@@ -15,7 +15,7 @@
  *   - 실패해도 npm install을 깨뜨리지 않음 (silent failure)
  */
 
-import { readFileSync, readdirSync, writeFileSync, mkdirSync, existsSync, rmSync, symlinkSync, cpSync } from 'node:fs';
+import { readFileSync, readdirSync, writeFileSync, mkdirSync, existsSync, rmSync, symlinkSync, cpSync, lstatSync, statSync, copyFileSync, renameSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { homedir, platform } from 'node:os';
 import { execFileSync } from 'node:child_process';
@@ -96,6 +96,34 @@ const CLAUDE_DIR = join(HOME, '.claude');
 const PLUGINS_DIR = join(CLAUDE_DIR, 'plugins');
 const SETTINGS_PATH = join(CLAUDE_DIR, 'settings.json');
 const COMPOUND_HOME = join(HOME, '.forgen');
+
+// ── 0.5. Migrate legacy storage (~/.tenetx/, ~/.compound/) → ~/.forgen/ ──
+function migrateLegacyStorage() {
+  const legacyDirs = [join(HOME, '.tenetx'), join(HOME, '.compound')];
+  for (const legacyHome of legacyDirs) {
+    try { if (lstatSync(legacyHome).isSymbolicLink()) continue; } catch { continue; }
+    if (!existsSync(legacyHome) || !statSync(legacyHome).isDirectory()) continue;
+
+    mkdirSync(COMPOUND_HOME, { recursive: true });
+    try {
+      for (const entry of readdirSync(legacyHome, { withFileTypes: true })) {
+        const src = join(legacyHome, entry.name);
+        const dest = join(COMPOUND_HOME, entry.name);
+        if (existsSync(dest)) continue;
+        if (entry.isDirectory()) cpSync(src, dest, { recursive: true });
+        else if (entry.isFile()) copyFileSync(src, dest);
+      }
+    } catch { /* ignore copy errors */ }
+
+    const backupPath = legacyHome + '.bak';
+    try {
+      if (!existsSync(backupPath)) {
+        renameSync(legacyHome, backupPath);
+        symlinkSync(COMPOUND_HOME, legacyHome, 'dir');
+      }
+    } catch { /* ignore symlink errors */ }
+  }
+}
 
 // ── 1. Ensure directories ──
 function ensureDirectories() {
@@ -689,6 +717,7 @@ function main() {
     // npm install (로컬) — postinstall 스킵
     return;
   }
+  migrateLegacyStorage();
   ensureDirectories();
 
   // ── 1. settings.json 한 번 읽기 ──

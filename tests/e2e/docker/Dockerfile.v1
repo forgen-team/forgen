@@ -7,10 +7,10 @@ RUN npm i -g @anthropic-ai/claude-code@latest 2>/dev/null || echo "Claude CLI op
 
 WORKDIR /workspace
 
-# tenetx 소스에서 직접 빌드 + 설치
-COPY . /workspace/tenetx-src
-RUN cd /workspace/tenetx-src && npm ci && npm run build && npm pack && \
-    npm i -g /workspace/tenetx-src/tenetx-*.tgz
+# forgen 소스에서 직접 빌드 + 설치
+COPY . /workspace/forgen-src
+RUN cd /workspace/forgen-src && npm ci && npm run build && npm pack && \
+    npm i -g /workspace/forgen-src/forgen-*.tgz
 
 # 검증 스크립트
 COPY tests/e2e/docker/verify-v1.sh /workspace/verify-v1.sh

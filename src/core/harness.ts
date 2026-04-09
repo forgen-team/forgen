@@ -503,30 +503,32 @@ function ensureGitignore(cwd: string): void {
 
 // ── Main Harness ──
 
-/** ~/.compound/ → ~/.forgen/ 스토리지 마이그레이션 (v5.1) */
+/** ~/.tenetx/ 및 ~/.compound/ → ~/.forgen/ 스토리지 마이그레이션 */
 function migrateToForgen(): void {
   const home = os.homedir();
-  // 테스트 환경 감지: 실제 홈 디렉토리가 아닌 /tmp/ 등에서는 마이그레이션 스킵
   if (home.startsWith('/tmp/') || home.includes('forgen-test')) return;
 
-  const compoundHome = path.join(home, '.compound');
   const forgenHome = path.join(home, '.forgen');
+  const legacyDirs = [
+    path.join(home, '.tenetx'),
+    path.join(home, '.compound'),
+  ];
 
-  // 이미 symlink면 마이그레이션 완료 상태
-  try {
-    if (fs.lstatSync(compoundHome).isSymbolicLink()) return;
-  } catch { /* ~/.compound 없음 — 아래에서 symlink 생성 */ }
+  for (const legacyHome of legacyDirs) {
+    try {
+      if (fs.lstatSync(legacyHome).isSymbolicLink()) continue;
+    } catch { continue; }
 
-  // ~/.compound/가 실제 디렉토리면 내용을 ~/.forgen/로 복사
-  if (fs.existsSync(compoundHome) && fs.statSync(compoundHome).isDirectory()) {
+    if (!fs.existsSync(legacyHome) || !fs.statSync(legacyHome).isDirectory()) continue;
+
     fs.mkdirSync(forgenHome, { recursive: true });
 
     try {
-      const entries = fs.readdirSync(compoundHome, { withFileTypes: true });
+      const entries = fs.readdirSync(legacyHome, { withFileTypes: true });
       for (const entry of entries) {
-        const src = path.join(compoundHome, entry.name);
+        const src = path.join(legacyHome, entry.name);
         const dest = path.join(forgenHome, entry.name);
-        if (fs.existsSync(dest)) continue; // 이미 있으면 skip
+        if (fs.existsSync(dest)) continue;
         if (entry.isDirectory()) {
           fs.cpSync(src, dest, { recursive: true });
         } else if (entry.isFile()) {
@@ -534,25 +536,26 @@ function migrateToForgen(): void {
         }
       }
     } catch (e) {
-      log.debug('migrateToForgen: 파일 복사 중 오류', e);
+      log.debug(`migrateToForgen: ${legacyHome} 파일 복사 중 오류`, e);
     }
 
-    // 원본 디렉토리를 백업 후 symlink로 교체
-    const backupPath = compoundHome + '.bak';
+    const backupPath = legacyHome + '.bak';
     try {
       if (!fs.existsSync(backupPath)) {
-        fs.renameSync(compoundHome, backupPath);
-        fs.symlinkSync(forgenHome, compoundHome, 'dir');
-        log.debug('migrateToForgen: ~/.compound → ~/.forgen symlink 생성 완료');
+        fs.renameSync(legacyHome, backupPath);
+        fs.symlinkSync(forgenHome, legacyHome, 'dir');
+        log.debug(`migrateToForgen: ${legacyHome} → ~/.forgen symlink 생성 완료`);
       }
     } catch (e) {
-      log.debug('migrateToForgen: symlink 생성 실패 — 기존 디렉토리 유지', e);
+      log.debug(`migrateToForgen: ${legacyHome} symlink 생성 실패`, e);
     }
   }
 
-  // ~/.compound가 없으면 바로 symlink 생성
-  if (!fs.existsSync(compoundHome)) {
-    try { fs.symlinkSync(forgenHome, compoundHome, 'dir'); } catch { /* ignore */ }
+  // 레거시 디렉토리가 없으면 symlink 생성
+  for (const legacyHome of legacyDirs) {
+    if (!fs.existsSync(legacyHome)) {
+      try { fs.symlinkSync(forgenHome, legacyHome, 'dir'); } catch { /* ignore */ }
+    }
   }
 }
 

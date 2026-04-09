@@ -120,10 +120,12 @@ describe('notepad', () => {
 
   describe('handleNotepad', () => {
     beforeEach(() => {
+      process.env.FORGEN_CWD = tmpDir;
       process.env.COMPOUND_CWD = tmpDir;
     });
 
     afterEach(() => {
+      delete process.env.FORGEN_CWD;
       delete process.env.COMPOUND_CWD;
     });
 

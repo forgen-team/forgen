@@ -34,8 +34,8 @@ describe('session-recovery session context resolution', () => {
     expect(context.cwd).toBe('/tmp/real-project');
   });
 
-  it('falls back to COMPOUND_CWD and a synthetic session id when stdin is missing', async () => {
-    vi.stubEnv('COMPOUND_CWD', '/tmp/from-env');
+  it('falls back to FORGEN_CWD and a synthetic session id when stdin is missing', async () => {
+    vi.stubEnv('FORGEN_CWD', '/tmp/from-env');
     vi.spyOn(Date, 'now').mockReturnValue(1700000000000);
 
     const { resolveSessionStartContext } = await import('../src/hooks/session-recovery.js');
