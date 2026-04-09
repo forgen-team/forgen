@@ -14,6 +14,7 @@
  */
 
 import * as fs from 'node:fs';
+import * as path from 'node:path';
 import * as crypto from 'node:crypto';
 import { FORGEN_HOME, V1_ME_DIR, V1_RULES_DIR, V1_EVIDENCE_DIR, V1_RECOMMENDATIONS_DIR, V1_SESSIONS_DIR, V1_STATE_DIR, V1_RAW_LOGS_DIR, V1_SOLUTIONS_DIR } from './paths.js';
 import { checkLegacyProfile, runLegacyCutover } from './legacy-detector.js';
@@ -159,7 +160,7 @@ export function bootstrapV1Session(): V1BootstrapResult {
   // 8. Raw Log 기록 + TTL sweep (7일)
   try {
     // 세션 시작 로그
-    const rawLogPath = require('node:path').join(V1_RAW_LOGS_DIR, `${sessionId}.jsonl`);
+    const rawLogPath = path.join(V1_RAW_LOGS_DIR, `${sessionId}.jsonl`);
     fs.appendFileSync(rawLogPath, JSON.stringify({
       event: 'session-started',
       session_id: sessionId,
@@ -175,7 +176,7 @@ export function bootstrapV1Session(): V1BootstrapResult {
     const TTL_MS = 7 * 24 * 60 * 60 * 1000;
     const now = Date.now();
     for (const file of fs.readdirSync(V1_RAW_LOGS_DIR)) {
-      const filePath = require('node:path').join(V1_RAW_LOGS_DIR, file);
+      const filePath = path.join(V1_RAW_LOGS_DIR, file);
       try {
         const stat = fs.statSync(filePath);
         if (now - stat.mtimeMs > TTL_MS) {

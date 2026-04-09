@@ -1,4 +1,5 @@
 import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { GLOBAL_CONFIG, V1_GLOBAL_CONFIG } from './paths.js';
 import type { QualityPack, AutonomyPack, TrustPolicy } from '../store/types.js';
 
@@ -65,6 +66,6 @@ export function loadGlobalConfig(): GlobalConfig {
 
 /** v1 config 저장 (~/.forgen/config.json) */
 export function saveGlobalConfig(config: GlobalConfig): void {
-  fs.mkdirSync(require('node:path').dirname(V1_GLOBAL_CONFIG), { recursive: true });
+  fs.mkdirSync(path.dirname(V1_GLOBAL_CONFIG), { recursive: true });
   fs.writeFileSync(V1_GLOBAL_CONFIG, JSON.stringify(config, null, 2));
 }

@@ -5,6 +5,9 @@
  * 사용자 대면 출력만 로케일에 따라 전환.
  */
 
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import * as os from 'node:os';
 import type { QualityPack, AutonomyPack, JudgmentPack, CommunicationPack, TrustPolicy } from '../store/types.js';
 
 export type Locale = 'en' | 'ko';
@@ -259,8 +262,9 @@ export function getLocale(): Locale { return _currentLocale; }
 /** GlobalConfig에서 locale을 읽어 설정. 없으면 'en' 기본값. */
 export function initLocaleFromConfig(): void {
   try {
-    const { loadGlobalConfig } = require('../core/global-config.js') as typeof import('../core/global-config.js');
-    const config = loadGlobalConfig();
+    const configPath = path.join(os.homedir(), '.forgen', 'config.json');
+    if (!fs.existsSync(configPath)) return;
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
     if (config.locale === 'ko' || config.locale === 'en') {
       _currentLocale = config.locale;
     }
