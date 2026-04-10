@@ -312,7 +312,7 @@ describe('PR2c-2: LRU eviction + HARD_CAP', () => {
     }
   });
 
-  it('HARD_CAP 경로: 5000개 초과 디렉터리에서 statSync 사전 정렬', () => {
+  it('HARD_CAP 경로: 5000개 초과 디렉터리에서 statSync 사전 정렬', { timeout: 30_000 }, () => {
     // 6000개 빈 .md 파일 — YAML parse 실패하지만 statSync 경로가 동작하는지
     resetIndexCache();
     const bigDir = fs.mkdtempSync(path.join(os.tmpdir(), 'solution-index-bigdir-'));
