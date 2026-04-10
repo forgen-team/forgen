@@ -2,7 +2,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { FORGEN_HOME, LAB_DIR, ME_BEHAVIOR, ME_DIR, ME_PHILOSOPHY, ME_SOLUTIONS, ME_RULES, PACKS_DIR, SESSIONS_DIR } from './paths.js';
+import { FORGEN_HOME, LAB_DIR, ME_BEHAVIOR, ME_DIR, ME_PHILOSOPHY, ME_SOLUTIONS, ME_RULES, PACKS_DIR, SESSIONS_DIR, STATE_DIR } from './paths.js';
 
 /** ~/.claude/projects/ — Claude Code 세션 저장 경로 */
 const CLAUDE_PROJECTS_DIR = path.join(os.homedir(), '.claude', 'projects');
@@ -158,6 +158,30 @@ export async function runDoctor(): Promise<void> {
       console.log();
     }
   }
+
+  // 훅 에러 카운트
+  console.log('  [Hook Health]');
+  const hookErrorPath = path.join(STATE_DIR, 'hook-errors.json');
+  if (fs.existsSync(hookErrorPath)) {
+    try {
+      const errors: Record<string, { count: number; lastAt: string }> = JSON.parse(fs.readFileSync(hookErrorPath, 'utf-8'));
+      const entries = Object.entries(errors);
+      if (entries.length === 0) {
+        console.log('  No hook errors recorded');
+      } else {
+        for (const [hookName, { count, lastAt }] of entries) {
+          const icon = count === 0 ? '✓' : '⚠';
+          const lastDate = lastAt ? lastAt.split('T')[0] : 'unknown';
+          console.log(`  ${icon} ${hookName}: ${count} error${count !== 1 ? 's' : ''}${count > 0 ? ` (last: ${lastDate})` : ''}`);
+        }
+      }
+    } catch {
+      console.log('  (hook-errors.json read failed)');
+    }
+  } else {
+    console.log('  No hook errors recorded');
+  }
+  console.log();
 
   // 현재 디렉토리 git 정보
   console.log('  [Git]');

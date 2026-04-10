@@ -74,3 +74,24 @@ export function updateRuleStatus(ruleId: string, status: RuleStatus): boolean {
   saveRule(rule);
   return true;
 }
+
+/**
+ * 현재 세션 ID와 다른 scope:'session' 규칙을 비활성화.
+ * 이전 세션의 임시 규칙이 새 세션에서 영향을 미치지 않도록 정리.
+ */
+export function cleanupStaleSessionRules(_currentSessionId: string): number {
+  if (!fs.existsSync(V1_RULES_DIR)) return 0;
+  let cleaned = 0;
+  for (const file of fs.readdirSync(V1_RULES_DIR)) {
+    if (!file.endsWith('.json')) continue;
+    const filePath = path.join(V1_RULES_DIR, file);
+    const rule = safeReadJSON<Rule | null>(filePath, null);
+    if (rule && rule.scope === 'session' && rule.status === 'active') {
+      rule.status = 'suppressed';
+      rule.updated_at = new Date().toISOString();
+      atomicWriteJSON(filePath, rule, { pretty: true });
+      cleaned++;
+    }
+  }
+  return cleaned;
+}

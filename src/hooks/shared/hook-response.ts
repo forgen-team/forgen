@@ -14,6 +14,10 @@
  *   모델에 컨텍스트를 주입하려면 반드시 additionalContext를 사용해야 함.
  */
 
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { STATE_DIR } from '../../core/paths.js';
+
 /** 통과 응답 (컨텍스트 없음, 모든 이벤트 공통) */
 export function approve(): string {
   return JSON.stringify({ continue: true });
@@ -64,5 +68,34 @@ export function ask(reason: string): string {
 
 /** fail-open: 에러 시 안전하게 통과 */
 export function failOpen(): string {
+  return JSON.stringify({ continue: true });
+}
+
+/** 훅별 에러 카운트를 STATE_DIR/hook-errors.json에 누적 */
+export function incrementHookErrorCount(hookName: string): void {
+  try {
+    const errorPath = path.join(STATE_DIR, 'hook-errors.json');
+    let errors: Record<string, { count: number; lastAt: string }> = {};
+    try {
+      if (fs.existsSync(errorPath)) {
+        errors = JSON.parse(fs.readFileSync(errorPath, 'utf-8'));
+      }
+    } catch { /* start fresh */ }
+
+    if (!errors[hookName]) errors[hookName] = { count: 0, lastAt: '' };
+    errors[hookName].count++;
+    errors[hookName].lastAt = new Date().toISOString();
+
+    fs.mkdirSync(STATE_DIR, { recursive: true });
+    fs.writeFileSync(errorPath, JSON.stringify(errors, null, 2));
+  } catch { /* meta-error in error tracking — ignore */ }
+}
+
+/**
+ * fail-open + 에러 카운트 누적.
+ * 훅의 main().catch() 블록에서 명시적으로 호출.
+ */
+export function failOpenWithTracking(hookName: string): string {
+  incrementHookErrorCount(hookName);
   return JSON.stringify({ continue: true });
 }

@@ -15,6 +15,8 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import { execFileSync, type ExecFileSyncOptions } from 'node:child_process';
 import { containsPromptInjection, filterSolutionContent } from '../hooks/prompt-injection-filter.js';
+import { createEvidence, saveEvidence, promoteSessionCandidates } from '../store/evidence-store.js';
+import { loadProfile } from '../store/profile-store.js';
 
 /** Auto-compound에 사용할 모델 — background 추출이므로 haiku로 충분 */
 const COMPOUND_MODEL = 'haiku';
@@ -344,6 +346,21 @@ ${sanitizedSummary.slice(0, 4000)}
           fs.writeFileSync(behaviorPath, content);
         }
       }
+
+      // behavior_observation evidence 저장 (mismatch detector 신호 확대)
+      const behaviorEvidence = createEvidence({
+        type: 'behavior_observation',
+        session_id: sessionId,
+        source_component: 'auto-compound-runner',
+        summary: trimmed.slice(0, 200),
+        axis_refs: kind === 'workflow' ? ['judgment_philosophy']
+          : kind === 'preference' ? ['communication_style']
+          : kind === 'thinking' ? ['judgment_philosophy']
+          : [],
+        confidence: 0.6,
+        raw_payload: { kind, observedCount: 1 },
+      });
+      saveEvidence(behaviorEvidence);
     }
   } catch (e) {
     process.stderr.write(`[forgen-auto-compound] behavior update: ${e instanceof Error ? e.message : String(e)}\n`);
@@ -357,8 +374,16 @@ ${sanitizedSummary.slice(0, 4000)}
     const V1_EVIDENCE_DIR = path.join(V1_ME_DIR, 'behavior');
 
     if (fs.existsSync(V1_PROFILE)) {
-      const learningSummaryPrompt = `다음 Claude Code 세션 대화를 분석하여 사용자의 개인화 학습 요약을 JSON으로 출력해주세요.
+      const currentProfile = loadProfile();
+      let profileContext = '';
+      if (currentProfile) {
+        const qf = currentProfile.axes.quality_safety.facets;
+        const af = currentProfile.axes.autonomy.facets;
+        profileContext = `\n현재 프로필:\n- 팩: quality=${currentProfile.base_packs.quality_pack}, autonomy=${currentProfile.base_packs.autonomy_pack}\n- quality_safety facets: verification_depth=${qf.verification_depth.toFixed(2)}, stop_threshold=${qf.stop_threshold.toFixed(2)}, change_conservatism=${qf.change_conservatism.toFixed(2)}\n- autonomy facets: confirmation_independence=${af.confirmation_independence.toFixed(2)}, assumption_tolerance=${af.assumption_tolerance.toFixed(2)}, scope_expansion_tolerance=${af.scope_expansion_tolerance.toFixed(2)}, approval_threshold=${af.approval_threshold.toFixed(2)}\n`;
+      }
 
+      const learningSummaryPrompt = `다음 Claude Code 세션 대화를 분석하여 사용자의 개인화 학습 요약을 JSON으로 출력해주세요.
+${profileContext}
 출력 형식 (JSON만, 설명 없이):
 {
   "corrections": ["사용자가 명시적으로 교정한 내용 목록"],
@@ -450,6 +475,16 @@ ${sanitizedSummary.slice(0, 4000)}
     }
   } catch (e) {
     process.stderr.write(`[forgen-auto-compound] session learning: ${e instanceof Error ? e.message : String(e)}\n`);
+  }
+
+  // Step 4: prefer-from-now / avoid-this 교정 → scope:'me' 영구 규칙 승격
+  try {
+    const promotedCount = promoteSessionCandidates(sessionId);
+    if (promotedCount > 0) {
+      process.stderr.write(`[forgen-auto-compound] promoted ${promotedCount} correction(s) to permanent rules\n`);
+    }
+  } catch (e) {
+    process.stderr.write(`[forgen-auto-compound] rule promotion: ${e instanceof Error ? e.message : String(e)}\n`);
   }
 
   // 완료 기록

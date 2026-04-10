@@ -56,6 +56,17 @@ export function classifyIntent(prompt: string): Intent {
   return 'general';
 }
 
+/** 프롬프트에 매칭되는 모든 의도를 반환. 없으면 ['general']. */
+export function classifyAllIntents(prompt: string): Intent[] {
+  const matches: Intent[] = [];
+  for (const rule of INTENT_RULES) {
+    if (rule.pattern.test(prompt)) {
+      matches.push(rule.intent);
+    }
+  }
+  return matches.length > 0 ? matches : ['general'];
+}
+
 async function main(): Promise<void> {
   const input = await readStdinJSON<HookInput>();
   if (!isHookEnabled('intent-classifier')) {
@@ -67,15 +78,16 @@ async function main(): Promise<void> {
     return;
   }
 
-  const intent = classifyIntent(input.prompt);
+  const intents = classifyAllIntents(input.prompt);
 
-  if (intent === 'general') {
+  if (intents.length === 1 && intents[0] === 'general') {
     console.log(approve());
     return;
   }
 
-  const hint = INTENT_HINTS[intent];
-  console.log(approveWithContext(`[intent: ${intent}] ${hint}`, 'UserPromptSubmit'));
+  const label = intents.join('+');
+  const hint = INTENT_HINTS[intents[0]];
+  console.log(approveWithContext(`[intent: ${label}] ${hint}`, 'UserPromptSubmit'));
 }
 
 main().catch((e) => {

@@ -89,6 +89,15 @@ export async function main(): Promise<void> {
       const errorMsg = input.error;
       if (/context.*limit|token.*limit|conversation.*too.*long/i.test(errorMsg)) {
         saveHandoff(sessionId, 'context-limit', errorMsg);
+        try {
+          const resumePath = path.join(STATE_DIR, 'pending-resume.json');
+          fs.writeFileSync(resumePath, JSON.stringify({
+            reason: 'token-limit',
+            sessionId,
+            savedAt: new Date().toISOString(),
+            cwd: process.env.FORGEN_CWD ?? process.env.COMPOUND_CWD ?? process.cwd(),
+          }, null, 2));
+        } catch { /* fail-open */ }
         console.log(approveWithWarning(`[Forgen] Context limit reached. Current state has been saved to ~/.forgen/handoffs/.\nThe previous work will be automatically recovered in the next session.`));
         return;
       }

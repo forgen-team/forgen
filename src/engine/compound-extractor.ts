@@ -67,6 +67,7 @@ interface ExtractionAnalysis {
   reason?: string;
   stats?: { files: number; lines: number; hasCodeFiles: boolean };
   persistStateWithoutSaving: boolean;
+  gitDiff?: string;
 }
 
 /** Load last extraction state */
@@ -685,6 +686,46 @@ function updateReExtractedCounter(tags: string[]): void {
   }
 }
 
+/**
+ * Optional LLM enrichment for thin solution content.
+ * Uses execFileSync (synchronous) to keep callers synchronous.
+ * Completely fail-open: any error returns null and the regex-extracted content is kept.
+ * Budget: max 2 calls per extraction run, 15s timeout each.
+ */
+function enrichSolutionContent(
+  solution: { name: string; context: string; content: string; tags: string[] },
+  diffSnippet: string,
+): string | null {
+  try {
+    const prompt = [
+      '다음 코드 변경에서 감지된 패턴을 2-3문장으로 설명해주세요.',
+      '무엇이 바뀌었는지가 아니라, **왜 이 패턴이 유용한지**와 **언제 적용해야 하는지**를 설명하세요.',
+      '',
+      `패턴 이름: ${solution.name}`,
+      `감지된 컨텍스트: ${solution.context}`,
+      `태그: ${solution.tags.join(', ')}`,
+      '',
+      '코드 변경 (일부):',
+      diffSnippet.slice(0, 2000),
+    ].join('\n');
+
+    const result = execFileSync('claude', ['-p', prompt, '--model', 'haiku'], {
+      timeout: 15000,
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+
+    const enriched = (result as unknown as string).trim();
+    if (enriched.length > 30 && enriched.length < 1000) {
+      return enriched;
+    }
+    return null;
+  } catch {
+    // fail-open: LLM enrichment failure should never block extraction
+    return null;
+  }
+}
+
 /** Main extraction function — called from SessionStart or CLI */
 function analyzeExtraction(cwd: string, options?: { enforceDailyLimit?: boolean }): ExtractionAnalysis {
   const state = loadLastExtraction();
@@ -791,6 +832,7 @@ function analyzeExtraction(cwd: string, options?: { enforceDailyLimit?: boolean 
     extracted,
     stats,
     persistStateWithoutSaving: false,
+    gitDiff,
   };
 }
 
@@ -856,6 +898,19 @@ export async function runExtraction(cwd: string, sessionId: string): Promise<{
   }
 
   if (analysis.extracted.length > 0) {
+    // Enrich thin solutions with LLM context — max 2 per run, fail-open
+    let enrichCount = 0;
+    for (const sol of analysis.extracted) {
+      if (enrichCount >= 2) break;
+      if (sol.content.length < 100 && analysis.state.extractionsToday < MAX_EXTRACTIONS_PER_DAY) {
+        const enriched = enrichSolutionContent(sol, analysis.gitDiff ?? '');
+        if (enriched) {
+          sol.content = enriched;
+          enrichCount++;
+        }
+      }
+    }
+
     const { saved, skipped } = processExtractionResults(JSON.stringify(analysis.extracted), sessionId);
     result.extracted = saved;
     result.skipped = skipped;

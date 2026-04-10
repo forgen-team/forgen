@@ -10,7 +10,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { prepareHarness, isFirstRun } from './core/harness.js';
-import { spawnClaude } from './core/spawn.js';
+import { spawnClaudeWithResume } from './core/spawn.js';
 // global-config is used by harness internally
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -268,7 +268,7 @@ async function main() {
 `);
     console.log('[forgen] Starting Claude Code...\n');
 
-    await spawnClaude(args, context);
+    await spawnClaudeWithResume(args, context, () => prepareHarness(process.cwd()));
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     if (msg.includes('ENOENT') && msg.includes('claude')) {

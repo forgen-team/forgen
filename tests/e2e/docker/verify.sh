@@ -374,6 +374,239 @@ fi
 echo ""
 
 # ──────────────────────────────────────────────
+# Phase 5: 학습 루프 풀 라이프사이클
+# ──────────────────────────────────────────────
+echo "  [Phase 5: Learning Loop Lifecycle]"
+
+# evidence-store.ts, rule-store.ts의 함수를 Node.js로 직접 호출
+EVIDENCE_STORE="$VERSION_DIR/dist/store/evidence-store.js"
+RULE_STORE="$VERSION_DIR/dist/store/rule-store.js"
+EVIDENCE_PROC="$VERSION_DIR/dist/forge/evidence-processor.js"
+MISMATCH="$VERSION_DIR/dist/forge/mismatch-detector.js"
+
+if [ -f "$EVIDENCE_PROC" ] && [ -f "$EVIDENCE_STORE" ] && [ -f "$RULE_STORE" ]; then
+
+  # 5-1. prefer-from-now 교정 → 승격 → 영구 규칙
+  PROMO_CHECK=$(node -e "
+    const { processCorrection } = require('$EVIDENCE_PROC');
+    const { promoteSessionCandidates } = require('$EVIDENCE_STORE');
+    const { loadActiveRules } = require('$RULE_STORE');
+
+    const result = processCorrection({
+      session_id: 'docker-e2e-session',
+      kind: 'prefer-from-now',
+      message: 'always run tests before commit',
+      target: 'pre-commit-test',
+      axis_hint: 'quality_safety',
+    });
+
+    if (!result.promotion_candidate) { console.log('FAIL:no-candidate'); process.exit(0); }
+
+    const promoted = promoteSessionCandidates('docker-e2e-session');
+    if (promoted !== 1) { console.log('FAIL:promo-count=' + promoted); process.exit(0); }
+
+    const rules = loadActiveRules().filter(r => r.scope === 'me');
+    if (rules.length < 1) { console.log('FAIL:no-me-rule'); process.exit(0); }
+
+    const rule = rules.find(r => r.policy.includes('always run tests'));
+    if (!rule) { console.log('FAIL:wrong-policy'); process.exit(0); }
+    if (rule.category !== 'quality') { console.log('FAIL:wrong-category=' + rule.category); process.exit(0); }
+
+    console.log('OK');
+  " 2>/dev/null)
+  if [ "$PROMO_CHECK" = "OK" ]; then
+    pass "Learning loop: prefer-from-now → promote → scope:me rule"
+  else
+    fail "Learning loop promotion: $PROMO_CHECK"
+  fi
+
+  # 5-2. 중복 승격 방지
+  DEDUP_CHECK=$(node -e "
+    const { promoteSessionCandidates } = require('$EVIDENCE_STORE');
+    const dup = promoteSessionCandidates('docker-e2e-session');
+    console.log(dup === 0 ? 'OK' : 'FAIL:dup=' + dup);
+  " 2>/dev/null)
+  if [ "$DEDUP_CHECK" = "OK" ]; then
+    pass "Learning loop: duplicate promotion prevented"
+  else
+    fail "Learning loop dedup: $DEDUP_CHECK"
+  fi
+
+  # 5-3. fix-now → session rule → cleanup
+  CLEANUP_CHECK=$(node -e "
+    const { processCorrection } = require('$EVIDENCE_PROC');
+    const { loadActiveRules, cleanupStaleSessionRules } = require('$RULE_STORE');
+
+    processCorrection({
+      session_id: 'docker-e2e-old-session',
+      kind: 'fix-now',
+      message: 'temp rule for old session',
+      target: 'temp-fix',
+      axis_hint: 'autonomy',
+    });
+
+    const before = loadActiveRules().filter(r => r.scope === 'session').length;
+    if (before < 1) { console.log('FAIL:no-session-rule'); process.exit(0); }
+
+    cleanupStaleSessionRules('docker-e2e-new-session');
+
+    const after = loadActiveRules().filter(r => r.scope === 'session').length;
+    console.log(after === 0 ? 'OK' : 'FAIL:stale=' + after);
+  " 2>/dev/null)
+  if [ "$CLEANUP_CHECK" = "OK" ]; then
+    pass "Learning loop: session rule cleanup works"
+  else
+    fail "Learning loop cleanup: $CLEANUP_CHECK"
+  fi
+
+  # 5-4. mismatch 감지 (prefer-from-now 누적)
+  if [ -f "$MISMATCH" ]; then
+    MISMATCH_CHECK=$(node -e "
+      const { processCorrection } = require('$EVIDENCE_PROC');
+      const { loadEvidenceBySession } = require('$EVIDENCE_STORE');
+      const { computeSessionSignals, detectMismatch } = require('$MISMATCH');
+
+      const allSignals = [];
+      for (let i = 0; i < 3; i++) {
+        const sid = 'docker-mismatch-' + i;
+        for (let j = 0; j < 2; j++) {
+          processCorrection({
+            session_id: sid,
+            kind: 'prefer-from-now',
+            message: 'quality correction ' + i + '-' + j,
+            target: 'quality-check-' + i + '-' + j,
+            axis_hint: 'quality_safety',
+          });
+        }
+        const corrections = loadEvidenceBySession(sid);
+        const signals = computeSessionSignals(sid, corrections, [], [], '보수형', '확인 우선형');
+        allSignals.push(...signals);
+      }
+
+      const result = detectMismatch(allSignals);
+      if (result.quality_mismatch && result.quality_score >= 4) {
+        console.log('OK:score=' + result.quality_score);
+      } else {
+        console.log('FAIL:mismatch=' + result.quality_mismatch + ',score=' + result.quality_score);
+      }
+    " 2>/dev/null)
+    if echo "$MISMATCH_CHECK" | grep -q "^OK"; then
+      pass "Learning loop: 3-session mismatch detection works ($MISMATCH_CHECK)"
+    else
+      fail "Learning loop mismatch: $MISMATCH_CHECK"
+    fi
+  else
+    warn "mismatch-detector.js not found"
+  fi
+
+  # 5-5. MCP profile-read 도구 (Node.js로 직접 호출)
+  PROFILE_STORE="$VERSION_DIR/dist/store/profile-store.js"
+  if [ -f "$PROFILE_STORE" ]; then
+    PROFILE_CHECK=$(node -e "
+      const { createProfile, saveProfile, loadProfile } = require('$PROFILE_STORE');
+      const p = createProfile('docker-test', '보수형', '확인 우선형', '가드레일 우선', 'test');
+      saveProfile(p);
+      const loaded = loadProfile();
+      if (loaded && loaded.base_packs.quality_pack === '보수형') {
+        console.log('OK');
+      } else {
+        console.log('FAIL:profile-load');
+      }
+    " 2>/dev/null)
+    if [ "$PROFILE_CHECK" = "OK" ]; then
+      pass "MCP: profile-read data accessible"
+    else
+      fail "MCP profile: $PROFILE_CHECK"
+    fi
+  fi
+
+  # 5-6. auto-compound-runner Step 4 실제 트리거 경로 검증
+  # (auto-compound-runner.ts를 직접 import하지 않고, Step 4와 동일한 코드 경로를 재현)
+  AUTO_COMPOUND="$VERSION_DIR/dist/core/auto-compound-runner.js"
+  if [ -f "$AUTO_COMPOUND" ]; then
+    AUTO_TRIGGER_CHECK=$(node -e "
+      // Step 4의 실제 코드 경로 재현:
+      // auto-compound-runner.ts:482 — promoteSessionCandidates(sessionId)
+      const { processCorrection } = require('$EVIDENCE_PROC');
+      const { promoteSessionCandidates, loadPromotionCandidates } = require('$EVIDENCE_STORE');
+      const { loadActiveRules } = require('$RULE_STORE');
+
+      // 세션 시뮬레이션: 교정 기록
+      const sid = 'docker-auto-trigger-test';
+      processCorrection({
+        session_id: sid,
+        kind: 'prefer-from-now',
+        message: 'use early return pattern',
+        target: 'early-return',
+        axis_hint: 'judgment_philosophy',
+      });
+      processCorrection({
+        session_id: sid,
+        kind: 'avoid-this',
+        message: 'never use nested if-else beyond 3 levels',
+        target: 'deep-nesting',
+        axis_hint: 'quality_safety',
+      });
+
+      // 승격 전 확인
+      const candidates = loadPromotionCandidates().filter(e => e.session_id === sid);
+      if (candidates.length !== 2) { console.log('FAIL:candidates=' + candidates.length); process.exit(0); }
+
+      const rulesBefore = loadActiveRules().filter(r => r.scope === 'me');
+      const countBefore = rulesBefore.length;
+
+      // auto-compound-runner Step 4와 동일한 호출
+      const promoted = promoteSessionCandidates(sid);
+
+      const rulesAfter = loadActiveRules().filter(r => r.scope === 'me');
+      const countAfter = rulesAfter.length;
+
+      if (promoted !== 2) { console.log('FAIL:promoted=' + promoted); process.exit(0); }
+      if (countAfter !== countBefore + 2) { console.log('FAIL:count=' + countBefore + '->' + countAfter); process.exit(0); }
+
+      // avoid-this는 strength:'strong'이어야 함
+      const strongRule = rulesAfter.find(r => r.strength === 'strong' && r.policy.includes('nested'));
+      if (!strongRule) { console.log('FAIL:no-strong-rule'); process.exit(0); }
+
+      // prefer-from-now는 strength:'default'이어야 함
+      const defaultRule = rulesAfter.find(r => r.strength === 'default' && r.policy.includes('early return'));
+      if (!defaultRule) { console.log('FAIL:no-default-rule'); process.exit(0); }
+
+      // 카테고리 매핑 확인
+      if (defaultRule.category !== 'workflow') { console.log('FAIL:cat=' + defaultRule.category); process.exit(0); }
+      if (strongRule.category !== 'quality') { console.log('FAIL:cat=' + strongRule.category); process.exit(0); }
+
+      console.log('OK');
+    " 2>/dev/null)
+    if [ "$AUTO_TRIGGER_CHECK" = "OK" ]; then
+      pass "Auto-compound Step 4: full trigger path verified (2 rules, correct strength/category)"
+    else
+      fail "Auto-compound Step 4: $AUTO_TRIGGER_CHECK"
+    fi
+  else
+    warn "auto-compound-runner.js not found"
+  fi
+
+  # 5-7. forgen me 대시보드 출력 검증
+  ME_OUTPUT=$(forgen me 2>&1 || true)
+  if echo "$ME_OUTPUT" | grep -q "Learning Loop Status"; then
+    pass "forgen me: dashboard shows Learning Loop Status"
+  else
+    fail "forgen me: dashboard missing Learning Loop Status section"
+  fi
+  if echo "$ME_OUTPUT" | grep -q "Rules:"; then
+    pass "forgen me: dashboard shows rule count"
+  else
+    fail "forgen me: dashboard missing rule count"
+  fi
+
+else
+  fail "evidence-processor.js or evidence-store.js not found — skipping learning loop tests"
+fi
+
+echo ""
+
+# ──────────────────────────────────────────────
 # Summary
 # ──────────────────────────────────────────────
 echo "═══════════════════════════════════════════"

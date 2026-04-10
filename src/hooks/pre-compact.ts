@@ -75,6 +75,35 @@ function saveCompactionSnapshot(sessionId: string): string | null {
   return snapshotPath;
 }
 
+/** context-guard.json에서 현재 promptCount 읽기 */
+function readPromptCount(): number {
+  try {
+    const guardPath = path.join(STATE_DIR, 'context-guard.json');
+    if (fs.existsSync(guardPath)) {
+      const data = JSON.parse(fs.readFileSync(guardPath, 'utf-8'));
+      return typeof data.promptCount === 'number' ? data.promptCount : 0;
+    }
+  } catch { /* fail-open */ }
+  return 0;
+}
+
+/**
+ * 백그라운드 compound 추출 트리거 (non-blocking).
+ * compound extract 서브커맨드가 없으므로 pending-compound.json 마커를 씀.
+ * session-recovery가 다음 세션 시작 시 이 마커를 읽고 추출을 트리거함.
+ */
+function triggerBackgroundExtraction(promptCount: number): void {
+  try {
+    const pendingPath = path.join(STATE_DIR, 'pending-compound.json');
+    fs.mkdirSync(STATE_DIR, { recursive: true });
+    fs.writeFileSync(pendingPath, JSON.stringify({
+      reason: 'pre-compact',
+      promptCount,
+      detectedAt: new Date().toISOString(),
+    }, null, 2));
+  } catch { /* fail-open */ }
+}
+
 /** 7일 이상 된 handoff 파일 정리 */
 function cleanOldHandoffs(): void {
   if (!fs.existsSync(HANDOFFS_DIR)) return;
@@ -154,6 +183,13 @@ Rules:
 - Skip patterns that are trivially obvious ("uses TypeScript")
 - Each pattern must be specific enough to change Claude's behavior in future sessions${existingList}
 </forgen-compound-extract>`;
+
+  // promptCount >= 20이면 백그라운드 추출 마커 기록
+  const promptCount = readPromptCount();
+  if (promptCount >= 20) {
+    triggerBackgroundExtraction(promptCount);
+    log.debug(`Pre-compact: promptCount=${promptCount} >= 20, pending-compound.json 기록`);
+  }
 
   // 스냅샷 저장
   try {

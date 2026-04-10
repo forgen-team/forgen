@@ -24,6 +24,8 @@ import {
 } from './solution-reader.js';
 import { processCorrection } from '../forge/evidence-processor.js';
 import type { CorrectionKind } from '../store/types.js';
+import { loadProfile } from '../store/profile-store.js';
+import { loadActiveRules } from '../store/rule-store.js';
 
 function getCwd(): string | undefined {
   return process.env.FORGEN_CWD ?? process.env.COMPOUND_CWD ?? undefined;
@@ -365,6 +367,138 @@ export function registerTools(server: McpServer): void {
           }],
         };
       }
+    },
+  );
+
+  // ── profile-read ──
+  server.registerTool(
+    'profile-read',
+    {
+      description: 'Read current user personalization profile — packs, facet scores, trust policy. Use this to understand how you are configured before suggesting profile changes.',
+      annotations: { readOnlyHint: true },
+    },
+    async () => {
+      const profile = loadProfile();
+
+      if (!profile) {
+        return {
+          content: [{
+            type: 'text' as const,
+            text: 'No profile configured. Run forgen onboarding.',
+          }],
+        };
+      }
+
+      const { base_packs, axes, trust_preferences, metadata } = profile;
+
+      const lines = [
+        `# Forgen Profile (user: ${profile.user_id})`,
+        '',
+        '## Packs',
+        `  quality:       ${base_packs.quality_pack}`,
+        `  autonomy:      ${base_packs.autonomy_pack}`,
+        `  judgment:      ${base_packs.judgment_pack}`,
+        `  communication: ${base_packs.communication_pack}`,
+        '',
+        '## Facets',
+        '  quality_safety:',
+        `    verification_depth:  ${axes.quality_safety.facets.verification_depth.toFixed(2)}`,
+        `    stop_threshold:      ${axes.quality_safety.facets.stop_threshold.toFixed(2)}`,
+        `    change_conservatism: ${axes.quality_safety.facets.change_conservatism.toFixed(2)}`,
+        `    (score: ${axes.quality_safety.score.toFixed(2)}, confidence: ${axes.quality_safety.confidence.toFixed(2)})`,
+        '  autonomy:',
+        `    confirmation_independence:   ${axes.autonomy.facets.confirmation_independence.toFixed(2)}`,
+        `    assumption_tolerance:        ${axes.autonomy.facets.assumption_tolerance.toFixed(2)}`,
+        `    scope_expansion_tolerance:   ${axes.autonomy.facets.scope_expansion_tolerance.toFixed(2)}`,
+        `    approval_threshold:          ${axes.autonomy.facets.approval_threshold.toFixed(2)}`,
+        `    (score: ${axes.autonomy.score.toFixed(2)}, confidence: ${axes.autonomy.confidence.toFixed(2)})`,
+        '  judgment_philosophy:',
+        `    minimal_change_bias:  ${axes.judgment_philosophy.facets.minimal_change_bias.toFixed(2)}`,
+        `    abstraction_bias:     ${axes.judgment_philosophy.facets.abstraction_bias.toFixed(2)}`,
+        `    evidence_first_bias:  ${axes.judgment_philosophy.facets.evidence_first_bias.toFixed(2)}`,
+        `    (score: ${axes.judgment_philosophy.score.toFixed(2)}, confidence: ${axes.judgment_philosophy.confidence.toFixed(2)})`,
+        '  communication_style:',
+        `    verbosity:      ${axes.communication_style.facets.verbosity.toFixed(2)}`,
+        `    structure:      ${axes.communication_style.facets.structure.toFixed(2)}`,
+        `    teaching_bias:  ${axes.communication_style.facets.teaching_bias.toFixed(2)}`,
+        `    (score: ${axes.communication_style.score.toFixed(2)}, confidence: ${axes.communication_style.confidence.toFixed(2)})`,
+        '',
+        '## Trust Policy',
+        `  ${trust_preferences.desired_policy} (source: ${trust_preferences.source})`,
+        '',
+        '## Metadata',
+        `  created:      ${metadata.created_at.slice(0, 10)}`,
+        `  last_updated: ${metadata.updated_at.slice(0, 10)}`,
+      ];
+
+      return {
+        content: [{
+          type: 'text' as const,
+          text: lines.join('\n'),
+        }],
+      };
+    },
+  );
+
+  // ── rule-list ──
+  server.registerTool(
+    'rule-list',
+    {
+      description: 'List active personalization rules grouped by category. Shows scope, strength, and source of each rule.',
+      inputSchema: {
+        category: z.enum(['quality', 'autonomy', 'workflow', 'all']).optional()
+          .describe('Filter by rule category (default: all)'),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ category }) => {
+      const rules = loadActiveRules();
+
+      if (rules.length === 0) {
+        return {
+          content: [{
+            type: 'text' as const,
+            text: 'No active rules found.',
+          }],
+        };
+      }
+
+      const filtered = (category && category !== 'all')
+        ? rules.filter(r => r.category === category)
+        : rules;
+
+      if (filtered.length === 0) {
+        return {
+          content: [{
+            type: 'text' as const,
+            text: `No active rules found for category: ${category}.`,
+          }],
+        };
+      }
+
+      // Group by category
+      const grouped = new Map<string, typeof filtered>();
+      for (const rule of filtered) {
+        const group = grouped.get(rule.category) ?? [];
+        group.push(rule);
+        grouped.set(rule.category, group);
+      }
+
+      const lines: string[] = [`Active rules (${filtered.length} total):`];
+      for (const [cat, catRules] of grouped) {
+        lines.push('', `## ${cat}`);
+        for (const rule of catRules) {
+          const refs = rule.evidence_refs.length > 0 ? ` (source: ${rule.evidence_refs.join(', ')})` : '';
+          lines.push(`  [${rule.scope}] [${rule.strength}] ${rule.policy}${refs}`);
+        }
+      }
+
+      return {
+        content: [{
+          type: 'text' as const,
+          text: lines.join('\n'),
+        }],
+      };
     },
   );
 }

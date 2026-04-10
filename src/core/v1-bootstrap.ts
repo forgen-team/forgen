@@ -20,7 +20,7 @@ import { FORGEN_HOME, V1_ME_DIR, V1_RULES_DIR, V1_EVIDENCE_DIR, V1_RECOMMENDATIO
 import { checkLegacyProfile, runLegacyCutover } from './legacy-detector.js';
 import { detectRuntimeCapability } from './runtime-detector.js';
 import { loadProfile, profileExists } from '../store/profile-store.js';
-import { loadActiveRules } from '../store/rule-store.js';
+import { loadActiveRules, cleanupStaleSessionRules } from '../store/rule-store.js';
 import { composeSession } from '../preset/preset-manager.js';
 import { renderRules, DEFAULT_CONTEXT } from '../renderer/rule-renderer.js';
 import { saveSessionState, loadRecentSessions } from '../store/session-state-store.js';
@@ -84,8 +84,16 @@ export function bootstrapV1Session(): V1BootstrapResult {
   const runtime = detectRuntimeCapability();
 
   // 4. Rules 로드 + Session 합성
-  const personalRules = loadActiveRules();
   const sessionId = crypto.randomUUID();
+
+  // 이전 세션의 scope:'session' 임시 규칙 정리
+  try {
+    cleanupStaleSessionRules(sessionId);
+  } catch {
+    // 정리 실패는 세션 시작을 막지 않음
+  }
+
+  const personalRules = loadActiveRules();
 
   const session = composeSession({
     session_id: sessionId,

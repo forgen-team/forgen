@@ -60,6 +60,9 @@ export function computeSessionSignals(
         if (direction === 'opposite') {
           signals.push({ session_id: sessionId, axis, score: 2, reason: `반대 방향 correction: ${c.summary}` });
         }
+        if (direction === 'same' && (axis === 'quality_safety' || axis === 'autonomy')) {
+          signals.push({ session_id: sessionId, axis, score: 1, reason: `교정 누적: ${c.summary}` });
+        }
       }
     }
   }

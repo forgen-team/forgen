@@ -7,6 +7,7 @@ import { buildEnv } from './config-injector.js';
 import type { V1HarnessContext } from './harness.js';
 import { loadGlobalConfig } from './global-config.js';
 import { createLogger } from './logger.js';
+import { STATE_DIR } from './paths.js';
 
 const log = createLogger('spawn');
 
@@ -66,8 +67,8 @@ async function indexTranscriptToFTS(cwd: string, transcriptPath: string, session
   }
 }
 
-/** Claude Code를 하네스 환경으로 실행 */
-export async function spawnClaude(args: string[], context: V1HarnessContext): Promise<void> {
+/** Claude Code를 하네스 환경으로 실행. exit code를 반환. */
+export async function spawnClaude(args: string[], context: V1HarnessContext): Promise<number> {
   const claudePath = findClaude();
   const env = buildEnv(context.cwd);
   const cleanArgs = [...args];
@@ -130,11 +131,57 @@ export async function spawnClaude(args: string[], context: V1HarnessContext): Pr
         console.error('[forgen] 세션 종료 후 처리 실패:', e instanceof Error ? e.message : e);
       }
 
-      if (code === 0 || code === null) {
-        resolve();
-      } else {
-        process.exit(code);
-      }
+      resolve(code ?? 0);
     });
   });
+}
+
+const RESUME_COOLDOWN_MS = 30_000;
+const MAX_RESUMES = 3;
+
+/**
+ * 토큰 한도 도달 시 자동 재시작을 지원하는 claude 실행 래퍼.
+ * context-guard가 pending-resume.json 마커를 생성하면 쿨다운 후 재시작.
+ */
+export async function spawnClaudeWithResume(
+  args: string[],
+  context: V1HarnessContext,
+  contextFactory: () => Promise<V1HarnessContext>,
+): Promise<void> {
+  let resumeCount = 0;
+  let currentContext = context;
+
+  while (true) {
+    const exitCode = await spawnClaude(args, currentContext);
+
+    const resumePath = path.join(STATE_DIR, 'pending-resume.json');
+    if (!fs.existsSync(resumePath)) {
+      if (exitCode !== 0) process.exit(exitCode);
+      break;
+    }
+
+    try {
+      const marker = JSON.parse(fs.readFileSync(resumePath, 'utf-8'));
+      fs.unlinkSync(resumePath);
+
+      if (marker.reason !== 'token-limit') {
+        if (exitCode !== 0) process.exit(exitCode);
+        break;
+      }
+      if (resumeCount >= MAX_RESUMES) {
+        console.log(`[forgen] 최대 자동 재시작 횟수(${MAX_RESUMES}) 도달. 수동으로 다시 시작하세요.`);
+        break;
+      }
+
+      resumeCount++;
+      console.log(`[forgen] 토큰 한도 도달. ${RESUME_COOLDOWN_MS / 1000}초 후 자동 재시작합니다... (${resumeCount}/${MAX_RESUMES})`);
+      await new Promise<void>(resolve => setTimeout(resolve, RESUME_COOLDOWN_MS));
+
+      console.log('[forgen] 세션 재시작 중...');
+      currentContext = await contextFactory();
+    } catch {
+      if (exitCode !== 0) process.exit(exitCode);
+      break;
+    }
+  }
 }
