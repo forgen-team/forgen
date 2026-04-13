@@ -81,6 +81,14 @@ const commands: Command[] = [
     },
   },
   {
+    name: 'dashboard',
+    description: 'Compound system dashboard with rich overview',
+    handler: async (_args) => {
+      const { handleDashboard } = await import('./core/dashboard.js');
+      await handleDashboard();
+    },
+  },
+  {
     name: 'me',
     description: 'Personal dashboard (→ inspect profile)',
     handler: async (_args) => {
@@ -300,6 +308,7 @@ function printHelp() {
     forgen inspect [profile|rules|evidence|session]
                                     Inspect v1 state
     forgen compound                 Manage accumulated knowledge
+    forgen dashboard                Compound system dashboard
     forgen me                       Personal dashboard
     forgen init                     Initialize project
     forgen config hooks             Hook management

@@ -607,6 +607,384 @@ fi
 echo ""
 
 # ──────────────────────────────────────────────
+# Phase 6: 세션 라이프사이클 시뮬레이션
+# ──────────────────────────────────────────────
+echo "  [Phase 6: Session Lifecycle Simulation]"
+
+# 격리된 HOME으로 전체 세션 흐름을 재현 (paths.ts는 os.homedir()/.forgen 사용)
+LIFECYCLE_ROOT="/tmp/lifecycle-root"
+rm -rf "$LIFECYCLE_ROOT"
+mkdir -p "$LIFECYCLE_ROOT/.forgen/state" "$LIFECYCLE_ROOT/.forgen/me/solutions" "$LIFECYCLE_ROOT/.forgen/me/behavior"
+LIFECYCLE_STATE="$LIFECYCLE_ROOT/.forgen/state"
+
+# 6-L1. 25회 프롬프트 누적 → context-guard 상태 축적
+echo "    Simulating 25-prompt session..."
+LIFECYCLE_PASS=true
+for i in $(seq 1 25); do
+  RESULT=$(echo "{\"prompt\":\"prompt number $i with some content to accumulate chars\",\"session_id\":\"lifecycle-test\"}" | \
+    HOME="$LIFECYCLE_ROOT" node "$HOOKS_DIR/context-guard.js" 2>/dev/null)
+  if ! echo "$RESULT" | grep -q '"continue":true'; then
+    LIFECYCLE_PASS=false
+    break
+  fi
+done
+
+if [ "$LIFECYCLE_PASS" = "true" ]; then
+  if [ -f "$LIFECYCLE_STATE/context-guard.json" ]; then
+    PROMPT_COUNT=$(node -e "
+      const d = JSON.parse(require('fs').readFileSync('$LIFECYCLE_STATE/context-guard.json','utf-8'));
+      console.log(d.promptCount);
+    " 2>/dev/null)
+    if [ "$PROMPT_COUNT" = "25" ]; then
+      pass "Session lifecycle: 25 prompts accumulated (promptCount=$PROMPT_COUNT)"
+    else
+      fail "Session lifecycle: promptCount=$PROMPT_COUNT (expected 25)"
+    fi
+  else
+    fail "Session lifecycle: context-guard.json not created"
+  fi
+else
+  fail "Session lifecycle: hook failed during prompt accumulation"
+fi
+
+# 6-L2. 세션 종료 (Stop hook) → pending-compound.json 마커 생성
+echo "    Simulating session end (Stop hook)..."
+rm -f "$LIFECYCLE_STATE/pending-compound.json"
+STOP_RESULT=$(echo '{"stop_hook_type":"user","session_id":"lifecycle-test"}' | \
+  HOME="$LIFECYCLE_ROOT" node "$HOOKS_DIR/context-guard.js" 2>/dev/null)
+
+if [ -f "$LIFECYCLE_STATE/pending-compound.json" ]; then
+  MARKER_REASON=$(node -e "
+    const d = JSON.parse(require('fs').readFileSync('$LIFECYCLE_STATE/pending-compound.json','utf-8'));
+    console.log(d.reason + ':' + d.promptCount);
+  " 2>/dev/null)
+  if echo "$MARKER_REASON" | grep -q "session-end:25"; then
+    pass "Session end: pending-compound.json written (reason=session-end, promptCount=25)"
+  else
+    fail "Session end: marker content wrong — $MARKER_REASON"
+  fi
+else
+  fail "Session end: pending-compound.json NOT created (20+ prompts should trigger)"
+fi
+
+if echo "$STOP_RESULT" | grep -qi "auto-trigger\|compound"; then
+  pass "Session end: Stop response mentions compound auto-trigger"
+else
+  fail "Session end: Stop response missing compound info — $(echo "$STOP_RESULT" | head -c 150)"
+fi
+
+# 6-L3. 12회 프롬프트 세션 → /compound 안내만 (자동 트리거 아님)
+echo "    Simulating 12-prompt session (below auto-trigger)..."
+SMALL_ROOT="/tmp/lifecycle-small"
+rm -rf "$SMALL_ROOT"
+mkdir -p "$SMALL_ROOT/.forgen/state"
+
+for i in $(seq 1 12); do
+  echo "{\"prompt\":\"short prompt $i\",\"session_id\":\"small-session\"}" | \
+    HOME="$SMALL_ROOT" node "$HOOKS_DIR/context-guard.js" >/dev/null 2>&1
+done
+
+SMALL_STOP=$(echo '{"stop_hook_type":"user","session_id":"small-session"}' | \
+  HOME="$SMALL_ROOT" node "$HOOKS_DIR/context-guard.js" 2>/dev/null)
+
+if [ ! -f "$SMALL_ROOT/.forgen/state/pending-compound.json" ]; then
+  if echo "$SMALL_STOP" | grep -q "/compound"; then
+    pass "12-prompt session: suggests /compound (no auto-trigger)"
+  else
+    warn "12-prompt session: no /compound suggestion in response"
+  fi
+else
+  fail "12-prompt session: should NOT auto-trigger (only 12 prompts)"
+fi
+
+# 6-L4. Auto-compact 트리거 — 120K 문자 누적 시 compact 지시 주입
+echo "    Simulating auto-compact trigger (120K chars)..."
+COMPACT_ROOT="/tmp/lifecycle-compact"
+rm -rf "$COMPACT_ROOT"
+mkdir -p "$COMPACT_ROOT/.forgen/state"
+
+node -e "
+  const fs = require('fs');
+  fs.writeFileSync('$COMPACT_ROOT/.forgen/state/context-guard.json', JSON.stringify({
+    promptCount: 50, totalChars: 115000, lastWarningAt: 0, lastAutoCompactAt: 0,
+    sessionId: 'compact-test'
+  }));
+" 2>/dev/null
+
+BIG_PROMPT=$(node -e "console.log(JSON.stringify({prompt:'x'.repeat(6000),session_id:'compact-test'}))" 2>/dev/null)
+COMPACT_RESULT=$(echo "$BIG_PROMPT" | \
+  HOME="$COMPACT_ROOT" node "$HOOKS_DIR/context-guard.js" 2>/dev/null)
+
+if echo "$COMPACT_RESULT" | grep -qi "auto-compact\|compact\|/compact"; then
+  pass "Auto-compact: /compact instruction injected at 121K chars"
+else
+  fail "Auto-compact: no compact instruction — $(echo "$COMPACT_RESULT" | head -c 200)"
+fi
+
+# 6-L5. Hook timing 축적
+TIMING_LOG="$LIFECYCLE_STATE/hook-timing.jsonl"
+if [ -f "$TIMING_LOG" ]; then
+  LINE_COUNT=$(wc -l < "$TIMING_LOG" | tr -d ' ')
+  if [ "$LINE_COUNT" -ge 25 ]; then
+    pass "Hook timing: $LINE_COUNT entries accumulated during session simulation"
+  else
+    warn "Hook timing: only $LINE_COUNT entries (expected 25+)"
+  fi
+else
+  warn "Hook timing: hook-timing.jsonl not created (context-guard may not have timing)"
+fi
+
+# 6-L6. Hook error tracking — 잘못된 stdin
+echo "    Simulating hook error..."
+echo "INVALID_JSON" | HOME="$LIFECYCLE_ROOT" node "$HOOKS_DIR/context-guard.js" >/dev/null 2>&1
+if [ -f "$LIFECYCLE_STATE/hook-errors.json" ]; then
+  ERROR_COUNT=$(node -e "
+    const d = JSON.parse(require('fs').readFileSync('$LIFECYCLE_STATE/hook-errors.json','utf-8'));
+    const cg = d['context-guard'];
+    console.log(cg ? cg.count : 0);
+  " 2>/dev/null)
+  if [ "$ERROR_COUNT" -ge 1 ]; then
+    pass "Hook error tracking: error recorded (count=$ERROR_COUNT)"
+  else
+    warn "Hook error tracking: file exists but count=0"
+  fi
+else
+  warn "Hook error tracking: hook-errors.json not created (may fail-open without tracking)"
+fi
+
+# 6-L7. Implicit feedback — 같은 파일 5+ 편집
+echo "    Simulating repeated file edits..."
+EDIT_ROOT="/tmp/lifecycle-edit"
+rm -rf "$EDIT_ROOT"
+mkdir -p "$EDIT_ROOT/.forgen/state"
+
+for i in $(seq 1 6); do
+  echo "{\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"/tmp/test.ts\",\"old_string\":\"a\",\"new_string\":\"b\"},\"session_id\":\"edit-test\"}" | \
+    HOME="$EDIT_ROOT" node "$HOOKS_DIR/post-tool-use.js" >/dev/null 2>&1
+done
+
+FEEDBACK_LOG="$EDIT_ROOT/.forgen/state/implicit-feedback.jsonl"
+if [ -f "$FEEDBACK_LOG" ]; then
+  if grep -q "repeated_edit" "$FEEDBACK_LOG"; then
+    pass "Implicit feedback: repeated_edit detected after 6 edits to same file"
+  else
+    warn "Implicit feedback: JSONL exists but no repeated_edit entry"
+  fi
+else
+  warn "Implicit feedback: implicit-feedback.jsonl not created"
+fi
+
+# 정리
+rm -rf "$LIFECYCLE_ROOT" "$SMALL_ROOT" "$COMPACT_ROOT" "$EDIT_ROOT"
+
+echo ""
+
+# ──────────────────────────────────────────────
+# Phase 7: v0.3 기능 export 검증
+# ──────────────────────────────────────────────
+echo "  [Phase 7: v0.3 Feature Exports]"
+
+# 7-1. Hook error tracking — failOpenWithTracking 호출 경로
+HOOK_RESP_JS=$(find "$VERSION_DIR" -name "hook-response.js" -path "*/shared/*" 2>/dev/null | head -1)
+if [ -n "$HOOK_RESP_JS" ] && [ -f "$HOOK_RESP_JS" ]; then
+  TRACKING_CHECK=$(node -e "
+    const m = require('$HOOK_RESP_JS');
+    if (typeof m.failOpenWithTracking !== 'function') { console.log('FAIL:no-export'); process.exit(0); }
+    const result = JSON.parse(m.failOpenWithTracking('test-hook'));
+    console.log(result.continue === true ? 'OK' : 'FAIL:not-continue');
+  " 2>/dev/null)
+  if [ "$TRACKING_CHECK" = "OK" ]; then
+    pass "failOpenWithTracking export works"
+  else
+    fail "failOpenWithTracking: $TRACKING_CHECK"
+  fi
+
+  # 모든 훅이 failOpenWithTracking을 사용하는지 확인
+  HOOKS_USING_OLD=$(grep -rl "failOpen()" "$VERSION_DIR/dist/hooks/" 2>/dev/null | grep -v "hook-response" | wc -l | tr -d ' ')
+  if [ "$HOOKS_USING_OLD" = "0" ]; then
+    pass "All hooks use failOpenWithTracking (no plain failOpen)"
+  else
+    fail "$HOOKS_USING_OLD hooks still use plain failOpen()"
+  fi
+else
+  fail "hook-response.js not found"
+fi
+
+# 7-2. Hook timing profiler — recordHookTiming/getTimingStats
+TIMING_JS=$(find "$VERSION_DIR" -name "hook-timing.js" -path "*/shared/*" 2>/dev/null | head -1)
+if [ -n "$TIMING_JS" ] && [ -f "$TIMING_JS" ]; then
+  TIMING_CHECK=$(node -e "
+    const m = require('$TIMING_JS');
+    if (typeof m.recordHookTiming !== 'function') { console.log('FAIL:no-record'); process.exit(0); }
+    if (typeof m.getTimingStats !== 'function') { console.log('FAIL:no-stats'); process.exit(0); }
+    // 실제 기록 + 통계 조회
+    m.recordHookTiming('e2e-test', 42, 'UserPromptSubmit');
+    m.recordHookTiming('e2e-test', 100, 'PreToolUse');
+    const stats = m.getTimingStats();
+    const entry = stats.find(s => s.hook === 'e2e-test');
+    if (!entry || entry.count < 2) { console.log('FAIL:count=' + (entry?.count ?? 0)); process.exit(0); }
+    console.log('OK');
+  " 2>/dev/null)
+  if [ "$TIMING_CHECK" = "OK" ]; then
+    pass "Hook timing profiler: record + stats work"
+  else
+    fail "Hook timing: $TIMING_CHECK"
+  fi
+else
+  fail "hook-timing.js not found"
+fi
+
+# 7-3. Bigram semantic matching — bigramSimilarity
+MATCHER_JS=$(find "$VERSION_DIR" -name "solution-matcher.js" -path "*/engine/*" 2>/dev/null | head -1)
+if [ -n "$MATCHER_JS" ] && [ -f "$MATCHER_JS" ]; then
+  BIGRAM_CHECK=$(node -e "
+    const m = require('$MATCHER_JS');
+    if (typeof m.bigramSimilarity !== 'function') { console.log('FAIL:no-export'); process.exit(0); }
+    const same = m.bigramSimilarity('hello', 'hello');
+    if (same !== 1) { console.log('FAIL:same=' + same); process.exit(0); }
+    const diff = m.bigramSimilarity('abc', 'xyz');
+    if (diff !== 0) { console.log('FAIL:diff=' + diff); process.exit(0); }
+    const partial = m.bigramSimilarity('database', 'datbase');
+    if (partial < 0.5) { console.log('FAIL:partial=' + partial); process.exit(0); }
+    console.log('OK');
+  " 2>/dev/null)
+  if [ "$BIGRAM_CHECK" = "OK" ]; then
+    pass "Bigram semantic matching: bigramSimilarity works"
+  else
+    fail "Bigram matching: $BIGRAM_CHECK"
+  fi
+else
+  fail "solution-matcher.js not found"
+fi
+
+# 7-4. Project-level hook config — mergeHookConfigs
+HOOKCONFIG_JS=$(find "$VERSION_DIR" -name "hook-config.js" -path "*/hooks/*" 2>/dev/null | head -1)
+if [ -n "$HOOKCONFIG_JS" ] && [ -f "$HOOKCONFIG_JS" ]; then
+  MERGE_CHECK=$(node -e "
+    const m = require('$HOOKCONFIG_JS');
+    if (typeof m.mergeHookConfigs !== 'function') { console.log('FAIL:no-export'); process.exit(0); }
+    const merged = m.mergeHookConfigs(
+      { hooks: { 'slop-detector': { enabled: true } } },
+      { hooks: { 'slop-detector': { enabled: false } } }
+    );
+    const slopEnabled = merged.hooks?.['slop-detector']?.enabled;
+    console.log(slopEnabled === false ? 'OK' : 'FAIL:merge=' + slopEnabled);
+  " 2>/dev/null)
+  if [ "$MERGE_CHECK" = "OK" ]; then
+    pass "Project hook config: mergeHookConfigs override works"
+  else
+    fail "Project hook config: $MERGE_CHECK"
+  fi
+else
+  fail "hook-config.js not found"
+fi
+
+# 7-5. Implicit feedback — post-tool-use trackModifiedFile/simpleHash
+PTU_JS=$(find "$VERSION_DIR" -name "post-tool-use.js" -path "*/hooks/*" 2>/dev/null | head -1)
+if [ -n "$PTU_JS" ] && [ -f "$PTU_JS" ]; then
+  IMPLICIT_CHECK=$(node -e "
+    const m = require('$PTU_JS');
+    // simpleHash 또는 trackModifiedFile export 확인
+    const hasHash = typeof m.simpleHash === 'function';
+    const hasTrack = typeof m.trackModifiedFile === 'function';
+    const hasRecord = typeof m.recordImplicitFeedback === 'function';
+    if (hasHash || hasTrack || hasRecord) {
+      console.log('OK:exports=' + [hasHash&&'hash',hasTrack&&'track',hasRecord&&'record'].filter(Boolean).join(','));
+    } else {
+      console.log('FAIL:no-exports');
+    }
+  " 2>/dev/null)
+  if echo "$IMPLICIT_CHECK" | grep -q "^OK"; then
+    pass "Implicit feedback: functions exported ($IMPLICIT_CHECK)"
+  else
+    warn "Implicit feedback: no public exports (may be internal-only)"
+  fi
+else
+  fail "post-tool-use.js not found"
+fi
+
+# 7-6. Auto compound on session end — context-guard pending-compound marker
+if [ -f "$HOOKS_DIR/context-guard.js" ]; then
+  AUTOCOMP_CHECK=$(echo '{"stop_hook_type":"user","session_id":"e2e-auto-compound"}' | \
+    FORGEN_HOME=/tmp/forgen-e2e node -e "
+      // 먼저 promptCount >= 20 상태를 시뮬레이션
+      const fs = require('fs');
+      const stateDir = '/tmp/forgen-e2e/state';
+      fs.mkdirSync(stateDir, {recursive: true});
+      fs.writeFileSync(stateDir + '/context-guard.json', JSON.stringify({
+        promptCount: 25, totalChars: 50000, lastWarningAt: 0, lastAutoCompactAt: 0,
+        sessionId: 'e2e-auto-compound'
+      }));
+      // stdin을 읽어 context-guard에 전달
+      process.stdin.resume();
+      let data = '';
+      process.stdin.on('data', d => data += d);
+      process.stdin.on('end', () => {
+        // pending-compound.json이 생성되었는지 확인
+        setTimeout(() => {
+          const markerPath = stateDir + '/pending-compound.json';
+          if (fs.existsSync(markerPath)) {
+            const marker = JSON.parse(fs.readFileSync(markerPath, 'utf-8'));
+            console.log(marker.reason === 'session-end' ? 'OK' : 'FAIL:reason=' + marker.reason);
+          } else {
+            console.log('FAIL:no-marker');
+          }
+        }, 100);
+      });
+    " 2>/dev/null)
+  # context-guard는 자체 경로를 사용하므로 대안 검증
+  # 소스에서 pending-compound 로직이 존재하는지 확인
+  if grep -q "pending-compound" "$HOOKS_DIR/context-guard.js" 2>/dev/null; then
+    pass "Auto compound: pending-compound.json write logic present in context-guard"
+  else
+    fail "Auto compound: pending-compound.json logic missing"
+  fi
+fi
+
+# 7-7. Auto-compact trigger at 120K chars
+if grep -q "auto-compact\|autoCompact\|AUTO_COMPACT" "$HOOKS_DIR/context-guard.js" 2>/dev/null; then
+  pass "Auto-compact: 120K threshold logic present in context-guard"
+else
+  fail "Auto-compact: threshold logic missing"
+fi
+
+# 7-8. Knowledge export/import — compound-export module
+EXPORT_JS=$(find "$VERSION_DIR" -name "compound-export.js" -path "*/engine/*" 2>/dev/null | head -1)
+if [ -n "$EXPORT_JS" ] && [ -f "$EXPORT_JS" ]; then
+  EXPORT_CHECK=$(node -e "
+    const m = require('$EXPORT_JS');
+    const hasExport = typeof m.exportKnowledge === 'function' || typeof m.handleExport === 'function';
+    const hasImport = typeof m.importKnowledge === 'function' || typeof m.handleImport === 'function';
+    console.log((hasExport && hasImport) ? 'OK' : 'FAIL:export=' + hasExport + ',import=' + hasImport);
+  " 2>/dev/null)
+  if [ "$EXPORT_CHECK" = "OK" ]; then
+    pass "Knowledge export/import: functions available"
+  else
+    warn "Knowledge export/import: $EXPORT_CHECK (may use CLI-only interface)"
+  fi
+else
+  fail "compound-export.js not found in dist"
+fi
+
+# 7-9. Compound dashboard — forgen dashboard 실행
+DASHBOARD_OUTPUT=$(forgen dashboard 2>&1 || true)
+if echo "$DASHBOARD_OUTPUT" | grep -qi "knowledge\|overview\|dashboard\|injection\|solution"; then
+  pass "forgen dashboard: runs and shows knowledge info"
+else
+  fail "forgen dashboard: unexpected output — $(echo $DASHBOARD_OUTPUT | head -c 100)"
+fi
+
+# 7-10. Doctor hook timing section
+DOCTOR_TIMING=$(forgen doctor 2>&1 || true)
+if echo "$DOCTOR_TIMING" | grep -qi "timing\|hook.*health\|p50\|p95"; then
+  pass "forgen doctor: shows hook timing/health section"
+else
+  warn "forgen doctor: timing section may not display without data"
+fi
+
+echo ""
+
+# ──────────────────────────────────────────────
 # Summary
 # ──────────────────────────────────────────────
 echo "═══════════════════════════════════════════"

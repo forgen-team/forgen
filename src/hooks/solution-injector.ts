@@ -27,8 +27,9 @@ import { withFileLock, withFileLockSync, FileLockError } from './shared/file-loc
 // v1: recordPrompt (regex 선호 감지) 제거
 import { calculateBudget } from './shared/context-budget.js';
 import { writeSignal } from './shared/plugin-signal.js';
-import { approve, approveWithContext, failOpen } from './shared/hook-response.js';
+import { approve, approveWithContext, failOpenWithTracking } from './shared/hook-response.js';
 import { STATE_DIR } from '../core/paths.js';
+import { recordHookTiming } from './shared/hook-timing.js';
 
 interface HookInput {
   prompt: string;
@@ -251,6 +252,8 @@ function backfillCacheTagsOnDisk(
 }
 
 async function main(): Promise<void> {
+  const _hookStart = Date.now();
+  try {
   const input = await readStdinJSON<HookInput>();
   if (!isHookEnabled('solution-injector')) {
     console.log(approve());
@@ -345,13 +348,33 @@ async function main(): Promise<void> {
     if (toInject.length >= Math.min(budget.solutionsPerPrompt, MAX_SOLUTIONS_PER_SESSION - injected.size)) break;
   }
 
-  // Progressive Disclosure Tier 2: 요약만 push, 전문은 MCP compound-read로 pull
-  // 근거: Anthropic "smallest set of high-signal tokens" + Cursor 46.9% 토큰 절감
+  // Progressive Disclosure Tier 2.5: 핵심 요약 push (이름+태그+본문 핵심 3줄)
+  // 이전 Tier 2(이름+태그만)는 반영률 0% → Claude가 행동 가능한 정보 부족
+  // 토큰 예산: 솔루션당 최대 300자, 3개 제한 → 최대 ~900자
+  const SUMMARY_MAX_CHARS = 300;
   const summaries = new Map<string, string>();
   const candidateEntries: Array<{ name: string; chars: number }> = [];
   for (const sol of toInject) {
-    // Tier 2: 한 줄 요약만 생성 (전문 읽기 없음 → 토큰 대폭 절감)
-    const summary = `${sol.name} [${sol.type}|${sol.confidence.toFixed(2)}]: ${sol.matchedTags.slice(0, 5).join(', ')}`;
+    let contentSnippet = '';
+    try {
+      const raw = fs.readFileSync(sol.path, 'utf-8');
+      const contentMatch = raw.match(/## Content\n([\s\S]*?)(?:\n## |\n---|\Z)/);
+      if (contentMatch) {
+        // 코드 블록 제거 후 핵심 텍스트만 추출, 최대 3줄
+        const lines = contentMatch[1]
+          .replace(/```[\s\S]*?```/g, '')
+          .split('\n')
+          .map(l => l.trim())
+          .filter(l => l.length > 0);
+        contentSnippet = lines.slice(0, 3).join('\n');
+        if (contentSnippet.length > SUMMARY_MAX_CHARS) {
+          contentSnippet = contentSnippet.slice(0, SUMMARY_MAX_CHARS - 3) + '...';
+        }
+      }
+    } catch { /* fail-open: 파일 읽기 실패 시 이름+태그만 사용 */ }
+
+    const header = `${sol.name} [${sol.type}|${sol.confidence.toFixed(2)}]: ${sol.matchedTags.slice(0, 5).join(', ')}`;
+    const summary = contentSnippet ? `${header}\n  ${contentSnippet.replace(/\n/g, '\n  ')}` : header;
     summaries.set(sol.name, summary);
     candidateEntries.push({ name: sol.name, chars: summary.length });
   }
@@ -454,17 +477,20 @@ async function main(): Promise<void> {
     return `- ${summary}`;
   }).join('\n');
 
-  const header = `Matched solutions (compound-read로 전문 확인 시 더 정확한 구현 가능):\n`;
-  const footer = `\n\nIMPORTANT: When you use compound knowledge above, briefly mention it naturally (e.g., "Based on accumulated patterns..." or "From past experience..."). This helps the user see compound learning in action.`;
+  const header = `Matched solutions (apply these patterns to your response):\n`;
+  const footer = `\n\nAPPLY the patterns above to your response. If a pattern is directly relevant, follow its guidance. Use compound-read MCP tool for full details if needed.\nWhen using Grep or Bash, always set head_limit or pipe through | head -n to limit output size.`;
   const fullInjection = header + injections + footer;
 
   // 플러그인 시그널 기록 (다른 플러그인이 참고할 수 있도록)
   try { writeSignal(sessionId, 'UserPromptSubmit', fullInjection.length); } catch (e) { log.debug('plugin signal 기록 실패', e); }
 
   console.log(approveWithContext(fullInjection, 'UserPromptSubmit'));
+  } finally {
+    recordHookTiming('solution-injector', Date.now() - _hookStart, 'UserPromptSubmit');
+  }
 }
 
 main().catch((e) => {
   process.stderr.write(`[ch-hook] solution-injector: ${e instanceof Error ? e.message : String(e)}\n`);
-  console.log(failOpen());
+  console.log(failOpenWithTracking('solution-injector'));
 });

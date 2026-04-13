@@ -10,7 +10,7 @@ RUN npm i -g @anthropic-ai/claude-code@latest 2>/dev/null || echo "Claude CLI in
 WORKDIR /workspace
 
 # forgen 패키지 복사 (npm pack으로 생성한 tarball)
-COPY forgen-*.tgz /tmp/forgen.tgz
+COPY *forgen*.tgz /tmp/forgen.tgz
 
 # 글로벌 설치 — 실제 사용자 환경과 동일
 RUN npm i -g /tmp/forgen.tgz

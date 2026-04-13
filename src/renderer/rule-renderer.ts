@@ -8,7 +8,7 @@
  */
 
 import type { Rule, RuleStrength, RuleScope, RuleSource, SessionEffectiveState, Profile, TrustPolicy, JudgmentPack, CommunicationPack } from '../store/types.js';
-import { initLocaleFromConfig, getLocale, qualityName, autonomyName, judgmentName, communicationName, RULE_RENDERER } from '../i18n/index.js';
+import { initLocaleFromConfig, getLocale, RULE_RENDERER } from '../i18n/index.js';
 
 // ── Render Context ──
 
@@ -158,15 +158,10 @@ export function renderRules(
     }
   }
 
-  // 6. 섹션 조립
+  // 6. 섹션 조립 (AI-optimized: 간결한 태그 형식)
   const parts: string[] = [];
 
-  if (ctx.include_pack_summary) {
-    const l = getLocale();
-    parts.push(`[${qualityName(state.quality_pack, l)} quality / ${autonomyName(state.autonomy_pack, l)} autonomy / ${judgmentName(state.judgment_pack, l)} judgment / ${communicationName(state.communication_pack, l)} communication]`);
-  }
-
-  let totalChars = parts.reduce((sum, p) => sum + p.length, 0);
+  let totalChars = 0;
   let totalRules = 0;
 
   for (const name of SECTION_ORDER) {

@@ -9,7 +9,7 @@
 import { HookError } from '../core/errors.js';
 import { readStdinJSON } from './shared/read-stdin.js';
 import { isHookEnabled } from './hook-config.js';
-import { approve, approveWithWarning, failOpen } from './shared/hook-response.js';
+import { approve, approveWithWarning, failOpenWithTracking } from './shared/hook-response.js';
 
 interface PostToolInput {
   tool_name?: string;
@@ -87,5 +87,5 @@ main().catch((e) => {
     hookName: 'secret-filter', eventType: 'PostToolUse', cause: e,
   });
   process.stderr.write(`[ch-hook] ${hookErr.name}: ${hookErr.message}\n`);
-  console.log(failOpen());
+  console.log(failOpenWithTracking('secret-filter'));
 });

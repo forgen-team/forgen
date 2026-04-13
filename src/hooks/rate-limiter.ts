@@ -11,7 +11,7 @@ import * as path from 'node:path';
 import { readStdinJSON } from './shared/read-stdin.js';
 import { atomicWriteJSON } from './shared/atomic-write.js';
 import { isHookEnabled } from './hook-config.js';
-import { approve, deny, failOpen } from './shared/hook-response.js';
+import { approve, deny, failOpenWithTracking } from './shared/hook-response.js';
 import { STATE_DIR } from '../core/paths.js';
 const RATE_LIMIT_PATH = path.join(STATE_DIR, 'rate-limit.json');
 const DEFAULT_LIMIT = 30; // calls per minute
@@ -75,7 +75,7 @@ async function main(): Promise<void> {
   const data = await readStdinJSON<PreToolInput>(1500); // Must finish within plugin.json timeout (2000ms)
   if (!data) {
     // stdin 파싱 실패 — 통과 (rate limiter는 fail-open)
-    console.log(failOpen());
+    console.log(failOpenWithTracking('rate-limiter'));
     return;
   }
   if (!isHookEnabled('rate-limiter')) {
@@ -109,5 +109,5 @@ async function main(): Promise<void> {
 
 main().catch((e) => {
   process.stderr.write(`[ch-hook] ${e instanceof Error ? e.message : String(e)}\n`);
-  console.log(failOpen());
+  console.log(failOpenWithTracking('rate-limiter'));
 });

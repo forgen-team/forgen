@@ -16,7 +16,7 @@ import { readStdinJSON } from './shared/read-stdin.js';
 import { isHookEnabled } from './hook-config.js';
 import { sanitizeId } from './shared/sanitize-id.js';
 import { atomicWriteJSON } from './shared/atomic-write.js';
-import { approve, approveWithWarning, failOpen } from './shared/hook-response.js';
+import { approve, approveWithWarning, failOpenWithTracking } from './shared/hook-response.js';
 import { STATE_DIR } from '../core/paths.js';
 
 interface FailureInput {
@@ -75,6 +75,9 @@ export function getRecoverySuggestion(error: string, toolName: string): string {
   if (/timeout|timed out/.test(lower)) {
     return 'Timeout occurred. Split into smaller units and retry.';
   }
+  if (/old_string.*not found|not found in file|not unique|multiple matches/i.test(lower)) {
+    return 'The old_string matched multiple locations. Include more surrounding context to make it unique, or use replace_all: true if all occurrences should change.';
+  }
   if (/enoent|no such file|not found/.test(lower)) {
     return 'File/path does not exist. Check the path.';
   }
@@ -87,8 +90,11 @@ export function getRecoverySuggestion(error: string, toolName: string): string {
   if (/enospc|no space/.test(lower)) {
     return 'Disk space is insufficient.';
   }
-  if (/old_string.*not found|not unique/i.test(lower)) {
-    return 'Edit tool old_string not found in file. Use Read to check the current file content and retry.';
+  if (/stale|file has been modified|changed since/i.test(lower)) {
+    return 'File content has changed since last read. Use Read to get the current content, then retry the edit with updated old_string.';
+  }
+  if (/binary|encoding|invalid utf|ucs-2/i.test(lower)) {
+    return "File may be binary or use non-UTF-8 encoding. Verify encoding with 'file <path>' command.";
   }
 
   return `${toolName} tool failed. Try a different approach.`;
@@ -140,5 +146,5 @@ main().catch((e) => {
     hookName: 'post-tool-failure', eventType: 'PostToolUseFailure', cause: e,
   });
   process.stderr.write(`[ch-hook] ${hookErr.name}: ${hookErr.message}\n`);
-  console.log(failOpen());
+  console.log(failOpenWithTracking('post-tool-failure'));
 });

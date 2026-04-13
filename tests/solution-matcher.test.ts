@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  bigramSimilarity,
   calculateRelevance,
   shouldRejectByR4T3Rules,
 } from '../src/engine/solution-matcher.js';
@@ -70,6 +71,68 @@ describe('calculateRelevance', () => {
     );
     // 'authentication'이 'auth'를 포함하므로 매칭
     expect(relevance).toBeGreaterThan(0);
+  });
+});
+
+describe('bigramSimilarity', () => {
+  it('동일 문자열은 1.0', () => {
+    expect(bigramSimilarity('database', 'database')).toBe(1.0);
+  });
+
+  it('완전히 다른 문자열은 0.0', () => {
+    expect(bigramSimilarity('abc', 'xyz')).toBe(0.0);
+  });
+
+  it('유사한 영어 문자열은 높은 점수', () => {
+    const score = bigramSimilarity('database', 'databse');
+    expect(score).toBeGreaterThan(0.7);
+  });
+
+  it('한글과 영어는 낮은 점수 (다른 문자 체계)', () => {
+    const score = bigramSimilarity('database', '데이터베이스');
+    expect(score).toBe(0.0);
+  });
+
+  it('빈 문자열은 0.0', () => {
+    expect(bigramSimilarity('', '')).toBe(0.0);
+    expect(bigramSimilarity('abc', '')).toBe(0.0);
+    expect(bigramSimilarity('', 'abc')).toBe(0.0);
+  });
+
+  it('단일 문자는 0.0 (bigram 생성 불가)', () => {
+    expect(bigramSimilarity('a', 'a')).toBe(0.0);
+    expect(bigramSimilarity('a', 'b')).toBe(0.0);
+  });
+
+  it('대소문자 무시', () => {
+    expect(bigramSimilarity('Database', 'database')).toBe(1.0);
+  });
+
+  it('공백 무시', () => {
+    expect(bigramSimilarity('data base', 'database')).toBe(1.0);
+  });
+
+  it('유사한 한글 문자열은 높은 점수', () => {
+    const score = bigramSimilarity('데이터베이스', '데이터베이');
+    expect(score).toBeGreaterThan(0.5);
+  });
+});
+
+describe('bigram boost integration', () => {
+  it('기존 매칭이 정상적으로 동작 (높은 TF-IDF 점수에는 영향 없음)', () => {
+    const relevance = calculateRelevance(
+      'wasm 바이너리 패치 오프셋',
+      ['wasm', '바이너리', '패치', '오프셋', '검증'],
+    );
+    expect(relevance).toBeGreaterThan(0.5);
+  });
+
+  it('매칭 없음은 여전히 0 (bigram도 유사하지 않으면 구제 없음)', () => {
+    const relevance = calculateRelevance(
+      'UI 디자인 변경',
+      ['database', 'migration', 'schema'],
+    );
+    expect(relevance).toBe(0);
   });
 });
 

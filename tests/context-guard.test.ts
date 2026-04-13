@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { shouldWarn, buildContextWarningMessage } from '../src/hooks/context-guard.js';
+import { shouldWarn, shouldAutoCompact, buildContextWarningMessage, buildAutoCompactMessage } from '../src/hooks/context-guard.js';
 
 describe('context-guard', () => {
   // ── shouldWarn (extended) ──
@@ -60,6 +60,66 @@ describe('context-guard', () => {
         { promptCount: 100, totalChars: 500_000, lastWarningAt: Date.now() - 1000 },
         { cooldownMs: 60_000 },
       )).toBe(false);
+    });
+  });
+
+  // ── shouldAutoCompact ──
+
+  describe('shouldAutoCompact', () => {
+    it('문자 수 120K 이상이면 true', () => {
+      expect(shouldAutoCompact({ totalChars: 120_000, lastAutoCompactAt: 0 })).toBe(true);
+    });
+
+    it('문자 수 120K 미만이면 false', () => {
+      expect(shouldAutoCompact({ totalChars: 119_999, lastAutoCompactAt: 0 })).toBe(false);
+    });
+
+    it('쿨다운 기간 내이면 false', () => {
+      expect(shouldAutoCompact({ totalChars: 200_000, lastAutoCompactAt: Date.now() })).toBe(false);
+    });
+
+    it('쿨다운 경과 후 true', () => {
+      const fiveMinAgo = Date.now() - 5 * 60 * 1000 - 1;
+      expect(shouldAutoCompact({ totalChars: 120_000, lastAutoCompactAt: fiveMinAgo })).toBe(true);
+    });
+
+    it('커스텀 임계값을 지원한다', () => {
+      expect(shouldAutoCompact(
+        { totalChars: 50_000, lastAutoCompactAt: 0 },
+        { charsThreshold: 40_000 },
+      )).toBe(true);
+    });
+
+    it('커스텀 쿨다운을 지원한다', () => {
+      const recentCompact = Date.now() - 500;
+      expect(shouldAutoCompact(
+        { totalChars: 200_000, lastAutoCompactAt: recentCompact },
+        { cooldownMs: 1000 },
+      )).toBe(false);
+      expect(shouldAutoCompact(
+        { totalChars: 200_000, lastAutoCompactAt: recentCompact },
+        { cooldownMs: 100 },
+      )).toBe(true);
+    });
+  });
+
+  // ── buildAutoCompactMessage ──
+
+  describe('buildAutoCompactMessage', () => {
+    it('forgen-auto-compact 태그를 포함한다', () => {
+      const msg = buildAutoCompactMessage(120_000);
+      expect(msg).toContain('<forgen-auto-compact>');
+      expect(msg).toContain('</forgen-auto-compact>');
+    });
+
+    it('문자 수를 K 단위로 표시한다', () => {
+      const msg = buildAutoCompactMessage(150_000);
+      expect(msg).toContain('150K');
+    });
+
+    it('/compact 실행 지시를 포함한다', () => {
+      const msg = buildAutoCompactMessage(120_000);
+      expect(msg).toContain('/compact');
     });
   });
 

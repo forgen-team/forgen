@@ -18,8 +18,10 @@ import { saveCheckpoint } from './session-recovery.js';
 // v1: recordWriteContent (regex 선호 감지) 제거
 import { incrementFailureCounter, checkCompoundNegative, getCompoundSuccessHint } from './post-tool-handlers.js';
 import { isHookEnabled } from './hook-config.js';
-import { approve, approveWithWarning, failOpen } from './shared/hook-response.js';
+import { approve, approveWithWarning, failOpenWithTracking } from './shared/hook-response.js';
 import { STATE_DIR } from '../core/paths.js';
+import { recordHookTiming } from './shared/hook-timing.js';
+import { type DriftState, createDriftState, evaluateDrift } from '../core/drift-score.js';
 
 // ── Types ──
 
@@ -39,6 +41,31 @@ interface ModifiedFilesState {
   sessionId: string;
   files: Record<string, { count: number; lastModified: string; tool: string }>;
   toolCallCount: number;
+  /** Track recent write content hashes for revert detection */
+  recentWrites?: Record<string, string[]>;
+  /** Drift detection state */
+  drift?: DriftState;
+}
+
+/** Lightweight hash for content comparison (not cryptographic) */
+function simpleHash(content: string): string {
+  let hash = 0;
+  for (let i = 0; i < content.length; i++) {
+    const char = content.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash |= 0; // Convert to 32-bit integer
+  }
+  return hash.toString(36);
+}
+
+const IMPLICIT_FEEDBACK_LOG = path.join(STATE_DIR, 'implicit-feedback.jsonl');
+
+/** Record implicit feedback signal to JSONL */
+function recordImplicitFeedback(entry: Record<string, unknown>): void {
+  try {
+    fs.mkdirSync(STATE_DIR, { recursive: true });
+    fs.appendFileSync(IMPLICIT_FEEDBACK_LOG, JSON.stringify(entry) + '\n');
+  } catch { /* fail-open: implicit feedback recording must not throw */ }
 }
 
 // ── State management ──
@@ -97,6 +124,8 @@ export function trackModifiedFile(
 // ── Main flow ──
 
 async function main(): Promise<void> {
+  const _hookStart = Date.now();
+  try {
   const data = await readStdinJSON<PostToolInput>();
   if (!data) {
     console.log(approve());
@@ -131,18 +160,69 @@ async function main(): Promise<void> {
     } catch (e) { log.debug('체크포인트 저장 실패', e); }
   }
 
-  // 2. File change tracking (Write, Edit)
+  // 2. File change tracking (Write, Edit) + implicit feedback detection
   if (toolName === 'Write' || toolName === 'Edit') {
     const filePath = (toolInput.file_path as string) ?? (toolInput.filePath as string) ?? '';
     if (filePath) {
       try {
         const { count } = trackModifiedFile(modState, filePath, toolName);
+
+        // Implicit feedback: repeated edit detection (5+ edits on same file)
         if (count >= 5) {
           messages.push(`<compound-tool-warning>\n[Forgen] ⚠ ${path.basename(filePath)} has been modified ${count} times.\nConsider redesigning the overall structure and restarting.\n</compound-tool-warning>`);
+          recordImplicitFeedback({
+            type: 'repeated_edit',
+            file: filePath,
+            editCount: count,
+            at: new Date().toISOString(),
+            sessionId,
+          });
+        }
+
+        // Implicit feedback: revert detection
+        // Track content hashes of recent writes to detect when content is reverted
+        const newContent = (toolInput.content as string) ?? (toolInput.new_string as string) ?? '';
+        if (newContent) {
+          const hash = simpleHash(newContent);
+          if (!modState.recentWrites) modState.recentWrites = {};
+          const prevHashes = modState.recentWrites[filePath] ?? [];
+
+          // Check if this content hash matches a previous write (revert pattern)
+          // Skip the most recent hash (which would be the write being "reverted from")
+          if (prevHashes.length >= 2 && prevHashes.slice(0, -1).includes(hash)) {
+            recordImplicitFeedback({
+              type: 'revert_detected',
+              file: filePath,
+              at: new Date().toISOString(),
+              sessionId,
+            });
+          }
+
+          // Keep last 10 hashes per file
+          prevHashes.push(hash);
+          if (prevHashes.length > 10) prevHashes.splice(0, prevHashes.length - 10);
+          modState.recentWrites[filePath] = prevHashes;
         }
       } catch (e) { log.debug('파일 변경 추적 실패', e); }
     }
-    // v1: regex 기반 write content 학습 제거. Evidence 기반으로 전환됨.
+  }
+
+  // 3. Drift score evaluation
+  if (toolName === 'Write' || toolName === 'Edit') {
+    if (!modState.drift) modState.drift = createDriftState(sessionId);
+    const isRevert = messages.some(m => m.includes('revert_detected'));
+    const driftResult = evaluateDrift(modState.drift, true, isRevert);
+    if (driftResult.message) {
+      messages.push(`<compound-tool-warning>\n${driftResult.message}\n</compound-tool-warning>`);
+      recordImplicitFeedback({
+        type: driftResult.level === 'critical' || driftResult.level === 'hardcap' ? 'drift_critical' : 'drift_warning',
+        score: driftResult.score,
+        totalEdits: modState.drift.totalEdits,
+        totalReverts: modState.drift.totalReverts,
+        at: new Date().toISOString(),
+        sessionId,
+      });
+    }
   }
 
   // 4. Bash error detection
@@ -170,9 +250,12 @@ async function main(): Promise<void> {
   } else {
     console.log(approve());
   }
+  } finally {
+    recordHookTiming('post-tool-use', Date.now() - _hookStart, 'PostToolUse');
+  }
 }
 
 main().catch((e) => {
   process.stderr.write(`[ch-hook] ${e instanceof Error ? e.message : String(e)}\n`);
-  console.log(failOpen());
+  console.log(failOpenWithTracking('post-tool-use'));
 });

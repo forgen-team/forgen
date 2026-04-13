@@ -30,8 +30,9 @@ describe('renderRules', () => {
 
   it('renders empty rules gracefully', () => {
     const output = renderRules([], makeState(), profile);
-    expect(output).toContain('균형형 quality');
+    // Pack summary removed for AI-optimized output; trust policy still injected via Working Defaults
     expect(output).toContain('Trust:');
+    expect(output).toContain('Working Defaults');
   });
 
   it('hard rules go to Must Not', () => {

@@ -40,7 +40,7 @@ import { atomicWriteJSON } from './shared/atomic-write.js';
 import { FORGEN_HOME, ME_DIR, STATE_DIR } from '../core/paths.js';
 import { KEYWORD_PATTERNS } from './keyword-detector.js';
 import { isHookEnabled } from './hook-config.js';
-import { approve, approveWithContext, failOpen } from './shared/hook-response.js';
+import { approve, approveWithContext, failOpenWithTracking } from './shared/hook-response.js';
 
 /** keyword-detector가 처리하는 키워드 이름 집합 (skill + inject 모두 포함, 이중 주입 방지) */
 const KEYWORD_DETECTOR_SKILL_NAMES: Set<string> = new Set(
@@ -314,5 +314,5 @@ async function main(): Promise<void> {
 
 main().catch((e) => {
   process.stderr.write(`[ch-hook] ${e instanceof Error ? e.message : String(e)}\n`);
-  console.log(failOpen());
+  console.log(failOpenWithTracking('skill-injector'));
 });

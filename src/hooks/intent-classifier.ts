@@ -11,7 +11,7 @@
 
 import { readStdinJSON } from './shared/read-stdin.js';
 import { isHookEnabled } from './hook-config.js';
-import { approve, approveWithContext, failOpen } from './shared/hook-response.js';
+import { approve, approveWithContext, failOpenWithTracking } from './shared/hook-response.js';
 
 export type Intent = 'implement' | 'debug' | 'refactor' | 'explain' | 'review' | 'explore' | 'design' | 'general';
 
@@ -47,6 +47,30 @@ const INTENT_HINTS: Record<Intent, string> = {
   general: 'General request.',
 };
 
+/** Intent-specific context rules injected via additionalContext */
+const INTENT_CONTEXT: Partial<Record<Intent, string>> = {
+  implement: `[quality-rules]
+- Write tests for new logic (branch coverage 83%+)
+- Build + lint + type-check must pass before completion
+- Prefer small incremental changes (<200 lines)
+- Interfaces and type contracts before implementation`,
+  review: `[review-rules]
+- Report format: [SEVERITY] file:line — issue
+- Check: logic errors, security (OWASP), performance, maintainability
+- Verify edge cases and error handling at system boundaries
+- No empty catch blocks, no eslint-disable without justification`,
+  debug: `[debug-rules]
+- Reproduce the bug first, then isolate the root cause
+- Write a failing test that captures the bug before fixing
+- Check for regression: does the fix break anything else?
+- Read error messages carefully — they usually point to the cause`,
+  refactor: `[refactor-rules]
+- Ensure all tests pass before AND after refactoring
+- Make one structural change at a time, verify between each
+- Preserve external behavior — refactoring changes structure, not function
+- Avoid mixing refactoring with feature changes in the same pass`,
+};
+
 export function classifyIntent(prompt: string): Intent {
   for (const rule of INTENT_RULES) {
     if (rule.pattern.test(prompt)) {
@@ -54,17 +78,6 @@ export function classifyIntent(prompt: string): Intent {
     }
   }
   return 'general';
-}
-
-/** 프롬프트에 매칭되는 모든 의도를 반환. 없으면 ['general']. */
-export function classifyAllIntents(prompt: string): Intent[] {
-  const matches: Intent[] = [];
-  for (const rule of INTENT_RULES) {
-    if (rule.pattern.test(prompt)) {
-      matches.push(rule.intent);
-    }
-  }
-  return matches.length > 0 ? matches : ['general'];
 }
 
 async function main(): Promise<void> {
@@ -78,19 +91,20 @@ async function main(): Promise<void> {
     return;
   }
 
-  const intents = classifyAllIntents(input.prompt);
+  const intent = classifyIntent(input.prompt);
 
-  if (intents.length === 1 && intents[0] === 'general') {
+  if (intent === 'general') {
     console.log(approve());
     return;
   }
 
-  const label = intents.join('+');
-  const hint = INTENT_HINTS[intents[0]];
-  console.log(approveWithContext(`[intent: ${label}] ${hint}`, 'UserPromptSubmit'));
+  const hint = INTENT_HINTS[intent];
+  const extra = INTENT_CONTEXT[intent] ?? '';
+  const context = extra ? `[intent: ${intent}] ${hint}\n${extra}` : `[intent: ${intent}] ${hint}`;
+  console.log(approveWithContext(context, 'UserPromptSubmit'));
 }
 
 main().catch((e) => {
   process.stderr.write(`[ch-hook] ${e instanceof Error ? e.message : String(e)}\n`);
-  console.log(failOpen());
+  console.log(failOpenWithTracking('intent-classifier'));
 });

@@ -21,7 +21,7 @@ import { readNotepad } from '../core/notepad.js';
 import { isHookEnabled } from './hook-config.js';
 import { truncateContent } from './shared/injection-caps.js';
 import { calculateBudget } from './shared/context-budget.js';
-import { approve, approveWithContext, failOpen } from './shared/hook-response.js';
+import { approve, approveWithContext, failOpenWithTracking } from './shared/hook-response.js';
 
 interface HookInput {
   prompt: string;
@@ -61,5 +61,5 @@ async function main(): Promise<void> {
 
 main().catch((e) => {
   process.stderr.write(`[ch-hook] ${e instanceof Error ? e.message : String(e)}\n`);
-  console.log(failOpen());
+  console.log(failOpenWithTracking('notepad-injector'));
 });

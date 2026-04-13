@@ -15,7 +15,7 @@ const log = createLogger('permission-handler');
 import { readStdinJSON } from './shared/read-stdin.js';
 import { sanitizeId } from './shared/sanitize-id.js';
 import { isHookEnabled } from './hook-config.js';
-import { approve, approveWithWarning, failOpen } from './shared/hook-response.js';
+import { approve, approveWithWarning, failOpenWithTracking } from './shared/hook-response.js';
 import { STATE_DIR } from '../core/paths.js';
 
 interface PermissionInput {
@@ -129,5 +129,5 @@ async function main(): Promise<void> {
 
 main().catch((e) => {
   process.stderr.write(`[ch-hook] ${e instanceof Error ? e.message : String(e)}\n`);
-  console.log(failOpen());
+  console.log(failOpenWithTracking('permission-handler'));
 });

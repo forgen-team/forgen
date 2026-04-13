@@ -232,6 +232,11 @@ export async function handleCompound(args: string[]): Promise<void> {
     forgen compound --lifecycle      Run promotion/demotion/circuit-breaker check
     forgen compound --verify <name>  Manually promote solution to verified
 
+  Export/Import:
+    forgen compound export [--output path]
+                                     Export knowledge to tar.gz archive
+    forgen compound import <path>    Import knowledge from archive (skip existing)
+
   Auto-extraction:
     forgen compound --pause-auto     Pause auto-extraction
     forgen compound --resume-auto    Resume auto-extraction
@@ -239,6 +244,20 @@ export async function handleCompound(args: string[]): Promise<void> {
   Interactive:
     forgen compound interactive
 `);
+    return;
+  }
+
+  // --- export command ---
+  if (args[0] === 'export') {
+    const { handleExport } = await import('./compound-export.js');
+    await handleExport(args.slice(1));
+    return;
+  }
+
+  // --- import command ---
+  if (args[0] === 'import') {
+    const { handleImport } = await import('./compound-export.js');
+    await handleImport(args.slice(1));
     return;
   }
 
@@ -434,6 +453,7 @@ export async function handleCompound(args: string[]): Promise<void> {
     '--lifecycle', '--verify', '--save', '--interactive',
     'list', 'inspect', 'remove', 'rollback', 'retag', 'lifecycle',
     '--list', '--inspect', '--remove', '--rollback', '--retag', '--since', 'interactive',
+    'export', 'import', '--output',
   ];
   const hasTypeFlag = knownFlags.some(f => args.includes(f));
 

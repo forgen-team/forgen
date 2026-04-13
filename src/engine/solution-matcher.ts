@@ -38,6 +38,83 @@ export function expandTagsWithSynonyms(tags: string[]): string[] {
 
 // ── TF-IDF weighting for common tags ──
 
+// ── Character bigram similarity (Dice coefficient) ──
+
+/**
+ * Compute the Dice coefficient between two strings using character bigrams.
+ *
+ * Dice = 2 * |intersection| / (|A| + |B|)
+ *
+ * Both strings are lowercased and whitespace-stripped before bigram generation.
+ * Returns 0 for empty strings or single-character strings (no bigrams possible).
+ * Returns 1.0 for identical non-trivial strings.
+ *
+ * This is used as a lightweight fuzzy matching signal for borderline cases
+ * where the TF-IDF tag intersection produces a low score but the query and
+ * solution tags are character-similar (e.g., "database" vs "데이터베이스"
+ * won't match, but "database" vs "databse" will get a high score).
+ */
+export function bigramSimilarity(a: string, b: string): number {
+  const na = a.toLowerCase().replace(/\s+/g, '');
+  const nb = b.toLowerCase().replace(/\s+/g, '');
+
+  if (na.length < 2 || nb.length < 2) return 0;
+  if (na === nb) return 1.0;
+
+  const bigramsA = new Map<string, number>();
+  for (let i = 0; i < na.length - 1; i++) {
+    const bg = na.slice(i, i + 2);
+    bigramsA.set(bg, (bigramsA.get(bg) ?? 0) + 1);
+  }
+
+  const bigramsB = new Map<string, number>();
+  for (let i = 0; i < nb.length - 1; i++) {
+    const bg = nb.slice(i, i + 2);
+    bigramsB.set(bg, (bigramsB.get(bg) ?? 0) + 1);
+  }
+
+  let intersectionSize = 0;
+  for (const [bg, countA] of bigramsA) {
+    const countB = bigramsB.get(bg) ?? 0;
+    intersectionSize += Math.min(countA, countB);
+  }
+
+  const totalA = na.length - 1;
+  const totalB = nb.length - 1;
+  return (2 * intersectionSize) / (totalA + totalB);
+}
+
+// ── BM25-like scoring ──
+
+/**
+ * Simplified BM25 score for a single query-document pair.
+ * Uses tag overlap with term frequency normalization.
+ * k1=1.2, b=0.75 (standard BM25 parameters).
+ */
+export function bm25Score(
+  queryTags: string[],
+  docTags: string[],
+  avgDocLength: number,
+): number {
+  const k1 = 1.2;
+  const b = 0.75;
+  const docLen = docTags.length;
+  if (docLen === 0 || queryTags.length === 0 || avgDocLength === 0) return 0;
+
+  let score = 0;
+  for (const qt of queryTags) {
+    // Term frequency in document
+    const tf = docTags.filter(dt => dt === qt || (dt.length > 3 && qt.length > 3 && (dt.includes(qt) || qt.includes(dt)))).length;
+    if (tf === 0) continue;
+    // BM25 TF saturation
+    const numerator = tf * (k1 + 1);
+    const denominator = tf + k1 * (1 - b + b * (docLen / avgDocLength));
+    score += numerator / denominator;
+  }
+  // Normalize by query length
+  return score / queryTags.length;
+}
+
 /** High-frequency tags that should be weighted lower */
 const COMMON_TAGS = new Set([
   'typescript', 'ts', 'javascript', 'js', 'fix', 'update', 'add', 'change',
@@ -99,6 +176,8 @@ export interface CalculateRelevanceOptions {
    * pair — `solutionTagsExpanded` MUST be a superset of `solutionTags`.
    */
   solutionTagsExpanded?: string[];
+  /** Average document (solution) tag count for BM25 normalization. Defaults to 6. */
+  avgDocLength?: number;
 }
 
 export function calculateRelevance(
@@ -152,20 +231,74 @@ export function calculateRelevance(
   // Apply TF-IDF weighting: common tags count less
   const weightedMatched = intersection.reduce((sum, t) => sum + tagWeight(t), 0)
     + partialMatches.reduce((sum, t) => sum + tagWeight(t) * 0.5, 0);
-  // 완화된 임계값: 가중 점수 0.5 이상이면 후보
-  if (weightedMatched < 0.5) return { relevance: 0, matchedTags: [] };
 
-  // Jaccard-like: weighted matched / union.
-  // Union uses RAW promptTags and RAW solutionTags — not the expanded set —
-  // so that the denominator semantics are unchanged from pre-T2 behaviour.
-  // This is intentional: expanding both sides of the Jaccard would
-  // asymmetrically inflate recall and silently shift all baseline metrics.
-  // R4-T1 explicitly preserves this: `keywordsOrTags` is the raw solution
-  // tag list, not the compound-expanded `matchTags` used above.
+  // ── Bigram similarity boost for borderline cases ──
+  //
+  // When the TF-IDF intersection score is below the match threshold (0.5),
+  // compute a character-bigram Dice coefficient between the query tags and
+  // the solution tags. If the best bigram similarity is high enough, blend
+  // it in at 20% weight (TF-IDF 80%, bigram 20%) to rescue fuzzy matches
+  // that the exact/substring intersection missed (e.g., typos, slight
+  // morphological variants).
+  //
+  // When TF-IDF score is already above threshold, the bigram boost is NOT
+  // applied — this preserves existing match quality and avoids disturbing
+  // already-good rankings. The bigram path is purely a rescue mechanism
+  // for borderline cases.
+  if (weightedMatched < 0.5) {
+    // Compute best bigram similarity across all (promptTag, solutionTag) pairs
+    let bestBigramScore = 0;
+    const bigramMatchedTags: string[] = [];
+    for (const st of matchTags) {
+      for (const pt of expandedPromptTags) {
+        const sim = bigramSimilarity(pt, st);
+        if (sim > bestBigramScore) {
+          bestBigramScore = sim;
+        }
+        // Track solution tags with meaningful bigram similarity (> 0.4)
+        if (sim > 0.4 && !bigramMatchedTags.includes(st)) {
+          bigramMatchedTags.push(st);
+        }
+      }
+    }
+
+    // Only rescue if the bigram signal is strong enough (> 0.4 threshold)
+    // to avoid noise from weakly similar strings
+    if (bestBigramScore > 0.4) {
+      const union = new Set([...promptOrTags, ...keywordsOrTags]).size;
+      const tfidfScore = weightedMatched / Math.max(union, 1);
+      const blendedScore = tfidfScore * 0.8 + bestBigramScore * 0.2;
+      return {
+        relevance: blendedScore * (confidence ?? 1),
+        matchedTags: [...intersection, ...partialMatches, ...bigramMatchedTags.filter(
+          t => !intersection.includes(t) && !partialMatches.includes(t),
+        )],
+      };
+    }
+
+    return { relevance: 0, matchedTags: [] };
+  }
+
+  // Ensemble: TF-IDF (Jaccard) 0.5 + BM25 0.3 + bigram 0.2
   const union = new Set([...promptOrTags, ...keywordsOrTags]).size;
-  const tagScore = weightedMatched / Math.max(union, 1);
+  const tfidfScore = weightedMatched / Math.max(union, 1);
+
+  // BM25 component: average doc length defaults to 6 tags (typical solution)
+  const avgDocLen = options?.avgDocLength ?? 6;
+  const bm25 = bm25Score(promptOrTags as string[], keywordsOrTags, avgDocLen);
+
+  // Bigram component (mild boost for partial string matches)
+  let bigramBoost = 0;
+  for (const st of matchTags) {
+    for (const pt of expandedPromptTags) {
+      const sim = bigramSimilarity(pt, st);
+      if (sim > bigramBoost) bigramBoost = sim;
+    }
+  }
+
+  const ensembleScore = tfidfScore * 0.5 + bm25 * 0.3 + bigramBoost * 0.2;
   return {
-    relevance: tagScore * (confidence ?? 1),
+    relevance: ensembleScore * (confidence ?? 1),
     matchedTags: [...intersection, ...partialMatches],
   };
 }

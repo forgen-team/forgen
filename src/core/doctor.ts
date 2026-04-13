@@ -2,7 +2,8 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { FORGEN_HOME, LAB_DIR, ME_BEHAVIOR, ME_DIR, ME_PHILOSOPHY, ME_SOLUTIONS, ME_RULES, PACKS_DIR, SESSIONS_DIR, STATE_DIR } from './paths.js';
+import { FORGEN_HOME, LAB_DIR, ME_BEHAVIOR, ME_DIR, ME_PHILOSOPHY, ME_SOLUTIONS, ME_RULES, ME_SKILLS, PACKS_DIR, SESSIONS_DIR, STATE_DIR } from './paths.js';
+import { getTimingStats } from '../hooks/shared/hook-timing.js';
 
 /** ~/.claude/projects/ — Claude Code 세션 저장 경로 */
 const CLAUDE_PROJECTS_DIR = path.join(os.homedir(), '.claude', 'projects');
@@ -121,6 +122,53 @@ export async function runDoctor(): Promise<void> {
   console.log(`  Claude Code sessions: ${CLAUDE_PROJECTS_DIR}`);
   console.log();
 
+  // Hook Health: recent error tracking
+  console.log('  [Hook Health]');
+  try {
+    const hookErrorsPath = path.join(STATE_DIR, 'hook-errors.jsonl');
+    if (exists(hookErrorsPath)) {
+      const content = fs.readFileSync(hookErrorsPath, 'utf-8');
+      const entries = content.trim().split('\n')
+        .map(line => { try { return JSON.parse(line); } catch { return null; } })
+        .filter(Boolean);
+      const byHook = new Map<string, number>();
+      for (const e of entries) {
+        byHook.set(e.hook, (byHook.get(e.hook) ?? 0) + 1);
+      }
+      if (byHook.size === 0) {
+        console.log('  No hook errors recorded.');
+      } else {
+        for (const [hook, count] of [...byHook.entries()].sort((a, b) => b[1] - a[1])) {
+          console.log(`  ${hook}: ${count} error(s)`);
+        }
+      }
+    } else {
+      console.log('  No hook errors recorded.');
+    }
+  } catch {
+    console.log('  Unable to read hook error log.');
+  }
+  console.log();
+
+  // Hook Timing: performance stats
+  console.log('  [Hook Timing]');
+  const timingStats = getTimingStats();
+  if (timingStats.length === 0) {
+    console.log('  No timing data collected yet.');
+  } else {
+    console.log('  Hook                  Count   p50ms   p95ms   max ms');
+    console.log('  ' + '-'.repeat(56));
+    for (const s of timingStats) {
+      const hook = s.hook.padEnd(22);
+      const count = String(s.count).padStart(5);
+      const p50 = String(s.p50).padStart(7);
+      const p95 = String(s.p95).padStart(7);
+      const max = String(s.max).padStart(8);
+      console.log(`  ${hook}${count}${p50}${p95}${max}`);
+    }
+  }
+  console.log();
+
   console.log();
 
   // v1: 팀 팩 시스템 제거. 개인 모드만 지원.
@@ -159,29 +207,106 @@ export async function runDoctor(): Promise<void> {
     }
   }
 
-  // 훅 에러 카운트
-  console.log('  [Hook Health]');
-  const hookErrorPath = path.join(STATE_DIR, 'hook-errors.json');
-  if (fs.existsSync(hookErrorPath)) {
-    try {
-      const errors: Record<string, { count: number; lastAt: string }> = JSON.parse(fs.readFileSync(hookErrorPath, 'utf-8'));
-      const entries = Object.entries(errors);
-      if (entries.length === 0) {
-        console.log('  No hook errors recorded');
-      } else {
-        for (const [hookName, { count, lastAt }] of entries) {
-          const icon = count === 0 ? '✓' : '⚠';
-          const lastDate = lastAt ? lastAt.split('T')[0] : 'unknown';
-          console.log(`  ${icon} ${hookName}: ${count} error${count !== 1 ? 's' : ''}${count > 0 ? ` (last: ${lastDate})` : ''}`);
+  // Harness Maturity section
+  console.log('  [Harness Maturity]');
+  const cwd = process.cwd();
+
+  // 1. Preparation
+  const hasClaude = fs.existsSync(path.join(cwd, 'CLAUDE.md'));
+  let rulesCount = 0;
+  try {
+    const rulesDir = path.join(cwd, '.claude', 'rules');
+    if (fs.existsSync(rulesDir)) {
+      rulesCount = fs.readdirSync(rulesDir).filter(f => f.endsWith('.md')).length;
+    }
+  } catch { /* fail-open */ }
+  let hooksActive = 0;
+  try {
+    const hooksJsonPath = path.join(cwd, 'hooks', 'hooks.json');
+    if (fs.existsSync(hooksJsonPath)) {
+      const hooksData = JSON.parse(fs.readFileSync(hooksJsonPath, 'utf-8'));
+      if (hooksData.hooks && typeof hooksData.hooks === 'object') {
+        for (const eventHooks of Object.values(hooksData.hooks)) {
+          if (Array.isArray(eventHooks)) {
+            for (const group of eventHooks) {
+              if (Array.isArray((group as { hooks?: unknown[] }).hooks)) {
+                hooksActive += ((group as { hooks: unknown[] }).hooks).length;
+              }
+            }
+          }
         }
       }
-    } catch {
-      console.log('  (hook-errors.json read failed)');
     }
-  } else {
-    console.log('  No hook errors recorded');
-  }
+  } catch { /* fail-open */ }
+  const prepL = hasClaude && rulesCount >= 3 && hooksActive > 0 ? 'L3' : hasClaude && hooksActive > 0 ? 'L2' : hasClaude ? 'L1' : 'L0';
+
+  // 2. Context
+  let solutionsCount = 0;
+  try {
+    if (exists(ME_SOLUTIONS)) solutionsCount = fs.readdirSync(ME_SOLUTIONS).filter(f => f.endsWith('.md')).length;
+  } catch { /* fail-open */ }
+  let behaviorCount = 0;
+  try {
+    if (exists(ME_BEHAVIOR)) behaviorCount = fs.readdirSync(ME_BEHAVIOR).filter(f => f.endsWith('.md')).length;
+  } catch { /* fail-open */ }
+  const ctxL = solutionsCount >= 5 && behaviorCount >= 3 ? 'L3' : solutionsCount >= 3 || behaviorCount >= 1 ? 'L2' : solutionsCount > 0 || behaviorCount > 0 ? 'L1' : 'L0';
+
+  // 3. Execution
+  const hasSkills = exists(ME_SKILLS);
+  const execL = hasSkills ? 'L2' : 'L1';
+
+  // 4. Validation
+  const hasTests = fs.existsSync(path.join(cwd, 'tests'));
+  const hasCI = fs.existsSync(path.join(cwd, '.github', 'workflows'));
+  const validL = hasTests && hasCI ? 'L3' : hasTests ? 'L2' : 'L1';
+
+  // 5. Improvement: reflection rate from solutions
+  let reflectionRate = 0;
+  try {
+    if (exists(ME_SOLUTIONS)) {
+      const solFiles = fs.readdirSync(ME_SOLUTIONS).filter(f => f.endsWith('.md'));
+      if (solFiles.length > 0) {
+        let reflected = 0;
+        for (const f of solFiles) {
+          try {
+            const content = fs.readFileSync(path.join(ME_SOLUTIONS, f), 'utf-8');
+            const match = content.match(/reflected:\s*(\d+)/);
+            if (match && parseInt(match[1], 10) > 0) reflected++;
+          } catch { /* skip */ }
+        }
+        reflectionRate = Math.round((reflected / solFiles.length) * 100);
+      }
+    }
+  } catch { /* fail-open */ }
+  const improvL = reflectionRate > 0 ? 'L3' : solutionsCount > 0 ? 'L2' : 'L1';
+
+  const levelIcon = (l: string) => l === 'L3' ? '✓' : l === 'L2' ? '✓' : l === 'L1' ? '✗' : '✗';
+
+  console.log(`  Axis               Level  Detail`);
+  console.log(`  ${'─'.repeat(55)}`);
+  console.log(`  ${levelIcon(prepL)} Preparation        ${prepL}     CLAUDE.md:${hasClaude ? 'yes' : 'no'}, rules:${rulesCount}, hooks:${hooksActive}`);
+  console.log(`  ${levelIcon(ctxL)} Context            ${ctxL}     solutions:${solutionsCount}, behavior:${behaviorCount}`);
+  console.log(`  ${levelIcon(execL)} Execution          ${execL}     skills:${hasSkills ? 'yes' : 'no'}`);
+  console.log(`  ${levelIcon(validL)} Validation         ${validL}     tests:${hasTests ? 'yes' : 'no'}, CI:${hasCI ? 'yes' : 'no'}`);
+  console.log(`  ${levelIcon(improvL)} Improvement        ${improvL}     reflection:${reflectionRate}%`);
   console.log();
+
+  // Quick wins: suggest for lowest scoring axes
+  const axes = [
+    { name: 'Preparation', level: prepL, hint: 'Add CLAUDE.md + .claude/rules/ files' },
+    { name: 'Context', level: ctxL, hint: 'Run /compound to accumulate solutions' },
+    { name: 'Execution', level: execL, hint: 'Promote solutions to skills' },
+    { name: 'Validation', level: validL, hint: 'Add tests/ dir and .github/workflows' },
+    { name: 'Improvement', level: improvL, hint: 'Reflect on existing solutions' },
+  ];
+  const quickWins = axes.filter(a => a.level === 'L0' || a.level === 'L1').slice(0, 3);
+  if (quickWins.length > 0) {
+    console.log('  Quick Wins (Top 3):');
+    for (const win of quickWins) {
+      console.log(`  → ${win.name}: ${win.hint}`);
+    }
+    console.log();
+  }
 
   // 현재 디렉토리 git 정보
   console.log('  [Git]');

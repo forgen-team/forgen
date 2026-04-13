@@ -21,8 +21,9 @@ import { sanitizeId } from './shared/sanitize-id.js';
 import { incrementEvidence } from '../engine/solution-writer.js';
 import { isReflectionCandidate } from './compound-reflection.js';
 import { isHookEnabled } from './hook-config.js';
-import { approve, approveWithWarning, deny, failOpen } from './shared/hook-response.js';
+import { approve, approveWithWarning, deny, failOpen, failOpenWithTracking } from './shared/hook-response.js';
 import { FORGEN_HOME, STATE_DIR } from '../core/paths.js';
+import { recordHookTiming } from './shared/hook-timing.js';
 const FAIL_COUNTER_PATH = path.join(STATE_DIR, 'pre-tool-fail-counter.json');
 const FAIL_CLOSE_THRESHOLD = 3; // 연속 3회 파싱 실패 시에만 reject
 
@@ -237,16 +238,39 @@ function checkCompoundReflection(toolName: string, toolInput: Record<string, unk
       let mutated = false;
 
       for (const sol of cache.solutions) {
-        if (!Array.isArray(sol.identifiers) || sol.identifiers.length === 0) continue;
+        const hasIdentifiers = Array.isArray(sol.identifiers) && sol.identifiers.length > 0;
+        const hasTags = Array.isArray(sol.tags) && sol.tags.length > 0;
 
-        const result = isReflectionCandidate({
-          identifiers: sol.identifiers,
-          code,
-          injectedAt: sol.injectedAt ?? '',
-          now,
-        });
+        if (!hasIdentifiers && !hasTags) continue;
 
-        if (result.reflected) {
+        let reflected = false;
+
+        if (hasIdentifiers) {
+          const result = isReflectionCandidate({
+            identifiers: sol.identifiers,
+            code,
+            injectedAt: sol.injectedAt ?? '',
+            now,
+          });
+          reflected = result.reflected;
+        }
+
+        // Tag-based fallback: identifiers 없는 솔루션도 감지
+        // 6자 이상 non-generic 태그 2개 이상이 코드에 출현하면 반영으로 인정
+        if (!reflected && hasTags) {
+          const genericTags = new Set(['pattern', 'solution', 'workflow', 'quality', 'best-practice', 'convention']);
+          const eligibleTags = (sol.tags as string[]).filter(
+            (t: string) => t.length >= 6 && !genericTags.has(t) && /^[a-zA-Z가-힣]/.test(t)
+          );
+          const matchedTagCount = eligibleTags.filter((t: string) => code.toLowerCase().includes(t.toLowerCase())).length;
+          const injectedTime = new Date(sol.injectedAt ?? '').getTime();
+          const elapsed = now.getTime() - injectedTime;
+          if (matchedTagCount >= 2 && elapsed <= 15 * 60 * 1000 && elapsed >= 0) {
+            reflected = true;
+          }
+        }
+
+        if (reflected) {
           reflectedNames.push(sol.name);
           if (!sol._sessionCounted) {
             sol._sessionCounted = true;
@@ -290,6 +314,8 @@ export function updateSolutionEvidence(solutionName: string, field: 'reflected' 
 }
 
 async function main(): Promise<void> {
+  const _hookStart = Date.now();
+  try {
   const data = await readStdinJSON<PreToolInput>();
   if (!data) {
     // graceful fail-close: consecutive failure counter.
@@ -331,6 +357,12 @@ async function main(): Promise<void> {
     return;
   }
 
+  // Output size guard: warn when Grep is used without head_limit
+  if (toolName === 'Grep' && !toolInput?.head_limit) {
+    console.log(approveWithWarning(`<compound-tool-warning>\n[Forgen] Grep without head_limit may produce large output. Set head_limit or pipe through | head -n to limit output size.\n</compound-tool-warning>`));
+    return;
+  }
+
   // Compound v3: Code Reflection check (non-blocking)
   try { checkCompoundReflection(toolName, toolInput, sessionId); } catch (e) { log.debug('compound reflection check 실패', e); }
 
@@ -342,6 +374,9 @@ async function main(): Promise<void> {
   }
 
   console.log(approve());
+  } finally {
+    recordHookTiming('pre-tool-use', Date.now() - _hookStart, 'PreToolUse');
+  }
 }
 
 main().catch((e) => {
@@ -350,5 +385,5 @@ main().catch((e) => {
   });
   process.stderr.write(`[ch-hook] ${hookErr.name}: ${hookErr.message}\n`);
   // fail-open: approve on internal error to avoid blocking all tool calls
-  console.log(failOpen());
+  console.log(failOpenWithTracking('pre-tool-use'));
 });

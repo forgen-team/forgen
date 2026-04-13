@@ -15,8 +15,8 @@
  */
 
 import * as fs from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
-import { STATE_DIR } from '../../core/paths.js';
 
 /** 통과 응답 (컨텍스트 없음, 모든 이벤트 공통) */
 export function approve(): string {
@@ -71,31 +71,19 @@ export function failOpen(): string {
   return JSON.stringify({ continue: true });
 }
 
-/** 훅별 에러 카운트를 STATE_DIR/hook-errors.json에 누적 */
-export function incrementHookErrorCount(hookName: string): void {
-  try {
-    const errorPath = path.join(STATE_DIR, 'hook-errors.json');
-    let errors: Record<string, { count: number; lastAt: string }> = {};
-    try {
-      if (fs.existsSync(errorPath)) {
-        errors = JSON.parse(fs.readFileSync(errorPath, 'utf-8'));
-      }
-    } catch { /* start fresh */ }
-
-    if (!errors[hookName]) errors[hookName] = { count: 0, lastAt: '' };
-    errors[hookName].count++;
-    errors[hookName].lastAt = new Date().toISOString();
-
-    fs.mkdirSync(STATE_DIR, { recursive: true });
-    fs.writeFileSync(errorPath, JSON.stringify(errors, null, 2));
-  } catch { /* meta-error in error tracking — ignore */ }
-}
-
 /**
- * fail-open + 에러 카운트 누적.
- * 훅의 main().catch() 블록에서 명시적으로 호출.
+ * fail-open with error tracking: 에러 시 안전하게 통과하되, 실패 정보를 기록.
+ * forgen doctor의 Hook Health 섹션에서 실패 이력을 표시할 수 있도록 JSONL 로그에 기록.
+ *
+ * @fail-open: hook failure must never block the user's workflow
  */
 export function failOpenWithTracking(hookName: string): string {
-  incrementHookErrorCount(hookName);
+  try {
+    const stateDir = path.join(os.homedir(), '.forgen', 'state');
+    fs.mkdirSync(stateDir, { recursive: true });
+    const logPath = path.join(stateDir, 'hook-errors.jsonl');
+    const entry = JSON.stringify({ hook: hookName, at: Date.now() });
+    fs.appendFileSync(logPath, entry + '\n');
+  } catch { /* fail-open: tracking itself must not throw */ }
   return JSON.stringify({ continue: true });
 }

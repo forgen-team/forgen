@@ -13,8 +13,9 @@ import * as path from 'node:path';
 import { createLogger } from '../core/logger.js';
 import { readStdinJSON } from './shared/read-stdin.js';
 import { isHookEnabled } from './hook-config.js';
-import { approve, approveWithWarning, failOpen } from './shared/hook-response.js';
-import { HANDOFFS_DIR, ME_BEHAVIOR, STATE_DIR } from '../core/paths.js';
+import { approve, approveWithWarning, failOpenWithTracking } from './shared/hook-response.js';
+import { HANDOFFS_DIR, ME_BEHAVIOR, ME_RULES, STATE_DIR } from '../core/paths.js';
+import { sanitizeId } from './shared/sanitize-id.js';
 
 const log = createLogger('pre-compact');
 
@@ -39,6 +40,95 @@ function collectActiveStates(): Array<{ mode: string; data: Record<string, unkno
   }
 
   return active;
+}
+
+export interface SessionBrief {
+  sessionId: string;
+  mode: string;
+  modifiedFiles: string[];
+  promptCount: number;
+  solutionsInjected: string[];
+  correctionCount: number;
+  generatedAt: string;
+}
+
+/** 세션 브리프 JSON 생성 */
+export function buildSessionBrief(sessionId: string): SessionBrief {
+  // modifiedFiles: read modified-files-{sessionId}.json (files field keys)
+  let modifiedFiles: string[] = [];
+  try {
+    const modPath = path.join(STATE_DIR, `modified-files-${sanitizeId(sessionId)}.json`);
+    if (fs.existsSync(modPath)) {
+      const modData = JSON.parse(fs.readFileSync(modPath, 'utf-8'));
+      if (modData.files && typeof modData.files === 'object') {
+        modifiedFiles = Object.keys(modData.files);
+      } else if (Array.isArray(modData.modifiedFiles)) {
+        modifiedFiles = modData.modifiedFiles;
+      } else if (Array.isArray(modData.fileEdits)) {
+        modifiedFiles = modData.fileEdits;
+      }
+    }
+  } catch { /* fail-open */ }
+
+  // promptCount: read context-guard.json
+  let promptCount = 0;
+  try {
+    const cgPath = path.join(STATE_DIR, 'context-guard.json');
+    if (fs.existsSync(cgPath)) {
+      const cgData = JSON.parse(fs.readFileSync(cgPath, 'utf-8'));
+      if (typeof cgData.promptCount === 'number') {
+        promptCount = cgData.promptCount;
+      }
+    }
+  } catch { /* fail-open */ }
+
+  // solutionsInjected: read injection-cache-*.json files, collect solutions[].name
+  let solutionsInjected: string[] = [];
+  try {
+    if (fs.existsSync(STATE_DIR)) {
+      for (const f of fs.readdirSync(STATE_DIR)) {
+        if (!f.startsWith('injection-cache-') || !f.endsWith('.json')) continue;
+        try {
+          const cacheData = JSON.parse(fs.readFileSync(path.join(STATE_DIR, f), 'utf-8'));
+          if (Array.isArray(cacheData.solutions)) {
+            for (const sol of cacheData.solutions) {
+              if (typeof sol.name === 'string' && !solutionsInjected.includes(sol.name)) {
+                solutionsInjected.push(sol.name);
+              }
+            }
+          }
+        } catch { /* skip */ }
+      }
+    }
+  } catch { /* fail-open */ }
+
+  // correctionCount: count files in ME_RULES with scope === 'session'
+  let correctionCount = 0;
+  try {
+    if (fs.existsSync(ME_RULES)) {
+      for (const f of fs.readdirSync(ME_RULES)) {
+        if (!f.endsWith('.json')) continue;
+        try {
+          const rule = JSON.parse(fs.readFileSync(path.join(ME_RULES, f), 'utf-8'));
+          if (rule.scope === 'session') correctionCount++;
+        } catch { /* skip */ }
+      }
+    }
+  } catch { /* fail-open */ }
+
+  // mode: from collectActiveStates
+  const activeStates = collectActiveStates();
+  const mode = activeStates.length > 0 ? activeStates.map(s => s.mode).join('+') : 'general';
+
+  return {
+    sessionId,
+    mode,
+    modifiedFiles,
+    promptCount,
+    solutionsInjected,
+    correctionCount,
+    generatedAt: new Date().toISOString(),
+  };
 }
 
 /** compaction 전 스냅샷 저장 */
@@ -73,35 +163,6 @@ function saveCompactionSnapshot(sessionId: string): string | null {
 
   fs.writeFileSync(snapshotPath, lines.join('\n'));
   return snapshotPath;
-}
-
-/** context-guard.json에서 현재 promptCount 읽기 */
-function readPromptCount(): number {
-  try {
-    const guardPath = path.join(STATE_DIR, 'context-guard.json');
-    if (fs.existsSync(guardPath)) {
-      const data = JSON.parse(fs.readFileSync(guardPath, 'utf-8'));
-      return typeof data.promptCount === 'number' ? data.promptCount : 0;
-    }
-  } catch { /* fail-open */ }
-  return 0;
-}
-
-/**
- * 백그라운드 compound 추출 트리거 (non-blocking).
- * compound extract 서브커맨드가 없으므로 pending-compound.json 마커를 씀.
- * session-recovery가 다음 세션 시작 시 이 마커를 읽고 추출을 트리거함.
- */
-function triggerBackgroundExtraction(promptCount: number): void {
-  try {
-    const pendingPath = path.join(STATE_DIR, 'pending-compound.json');
-    fs.mkdirSync(STATE_DIR, { recursive: true });
-    fs.writeFileSync(pendingPath, JSON.stringify({
-      reason: 'pre-compact',
-      promptCount,
-      detectedAt: new Date().toISOString(),
-    }, null, 2));
-  } catch { /* fail-open */ }
 }
 
 /** 7일 이상 된 handoff 파일 정리 */
@@ -184,11 +245,28 @@ Rules:
 - Each pattern must be specific enough to change Claude's behavior in future sessions${existingList}
 </forgen-compound-extract>`;
 
-  // promptCount >= 20이면 백그라운드 추출 마커 기록
-  const promptCount = readPromptCount();
-  if (promptCount >= 20) {
-    triggerBackgroundExtraction(promptCount);
-    log.debug(`Pre-compact: promptCount=${promptCount} >= 20, pending-compound.json 기록`);
+  // 세션 브리프 저장
+  try {
+    const brief = buildSessionBrief(sessionId);
+    fs.mkdirSync(HANDOFFS_DIR, { recursive: true });
+    const briefTimestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const briefPath = path.join(HANDOFFS_DIR, `${briefTimestamp}-session-brief.json`);
+    let briefJson = JSON.stringify(brief, null, 2);
+    // max 1500 chars — truncate modifiedFiles and solutionsInjected if needed
+    if (briefJson.length > 1500) {
+      let truncBrief = { ...brief };
+      while (briefJson.length > 1500 && (truncBrief.modifiedFiles.length > 0 || truncBrief.solutionsInjected.length > 0)) {
+        if (truncBrief.solutionsInjected.length > 0) {
+          truncBrief = { ...truncBrief, solutionsInjected: truncBrief.solutionsInjected.slice(0, Math.max(0, truncBrief.solutionsInjected.length - 1)) };
+        } else {
+          truncBrief = { ...truncBrief, modifiedFiles: truncBrief.modifiedFiles.slice(0, Math.max(0, truncBrief.modifiedFiles.length - 1)) };
+        }
+        briefJson = JSON.stringify(truncBrief, null, 2);
+      }
+    }
+    fs.writeFileSync(briefPath, briefJson);
+  } catch (e) {
+    log.debug('세션 브리프 저장 실패', e);
   }
 
   // 스냅샷 저장
@@ -207,5 +285,5 @@ Rules:
 
 main().catch((e) => {
   process.stderr.write(`[ch-hook] ${e instanceof Error ? e.message : String(e)}\n`);
-  console.log(failOpen());
+  console.log(failOpenWithTracking('pre-compact'));
 });

@@ -25,7 +25,8 @@ import { ALL_MODES, FORGEN_HOME, ME_DIR, PACKS_DIR, STATE_DIR } from '../core/pa
 import { atomicWriteJSON } from './shared/atomic-write.js';
 import { escapeAllXmlTags } from './prompt-injection-filter.js';
 import { getSkillConflicts } from '../core/plugin-detector.js';
-import { approve, approveWithContext, failOpen } from './shared/hook-response.js';
+import { approve, approveWithContext, failOpenWithTracking } from './shared/hook-response.js';
+import { recordHookTiming } from './shared/hook-timing.js';
 
 /** Escape a string for safe use in XML attribute values */
 function escapeXmlAttr(s: string): string {
@@ -96,10 +97,9 @@ export const KEYWORD_PATTERNS: Array<{
   { pattern: /\b(refactor|리팩토링|리팩터)\s*(?:mode|모드|해|해줘|시작|실행|진행)/i, keyword: 'refactor', type: 'skill', skill: 'refactor' },
 ];
 
-// ── 인젝션 메시지 (폴백 전용) ──
-// commands/*.md 파일이 없을 때만 사용. commands/*.md가 단일 진실 공급원.
+// ── 인젝션 메시지 ──
 
-const FALLBACK_INJECT_MESSAGES: Record<string, string> = {
+const INJECT_MESSAGES: Record<string, string> = {
   ultrathink: `<compound-think-mode>
 EXTENDED THINKING MODE ACTIVATED.
 Before responding, engage in deep, thorough reasoning. Consider multiple approaches,
@@ -276,11 +276,10 @@ export function detectKeyword(prompt: string): KeywordMatch | null {
       }
 
       if (entry.type === 'inject') {
-        const fileContent = loadSkillContent(entry.keyword);
         return {
           type: 'inject',
           keyword: entry.keyword,
-          message: fileContent ?? FALLBACK_INJECT_MESSAGES[entry.keyword] ?? '',
+          message: INJECT_MESSAGES[entry.keyword] ?? '',
         };
       }
 
@@ -322,6 +321,8 @@ function cleanSkillCaches(): void {
 // ── 메인 ──
 
 async function main(): Promise<void> {
+  const _hookStart = Date.now();
+  try {
   const input = await readStdinJSON<HookInput>();
   if (!isHookEnabled('keyword-detector')) {
     console.log(approve());
@@ -435,6 +436,9 @@ async function main(): Promise<void> {
   }
 
   console.log(approve());
+  } finally {
+    recordHookTiming('keyword-detector', Date.now() - _hookStart, 'UserPromptSubmit');
+  }
 }
 
 // ESM main guard: 다른 모듈에서 import 시 main() 실행 방지
@@ -442,6 +446,6 @@ async function main(): Promise<void> {
 if (process.argv[1] && fs.realpathSync(path.resolve(process.argv[1])) === fileURLToPath(import.meta.url)) {
   main().catch((e) => {
     process.stderr.write(`[ch-hook] ${e instanceof Error ? e.message : String(e)}\n`);
-    console.log(failOpen());
+    console.log(failOpenWithTracking('keyword-detector'));
   });
 }

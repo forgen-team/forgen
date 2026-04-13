@@ -53,7 +53,41 @@ describe('getRecoverySuggestion', () => {
   it('old_string not unique 에러를 감지한다', () => {
     const result = getRecoverySuggestion('old_string is not unique in file', 'Edit');
     expect(result).toContain('old_string');
+    expect(result).toContain('unique');
+  });
+
+  it('multiple matches 에러를 감지한다', () => {
+    const result = getRecoverySuggestion('multiple matches found for old_string', 'Edit');
+    expect(result).toContain('old_string');
+    expect(result).toContain('replace_all');
+  });
+
+  it('not found in file 에러를 감지한다', () => {
+    const result = getRecoverySuggestion('pattern not found in file', 'Edit');
+    expect(result).toContain('old_string');
+    expect(result).toContain('unique');
+  });
+
+  it('stale 에러를 감지한다', () => {
+    const result = getRecoverySuggestion('stale content detected', 'Edit');
+    expect(result).toContain('changed since last read');
     expect(result).toContain('Read');
+  });
+
+  it('file has been modified 에러를 감지한다', () => {
+    const result = getRecoverySuggestion('Error: file has been modified externally', 'Edit');
+    expect(result).toContain('changed since last read');
+  });
+
+  it('binary 에러를 감지한다', () => {
+    const result = getRecoverySuggestion('binary file detected, cannot edit', 'Edit');
+    expect(result).toContain('binary');
+    expect(result).toContain('encoding');
+  });
+
+  it('UCS-2 인코딩 에러를 감지한다', () => {
+    const result = getRecoverySuggestion('UCS-2 encoding not supported', 'Edit');
+    expect(result).toContain('binary');
   });
 
   it('알 수 없는 에러에 대한 기본 제안을 반환한다', () => {

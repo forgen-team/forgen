@@ -17,8 +17,9 @@ const log = createLogger('session-recovery');
 import { atomicWriteJSON } from './shared/atomic-write.js';
 import { sanitizeId } from './shared/sanitize-id.js';
 import { isHookEnabled } from './hook-config.js';
-import { approve, approveWithContext, failOpen } from './shared/hook-response.js';
+import { approve, approveWithContext, failOpenWithTracking } from './shared/hook-response.js';
 import { HANDOFFS_DIR, STATE_DIR } from '../core/paths.js';
+import { recordHookTiming } from './shared/hook-timing.js';
 
 export interface Checkpoint {
   sessionId: string;
@@ -146,6 +147,8 @@ export function resolveSessionStartContext(rawInput: string): { sessionId: strin
 }
 
 async function main(): Promise<void> {
+  const _hookStart = Date.now();
+  try {
   // SessionStart 훅은 stdin으로 세션 정보를 받음 (타임아웃 포함)
   const chunks: string[] = [];
   process.stdin.setEncoding('utf-8');
@@ -320,6 +323,19 @@ async function main(): Promise<void> {
     } catch (e) { log.debug('handoff 파일 읽기 실패', e); }
   }
 
+  // Load latest session brief
+  try {
+    const briefFiles = fs.readdirSync(HANDOFFS_DIR)
+      .filter(f => f.endsWith('-session-brief.json'))
+      .sort()
+      .reverse();
+    if (briefFiles.length > 0) {
+      const brief = JSON.parse(fs.readFileSync(path.join(HANDOFFS_DIR, briefFiles[0]), 'utf-8'));
+      const briefContext = `Previous session: ${brief.mode || 'general'}, ${brief.promptCount || 0} prompts, ${(brief.modifiedFiles || []).length} files modified, ${(brief.solutionsInjected || []).length} solutions used.`;
+      recoveryMessages.push(briefContext);
+    }
+  } catch { /* fail-open */ }
+
   const sessionId = sessionContext.sessionId;
 
   // 이전 세션 자동 compound (fire-and-forget)
@@ -403,6 +419,9 @@ async function main(): Promise<void> {
   } else {
     console.log(approve());
   }
+  } finally {
+    recordHookTiming('session-recovery', Date.now() - _hookStart, 'SessionStart');
+  }
 }
 
 // ESM main guard: 다른 모듈에서 import 시 main() 실행 방지
@@ -410,6 +429,6 @@ async function main(): Promise<void> {
 if (process.argv[1] && fs.realpathSync(path.resolve(process.argv[1])) === fileURLToPath(import.meta.url)) {
   main().catch((e) => {
     process.stderr.write(`[ch-hook] ${e instanceof Error ? e.message : String(e)}\n`);
-    console.log(failOpen());
+    console.log(failOpenWithTracking('session-recovery'));
   });
 }

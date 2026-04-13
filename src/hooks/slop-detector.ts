@@ -10,7 +10,7 @@
 import { readStdinJSON } from './shared/read-stdin.js';
 import { createLogger } from '../core/logger.js';
 import { isHookEnabled, loadHookConfig } from './hook-config.js';
-import { approve, approveWithWarning, failOpen } from './shared/hook-response.js';
+import { approve, approveWithWarning, failOpenWithTracking } from './shared/hook-response.js';
 
 const log = createLogger('slop-detector');
 
@@ -106,11 +106,11 @@ async function main(): Promise<void> {
     }
   } catch (e) {
     log.debug('슬롭 감지 실패', e);
-    console.log(failOpen());
+    console.log(failOpenWithTracking('slop-detector'));
   }
 }
 
 main().catch((e) => {
   process.stderr.write(`[ch-hook] ${e instanceof Error ? e.message : String(e)}\n`);
-  console.log(failOpen());
+  console.log(failOpenWithTracking('slop-detector'));
 });
