@@ -193,7 +193,7 @@ Each solution starts as an `experiment`. As it gets reflected in your code acros
 | Type | Source | How Claude uses it |
 |------|--------|--------------------|
 | **Solutions** | Extracted from sessions | Auto-injected when relevant to your prompt (TF-IDF + BM25 + bigram ensemble) |
-| **Skills** | 21 built-in + promoted from verified solutions | Activated by keyword (`specify`, `deep-interview`, `tdd`, etc.) |
+| **Skills** | 10 built-in + promoted from verified solutions | Activated by keyword (`deep-interview`, `forge-loop`, `ship`, etc.) |
 | **Behavioral patterns** | Auto-detected at 3+ observations | Applied to `forge-behavioral.md` |
 | **Evidence** | Corrections + observations | Drives facet adjustments + rule creation |
 
@@ -212,23 +212,34 @@ Claude sees: "Matched solutions: error-handling-patterns [pattern|0.70]
 Claude writes better error handling code, informed by your accumulated patterns.
 ```
 
-### 21 built-in skills
+### 10 built-in skills
 
-Activate with a keyword in your prompt:
+Curated, compound-native skills. Each one integrates with accumulated knowledge — they get better every session.
+
+**Core chain** (build → learn):
 
 | Skill | Trigger | What it does |
 |-------|---------|-------------|
-| `specify` | "specify", "명세" | Structures requirements as Resolved/Provisional/Unresolved with readiness % |
-| `deep-interview` | "deep-interview" | Deep requirement interview with Ambiguity Score (0-10) per topic |
-| `code-review` | "code review 해줘" | 20-item checklist review with severity ratings |
-| `tdd` | "tdd 해줘" | Red-Green-Refactor test-driven development |
-| `debug-detective` | "debug-detective" | Reproduce → Isolate → Fix → Verify loop |
-| `refactor` | "refactor 시작" | Test-first safe refactoring |
-| `git-master` | "git-master" | Atomic commits + clean history management |
-| `security-review` | "security review" | OWASP Top 10 vulnerability check |
-| `ecomode` | "ecomode", "에코 모드" | Token-saving mode |
-| `migrate` | "migrate 해줘", "마이그레이션 시작" | 5-phase safe migration workflow |
-| ... | | 11 more (api-design, architecture-decision, ci-cd, database, docker, documentation, frontend, incident-response, performance, testing-strategy, compound) |
+| `deep-interview` | "deep-interview", "딥인터뷰" | Weighted 4-dimension ambiguity scoring, 3 challenge modes (Contrarian/Simplifier/Ontologist), ontology tracking |
+| `forge-loop` | "forge-loop", "끝까지" | PRD-based iteration loop. Stop hook prevents polite-stop. Verifier enforcement with fresh evidence |
+| `compound` | "복리화", "compound" | Extract reusable patterns with 5-Question quality filter. Health dashboard included |
+
+**Management chain** (review → tune):
+
+| Skill | Trigger | What it does |
+|-------|---------|-------------|
+| `retro` | "retro", "회고" | Weekly retrospective: git analysis + compound health + learning trend + 3 recommendations |
+| `learn` | "learn prune", "compound 정리" | 5 subcommands: search/stats/prune/export/import. Stale & duplicate detection |
+| `calibrate` | "calibrate", "프로필 보정" | Evidence-based profile adjustment. Max 2 axes per calibration. Threshold: 3+ corrections in same direction |
+
+**Independent skills**:
+
+| Skill | Trigger | What it does |
+|-------|---------|-------------|
+| `ship` | "ship", "배포" | 15-step pipeline. "Never ask, just do" philosophy. Review Readiness Dashboard + Verification Gate |
+| `code-review` | "code review", "리뷰" | Confidence 1-10 calibration, Critical 5 categories (SQL/race/LLM trust/secrets/enum), auto-fix |
+| `architecture-decision` | "adr" | Weighted trade-off matrix, ADR lifecycle, reversibility classification |
+| `docker` | "docker", "컨테이너" | Multi-stage builds, security hardening, 10 failure modes
 
 ### Session management
 

@@ -5,6 +5,42 @@ All notable changes to forgen will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-04-15
+
+### BREAKING
+
+- **Skill consolidation: 21 → 10**. Removed: refactor, tdd, testing-strategy, documentation, git-master, ecomode, specify, performance, incident-response, database, frontend, ci-cd, api-design, debug-detective, migrate, security-review. Most were generic checklists; their content is better handled by Claude natively or absorbed into remaining skills.
+- **Agent consolidation: 19 → 12**. Removed: performance-reviewer, security-reviewer (merged into code-reviewer as review perspectives), refactoring-expert, code-simplifier (merged into executor), scientist, qa-tester (merged into verifier), writer.
+- **Custom frontmatter removed**: Agents no longer use `tier` and `lane` fields (Claude Code ignored them anyway).
+
+### Added
+
+- **5 new skills** designed from best-in-class research (OMC ralph, gstack /ship, /retro, /learn):
+  - `forge-loop`: PRD-based iteration with Stop hook persistence. Prevents polite-stop anti-pattern.
+  - `ship`: 15-step automated release pipeline with "never ask, just do" philosophy + Review Readiness Dashboard + Verification Gate.
+  - `retro`: Weekly retrospective with git analysis + compound health + learning trend + compare mode.
+  - `learn`: Compound knowledge management — 5 subcommands (search/stats/prune/export/import) with stale & duplicate detection.
+  - `calibrate`: Evidence-based profile adjustment — quantitative protocol, 3-correction threshold, max 2 axes per calibration.
+- **Stop hook forge-loop integration** (`context-guard.ts`): When `.forgen/state/forge-loop.json` has incomplete stories, Stop is blocked with persistence message. Circuit breakers: 2h stale threshold, 30 max blocks.
+- **Learning Dashboard** (`forgen dashboard`): New "Learning Curve" section showing correction trend (7d vs prev 7d), top correction axes, activity days, estimated time saved via compound injections.
+- **Session Summary with Counterfactual**: Session end message now includes "주입된 compound: N건 / 추정 절약 시간: Xh Ym (forgen 없었으면 시행착오 필요)".
+- **Plugin system**: `.forgen/skills/*.md` scan path added. Project-level custom skills supported.
+- **Stale agent cleanup**: `harness.ts` `installAgents` now removes `ch-*.md` files that don't exist in current source (with marker + hash verification for user-modification safety).
+
+### Changed
+
+- **All 10 skills upgraded** with `<Compound_Integration>`, `<Failure_Modes>`, `argument-hint`. Density dramatically improved despite fewer skills.
+- **All 12 agents upgraded** with `<Failure_Modes_To_Avoid>`, `<Examples>` (Good/Bad), `<Success_Criteria>`, and official frontmatter (`maxTurns`, `color`, `permissionMode`).
+- **deep-interview rewritten** using OMC research: weighted 4-dimension scoring, 3 challenge modes (Contrarian/Simplifier/Ontologist), ontology stability tracking, anti-sycophancy rules, one-question-at-a-time protocol.
+- **Cancel flow**: `cancelforgen` now also deletes `forge-loop.json` to release Stop hook block.
+
+### Documentation
+
+- `docs/weakness-analysis-2026-04-14.md` — Competitor analysis vs 7 harness tools
+- `docs/design-skills-agents-plugins.md` — Full design specification with implementation status
+- `docs/skill-scenarios.md` — 12 developer scenarios × skill usage matrix
+- `docs/positioning-and-selling.md` — Market positioning and Go-to-Market strategy
+
 ## [0.2.1] - 2026-04-13
 
 ### Added

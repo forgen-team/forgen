@@ -193,7 +193,7 @@ experiment (0.30) → candidate (0.55) → verified (0.75) → mature (0.90)
 | 유형 | 출처 | Claude 활용 방법 |
 |------|------|-----------------|
 | **솔루션** | 세션에서 추출 | 프롬프트와 관련 있을 때 자동 주입 (TF-IDF + BM25 + bigram 앙상블) |
-| **스킬** | 21개 내장 + 검증된 솔루션에서 승격 | 키워드로 활성화 (`specify`, `deep-interview`, `tdd` 등) |
+| **스킬** | 10개 내장 + 검증된 솔루션에서 승격 | 키워드로 활성화 (`deep-interview`, `forge-loop`, `ship` 등) |
 | **행동 패턴** | 3회 이상 관찰 시 자동 감지 | `forge-behavioral.md`에 적용 |
 | **Evidence** | 교정 + 관찰 | facet 조정 및 규칙 생성의 근거 |
 
@@ -212,23 +212,34 @@ Claude에게 전달: "매칭된 솔루션: error-handling-patterns [pattern|0.70
 Claude가 축적된 패턴을 바탕으로 더 나은 에러 핸들링 코드를 작성합니다.
 ```
 
-### 21개 내장 스킬
+### 10개 내장 스킬
 
-프롬프트에 키워드를 입력하면 활성화됩니다:
+엄선된 compound-native 스킬. 모든 스킬이 축적된 지식과 연동 — 쓸수록 정확해집니다.
+
+**핵심 체인** (빌드 → 학습):
 
 | 스킬 | 트리거 | 기능 |
 |------|--------|------|
-| `specify` | "specify", "명세" | 요구사항을 Resolved/Provisional/Unresolved로 구조화, 준비도 % 산출 |
-| `deep-interview` | "deep-interview" | 주제별 Ambiguity Score (0-10)를 사용한 심층 요구사항 인터뷰 |
-| `code-review` | "code review 해줘" | 심각도 등급이 포함된 20개 항목 체크리스트 리뷰 |
-| `tdd` | "tdd 해줘" | Red-Green-Refactor 테스트 주도 개발 |
-| `debug-detective` | "debug-detective" | 재현 → 격리 → 수정 → 검증 루프 |
-| `refactor` | "refactor 시작" | 테스트 우선 안전한 리팩토링 |
-| `git-master` | "git-master" | 원자적 커밋 + 클린 히스토리 관리 |
-| `security-review` | "security review" | OWASP Top 10 취약점 점검 |
-| `ecomode` | "ecomode", "에코 모드" | 토큰 절약 모드 |
-| `migrate` | "migrate 해줘", "마이그레이션 시작" | 5단계 안전 마이그레이션 워크플로우 |
-| ... | | 11개 추가 (api-design, architecture-decision, ci-cd, database, docker, documentation, frontend, incident-response, performance, testing-strategy, compound) |
+| `deep-interview` | "deep-interview", "딥인터뷰" | 가중 4차원 ambiguity 점수, 3개 챌린지 모드 (Contrarian/Simplifier/Ontologist), 온톨로지 추적 |
+| `forge-loop` | "forge-loop", "끝까지" | PRD 기반 반복 루프. Stop 훅이 polite-stop 방지. Verifier가 fresh evidence 강제 |
+| `compound` | "복리화", "compound" | 5-Question 품질 필터로 패턴 추출. Health dashboard 포함 |
+
+**관리 체인** (리뷰 → 튜닝):
+
+| 스킬 | 트리거 | 기능 |
+|------|--------|------|
+| `retro` | "retro", "회고" | 주간 회고: git 분석 + compound 건강도 + 학습 추세 + 3가지 추천 |
+| `learn` | "learn prune", "compound 정리" | 5개 서브커맨드: search/stats/prune/export/import. Stale & 중복 자동 감지 |
+| `calibrate` | "calibrate", "프로필 보정" | Evidence 기반 프로필 조정. 한 번에 최대 2개 축. 임계값: 같은 방향 3건+ |
+
+**독립 스킬**:
+
+| 스킬 | 트리거 | 기능 |
+|------|--------|------|
+| `ship` | "ship", "배포" | 15단계 파이프라인. "Never ask, just do" 철학. Review Readiness Dashboard + Verification Gate |
+| `code-review` | "code review", "리뷰" | 신뢰도 1-10 보정, Critical 5개 카테고리 (SQL/race/LLM trust/secrets/enum), auto-fix |
+| `architecture-decision` | "adr" | 가중 트레이드오프 매트릭스, ADR 라이프사이클, 가역성 분류 |
+| `docker` | "docker", "컨테이너" | 멀티스테이지 빌드, 보안 강화, 10개 failure modes |
 
 ### 세션 관리
 
