@@ -42,3 +42,6 @@ hooks/hooks.json
 .claude/rules/compound.md
 .compound/
 .omc/
+
+# Build artifacts
+*.tgz
