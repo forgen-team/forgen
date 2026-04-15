@@ -33,6 +33,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **All 12 agents upgraded** with `<Failure_Modes_To_Avoid>`, `<Examples>` (Good/Bad), `<Success_Criteria>`, and official frontmatter (`maxTurns`, `color`, `permissionMode`).
 - **deep-interview rewritten** using OMC research: weighted 4-dimension scoring, 3 challenge modes (Contrarian/Simplifier/Ontologist), ontology stability tracking, anti-sycophancy rules, one-question-at-a-time protocol.
 - **Cancel flow**: `cancelforgen` now also deletes `forge-loop.json` to release Stop hook block.
+- **Install is global-only**: `package.json` sets `preferGlobal: true` so non-global installs surface a warning (forgen is a CLI on PATH; local installs were unreachable).
+- **README**: Added "12 built-in agents" section grouped by tool access (read-only / plan-only / write-enabled) with the absorbed-agent mapping from the 19→12 consolidation.
+
+### Fixed
+
+- **Agent parser compat**: Moved `<!-- forgen-managed -->` marker below YAML frontmatter in all 12 `agents/*.md`. Claude Code's agent parser requires `---` on line 1; the prior position caused `Agent(subagent_type: "ch-*")` to fail with "not found" while the file stayed marked as managed.
+- **README install typo**: `npm install -g /forgen` → `npm install -g @wooojin/forgen` (missing scope).
+- **flaky e2e test**: `runHook` helper in `tests/e2e/chain-verification.test.ts` now requires the parsed stdout JSON to carry a `continue` field, preventing stray log lines from satisfying the parser and producing false `continue:false` matches. Verified stable across 3 consecutive full runs (1541/1541 each).
 
 ### Documentation
 
