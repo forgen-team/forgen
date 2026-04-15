@@ -11,6 +11,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { ME_BEHAVIOR, ME_DIR, ME_RULES } from './paths.js';
 import { createLogger } from './logger.js';
+import type { RuntimeHost } from './types.js';
 import { parseSolutionV3 } from '../engine/solution-format.js';
 import { containsPromptInjection } from '../hooks/prompt-injection-filter.js';
 import { RULE_FILE_CAPS, truncateContent } from '../hooks/shared/injection-caps.js';
@@ -465,12 +466,17 @@ export async function registerTmuxBindings(): Promise<void> {
  * or user scripts may still read them). When all consumers have been
  * migrated and a major version ships, remove the `COMPOUND_*` lines.
  */
-export function buildEnv(cwd: string, v1SessionId?: string): Record<string, string> {
+export function buildEnv(
+  cwd: string,
+  v1SessionId?: string,
+  runtime: RuntimeHost = 'claude',
+): Record<string, string> {
   const env: Record<string, string> = {
     // New canonical names
     FORGEN_HARNESS: '1',
     FORGEN_CWD: cwd,
     FORGEN_V1: '1',
+    FORGEN_RUNTIME: runtime,
     // Legacy compat (remove in next major)
     COMPOUND_HARNESS: '1',
     COMPOUND_CWD: cwd,

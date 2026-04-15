@@ -107,3 +107,41 @@ export interface HarnessContext {
   /** 모델 라우팅 프리셋 (default, cost-saving, max-quality) */
   routingPreset?: string;
 }
+
+/** 런타임 Host */
+export type RuntimeHost = 'claude' | 'codex';
+
+/** 런칭 컨텍스트 — CLI에서 runtime/args 결정을 모델화 */
+export interface LaunchContext {
+  runtime: RuntimeHost;
+  args: string[];
+  runtimeSource: 'flag' | 'env' | 'default';
+}
+
+/** 훅 입력 이벤트 스키마 (버전 간 상위 호환용 최소 스펙) */
+export interface HookEventInput {
+  hookEventName?: string;
+  event?: string;
+  session_id?: string;
+  sessionId?: string;
+  tool_name?: string;
+  toolName?: string;
+  tool_input?: Record<string, unknown>;
+  toolInput?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+/** 훅 출력 스키마 (Claude/Codex 정규화용 공통 뷰) */
+export interface HookEventOutput {
+  continue?: boolean;
+  suppressOutput?: boolean;
+  systemMessage?: string;
+  hookSpecificOutput?: {
+    hookEventName?: string;
+    permissionDecision?: string;
+    permissionDecisionReason?: string;
+    additionalContext?: string;
+    [key: string]: unknown;
+  };
+  [key: string]: unknown;
+}

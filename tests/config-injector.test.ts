@@ -107,6 +107,16 @@ describe('buildEnv', () => {
     expect(env['COMPOUND_HARNESS']).toBe('1');
   });
 
+  it('FORGEN_RUNTIME 기본값은 claude이다', () => {
+    const env = buildEnv('/tmp/test');
+    expect(env['FORGEN_RUNTIME']).toBe('claude');
+  });
+
+  it('FORGEN_RUNTIME이 codex로 설정된다', () => {
+    const env = buildEnv('/tmp/test', undefined, 'codex');
+    expect(env['FORGEN_RUNTIME']).toBe('codex');
+  });
+
   it('FORGEN_V1이 1이다', () => {
     const env = buildEnv('/tmp/test');
     expect(env['FORGEN_V1']).toBe('1');

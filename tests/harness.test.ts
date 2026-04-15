@@ -157,6 +157,21 @@ describe('prepareHarness() integration', () => {
     expect(settings.env.COMPOUND_HARNESS).toBe('1');
   });
 
+  it('코덱스 런타임일 때 hooks 설정에 codex-adapter가 주입된다', async () => {
+    await prepareHarness(TEST_CWD, { runtime: 'codex' });
+
+    const settings = JSON.parse(fs.readFileSync(TEST_SETTINGS_PATH, 'utf-8'));
+    const hooks = settings.hooks as
+      | Record<string, Array<{ hooks: Array<{ command: string }> }>>
+      | undefined;
+
+    const allCommands = Object.values(hooks ?? {}).flatMap(matchers =>
+      matchers.flatMap(entry => entry.hooks.map(handler => handler.command)),
+    );
+
+    expect(allCommands.some(command => command.includes('host/codex-adapter.js'))).toBe(true);
+  });
+
   it('compound staleness marker 생성', async () => {
     const stateDir = path.join(TEST_COMPOUND_HOME, 'state');
     fs.mkdirSync(stateDir, { recursive: true });

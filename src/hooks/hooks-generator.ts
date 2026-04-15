@@ -15,6 +15,7 @@ import * as path from 'node:path';
 import { HOOK_REGISTRY, type HookEntry, type HookEventType } from './hook-registry.js';
 import { isHookEnabled } from './hook-config.js';
 import { detectInstalledPlugins, getHookConflicts } from '../core/plugin-detector.js';
+import { type RuntimeHost } from '../core/types.js';
 
 // ── 타입 ──
 
@@ -41,6 +42,34 @@ interface GenerateOptions {
   cwd?: string;
   /** 훅 실행 스크립트의 루트 경로 */
   pluginRoot?: string;
+  /** 런타임 (claude|codex) */
+  runtime?: RuntimeHost;
+}
+
+function splitCommand(raw: string): { script: string; args: string[] } {
+  const tokens = raw.match(/"([^"]+)"|\S+/g) ?? [];
+  const unquoted = tokens.map(token => token.replace(/^"/, '').replace(/"$/, ''));
+  return { script: unquoted[0] ?? '', args: unquoted.slice(1) };
+}
+
+function quoteArg(raw: string): string {
+  return `"${raw.replace(/"/g, '\\"')}"`;
+}
+
+function buildHookCommand(pluginRoot: string, rawScript: string, runtime: RuntimeHost): string {
+  const { script, args } = splitCommand(rawScript);
+  const scriptPath = `${pluginRoot}/${script}`;
+  const quotedArgs = args.map(quoteArg).join(' ');
+
+  if (runtime === 'codex') {
+    const adapterPath = `${pluginRoot}/host/codex-adapter.js`;
+    const baseCommand = `node ${quoteArg(adapterPath)} ${quoteArg(scriptPath)}`;
+    return `${baseCommand}${quotedArgs ? ` ${quotedArgs}` : ''}`;
+  }
+
+  return quotedArgs
+    ? `node ${quoteArg(scriptPath)} ${quotedArgs}`
+    : `node ${quoteArg(scriptPath)}`;
 }
 
 /**
@@ -56,6 +85,7 @@ export function generateHooksJson(options?: GenerateOptions): HooksJson {
   const cwd = options?.cwd;
   // biome-ignore lint/suspicious/noTemplateCurlyInString: CLAUDE_PLUGIN_ROOT is a Claude Code Plugin SDK variable resolved at runtime
   const pluginRoot = options?.pluginRoot ?? '${CLAUDE_PLUGIN_ROOT}/dist';
+  const runtime = options?.runtime ?? 'claude';
 
   // 다른 플러그인의 충돌 훅 감지
   const hookConflicts = getHookConflicts(cwd);
@@ -98,12 +128,7 @@ export function generateHooksJson(options?: GenerateOptions): HooksJson {
     hooks[event] = [...byMatcher.entries()].map(([matcher, matcherEntries]) => ({
       matcher,
       hooks: matcherEntries.map(h => {
-        // script에 인자가 포함된 경우 (예: "hooks/subagent-tracker.js start")
-        // 파일 경로와 인자를 분리해야 셸에서 ENOENT를 방지
-        const spaceIdx = h.script.indexOf(' ');
-        const command = spaceIdx === -1
-          ? `node "${pluginRoot}/${h.script}"`
-          : `node "${pluginRoot}/${h.script.slice(0, spaceIdx)}" ${h.script.slice(spaceIdx + 1)}`;
+        const command = buildHookCommand(pluginRoot, h.script, runtime);
         return { type: 'command' as const, command, timeout: h.timeout };
       }),
     }));

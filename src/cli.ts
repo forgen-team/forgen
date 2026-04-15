@@ -11,13 +11,16 @@ import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { prepareHarness, isFirstRun } from './core/harness.js';
 import { spawnClaudeWithResume } from './core/spawn.js';
+import { resolveLaunchContext } from './services/session.js';
 // global-config is used by harness internally
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const pkgJson = JSON.parse(fs.readFileSync(path.resolve(__dirname, '..', 'package.json'), 'utf-8'));
 const PKG_VERSION: string = pkgJson.version ?? '0.0.0';
 
-const args = process.argv.slice(2);
+const launchContext = resolveLaunchContext(process.argv.slice(2));
+const args = launchContext.args;
+const runtime = launchContext.runtime;
 
 // ---------------------------------------------------------------------------
 // Command Registry — "쓸수록 나를 더 잘 아는 Claude"에 필요한 것만
@@ -105,7 +108,7 @@ const commands: Command[] = [
         if (args.includes('--regenerate')) {
           const { writeHooksJson } = await import('./hooks/hooks-generator.js');
           const hooksDir = path.join(process.cwd(), 'hooks');
-          const result = writeHooksJson(hooksDir, { cwd: process.cwd() });
+          const result = writeHooksJson(hooksDir, { cwd: process.cwd(), runtime });
           console.log(`[forgen] hooks.json regenerated: ${result.active} active, ${result.disabled} disabled`);
         } else {
           const { displayHookStatus } = await import('./core/config-hooks.js');
@@ -246,7 +249,7 @@ async function main() {
   Setting up...`);
     }
 
-    let context = await prepareHarness(process.cwd());
+    let context = await prepareHarness(process.cwd(), { runtime });
 
     // 첫 실행 또는 프로필 없음 → 자동 온보딩 (interactive 환경)
     if (context.v1.needsOnboarding && process.stdin.isTTY) {
@@ -254,7 +257,7 @@ async function main() {
       const { runOnboarding } = await import('./forge/onboarding-cli.js');
       await runOnboarding();
       // 온보딩 후 harness 재실행 (프로필 반영)
-      context = await prepareHarness(process.cwd());
+      context = await prepareHarness(process.cwd(), { runtime });
     }
 
     if (firstRun && !context.v1.needsOnboarding) {
@@ -274,12 +277,15 @@ async function main() {
   ${dim}Code, forged for you.${reset}
   ${dim}Scope: v1(${context.v1.session?.quality_pack ?? 'onboarding needed'})${reset}
 `);
-    console.log('[forgen] Starting Claude Code...\n');
+    const runtimeLabel = runtime === 'codex' ? 'Codex' : 'Claude';
+    console.log(`[forgen] Starting ${runtimeLabel}...\n`);
 
-    await spawnClaudeWithResume(args, context, () => prepareHarness(process.cwd()));
+    await spawnClaudeWithResume(args, context, () => prepareHarness(process.cwd(), { runtime }), runtime);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    if (msg.includes('ENOENT') && msg.includes('claude')) {
+    if (msg.includes('Codex is not installed')) {
+      console.error('[forgen] Codex is not installed.');
+    } else if (msg.includes('Claude Code is not installed')) {
       console.error('[forgen] Claude Code not found. Install: npm install -g @anthropic-ai/claude-code');
     } else {
       console.error('[forgen] Error:', msg);
@@ -298,9 +304,10 @@ function printHelp() {
   The more you use Claude, the better it knows you.
 
   Usage:
-    forgen                          Start Claude Code (harness mode)
+    forgen                          Start runtime launcher (harness mode)
     forgen "prompt"                 Start with a prompt
     forgen --resume                 Resume previous session
+    forgen --runtime claude|codex   Select launch runtime
 
   Commands:
     forgen forge                    Personalize your coding profile
@@ -319,7 +326,7 @@ function printHelp() {
     forgen uninstall                Remove forgen
 
   Harness mode (default):
-    Wraps Claude Code with personalization, auto-compound, and safety hooks.
+    Wraps Claude (or Codex) with personalization, auto-compound, and safety hooks.
 `);
 }
 

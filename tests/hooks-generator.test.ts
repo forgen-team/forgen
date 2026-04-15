@@ -221,6 +221,19 @@ describe('hooks-generator', () => {
       }
     });
 
+    it('runtime=codex일 때 코덱스 어댑터가 prepend 된다', () => {
+      const result = generateHooksJson({ pluginRoot: '/custom/root', runtime: 'codex' });
+
+      for (const matchers of Object.values(result.hooks)) {
+        for (const m of matchers) {
+          for (const h of m.hooks) {
+            expect(h.command).toContain('host/codex-adapter.js');
+            expect(h.command).toContain('/custom/root/hooks/');
+          }
+        }
+      }
+    });
+
     it('script에 인자가 있는 훅의 커맨드가 올바르게 분리됨 (subagent-tracker)', () => {
       const result = generateHooksJson({ pluginRoot: '/root' });
 
@@ -240,10 +253,31 @@ describe('hooks-generator', () => {
       expect(startCmd).toBeDefined();
       expect(stopCmd).toBeDefined();
 
-      // 올바른 형식: node "/root/hooks/subagent-tracker.js" start
+      // 올바른 형식: node "/root/hooks/subagent-tracker.js" start (또는 "start")
       // 잘못된 형식: node "/root/hooks/subagent-tracker.js start"
-      expect(startCmd).toMatch(/subagent-tracker\.js"\s+start/);
-      expect(stopCmd).toMatch(/subagent-tracker\.js"\s+stop/);
+      expect(startCmd).toMatch(/subagent-tracker\.js"\s+"?start"?/);
+      expect(stopCmd).toMatch(/subagent-tracker\.js"\s+"?stop"?/);
+    });
+
+    it('runtime=codex일 때 인자가 있는 훅 커맨드 분리가 유지됨', () => {
+      const result = generateHooksJson({ pluginRoot: '/root', runtime: 'codex' });
+
+      const allCommands: string[] = [];
+      for (const matchers of Object.values(result.hooks)) {
+        for (const m of matchers) {
+          for (const h of m.hooks) {
+            allCommands.push(h.command);
+          }
+        }
+      }
+
+      const startCmd = allCommands.find(c => c.includes('subagent-tracker') && c.includes('start'));
+      const stopCmd = allCommands.find(c => c.includes('subagent-tracker') && c.includes('stop'));
+
+      expect(startCmd).toBeDefined();
+      expect(stopCmd).toBeDefined();
+      expect(startCmd).toMatch(/codex-adapter\.js"\s+"\/root\/hooks\/subagent-tracker\.js"\s+"start"/);
+      expect(stopCmd).toMatch(/codex-adapter\.js"\s+"\/root\/hooks\/subagent-tracker\.js"\s+"stop"/);
     });
   });
 });

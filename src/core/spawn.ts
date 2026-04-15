@@ -8,12 +8,17 @@ import type { V1HarnessContext } from './harness.js';
 import { loadGlobalConfig } from './global-config.js';
 import { createLogger } from './logger.js';
 import { STATE_DIR } from './paths.js';
+import { type RuntimeHost } from './types.js';
 
 const log = createLogger('spawn');
 
 /** claude CLI 경로 탐색 */
 function findClaude(): string {
   return 'claude';
+}
+
+function findRuntimeLauncher(runtime: RuntimeHost): string {
+  return runtime === 'codex' ? 'codex' : findClaude();
 }
 
 /**
@@ -68,14 +73,22 @@ async function indexTranscriptToFTS(cwd: string, transcriptPath: string, session
 }
 
 /** Claude Code를 하네스 환경으로 실행. exit code를 반환. */
-export async function spawnClaude(args: string[], context: V1HarnessContext): Promise<number> {
-  const claudePath = findClaude();
-  const env = buildEnv(context.cwd);
+export async function spawnClaude(
+  args: string[],
+  context: V1HarnessContext,
+  runtime: RuntimeHost = 'claude',
+): Promise<number> {
+  const launcher = findRuntimeLauncher(runtime);
+  const env = buildEnv(context.cwd, context.v1.session?.session_id, runtime);
   const cleanArgs = [...args];
 
   // config.json에서 dangerouslySkipPermissions 기본값 적용
   const globalConfig = loadGlobalConfig();
-  if (globalConfig.dangerouslySkipPermissions && !cleanArgs.includes('--dangerously-skip-permissions')) {
+  if (
+    runtime === 'claude' &&
+    globalConfig.dangerouslySkipPermissions &&
+    !cleanArgs.includes('--dangerously-skip-permissions')
+  ) {
     cleanArgs.unshift('--dangerously-skip-permissions');
   }
 
@@ -83,7 +96,7 @@ export async function spawnClaude(args: string[], context: V1HarnessContext): Pr
   const sessionStartTime = Date.now();
 
   return new Promise((resolve, reject) => {
-    const child = spawn(claudePath, cleanArgs, {
+    const child = spawn(launcher, cleanArgs, {
       stdio: 'inherit',
       env: { ...process.env, ...env },
       cwd: context.cwd,
@@ -91,13 +104,22 @@ export async function spawnClaude(args: string[], context: V1HarnessContext): Pr
 
     child.on('error', (err) => {
       if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-        reject(new Error('Claude Code is not installed. npm install -g @anthropic-ai/claude-code'));
+        if (runtime === 'codex') {
+          reject(new Error('Codex is not installed.'));
+        } else {
+          reject(new Error('Claude Code is not installed. npm install -g @anthropic-ai/claude-code'));
+        }
       } else {
         reject(err);
       }
     });
 
     child.on('exit', async (code) => {
+      if (runtime !== 'claude') {
+        resolve(code ?? 0);
+        return;
+      }
+
       // 세션 종료 후 하네스 작업
       try {
         const transcript = findLatestTranscript(context.cwd);
@@ -147,12 +169,17 @@ export async function spawnClaudeWithResume(
   args: string[],
   context: V1HarnessContext,
   contextFactory: () => Promise<V1HarnessContext>,
+  runtime: RuntimeHost = 'claude',
 ): Promise<void> {
   let resumeCount = 0;
   let currentContext = context;
 
   while (true) {
-    const exitCode = await spawnClaude(args, currentContext);
+    const exitCode = await spawnClaude(args, currentContext, runtime);
+    if (runtime !== 'claude') {
+      if (exitCode !== 0) process.exit(exitCode);
+      break;
+    }
 
     const resumePath = path.join(STATE_DIR, 'pending-resume.json');
     if (!fs.existsSync(resumePath)) {

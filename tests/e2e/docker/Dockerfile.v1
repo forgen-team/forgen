@@ -9,8 +9,9 @@ WORKDIR /workspace
 
 # forgen 소스에서 직접 빌드 + 설치
 COPY . /workspace/forgen-src
-RUN cd /workspace/forgen-src && npm ci && npm run build && npm pack && \
-    npm i -g /workspace/forgen-src/forgen-*.tgz
+RUN cd /workspace/forgen-src && npm install && npm run build && \
+    TARBALL=$(npm pack 2>&1 | tail -1) && \
+    npm i -g "/workspace/forgen-src/$TARBALL"
 
 # 검증 스크립트
 COPY tests/e2e/docker/verify-v1.sh /workspace/verify-v1.sh

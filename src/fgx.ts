@@ -5,16 +5,19 @@
  * 모든 인자를 그대로 전달하되, --dangerously-skip-permissions 를 자동 주입
  */
 
+import { resolveLaunchContext } from './services/session.js';
+import { prepareHarness, isFirstRun } from './core/harness.js';
+import { spawnClaude } from './core/spawn.js';
+
 const args = process.argv.slice(2);
 
 // 이미 포함되어 있으면 중복 추가하지 않음
-if (!args.includes('--dangerously-skip-permissions')) {
-  args.unshift('--dangerously-skip-permissions');
+const launchContext = resolveLaunchContext(args);
+const runtime = launchContext.runtime;
+const launchArgs = [...launchContext.args];
+if (!launchArgs.includes('--dangerously-skip-permissions')) {
+  launchArgs.unshift('--dangerously-skip-permissions');
 }
-
-// cli.ts 의 main 로직을 재사용
-import { prepareHarness, isFirstRun } from './core/harness.js';
-import { spawnClaude } from './core/spawn.js';
 
 async function main() {
   // Security warning — fgx bypasses all Claude Code permission checks
@@ -30,7 +33,7 @@ async function main() {
     console.log('  Run `forgen onboarding` afterwards to complete personalization.\n');
   }
 
-  const context = await prepareHarness(process.cwd());
+  const context = await prepareHarness(process.cwd(), { runtime });
 
   if (firstRun) {
     console.log('  [Done] Initial setup complete.\n');
@@ -42,9 +45,10 @@ async function main() {
     console.log(`[forgen] Trust: ${v1.session.effective_trust_policy}`);
   }
   console.log('[forgen] Mode: dangerously-skip-permissions');
-  console.log('[forgen] Starting Claude Code...\n');
+  const runtimeLabel = runtime === 'codex' ? 'Codex' : 'Claude';
+  console.log(`[forgen] Starting ${runtimeLabel}...\n`);
 
-  await spawnClaude(args, context);
+  await spawnClaude(launchArgs, context, runtime);
 }
 
 main().catch((err) => {
