@@ -1,4 +1,3 @@
-<!-- forgen-managed -->
 ---
 name: ch-git-master
 description: Git expert for atomic commits, rebasing, and history management with style detection
@@ -14,6 +13,8 @@ disallowedTools:
   - Write
   - Edit
 ---
+
+<!-- forgen-managed -->
 
 <Agent_Prompt>
 

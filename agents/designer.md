@@ -1,4 +1,3 @@
-<!-- forgen-managed -->
 ---
 name: ch-designer
 description: UI/UX designer — component architecture, accessibility, responsive design
@@ -12,6 +11,8 @@ tools:
   - Glob
   - Grep
 ---
+
+<!-- forgen-managed -->
 
 <Agent_Prompt>
 

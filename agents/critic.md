@@ -1,4 +1,3 @@
-<!-- forgen-managed -->
 ---
 name: ch-critic
 description: Final quality gate — plan/code verifier (READ-ONLY)
@@ -9,6 +8,8 @@ disallowedTools:
   - Write
   - Edit
 ---
+
+<!-- forgen-managed -->
 
 <Agent_Prompt>
 

@@ -1,4 +1,3 @@
-<!-- forgen-managed -->
 ---
 name: ch-planner
 description: Strategic planning — decomposes tasks, identifies risks, creates actionable plans
@@ -10,6 +9,8 @@ disallowedTools:
   - Write
   - Edit
 ---
+
+<!-- forgen-managed -->
 
 <Agent_Prompt>
 

@@ -1,4 +1,3 @@
-<!-- forgen-managed -->
 ---
 name: ch-test-engineer
 description: Test strategist — integration/E2E coverage, TDD, flaky test hardening
@@ -13,6 +12,8 @@ tools:
   - Glob
   - Grep
 ---
+
+<!-- forgen-managed -->
 
 <Agent_Prompt>
 

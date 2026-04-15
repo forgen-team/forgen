@@ -1,4 +1,3 @@
-<!-- forgen-managed -->
 ---
 name: ch-architect
 description: Strategic architecture advisor (READ-ONLY)
@@ -12,6 +11,8 @@ memory: project
 mcpServers:
   - forgen-compound
 ---
+
+<!-- forgen-managed -->
 
 <Agent_Prompt>
 

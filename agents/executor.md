@@ -1,4 +1,3 @@
-<!-- forgen-managed -->
 ---
 name: ch-executor
 description: Code implementation specialist — compound-aware, absorbs refactoring and simplification
@@ -16,6 +15,8 @@ memory: project
 mcpServers:
   - forgen-compound
 ---
+
+<!-- forgen-managed -->
 
 <Agent_Prompt>
 

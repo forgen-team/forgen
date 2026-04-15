@@ -1,4 +1,3 @@
-<!-- forgen-managed -->
 ---
 name: ch-analyst
 description: Requirements analyst — uncovers hidden constraints via Socratic inquiry
@@ -9,6 +8,8 @@ disallowedTools:
   - Write
   - Edit
 ---
+
+<!-- forgen-managed -->
 
 <Agent_Prompt>
 

@@ -1,4 +1,3 @@
-<!-- forgen-managed -->
 ---
 name: ch-debugger
 description: Root-cause debugger — isolates regressions and analyzes stack traces
@@ -11,6 +10,8 @@ tools:
   - Glob
   - Grep
 ---
+
+<!-- forgen-managed -->
 
 <Agent_Prompt>
 

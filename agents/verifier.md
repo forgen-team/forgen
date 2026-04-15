@@ -1,4 +1,3 @@
-<!-- forgen-managed -->
 ---
 name: ch-verifier
 description: Completion verifier — evidence collection, test adequacy, manual test scenarios
@@ -11,6 +10,8 @@ tools:
   - Glob
   - Grep
 ---
+
+<!-- forgen-managed -->
 
 <Agent_Prompt>
 

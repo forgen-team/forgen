@@ -1,4 +1,3 @@
-<!-- forgen-managed -->
 ---
 name: ch-code-reviewer
 description: Unified code reviewer — quality, security (OWASP), performance. Use for all code review tasks.
@@ -12,6 +11,8 @@ memory: project
 mcpServers:
   - forgen-compound
 ---
+
+<!-- forgen-managed -->
 
 <Agent_Prompt>
 

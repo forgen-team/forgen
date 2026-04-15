@@ -1,4 +1,3 @@
-<!-- forgen-managed -->
 ---
 name: ch-explore
 description: Fast codebase explorer — file/pattern search, structure mapping (READ-ONLY)
@@ -9,6 +8,8 @@ disallowedTools:
   - Write
   - Edit
 ---
+
+<!-- forgen-managed -->
 
 <Agent_Prompt>
 
