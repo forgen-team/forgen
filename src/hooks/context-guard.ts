@@ -278,7 +278,7 @@ interface ForgeLoopState {
  * forge-loop 활성 시 미완료 스토리가 있으면 Stop을 차단하고 지속 메시지 주입.
  * OMC의 persistent-mode.cjs 패턴 참고.
  */
-function checkForgeLoopActive(): string | null {
+export function checkForgeLoopActive(): string | null {
   try {
     if (!fs.existsSync(FORGE_LOOP_STATE_PATH)) return null;
 
