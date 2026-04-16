@@ -46,7 +46,12 @@ disallowedTools:
 
 ## 출력 형식
 
-다음 형태의 **3개 후보 YAML frontmatter + 본문**을 순서대로 제시. 파일 쓰기는 하지 않습니다 (후처리 스크립트 담당).
+각 후보를 **파일로 직접 작성**합니다. 대상 디렉토리: `~/.forgen/lab/candidates/`.
+파일명은 `evolved-{slug}.md` 형식 (slug는 후보 이름에서 영문 소문자 + 하이픈만).
+이 디렉토리는 격리된 qurantine 영역으로, 여기 쓴 파일은 매칭에 바로 참여하지 **않습니다**.
+사용자가 `forgen learn evolve --promote <name>` 을 실행해야 `me/solutions/`로 이동합니다.
+
+파일 구조:
 
 ```markdown
 ### Candidate 1: {slug}

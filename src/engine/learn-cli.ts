@@ -3,7 +3,8 @@ import * as os from 'node:os';
 import { fixupSolutions } from './solution-fixup.js';
 import { listQuarantined, pruneQuarantine } from './solution-quarantine.js';
 import { computeFitness } from './solution-fitness.js';
-import { buildWeaknessReport, saveWeaknessReport, latestWeaknessReport } from './solution-weakness.js';
+import { buildWeaknessReport, saveWeaknessReport } from './solution-weakness.js';
+import { listCandidates, promoteCandidate, rollbackSince } from './solution-candidate.js';
 
 const ME_SOLUTIONS = path.join(os.homedir(), '.forgen', 'me', 'solutions');
 
@@ -136,23 +137,45 @@ function renderTagRow(label: string, items: string[]): void {
 }
 
 function runEvolveRollback(ts: string): void {
-  const report = latestWeaknessReport();
-  if (!report) {
-    console.log(`\n  No weakness report found. Nothing to roll back.\n`);
+  const epochMs = /^\d+$/.test(ts) ? Number(ts) : Date.parse(ts);
+  if (!Number.isFinite(epochMs)) {
+    console.log(`\n  Invalid timestamp: ${ts}. Use epoch ms or ISO-8601.\n`);
     return;
   }
-  console.log(`\n  Rollback (ts=${ts}):`);
-  console.log(`    This command is a placeholder: candidate lifecycle writes go through`);
-  console.log(`    --promote, so rolling back means deleting files created after ${ts}.`);
-  console.log(`    Manual: ls -t ~/.forgen/me/solutions/evolved-*.md | xargs rm`);
-  console.log(`    Automatic rollback ships with Phase 4.5. See docs/design-solution-evolution.md\n`);
+  const result = rollbackSince(epochMs);
+  console.log(`\n  Rollback since ${new Date(epochMs).toISOString()}:`);
+  if (result.archived.length === 0) {
+    console.log(`    (no evolved solutions newer than cutoff)\n`);
+    return;
+  }
+  console.log(`    Archived ${result.archived.length} file(s) → ${result.archive_dir}`);
+  for (const p of result.archived) console.log(`      - ${path.basename(p)}`);
+  if (result.errors.length > 0) {
+    console.log(`    Errors:`);
+    for (const e of result.errors) console.log(`      ! ${e}`);
+  }
+  console.log('');
 }
 
-function runEvolvePromote(candidateName: string): void {
-  console.log(`\n  Promotion intent for '${candidateName}':`);
-  console.log(`    This flow expects the ch-solution-evolver agent to have written`);
-  console.log(`    a candidate file at ~/.forgen/me/solutions/${candidateName}.md`);
-  console.log(`    with status: candidate. The cold-start bonus is already wired —`);
-  console.log(`    no further action is required beyond verifying the file exists.\n`);
-  console.log(`    Automatic candidate-file emit ships with Phase 4.5. See design doc.\n`);
+function runEvolvePromote(candidateNameOrList: string): void {
+  if (candidateNameOrList === '--list' || candidateNameOrList === 'list') {
+    const found = listCandidates();
+    if (found.length === 0) {
+      console.log(`\n  No pending candidates in ~/.forgen/lab/candidates/\n`);
+      return;
+    }
+    console.log(`\n  Pending candidates (${found.length}):`);
+    for (const p of found) console.log(`    - ${path.basename(p, '.md')}`);
+    console.log(`\n  Promote one: forgen learn evolve --promote <name>\n`);
+    return;
+  }
+  const result = promoteCandidate(candidateNameOrList);
+  if (result.ok) {
+    console.log(`\n  ✓ Promoted: ${path.basename(result.dest!)}`);
+    console.log(`    from: ${result.source}`);
+    console.log(`    to:   ${result.dest}`);
+    console.log(`    Cold-start bonus active until 5 injections accumulate (auto-promotes to verified).\n`);
+  } else {
+    console.log(`\n  ✗ Promotion refused: ${result.reason}\n`);
+  }
 }

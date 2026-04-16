@@ -80,6 +80,18 @@ export const SOLUTION_QUARANTINE_PATH = path.join(STATE_DIR, 'solution-quarantin
  */
 export const OUTCOMES_DIR = path.join(STATE_DIR, 'outcomes');
 
+/**
+ * ~/.forgen/lab/candidates/ — Phase 4 quarantine zone for evolver-agent
+ * proposals before they enter the live solution index. The evolver writes
+ * here; promotion and rollback commands move files out (to ME_SOLUTIONS
+ * or to `lab/archived-{ts}/`). Keeping candidates isolated means a
+ * runaway agent cannot silently poison the match pool.
+ */
+export const CANDIDATES_DIR = path.join(FORGEN_HOME, 'lab', 'candidates');
+
+/** ~/.forgen/lab/archived/ — rollback destination for evolved solutions. */
+export const ARCHIVED_DIR = path.join(FORGEN_HOME, 'lab', 'archived');
+
 /** ~/.forgen/sessions/ — 세션 로그 */
 export const SESSIONS_DIR = path.join(FORGEN_HOME, 'sessions');
 
