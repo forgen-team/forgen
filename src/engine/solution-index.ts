@@ -6,6 +6,7 @@ import { defaultNormalizer } from './term-normalizer.js';
 import { withFileLockSync } from '../hooks/shared/file-lock.js';
 import { atomicWriteText } from '../hooks/shared/atomic-write.js';
 import { createLogger } from '../core/logger.js';
+import { recordQuarantine, diagnoseFromRawContent } from './solution-quarantine.js';
 
 const log = createLogger('solution-index');
 
@@ -178,6 +179,14 @@ function buildIndex(dirs: SolutionDirConfig[]): SolutionIndex {
         const fm = parseFrontmatterOnly(content);
         if (!fm) {
           droppedMalformed++;
+          // Slow-path diagnosis: re-parse YAML to produce actionable errors,
+          // then persist to ~/.forgen/state/solution-quarantine.jsonl so the
+          // file is visible to `forgen doctor` instead of silently dead.
+          // Best-effort: quarantine writes must never throw.
+          try {
+            const errors = diagnoseFromRawContent(content);
+            recordQuarantine(filePath, errors);
+          } catch { /* ignore */ }
           log.debug(`dropped (malformed frontmatter): ${filePath}`);
           continue;
         }

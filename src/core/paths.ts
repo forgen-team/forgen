@@ -63,6 +63,23 @@ export const STATE_DIR = path.join(FORGEN_HOME, 'state');
  */
 export const MATCH_EVAL_LOG_PATH = path.join(STATE_DIR, 'match-eval-log.jsonl');
 
+/**
+ * ~/.forgen/state/solution-quarantine.jsonl — JSONL log of solution files
+ * dropped during index build due to malformed frontmatter. Append-only,
+ * dedupe-by-path. Used by `forgen doctor` to surface dead solutions that
+ * would otherwise vanish silently (see `diagnoseFrontmatter`).
+ */
+export const SOLUTION_QUARANTINE_PATH = path.join(STATE_DIR, 'solution-quarantine.jsonl');
+
+/**
+ * ~/.forgen/state/outcomes/ — per-session JSONL logs of solution inject →
+ * outcome events (accept / correct / error / unknown). Written by the
+ * solution-outcome-tracker hook. One file per session for write-safety
+ * under concurrent sessions. Consumers aggregate across files to compute
+ * fitness (see `solution-fitness.ts`).
+ */
+export const OUTCOMES_DIR = path.join(STATE_DIR, 'outcomes');
+
 /** ~/.forgen/sessions/ — 세션 로그 */
 export const SESSIONS_DIR = path.join(FORGEN_HOME, 'sessions');
 

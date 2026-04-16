@@ -112,34 +112,55 @@ export function slugify(text: string): string {
 
 /** Runtime type guard for SolutionFrontmatter */
 export function validateFrontmatter(fm: unknown): fm is SolutionFrontmatter {
-  if (fm == null || typeof fm !== 'object') return false;
+  return diagnoseFrontmatter(fm).length === 0;
+}
+
+/**
+ * Return a list of validation errors for a parsed frontmatter object.
+ *
+ * Empty array = valid. Non-empty = each entry describes one missing/wrong
+ * field. Callers that only need a boolean should use `validateFrontmatter`.
+ * Slow path (quarantine logging) uses this to produce actionable diagnostics.
+ */
+export function diagnoseFrontmatter(fm: unknown): string[] {
+  const errors: string[] = [];
+  if (fm == null || typeof fm !== 'object') {
+    errors.push('frontmatter is not an object');
+    return errors;
+  }
   const o = fm as Record<string, unknown>;
 
-  if (typeof o.name !== 'string') return false;
-  if (typeof o.version !== 'number' || o.version <= 0) return false;
+  if (typeof o.name !== 'string') errors.push('name: must be string');
+  if (typeof o.version !== 'number' || o.version <= 0) errors.push('version: must be positive number');
   if (typeof o.status !== 'string' || !VALID_STATUSES.includes(o.status as SolutionStatus))
-    return false;
-  if (typeof o.confidence !== 'number' || o.confidence < 0 || o.confidence > 1) return false;
-  if (typeof o.type !== 'string' || !VALID_TYPES.includes(o.type as SolutionType)) return false;
+    errors.push(`status: must be one of ${VALID_STATUSES.join('|')}`);
+  if (typeof o.confidence !== 'number' || o.confidence < 0 || o.confidence > 1)
+    errors.push('confidence: must be number in [0,1]');
+  if (typeof o.type !== 'string' || !VALID_TYPES.includes(o.type as SolutionType))
+    errors.push(`type: must be one of ${VALID_TYPES.join('|')}`);
   if (o.scope !== 'me' && o.scope !== 'team' && o.scope !== 'project' && o.scope !== 'universal')
-    return false;
-  if (!Array.isArray(o.tags) || !o.tags.every((t: unknown) => typeof t === 'string')) return false;
+    errors.push('scope: must be me|team|project|universal');
+  if (!Array.isArray(o.tags) || !o.tags.every((t: unknown) => typeof t === 'string'))
+    errors.push('tags: must be string[]');
   if (!Array.isArray(o.identifiers) || !o.identifiers.every((t: unknown) => typeof t === 'string'))
-    return false;
-  if (typeof o.created !== 'string') return false;
-  if (typeof o.updated !== 'string') return false;
-  if (o.supersedes !== null && typeof o.supersedes !== 'string') return false;
-  if (o.extractedBy !== 'auto' && o.extractedBy !== 'manual') return false;
+    errors.push('identifiers: must be string[]');
+  if (typeof o.created !== 'string') errors.push('created: must be string');
+  if (typeof o.updated !== 'string') errors.push('updated: must be string');
+  if (o.supersedes !== null && typeof o.supersedes !== 'string')
+    errors.push('supersedes: must be string or null');
+  if (o.extractedBy !== 'auto' && o.extractedBy !== 'manual')
+    errors.push('extractedBy: missing or not auto|manual');
 
-  // evidence
-  if (o.evidence == null || typeof o.evidence !== 'object') return false;
-  const ev = o.evidence as Record<string, unknown>;
-  const evFields = ['injected', 'reflected', 'negative', 'sessions', 'reExtracted'] as const;
-  for (const f of evFields) {
-    if (typeof ev[f] !== 'number') return false;
+  if (o.evidence == null || typeof o.evidence !== 'object') {
+    errors.push('evidence: block missing');
+  } else {
+    const ev = o.evidence as Record<string, unknown>;
+    const evFields = ['injected', 'reflected', 'negative', 'sessions', 'reExtracted'] as const;
+    for (const f of evFields) {
+      if (typeof ev[f] !== 'number') errors.push(`evidence.${f}: must be number`);
+    }
   }
-
-  return true;
+  return errors;
 }
 
 // ── Parsing ──
