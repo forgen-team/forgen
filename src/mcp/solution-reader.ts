@@ -24,6 +24,7 @@ import {
   expandCompoundTags,
   expandQueryBigrams,
   extractTags,
+  parseFrontmatterOnly,
   parseSolutionV3,
 } from '../engine/solution-format.js';
 import type { SolutionDirConfig } from '../engine/solution-index.js';
@@ -78,6 +79,8 @@ export interface SolutionDetail {
 
 export interface SolutionStats {
   total: number;
+  retiredCount: number;
+  extractionPrecision: number | null;
   byStatus: Record<SolutionStatus, number>;
   byType: Record<SolutionType, number>;
   byScope: Record<'me' | 'team' | 'project' | 'universal', number>;
@@ -349,8 +352,27 @@ export function getSolutionStats(options?: { dirs?: SolutionDirConfig[] }): Solu
 
   const index = getOrBuildIndex(dirs);
 
+  // retired 카운트: 인덱스에서 제외되므로 디렉토리를 직접 스캔
+  let retiredCount = 0;
+  for (const { dir } of dirs) {
+    if (!fs.existsSync(dir)) continue;
+    try {
+      const files = fs.readdirSync(dir).filter((f) => f.endsWith('.md'));
+      for (const file of files) {
+        try {
+          const content = fs.readFileSync(path.join(dir, file), 'utf-8');
+          const fm = parseFrontmatterOnly(content);
+          if (fm?.status === 'retired') retiredCount++;
+        } catch { /* ignore */ }
+      }
+    } catch { /* ignore */ }
+  }
+
+  // extractionPrecision: verified+mature / (total active + retired)
   const stats: SolutionStats = {
     total: index.entries.length,
+    retiredCount,
+    extractionPrecision: null,
     // retired는 인덱스에서 제외되므로 항상 0 (solution-index.ts:73)
     byStatus: { experiment: 0, candidate: 0, verified: 0, mature: 0, retired: 0 },
     byType: {
@@ -368,6 +390,12 @@ export function getSolutionStats(options?: { dirs?: SolutionDirConfig[] }): Solu
     if (entry.status in stats.byStatus) stats.byStatus[entry.status]++;
     if (entry.type in stats.byType) stats.byType[entry.type]++;
     if (entry.scope in stats.byScope) stats.byScope[entry.scope]++;
+  }
+
+  const highConfidence = stats.byStatus.verified + stats.byStatus.mature;
+  const denominator = index.entries.length + retiredCount;
+  if (denominator > 0) {
+    stats.extractionPrecision = Math.round((highConfidence / denominator) * 100);
   }
 
   return stats;

@@ -166,7 +166,7 @@ describe('compound CLI contract', () => {
     expect(output).toContain('Compound Entries');
     expect(output).toContain('solution-entry [solution]');
     expect(output).toContain('rule-entry [rule]');
-    expect(output).toContain('Total: 2 entries');
+    expect(output).toContain('Total: 2 active');
   });
 
   it('rollback only removes solution entries and leaves rule entries intact', async () => {

@@ -5,14 +5,11 @@
  * philosophy/scope/pack 의존 제거. Profile + Preset Manager + Rule Renderer.
  *
  * Module Structure:
- * - Lines 1-70: Imports, utility helpers
- * - Lines 70-220: injectSettings — Claude Code settings.json injection
- * - Lines 220-400: Agent/skill installation helpers
- * - Lines 400-550: Rule file injection, gitignore, compound memory
- * - Lines 550+: prepareHarness — main orchestration
+ * - Lines 1-50: Imports, utility helpers
+ * - Lines 50-120: Rule file injection, gitignore, compound memory
+ * - Lines 120+: prepareHarness — main orchestration
  */
 
-import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -21,19 +18,13 @@ import { buildEnv, generateClaudeRuleFiles, registerTmuxBindings } from './confi
 import { createLogger } from './logger.js';
 import { HANDOFFS_DIR, ME_BEHAVIOR, ME_DIR, ME_RULES, ME_SKILLS, ME_SOLUTIONS, SESSIONS_DIR, STATE_DIR, FORGEN_HOME } from './paths.js';
 import { RULE_FILE_CAPS } from '../hooks/shared/injection-caps.js';
-import { generateHooksJson } from '../hooks/hooks-generator.js';
 import { type RuntimeHost } from './types.js';
 import {
-  acquireLock,
-  atomicWriteFileSync,
-  CLAUDE_DIR,
-  releaseLock,
   rollbackSettings,
-  SETTINGS_BACKUP_PATH,
-  SETTINGS_PATH,
 } from './settings-lock.js';
-import { ConfigError } from './errors.js';
 import { bootstrapV1Session, ensureV1Directories, type V1BootstrapResult } from './v1-bootstrap.js';
+import { injectSettings } from './settings-injector.js';
+import { installAgents, installSlashCommands } from './installer.js';
 
 const log = createLogger('harness');
 
@@ -85,369 +76,6 @@ function ensureDirectories(): void {
 }
 
 export { rollbackSettings };
-
-// ── Settings Injection ──
-
-const FORGEN_PERMISSION_RULES = new Set([
-  '# forgen-managed',
-  'Bash(rm -rf *)',
-  'Bash(git push --force*)',
-  'Bash(git reset --hard*)',
-]);
-
-function stripForgenManagedRules(rules: string[]): string[] {
-  return rules.filter(r => !FORGEN_PERMISSION_RULES.has(r));
-}
-
-/** Claude Code settings.json에 하네스 환경변수 + 훅 주입 */
-// ── B9: injectSettings sub-phases (extracted from 128-line monolith) ──
-
-/** Read settings.json with backup, or return empty object on failure. */
-function readSettingsWithBackup(): Record<string, unknown> {
-  if (!fs.existsSync(SETTINGS_PATH)) return {};
-  try {
-    const settings = JSON.parse(fs.readFileSync(SETTINGS_PATH, 'utf-8'));
-    fs.copyFileSync(SETTINGS_PATH, SETTINGS_BACKUP_PATH);
-    return settings as Record<string, unknown>;
-  } catch (e) {
-    log.debug('settings.json 파싱 실패, 빈 설정으로 시작',
-      new ConfigError('settings.json parse failed', { configPath: SETTINGS_PATH, cause: e }));
-    return {};
-  }
-}
-
-/** Apply forgen statusLine only if user hasn't set a custom one. */
-function applyStatusLine(settings: Record<string, unknown>): void {
-  const existing = settings.statusLine as { type?: string; command?: string } | undefined;
-  const isForgenOwned = !existing || !existing.command || existing.command.startsWith('forgen');
-  if (isForgenOwned) {
-    settings.statusLine = { type: 'command', command: 'forgen me' };
-  }
-}
-
-/** Check if a settings.json hook entry was installed by forgen. */
-function isForgenHookEntry(entry: Record<string, unknown>, pkgRoot: string): boolean {
-  const distHooksPath = path.join(pkgRoot, 'dist', 'hooks');
-  const matchesPath = (cmd: string) =>
-    cmd.includes(distHooksPath) || /[\\/]dist[\\/]hooks[\\/].*\.js/.test(cmd);
-  if (typeof entry.command === 'string' && matchesPath(entry.command)) return true;
-  const hooks = entry.hooks as Array<Record<string, unknown>> | undefined;
-  return Array.isArray(hooks) && hooks.some(h => typeof h.command === 'string' && matchesPath(h.command));
-}
-
-/** Strip existing forgen hooks from settings, merge fresh hooks.json. */
-function mergeHooksIntoSettings(
-  settings: Record<string, unknown>,
-  runtime: RuntimeHost,
-  cwd: string,
-): void {
-  const pkgRoot = getPackageRoot();
-  const hooksConfig = (settings.hooks as Record<string, unknown[]>) ?? {};
-
-  // Remove existing forgen hooks (clean slate before re-inject)
-  for (const [event, entries] of Object.entries(hooksConfig)) {
-    if (!Array.isArray(entries)) continue;
-    const filtered = entries.filter(h => !isForgenHookEntry(h as Record<string, unknown>, pkgRoot));
-    if (filtered.length === 0) delete hooksConfig[event];
-    else hooksConfig[event] = filtered;
-  }
-
-  try {
-    if (runtime === 'codex') {
-      const generated = generateHooksJson({ cwd, runtime, pluginRoot: path.join(pkgRoot, 'dist') });
-      for (const [event, handlers] of Object.entries(generated.hooks)) {
-        if (!hooksConfig[event]) hooksConfig[event] = [];
-        (hooksConfig[event] as unknown[]).push(...handlers);
-      }
-    } else {
-      // Read hooks.json and inject, replacing ${CLAUDE_PLUGIN_ROOT}
-      const hooksJsonPath = path.join(pkgRoot, 'hooks', 'hooks.json');
-      if (fs.existsSync(hooksJsonPath)) {
-        const hooksJson = JSON.parse(fs.readFileSync(hooksJsonPath, 'utf-8'));
-        const hooksData = hooksJson.hooks as Record<string, unknown[]> | undefined;
-        if (hooksData) {
-          const resolved = JSON.parse(
-            JSON.stringify(hooksData).replace(/\$\{CLAUDE_PLUGIN_ROOT\}/g, pkgRoot),
-          ) as Record<string, unknown[]>;
-          for (const [event, handlers] of Object.entries(resolved)) {
-            if (!hooksConfig[event]) hooksConfig[event] = [];
-            (hooksConfig[event] as unknown[]).push(...handlers);
-          }
-        }
-      }
-    }
-  } catch (e) {
-    log.debug('hooks.json 로드 실패', e);
-  }
-
-  settings.hooks = Object.keys(hooksConfig).length > 0 ? hooksConfig : undefined;
-  if (settings.hooks && Object.keys(settings.hooks as Record<string, unknown>).length === 0) {
-    delete settings.hooks;
-  }
-}
-
-/** Apply v1 trust policy → permissions (deny/ask lists). */
-function applyTrustPolicyPermissions(settings: Record<string, unknown>, v1Result: V1BootstrapResult): void {
-  if (!v1Result.session) return;
-  const trust = v1Result.session.effective_trust_policy;
-  const permissions = (settings.permissions as Record<string, string[]>) ?? {};
-  const existingDeny = stripForgenManagedRules(permissions.deny ?? []);
-
-  if (trust === '가드레일 우선') {
-    permissions.deny = [
-      ...existingDeny, '# forgen-managed',
-      'Bash(rm -rf *)', 'Bash(git push --force*)', 'Bash(git reset --hard*)',
-    ];
-  } else if (trust === '승인 완화') {
-    const existingAsk = stripForgenManagedRules(permissions.ask ?? []);
-    permissions.ask = [
-      ...existingAsk, '# forgen-managed',
-      'Bash(rm -rf *)', 'Bash(git push --force*)',
-    ];
-    permissions.deny = existingDeny.length > 0 ? existingDeny : undefined as unknown as string[];
-  }
-  // '완전 신뢰 실행': 추가 제한 없음
-
-  if (!permissions.deny?.length) delete permissions.deny;
-  if (!permissions.ask?.length) delete permissions.ask;
-  if (Object.keys(permissions).length > 0) settings.permissions = permissions;
-}
-
-/**
- * B9: injectSettings — now a ~20-line coordinator calling the extracted
- * sub-phases above. Pre-B9 this was 128 lines with interleaved phases
- * (read/backup, env merge, statusLine, hook strip+inject, trust policy,
- * atomic write). Each phase is now a named function with a single
- * responsibility, testable in isolation if needed.
- */
-function injectSettings(
-  env: Record<string, string>,
-  v1Result: V1BootstrapResult,
-  runtime: RuntimeHost,
-  cwd: string,
-): void {
-  fs.mkdirSync(CLAUDE_DIR, { recursive: true });
-  acquireLock();
-
-  const settings = readSettingsWithBackup();
-
-  // Merge env vars
-  settings.env = { ...((settings.env as Record<string, string>) ?? {}), ...env };
-
-  applyStatusLine(settings);
-  mergeHooksIntoSettings(settings, runtime, cwd);
-  applyTrustPolicyPermissions(settings, v1Result);
-
-  try {
-    atomicWriteFileSync(SETTINGS_PATH, JSON.stringify(settings, null, 2));
-  } catch (err) {
-    rollbackSettings();
-    throw err;
-  } finally {
-    releaseLock();
-  }
-}
-
-// ── Agent Installation ──
-
-function contentHash(content: string): string {
-  return crypto.createHash('sha256').update(content).digest('hex').slice(0, 12);
-}
-
-const AGENT_HASHES_PATH = path.join(STATE_DIR, 'agent-hashes.json');
-
-function loadAgentHashes(): Record<string, string> {
-  try {
-    if (fs.existsSync(AGENT_HASHES_PATH)) {
-      return JSON.parse(fs.readFileSync(AGENT_HASHES_PATH, 'utf-8'));
-    }
-  } catch (e) {
-    log.debug('에이전트 해시 맵 로드 실패', e);
-  }
-  return {};
-}
-
-function saveAgentHashes(hashes: Record<string, string>): void {
-  try {
-    fs.mkdirSync(path.dirname(AGENT_HASHES_PATH), { recursive: true });
-    fs.writeFileSync(AGENT_HASHES_PATH, JSON.stringify(hashes, null, 2));
-  } catch (e) {
-    log.debug('에이전트 해시 맵 저장 실패', e);
-  }
-}
-
-function installAgentsFromDir(
-  sourceDir: string,
-  targetDir: string,
-  prefix: string,
-  hashes: Record<string, string>,
-): void {
-  if (!fs.existsSync(sourceDir)) return;
-
-  const files = fs.readdirSync(sourceDir).filter((f) => f.endsWith('.md'));
-  for (const file of files) {
-    const src = path.join(sourceDir, file);
-    const dstName = `${prefix}${file}`;
-    const dst = path.join(targetDir, dstName);
-    const content = fs.readFileSync(src, 'utf-8');
-    const newHash = contentHash(content);
-
-    if (fs.existsSync(dst)) {
-      const existing = fs.readFileSync(dst, 'utf-8');
-      if (existing === content) {
-        hashes[dstName] = newHash;
-        continue;
-      }
-      const recordedHash = hashes[dstName];
-      if (recordedHash && contentHash(existing) !== recordedHash) {
-        log.debug(`에이전트 파일 보호: ${dstName} (사용자 수정 감지)`);
-        continue;
-      }
-      if (!recordedHash && !existing.includes('<!-- forgen-managed -->')) {
-        log.debug(`에이전트 파일 보호: ${dstName} (레거시 사용자 수정 감지)`);
-        continue;
-      }
-    }
-
-    fs.writeFileSync(dst, content);
-    hashes[dstName] = newHash;
-  }
-}
-
-/**
- * 현재 source에 없는 stale ch-*.md 에이전트 파일을 정리.
- * forgen-managed 마커가 있는 파일만 삭제 (사용자 수정 파일 보호).
- */
-function cleanupStaleAgents(
-  sourceDir: string,
-  targetDir: string,
-  prefix: string,
-  hashes: Record<string, string>,
-): void {
-  if (!fs.existsSync(targetDir)) return;
-  if (!fs.existsSync(sourceDir)) return;
-
-  // 현재 source의 유효한 파일 목록
-  const validFiles = new Set(
-    fs.readdirSync(sourceDir)
-      .filter((f) => f.endsWith('.md'))
-      .map((f) => `${prefix}${f}`),
-  );
-
-  // targetDir에서 prefix로 시작하지만 유효 목록에 없는 파일 삭제
-  for (const existing of fs.readdirSync(targetDir)) {
-    if (!existing.startsWith(prefix) || !existing.endsWith('.md')) continue;
-    if (validFiles.has(existing)) continue;
-
-    const filePath = path.join(targetDir, existing);
-    try {
-      const content = fs.readFileSync(filePath, 'utf-8');
-      // 사용자 수정 보호: forgen-managed 마커가 있고 hash가 기록된 경우만 삭제
-      const recordedHash = hashes[existing];
-      const hasMarker = content.includes('<!-- forgen-managed -->');
-      if (!hasMarker) {
-        log.debug(`에이전트 삭제 스킵: ${existing} (forgen-managed 마커 없음)`);
-        continue;
-      }
-      if (recordedHash && contentHash(content) !== recordedHash) {
-        log.debug(`에이전트 삭제 스킵: ${existing} (사용자 수정 감지)`);
-        continue;
-      }
-      fs.unlinkSync(filePath);
-      delete hashes[existing];
-      log.debug(`stale 에이전트 삭제: ${existing}`);
-    } catch (e) {
-      log.debug(`에이전트 삭제 실패: ${existing}`, e);
-    }
-  }
-}
-
-/** 에이전트 정의 파일 설치 (패키지 내장만) */
-function installAgents(cwd: string): void {
-  const pkgRoot = getPackageRoot();
-  const targetDir = path.join(cwd, '.claude', 'agents');
-  fs.mkdirSync(targetDir, { recursive: true });
-
-  const hashes = loadAgentHashes();
-  const sourceDir = path.join(pkgRoot, 'agents');
-  try {
-    installAgentsFromDir(sourceDir, targetDir, 'ch-', hashes);
-    cleanupStaleAgents(sourceDir, targetDir, 'ch-', hashes);
-    saveAgentHashes(hashes);
-  } catch (e) {
-    log.debug('에이전트 설치 실패', e);
-  }
-}
-
-// ── Slash Commands ──
-
-function buildCommandContent(skillContent: string, skillName: string): string {
-  const descMatch = skillContent.match(/description:\s*(.+)/);
-  const desc = descMatch?.[1]?.trim() ?? skillName;
-  return `# ${desc}\n\n<!-- forgen-managed -->\n\nActivate Forgen "${skillName}" mode for the task: $ARGUMENTS\n\n${skillContent}`;
-}
-
-function safeWriteCommand(cmdPath: string, content: string): boolean {
-  if (fs.existsSync(cmdPath)) {
-    const existing = fs.readFileSync(cmdPath, 'utf-8');
-    if (!existing.includes('<!-- forgen-managed -->')) return false;
-  }
-  fs.writeFileSync(cmdPath, content);
-  return true;
-}
-
-function cleanupStaleCommands(commandsDir: string, validFiles: Set<string>): number {
-  if (!fs.existsSync(commandsDir)) return 0;
-  let removed = 0;
-  for (const file of fs.readdirSync(commandsDir).filter((f) => f.endsWith('.md'))) {
-    if (validFiles.has(file)) continue;
-    const filePath = path.join(commandsDir, file);
-    try {
-      const content = fs.readFileSync(filePath, 'utf-8');
-      if (content.includes('<!-- forgen-managed -->')) {
-        fs.unlinkSync(filePath);
-        removed++;
-      }
-    } catch (e) {
-      log.debug(`stale 명령 파일 정리 실패: ${file}`, e);
-    }
-  }
-  return removed;
-}
-
-/** 스킬을 Claude Code 슬래시 명령으로 설치 (패키지 내장만) */
-function installSlashCommands(_cwd: string): void {
-  const pkgRoot = getPackageRoot();
-  let skillsDir = path.join(pkgRoot, 'commands');
-  if (!fs.existsSync(skillsDir)) {
-    skillsDir = path.join(pkgRoot, 'skills');
-  }
-  const homeDir = os.homedir();
-  const globalCommandsDir = path.join(homeDir, '.claude', 'commands', 'forgen');
-
-  if (!fs.existsSync(skillsDir)) return;
-  fs.mkdirSync(globalCommandsDir, { recursive: true });
-
-  const skills = fs.readdirSync(skillsDir).filter((f) => f.endsWith('.md'));
-  const validGlobalFiles = new Set<string>();
-  let installed = 0;
-
-  for (const file of skills) {
-    validGlobalFiles.add(file);
-    const skillName = file.replace('.md', '');
-    const skillContent = fs.readFileSync(path.join(skillsDir, file), 'utf-8');
-    const cmdContent = buildCommandContent(skillContent, skillName);
-    if (safeWriteCommand(path.join(globalCommandsDir, file), cmdContent)) {
-      installed++;
-    }
-  }
-
-  const removedGlobal = validGlobalFiles.size > 0
-    ? cleanupStaleCommands(globalCommandsDir, validGlobalFiles)
-    : 0;
-
-  log.debug(`슬래시 명령 설치: ${installed}개 설치, ${removedGlobal}개 정리`);
-}
 
 // ── Rule File Injection ──
 
@@ -727,18 +355,19 @@ export async function prepareHarness(
     const inTmux = !!process.env.TMUX;
 
     // 4. Claude Code 설정 주입 (환경변수 + trust 기반 permissions)
+    const pkgRoot = getPackageRoot();
     const env = buildEnv(cwd, v1Result.session?.session_id, runtime);
-    injectSettings(env, v1Result, runtime, cwd);
+    injectSettings(env, v1Result, runtime, cwd, pkgRoot);
 
     // 5. 에이전트 설치
-    installAgents(cwd);
+    installAgents(cwd, pkgRoot);
 
     // 6. 규칙 파일 생성 및 주입 (v1 부트스트랩 결과의 renderedRules를 직접 전달)
     const ruleFiles = generateClaudeRuleFiles(cwd, v1Result.renderedRules);
     injectClaudeRuleFiles(cwd, ruleFiles);
 
     // 7. 슬래시 명령 설치
-    installSlashCommands(cwd);
+    installSlashCommands(cwd, pkgRoot);
 
     // 8. tmux 바인딩 등록
     if (inTmux) {

@@ -97,7 +97,18 @@ export function listSolutions(): void {
     }
   }
 
-  console.log(`\n  Total: ${total} entries\n`);
+  // retired 카운트: scanEntries는 모든 상태를 포함하므로 직접 계산
+  const retiredCount = entries.filter(e => e.status === 'retired').length;
+  const activeCount = total - retiredCount;
+  const highConfidence = entries.filter(e => e.status === 'verified' || e.status === 'mature').length;
+  const denominator = total;
+  const precision = denominator > 0 ? Math.round((highConfidence / denominator) * 100) : null;
+
+  console.log(`\n  Total: ${activeCount} active + ${retiredCount} retired`);
+  if (precision !== null) {
+    console.log(`  Extraction precision: ${precision}%`);
+  }
+  console.log();
 }
 
 /** Inspect a single saved entry in detail */

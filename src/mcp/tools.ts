@@ -203,7 +203,10 @@ export function registerTools(server: McpServer): void {
       });
 
       const lines = [
-        `Total solutions: ${stats.total}`,
+        `Total solutions: ${stats.total} active + ${stats.retiredCount} retired`,
+        stats.extractionPrecision !== null
+          ? `Extraction precision: ${stats.extractionPrecision}%`
+          : '',
         '',
         'By status:',
         ...Object.entries(stats.byStatus)
@@ -219,7 +222,7 @@ export function registerTools(server: McpServer): void {
         ...Object.entries(stats.byScope)
           .filter(([, count]) => count > 0)
           .map(([scope, count]) => `  ${scope}: ${count}`),
-      ];
+      ].filter((l) => l !== undefined);
 
       return {
         content: [{
