@@ -10,7 +10,7 @@ import * as path from 'node:path';
 import { readStdinJSON } from './shared/read-stdin.js';
 import { atomicWriteJSON } from './shared/atomic-write.js';
 import { isHookEnabled } from './hook-config.js';
-import { approve, approveWithWarning, deny, failOpen, failOpenWithTracking } from './shared/hook-response.js';
+import { approve, approveWithWarning, deny, failOpenWithTracking } from './shared/hook-response.js';
 import { STATE_DIR } from '../core/paths.js';
 const FAIL_COUNTER_PATH = path.join(STATE_DIR, 'db-guard-fail-counter.json');
 const FAIL_CLOSE_THRESHOLD = 3;

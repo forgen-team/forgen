@@ -2,7 +2,6 @@ import { describe, it, expect } from 'vitest';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import {
-  COMPOUND_HOME,
   FORGEN_HOME,
   ME_DIR,
   ME_PHILOSOPHY,
@@ -21,10 +20,6 @@ import {
 const HOME = os.homedir();
 
 describe('paths', () => {
-  it('COMPOUND_HOME은 ~/.compound/ (레거시 호환)', () => {
-    expect(COMPOUND_HOME).toBe(path.join(HOME, '.compound'));
-  });
-
   it('FORGEN_HOME은 ~/.forgen/', () => {
     expect(FORGEN_HOME).toBe(path.join(HOME, '.forgen'));
   });
@@ -94,7 +89,7 @@ describe('paths', () => {
   });
 
   it('모든 경로가 절대 경로', () => {
-    const paths = [COMPOUND_HOME, FORGEN_HOME, ME_DIR, ME_PHILOSOPHY, ME_SOLUTIONS, ME_BEHAVIOR, ME_RULES, PACKS_DIR, STATE_DIR, SESSIONS_DIR, GLOBAL_CONFIG];
+    const paths = [FORGEN_HOME, ME_DIR, ME_PHILOSOPHY, ME_SOLUTIONS, ME_BEHAVIOR, ME_RULES, PACKS_DIR, STATE_DIR, SESSIONS_DIR, GLOBAL_CONFIG];
     for (const p of paths) {
       expect(path.isAbsolute(p)).toBe(true);
     }

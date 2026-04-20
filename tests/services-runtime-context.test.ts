@@ -50,17 +50,31 @@ describe('resolveLaunchContext', () => {
   });
 
   it('미지원 --runtime 값은 args로 유지된다', () => {
-    const context = resolveLaunchContext(['--runtime', 'gpt', 'Hello']);
-    expect(context.runtime).toBe('claude');
-    expect(context.args).toEqual(['gpt', 'Hello']);
-    expect(context.runtimeSource).toBe('default');
+    const prev = process.env.FORGEN_RUNTIME;
+    delete process.env.FORGEN_RUNTIME;
+    try {
+      const context = resolveLaunchContext(['--runtime', 'gpt', 'Hello']);
+      expect(context.runtime).toBe('claude');
+      expect(context.args).toEqual(['gpt', 'Hello']);
+      expect(context.runtimeSource).toBe('default');
+    } finally {
+      if (prev === undefined) delete process.env.FORGEN_RUNTIME;
+      else process.env.FORGEN_RUNTIME = prev;
+    }
   });
 
   it('--runtime= 형태가 비어있으면 args가 보존된다', () => {
-    const context = resolveLaunchContext(['--runtime=', 'Hello']);
-    expect(context.runtime).toBe('claude');
-    expect(context.args).toEqual(['Hello']);
-    expect(context.runtimeSource).toBe('default');
+    const prev = process.env.FORGEN_RUNTIME;
+    delete process.env.FORGEN_RUNTIME;
+    try {
+      const context = resolveLaunchContext(['--runtime=', 'Hello']);
+      expect(context.runtime).toBe('claude');
+      expect(context.args).toEqual(['Hello']);
+      expect(context.runtimeSource).toBe('default');
+    } finally {
+      if (prev === undefined) delete process.env.FORGEN_RUNTIME;
+      else process.env.FORGEN_RUNTIME = prev;
+    }
   });
 
 });

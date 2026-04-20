@@ -11,7 +11,7 @@ const { tmpDir, tmpEvDir } = vi.hoisted(() => {
 });
 
 vi.mock('../../src/core/paths.js', () => ({
-  V1_EVIDENCE_DIR: tmpEvDir,
+  ME_BEHAVIOR: tmpEvDir,
   STATE_DIR: '/__test_no_state_dir__',
 }));
 

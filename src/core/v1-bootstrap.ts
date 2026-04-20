@@ -16,7 +16,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as crypto from 'node:crypto';
-import { FORGEN_HOME, V1_ME_DIR, V1_RULES_DIR, V1_EVIDENCE_DIR, V1_RECOMMENDATIONS_DIR, V1_SESSIONS_DIR, V1_STATE_DIR, V1_RAW_LOGS_DIR, V1_SOLUTIONS_DIR } from './paths.js';
+import { FORGEN_HOME, ME_DIR, ME_RULES, ME_BEHAVIOR, V1_RECOMMENDATIONS_DIR, V1_SESSIONS_DIR, STATE_DIR, V1_RAW_LOGS_DIR, ME_SOLUTIONS } from './paths.js';
 import { checkLegacyProfile, runLegacyCutover } from './legacy-detector.js';
 import { detectRuntimeCapability } from './runtime-detector.js';
 import { loadProfile, profileExists } from '../store/profile-store.js';
@@ -31,7 +31,7 @@ import type { SessionEffectiveState, Profile } from '../store/types.js';
 
 // ── Directory Initialization ──
 
-const V1_DIRS = [FORGEN_HOME, V1_ME_DIR, V1_RULES_DIR, V1_EVIDENCE_DIR, V1_RECOMMENDATIONS_DIR, V1_STATE_DIR, V1_SESSIONS_DIR, V1_RAW_LOGS_DIR, V1_SOLUTIONS_DIR];
+const V1_DIRS = [FORGEN_HOME, ME_DIR, ME_RULES, ME_BEHAVIOR, V1_RECOMMENDATIONS_DIR, STATE_DIR, V1_SESSIONS_DIR, V1_RAW_LOGS_DIR, ME_SOLUTIONS];
 
 export function ensureV1Directories(): void {
   for (const dir of V1_DIRS) {

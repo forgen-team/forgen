@@ -8,12 +8,12 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as crypto from 'node:crypto';
-import { V1_RULES_DIR } from '../core/paths.js';
+import { ME_RULES } from '../core/paths.js';
 import { atomicWriteJSON, safeReadJSON } from '../hooks/shared/atomic-write.js';
 import type { Rule, RuleCategory, RuleScope, RuleStrength, RuleSource, RuleStatus } from './types.js';
 
 function rulePath(ruleId: string): string {
-  return path.join(V1_RULES_DIR, `${ruleId}.json`);
+  return path.join(ME_RULES, `${ruleId}.json`);
 }
 
 export function createRule(params: {
@@ -53,11 +53,11 @@ export function loadRule(ruleId: string): Rule | null {
 }
 
 export function loadAllRules(): Rule[] {
-  if (!fs.existsSync(V1_RULES_DIR)) return [];
+  if (!fs.existsSync(ME_RULES)) return [];
   const rules: Rule[] = [];
-  for (const file of fs.readdirSync(V1_RULES_DIR)) {
+  for (const file of fs.readdirSync(ME_RULES)) {
     if (!file.endsWith('.json')) continue;
-    const rule = safeReadJSON<Rule | null>(path.join(V1_RULES_DIR, file), null);
+    const rule = safeReadJSON<Rule | null>(path.join(ME_RULES, file), null);
     if (rule) rules.push(rule);
   }
   return rules;
@@ -80,11 +80,11 @@ export function updateRuleStatus(ruleId: string, status: RuleStatus): boolean {
  * 이전 세션의 임시 규칙이 새 세션에서 영향을 미치지 않도록 정리.
  */
 export function cleanupStaleSessionRules(_currentSessionId: string): number {
-  if (!fs.existsSync(V1_RULES_DIR)) return 0;
+  if (!fs.existsSync(ME_RULES)) return 0;
   let cleaned = 0;
-  for (const file of fs.readdirSync(V1_RULES_DIR)) {
+  for (const file of fs.readdirSync(ME_RULES)) {
     if (!file.endsWith('.json')) continue;
-    const filePath = path.join(V1_RULES_DIR, file);
+    const filePath = path.join(ME_RULES, file);
     const rule = safeReadJSON<Rule | null>(filePath, null);
     if (rule && rule.scope === 'session' && rule.status === 'active') {
       rule.status = 'suppressed';

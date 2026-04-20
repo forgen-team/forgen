@@ -15,18 +15,14 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import {
-  ME_DIR,
   ME_SOLUTIONS,
   ME_RULES,
   ME_BEHAVIOR,
-  MATCH_EVAL_LOG_PATH,
   STATE_DIR,
-  V1_EVIDENCE_DIR,
 } from './paths.js';
 import { parseFrontmatterOnly } from '../engine/solution-format.js';
 import type { SolutionFrontmatter, SolutionStatus } from '../engine/solution-format.js';
 import { readMatchEvalLog } from '../engine/match-eval-log.js';
-import type { MatchEvalLogRecord } from '../engine/match-eval-log.js';
 
 // ── ANSI color helpers ──
 
@@ -473,11 +469,11 @@ export function collectLearningCurve(): LearningCurve {
   const uniqueDays = new Set<string>();
 
   try {
-    if (fs.existsSync(V1_EVIDENCE_DIR)) {
-      const files = fs.readdirSync(V1_EVIDENCE_DIR).filter(f => f.endsWith('.json'));
+    if (fs.existsSync(ME_BEHAVIOR)) {
+      const files = fs.readdirSync(ME_BEHAVIOR).filter(f => f.endsWith('.json'));
       for (const f of files) {
         try {
-          const data = JSON.parse(fs.readFileSync(path.join(V1_EVIDENCE_DIR, f), 'utf-8')) as {
+          const data = JSON.parse(fs.readFileSync(path.join(ME_BEHAVIOR, f), 'utf-8')) as {
             timestamp?: string;
             axis_hint?: string;
           };

@@ -6,7 +6,7 @@
  */
 
 import * as fs from 'node:fs';
-import { V1_PROFILE } from '../core/paths.js';
+import { FORGE_PROFILE } from '../core/paths.js';
 import { atomicWriteJSON, safeReadJSON } from '../hooks/shared/atomic-write.js';
 import type { Profile, QualityPack, AutonomyPack, JudgmentPack, CommunicationPack, TrustPolicy } from './types.js';
 import {
@@ -54,16 +54,16 @@ export function createProfile(
 }
 
 export function loadProfile(): Profile | null {
-  return safeReadJSON<Profile | null>(V1_PROFILE, null);
+  return safeReadJSON<Profile | null>(FORGE_PROFILE, null);
 }
 
 export function saveProfile(profile: Profile): void {
   profile.metadata.updated_at = new Date().toISOString();
-  atomicWriteJSON(V1_PROFILE, profile, { pretty: true });
+  atomicWriteJSON(FORGE_PROFILE, profile, { pretty: true });
 }
 
 export function profileExists(): boolean {
-  return fs.existsSync(V1_PROFILE);
+  return fs.existsSync(FORGE_PROFILE);
 }
 
 export function isV1Profile(data: unknown): data is Profile {

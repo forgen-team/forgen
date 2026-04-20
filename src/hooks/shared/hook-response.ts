@@ -66,11 +66,6 @@ export function ask(reason: string): string {
   });
 }
 
-/** fail-open: 에러 시 안전하게 통과 */
-export function failOpen(): string {
-  return JSON.stringify({ continue: true });
-}
-
 /**
  * fail-open with error tracking: 에러 시 안전하게 통과하되, 실패 정보를 기록.
  * forgen doctor의 Hook Health 섹션에서 실패 이력을 표시할 수 있도록 JSONL 로그에 기록.

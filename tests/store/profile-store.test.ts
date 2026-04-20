@@ -11,7 +11,7 @@ const { tmpDir, tmpProfile } = vi.hoisted(() => {
 });
 
 vi.mock('../../src/core/paths.js', () => ({
-  V1_PROFILE: tmpProfile,
+  FORGE_PROFILE: tmpProfile,
   STATE_DIR: '/__test_no_state_dir__', // atomic-write의 STATE_DIR auto-detect 비활성
 }));
 

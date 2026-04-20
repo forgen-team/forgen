@@ -21,7 +21,7 @@ import { sanitizeId } from './shared/sanitize-id.js';
 import { incrementEvidence } from '../engine/solution-writer.js';
 import { isReflectionCandidate } from './compound-reflection.js';
 import { isHookEnabled } from './hook-config.js';
-import { approve, approveWithWarning, deny, failOpen, failOpenWithTracking } from './shared/hook-response.js';
+import { approve, approveWithWarning, deny, failOpenWithTracking } from './shared/hook-response.js';
 import { FORGEN_HOME, STATE_DIR } from '../core/paths.js';
 import { recordHookTiming } from './shared/hook-timing.js';
 const FAIL_COUNTER_PATH = path.join(STATE_DIR, 'pre-tool-fail-counter.json');

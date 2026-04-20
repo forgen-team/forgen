@@ -1,0 +1,24 @@
+# Forgen — Code Ownership
+# Default owner for everything
+* @wooo-jin
+
+# Core harness & bootstrap
+src/core/ @wooo-jin
+
+# Hook pipeline
+src/hooks/ @wooo-jin
+
+# Compound engine (extraction, lifecycle, matching)
+src/engine/ @wooo-jin
+
+# MCP server & tools
+src/mcp/ @wooo-jin
+
+# Forge (onboarding, profile, evidence)
+src/forge/ @wooo-jin
+
+# Agent definitions
+agents/ @wooo-jin
+
+# CI & release
+.github/ @wooo-jin

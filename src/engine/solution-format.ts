@@ -243,11 +243,6 @@ export function serializeSolutionV3(solution: SolutionV3): string {
 
 // ── Format Detection ──
 
-/** Check if content is in V3 format (YAML frontmatter) */
-export function isV3Format(content: string): boolean {
-  return content.trimStart().startsWith('---');
-}
-
 /** Check if content is in V1 format (# Title + > Type: pattern) */
 export function isV1Format(content: string): boolean {
   const lines = content.split('\n');

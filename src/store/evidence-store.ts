@@ -8,13 +8,13 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as crypto from 'node:crypto';
-import { V1_EVIDENCE_DIR } from '../core/paths.js';
+import { ME_BEHAVIOR } from '../core/paths.js';
 import { atomicWriteJSON, safeReadJSON } from '../hooks/shared/atomic-write.js';
 import type { Evidence, EvidenceType, RuleCategory } from './types.js';
 import { createRule, saveRule, loadActiveRules } from './rule-store.js';
 
 function evidencePath(evidenceId: string): string {
-  return path.join(V1_EVIDENCE_DIR, `${evidenceId}.json`);
+  return path.join(ME_BEHAVIOR, `${evidenceId}.json`);
 }
 
 export function createEvidence(params: {
@@ -50,11 +50,11 @@ export function loadEvidence(evidenceId: string): Evidence | null {
 }
 
 export function loadAllEvidence(): Evidence[] {
-  if (!fs.existsSync(V1_EVIDENCE_DIR)) return [];
+  if (!fs.existsSync(ME_BEHAVIOR)) return [];
   const items: Evidence[] = [];
-  for (const file of fs.readdirSync(V1_EVIDENCE_DIR)) {
+  for (const file of fs.readdirSync(ME_BEHAVIOR)) {
     if (!file.endsWith('.json')) continue;
-    const ev = safeReadJSON<Evidence | null>(path.join(V1_EVIDENCE_DIR, file), null);
+    const ev = safeReadJSON<Evidence | null>(path.join(ME_BEHAVIOR, file), null);
     if (ev) items.push(ev);
   }
   return items;

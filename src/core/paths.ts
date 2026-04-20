@@ -5,26 +5,10 @@ const HOME = os.homedir();
 
 /** ~/.claude/ — Claude Code 설정 디렉토리 */
 export const CLAUDE_DIR = path.join(HOME, '.claude');
-export const CODEX_DIR = path.join(HOME, '.codex');
 
 /** ~/.claude/settings.json — Claude Code 설정 파일 */
 export const SETTINGS_PATH = path.join(CLAUDE_DIR, 'settings.json');
 
-/**
- * ~/.compound/ — LEGACY harness home (pre-v5).
- *
- * @deprecated A5 (2026-04-09): this path must NEVER be used for WRITES.
- * It exists solely as the source path for `migrateToForgen()`.
- * All new writes must target `FORGEN_HOME`-based paths. Consumers that
- * read from this path should prefer the FORGEN_HOME equivalent first
- * and fall back here only during migration.
- *
- * Pre-A5, `harness.ts:ensureDirectories` and several hooks actively
- * created directories under this path, causing a dual-reality where
- * state could diverge between `~/.compound/` and `~/.forgen/` when the
- * migration symlink was broken (sudo install, SIP, CI, manual delete).
- */
-export const COMPOUND_HOME = path.join(HOME, '.compound');
 
 /** ~/.forgen/ — v1 하네스 홈 디렉토리 */
 export const FORGEN_HOME = path.join(HOME, '.forgen');
@@ -98,52 +82,23 @@ export const SESSIONS_DIR = path.join(FORGEN_HOME, 'sessions');
 /** ~/.forgen/config.json — 글로벌 설정 */
 export const GLOBAL_CONFIG = path.join(FORGEN_HOME, 'config.json');
 
-/** ~/.forgen/state/session-quality/ — 세션 품질 점수 */
-export const SESSION_QUALITY_DIR = path.join(STATE_DIR, 'session-quality');
-
 /** ~/.forgen/state/meta-learning/ — 메타학습 상태 파일 */
 export const META_LEARNING_DIR = path.join(STATE_DIR, 'meta-learning');
 
 /** ~/.forgen/lab/ — Lab 적응형 최적화 엔진 데이터 */
 export const LAB_DIR = path.join(FORGEN_HOME, 'lab');
 
-/** ~/.forgen/lab/events.jsonl — Lab 이벤트 로그 (JSONL) */
-export const LAB_EVENTS = path.join(LAB_DIR, 'events.jsonl');
-
 /** ~/.forgen/me/forge-profile.json — 글로벌 Forge 프로필 */
 export const FORGE_PROFILE = path.join(ME_DIR, 'forge-profile.json');
 
-// ── v1 호환 경로 (ME_*와 동일 — 점진 제거 예정) ──
-
-/** @deprecated use ME_DIR */
-export const V1_ME_DIR = ME_DIR;
-
-/** @deprecated use FORGE_PROFILE */
-export const V1_PROFILE = FORGE_PROFILE;
-
-/** @deprecated use ME_RULES */
-export const V1_RULES_DIR = ME_RULES;
-
-/** @deprecated use ME_BEHAVIOR */
-export const V1_EVIDENCE_DIR = ME_BEHAVIOR;
-
 /** ~/.forgen/me/recommendations/ — Pack Recommendation */
 export const V1_RECOMMENDATIONS_DIR = path.join(ME_DIR, 'recommendations');
-
-/** @deprecated use ME_SOLUTIONS */
-export const V1_SOLUTIONS_DIR = ME_SOLUTIONS;
-
-/** @deprecated use STATE_DIR */
-export const V1_STATE_DIR = STATE_DIR;
 
 /** ~/.forgen/state/sessions/ — Session Effective State */
 export const V1_SESSIONS_DIR = path.join(STATE_DIR, 'sessions');
 
 /** ~/.forgen/state/raw-logs/ — Raw Log */
 export const V1_RAW_LOGS_DIR = path.join(STATE_DIR, 'raw-logs');
-
-/** @deprecated use GLOBAL_CONFIG */
-export const V1_GLOBAL_CONFIG = GLOBAL_CONFIG;
 
 // ── 레거시 ──
 

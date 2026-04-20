@@ -11,15 +11,15 @@ vi.mock('node:os', async (importOriginal) => {
 });
 
 import { processCorrection, applyFacetDelta } from '../../src/forge/evidence-processor.js';
-import { V1_ME_DIR, V1_EVIDENCE_DIR, V1_RULES_DIR } from '../../src/core/paths.js';
+import { ME_DIR, ME_BEHAVIOR, ME_RULES } from '../../src/core/paths.js';
 import type { CorrectionRequest, QualityFacets, AutonomyFacets } from '../../src/store/types.js';
 
 describe('evidence-processor', () => {
   beforeEach(() => {
     fs.rmSync(TEST_HOME, { recursive: true, force: true });
-    fs.mkdirSync(V1_ME_DIR, { recursive: true });
-    fs.mkdirSync(V1_EVIDENCE_DIR, { recursive: true });
-    fs.mkdirSync(V1_RULES_DIR, { recursive: true });
+    fs.mkdirSync(ME_DIR, { recursive: true });
+    fs.mkdirSync(ME_BEHAVIOR, { recursive: true });
+    fs.mkdirSync(ME_RULES, { recursive: true });
   });
   afterEach(() => { fs.rmSync(TEST_HOME, { recursive: true, force: true }); });
 

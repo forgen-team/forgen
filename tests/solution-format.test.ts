@@ -6,7 +6,6 @@ import {
   parseFrontmatterOnly,
   parseSolutionV3,
   serializeSolutionV3,
-  isV3Format,
   isV1Format,
   migrateV1toV3,
   validateFrontmatter,
@@ -365,21 +364,7 @@ describe('serializeSolutionV3', () => {
   });
 });
 
-// ── isV3Format / isV1Format ──
-
-describe('isV3Format', () => {
-  it('---로 시작하면 v3으로 감지한다', () => {
-    expect(isV3Format('---\nname: test\n---\n')).toBe(true);
-  });
-
-  it('---로 시작하지 않으면 v3가 아니다', () => {
-    expect(isV3Format('# Title\n> Type: solution')).toBe(false);
-  });
-
-  it('앞에 공백이 있어도 ---로 시작하면 v3이다', () => {
-    expect(isV3Format('  \n---\nname: test\n---\n')).toBe(true);
-  });
-});
+// ── isV1Format ──
 
 describe('isV1Format', () => {
   it('# Title과 > Type: 이 있으면 v1으로 감지한다', () => {
@@ -458,7 +443,6 @@ describe('migrateV1toV3', () => {
 
   it('변환 후 재파싱하면 유효한 v3이다 (roundtrip)', () => {
     const result = migrateV1toV3(v1Content, 'test.md');
-    expect(isV3Format(result)).toBe(true);
     const parsed = parseSolutionV3(result);
     expect(parsed).not.toBeNull();
     expect(validateFrontmatter(parsed!.frontmatter)).toBe(true);

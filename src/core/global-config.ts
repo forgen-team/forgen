@@ -1,6 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { GLOBAL_CONFIG, V1_GLOBAL_CONFIG } from './paths.js';
+import { GLOBAL_CONFIG } from './paths.js';
 import type { QualityPack, AutonomyPack, TrustPolicy } from '../store/types.js';
 
 export type NotifyVerbosity = 'minimal' | 'session' | 'agent' | 'verbose';
@@ -47,25 +47,18 @@ export interface GlobalConfig {
   legacy_backup?: string;
 }
 
-/** v1 config 로드 (~/.forgen/config.json 우선, 레거시 폴백) */
+/** 글로벌 config 로드 (~/.forgen/config.json) */
 export function loadGlobalConfig(): GlobalConfig {
-  // v1 경로 우선
-  if (fs.existsSync(V1_GLOBAL_CONFIG)) {
-    try {
-      return JSON.parse(fs.readFileSync(V1_GLOBAL_CONFIG, 'utf-8'));
-    } catch { /* fall through */ }
-  }
-  // 레거시 폴백
   if (fs.existsSync(GLOBAL_CONFIG)) {
     try {
       return JSON.parse(fs.readFileSync(GLOBAL_CONFIG, 'utf-8'));
-    } catch { /* fall through */ }
+    } catch { /* malformed — use defaults */ }
   }
   return {};
 }
 
-/** v1 config 저장 (~/.forgen/config.json) */
+/** 글로벌 config 저장 (~/.forgen/config.json) */
 export function saveGlobalConfig(config: GlobalConfig): void {
-  fs.mkdirSync(path.dirname(V1_GLOBAL_CONFIG), { recursive: true });
-  fs.writeFileSync(V1_GLOBAL_CONFIG, JSON.stringify(config, null, 2));
+  fs.mkdirSync(path.dirname(GLOBAL_CONFIG), { recursive: true });
+  fs.writeFileSync(GLOBAL_CONFIG, JSON.stringify(config, null, 2));
 }

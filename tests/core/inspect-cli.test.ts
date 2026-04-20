@@ -12,7 +12,7 @@ vi.mock('node:os', async (importOriginal) => {
 });
 
 import { handleInspect } from '../../src/core/inspect-cli.js';
-import { V1_ME_DIR, V1_RULES_DIR, V1_EVIDENCE_DIR, V1_SESSIONS_DIR } from '../../src/core/paths.js';
+import { ME_DIR, ME_RULES, ME_BEHAVIOR, V1_SESSIONS_DIR } from '../../src/core/paths.js';
 import { createProfile, saveProfile } from '../../src/store/profile-store.js';
 import { createRule, saveRule } from '../../src/store/rule-store.js';
 import { createEvidence, saveEvidence } from '../../src/store/evidence-store.js';
@@ -25,9 +25,9 @@ describe('inspect-cli', () => {
   beforeEach(() => {
     setLocale('ko');
     fs.rmSync(TEST_HOME, { recursive: true, force: true });
-    fs.mkdirSync(V1_ME_DIR, { recursive: true });
-    fs.mkdirSync(V1_RULES_DIR, { recursive: true });
-    fs.mkdirSync(V1_EVIDENCE_DIR, { recursive: true });
+    fs.mkdirSync(ME_DIR, { recursive: true });
+    fs.mkdirSync(ME_RULES, { recursive: true });
+    fs.mkdirSync(ME_BEHAVIOR, { recursive: true });
     fs.mkdirSync(V1_SESSIONS_DIR, { recursive: true });
     consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
   });

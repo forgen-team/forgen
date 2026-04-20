@@ -19,16 +19,15 @@ const { tmpDir, tmpProfile, tmpRulesDir, tmpEvDir, tmpRecDir, tmpSessionsDir, tm
 });
 
 vi.mock('../../src/core/paths.js', () => ({
-  V1_PROFILE: tmpProfile,
-  V1_RULES_DIR: tmpRulesDir,
-  V1_EVIDENCE_DIR: tmpEvDir,
+  FORGE_PROFILE: tmpProfile,
+  ME_RULES: tmpRulesDir,
+  ME_BEHAVIOR: tmpEvDir,
   V1_RECOMMENDATIONS_DIR: tmpRecDir,
   V1_SESSIONS_DIR: tmpSessionsDir,
   V1_RAW_LOGS_DIR: tmpRawLogsDir,
-  V1_SOLUTIONS_DIR: tmpSolDir,
+  ME_SOLUTIONS: tmpSolDir,
   FORGEN_HOME: tmpDir,
-  V1_ME_DIR: require('node:path').join(tmpDir, 'me'),
-  V1_STATE_DIR: require('node:path').join(tmpDir, 'state'),
+  ME_DIR: require('node:path').join(tmpDir, 'me'),
   STATE_DIR: require('node:path').join(tmpDir, 'state'),
 }));
 

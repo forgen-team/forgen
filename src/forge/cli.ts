@@ -66,7 +66,7 @@ async function handleReset(level: string): Promise<void> {
 
   // 동적 import로 store 모듈 로드
   const fs = await import('node:fs');
-  const { V1_PROFILE, V1_RULES_DIR, V1_EVIDENCE_DIR, V1_RECOMMENDATIONS_DIR, V1_SESSIONS_DIR, V1_RAW_LOGS_DIR, V1_SOLUTIONS_DIR } = await import('../core/paths.js');
+  const { FORGE_PROFILE, ME_RULES, ME_BEHAVIOR, V1_RECOMMENDATIONS_DIR, V1_SESSIONS_DIR, V1_RAW_LOGS_DIR, ME_SOLUTIONS } = await import('../core/paths.js');
 
   const deleteDirs = (dirs: string[]) => {
     for (const dir of dirs) {
@@ -82,16 +82,16 @@ async function handleReset(level: string): Promise<void> {
   };
 
   if (level === 'soft') {
-    deleteFile(V1_PROFILE);
-    deleteDirs([V1_RULES_DIR, V1_RECOMMENDATIONS_DIR, V1_SESSIONS_DIR]);
+    deleteFile(FORGE_PROFILE);
+    deleteDirs([ME_RULES, V1_RECOMMENDATIONS_DIR, V1_SESSIONS_DIR]);
     console.log('\n  Soft reset 완료. Profile + Rule + Recommendation + Session 초기화.');
   } else if (level === 'learning') {
-    deleteFile(V1_PROFILE);
-    deleteDirs([V1_RULES_DIR, V1_EVIDENCE_DIR, V1_RECOMMENDATIONS_DIR, V1_SESSIONS_DIR, V1_RAW_LOGS_DIR]);
+    deleteFile(FORGE_PROFILE);
+    deleteDirs([ME_RULES, ME_BEHAVIOR, V1_RECOMMENDATIONS_DIR, V1_SESSIONS_DIR, V1_RAW_LOGS_DIR]);
     console.log('\n  Learning reset 완료. 개인 학습 전체 초기화.');
   } else if (level === 'full') {
-    deleteFile(V1_PROFILE);
-    deleteDirs([V1_RULES_DIR, V1_EVIDENCE_DIR, V1_RECOMMENDATIONS_DIR, V1_SESSIONS_DIR, V1_RAW_LOGS_DIR, V1_SOLUTIONS_DIR]);
+    deleteFile(FORGE_PROFILE);
+    deleteDirs([ME_RULES, ME_BEHAVIOR, V1_RECOMMENDATIONS_DIR, V1_SESSIONS_DIR, V1_RAW_LOGS_DIR, ME_SOLUTIONS]);
     console.log('\n  Full reset 완료. Compound 포함 전체 초기화.');
   }
 

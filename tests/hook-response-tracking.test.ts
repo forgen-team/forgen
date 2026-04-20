@@ -6,14 +6,9 @@
  * The file write side effect is tested indirectly through the doctor.ts integration.
  */
 import { describe, it, expect } from 'vitest';
-import { failOpen, failOpenWithTracking, approve, deny, ask } from '../src/hooks/shared/hook-response.js';
+import { failOpenWithTracking, approve, deny, ask } from '../src/hooks/shared/hook-response.js';
 
 describe('hook-response functions', () => {
-  it('failOpen returns continue: true JSON', () => {
-    const result = JSON.parse(failOpen());
-    expect(result.continue).toBe(true);
-  });
-
   it('failOpenWithTracking returns continue: true JSON', () => {
     const result = JSON.parse(failOpenWithTracking('test-hook'));
     expect(result.continue).toBe(true);
