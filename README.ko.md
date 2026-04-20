@@ -131,6 +131,35 @@ forgen
 - **Node.js** >= 20 (SQLite 세션 검색은 >= 22 권장)
 - **Claude Code** 설치 및 인증 (`npm i -g @anthropic-ai/claude-code`)
 
+> **벤더 의존성:** forgen은 Claude Code를 래핑합니다. Anthropic API 또는 Claude Code 변경이 동작에 영향을 줄 수 있습니다. Claude Code 1.0.x 기준으로 테스트되었습니다.
+
+---
+
+## 왜 forgen인가
+
+|                        | Generic Claude Code | oh-my-claudecode | forgen          |
+|------------------------|:-------------------:|:----------------:|:---------------:|
+| 모두에게 동일           | Yes                 | Yes              | **No**          |
+| 교정에서 학습           | No                  | No               | **Yes**         |
+| Evidence 기반 라이프사이클| No               | No               | **Yes**         |
+| 나쁜 패턴 자동 은퇴      | No                  | No               | **Yes**         |
+| 개인화된 규칙           | No                  | No               | **Yes**         |
+| 런타임 의존성           | -                   | many             | **3**           |
+
+### 언제 사용하면 좋은가
+
+**잘 맞는 경우:**
+- 몇 주에 걸쳐 Claude가 패턴을 학습하는 장기 프로젝트
+- AI 행동 방식에 강한 선호가 있는 개발자
+- Compound 지식의 혜택을 받는 반복 패턴이 있는 코드베이스
+
+**맞지 않는 경우:**
+- 일회성 스크립트나 임시 프로토타입
+- Claude Code가 없는 환경
+- 모든 구성원이 동일한 AI 행동이 필요한 팀 (forgen은 개인용이지, 팀용이 아님)
+
+**forgen + oh-my-claudecode:** 함께 사용할 수 있습니다. OMC는 오케스트레이션(에이전트, 워크플로우)을, forgen은 개인화(프로필, 학습)를 담당합니다. [공존 가이드](docs/guides/with-omc.md)를 참고하세요.
+
 ---
 
 ## 동작 방식

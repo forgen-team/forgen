@@ -131,6 +131,35 @@ forgen
 - **Node.js** >= 20 (>= 22 recommended for SQLite session search)
 - **Claude Code** installed and authenticated (`npm i -g @anthropic-ai/claude-code`)
 
+> **Vendor dependency:** Forgen wraps Claude Code. Anthropic API or Claude Code changes may affect behavior. Tested with Claude Code 1.0.x.
+
+---
+
+## Why forgen
+
+|                        | Generic Claude Code | oh-my-claudecode | forgen          |
+|------------------------|:-------------------:|:----------------:|:---------------:|
+| Same for everyone      | Yes                 | Yes              | **No**          |
+| Learns from corrections| No                  | No               | **Yes**         |
+| Evidence-based lifecycle| No                 | No               | **Yes**         |
+| Auto-retires bad patterns| No               | No               | **Yes**         |
+| Personalized rules     | No                  | No               | **Yes**         |
+| Runtime dependencies   | -                   | many             | **3**           |
+
+### When to use forgen
+
+**Good fit:**
+- Long-running projects where Claude learns your patterns over weeks
+- Developers with strong preferences about how AI should behave
+- Codebases with recurring patterns that benefit from compound knowledge
+
+**Not a fit:**
+- One-off scripts or throwaway prototypes
+- Environments without Claude Code
+- Teams that need identical AI behavior for all members (forgen is personal, not team-wide)
+
+**forgen + oh-my-claudecode:** They work together. OMC provides orchestration (agents, workflows); forgen provides personalization (profile, learning). See [Coexistence Guide](docs/guides/with-omc.md).
+
 ---
 
 ## How It Works

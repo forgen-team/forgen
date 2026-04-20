@@ -131,6 +131,35 @@ forgen
 - **Node.js** >= 20（SQLite 会话搜索推荐 >= 22）
 - **Claude Code** 已安装并认证（`npm i -g @anthropic-ai/claude-code`）
 
+> **厂商依赖:** forgen 封装了 Claude Code。Anthropic API 或 Claude Code 的变更可能影响其行为。已在 Claude Code 1.0.x 版本下测试。
+
+---
+
+## 为什么选择 forgen
+
+|                        | Generic Claude Code | oh-my-claudecode | forgen          |
+|------------------------|:-------------------:|:----------------:|:---------------:|
+| 对所有人相同           | Yes                 | Yes              | **No**          |
+| 从纠正中学习           | No                  | No               | **Yes**         |
+| 基于证据的生命周期     | No                  | No               | **Yes**         |
+| 自动淘汰不良模式       | No                  | No               | **Yes**         |
+| 个性化规则             | No                  | No               | **Yes**         |
+| 运行时依赖             | -                   | many             | **3**           |
+
+### 适用场景
+
+**适合使用:**
+- Claude 可以在数周内学习你的模式的长期项目
+- 对 AI 行为方式有强烈偏好的开发者
+- 有重复模式、能从 Compound 知识中获益的代码库
+
+**不适合使用:**
+- 一次性脚本或临时原型
+- 没有 Claude Code 的环境
+- 需要所有成员 AI 行为完全一致的团队（forgen 是个人化的，不面向团队）
+
+**forgen + oh-my-claudecode:** 可以一起使用。OMC 负责编排（智能体、工作流）; forgen 负责个性化（档案、学习）。详情请参阅 [共存指南](docs/guides/with-omc.md)。
+
 ---
 
 ## 工作原理
