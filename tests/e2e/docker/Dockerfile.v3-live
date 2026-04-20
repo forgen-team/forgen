@@ -1,0 +1,29 @@
+FROM node:22-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends git curl && rm -rf /var/lib/apt/lists/*
+
+# Claude Code CLI (required for live verification)
+RUN npm i -g @anthropic-ai/claude-code@latest
+
+WORKDIR /workspace
+
+COPY . /workspace/forgen-src
+RUN cd /workspace/forgen-src && npm install && npm run build && \
+    TARBALL=$(npm pack 2>&1 | tail -1) && \
+    npm i -g "/workspace/forgen-src/$TARBALL"
+
+COPY tests/e2e/docker/verify-live-claude.sh /workspace/verify-live-claude.sh
+RUN chmod +x /workspace/verify-live-claude.sh
+
+# non-root user (Claude Code's --dangerously-skip-permissions 요구사항)
+RUN useradd -m -s /bin/bash tester && \
+    mkdir -p /workspace/test-project && \
+    cd /workspace/test-project && \
+    git init && git config user.email "test@test.com" && git config user.name "test" && \
+    npm init -y && \
+    chown -R tester:tester /workspace
+
+USER tester
+WORKDIR /workspace/test-project
+
+ENTRYPOINT ["/workspace/verify-live-claude.sh"]
