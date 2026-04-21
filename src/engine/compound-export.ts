@@ -17,6 +17,25 @@ import { ME_DIR } from '../core/paths.js';
 /** Directories within ME_DIR to include in the archive. */
 const KNOWLEDGE_DIRS = ['solutions', 'rules', 'behavior'] as const;
 
+/**
+ * Test-friendly containment check (exported for unit tests).
+ *
+ * Audit fix (2026-04-21, follow-up #A): prior guard
+ * `realDest.startsWith(ME_DIR)` was a naive prefix match. A path like
+ * `/home/u/.forgen/me-evil/x.md` starts with `/home/u/.forgen/me` and
+ * bypassed the check — even though it's a sibling, not a child, of
+ * ME_DIR. Fix: compare with `parent + path.sep` so `/home/u/.forgen/me/`
+ * cannot prefix-match `/home/u/.forgen/me-evil/...`.
+ *
+ * @param parentWithSep absolute canonical parent path that INCLUDES a
+ *   trailing `path.sep` (precomputed by caller once per archive).
+ * @param candidate any path string (will be resolved lexically).
+ */
+export function isPathInside(parentWithSep: string, candidate: string): boolean {
+  const resolved = path.resolve(candidate) + path.sep;
+  return resolved.startsWith(parentWithSep) && resolved !== parentWithSep;
+}
+
 export interface ExportResult {
   outputPath: string;
   counts: Record<string, number>;
@@ -119,13 +138,23 @@ export function importKnowledge(archivePath: string): ImportResult {
 
     const result: ImportResult = { imported: 0, skipped: 0, details: [] };
 
-    for (const relFile of archiveFiles) {
-      const srcPath = path.join(tmpDir, relFile);
-      const destPath = path.join(ME_DIR, relFile);
+    // Audit fix (2026-04-21, follow-up #A): prior check
+    // `realDest.startsWith(ME_DIR)` was a broken prefix guard. An archive
+    // entry `../me-evil/payload.md` resolves to a sibling directory path
+    // that still startsWith ME_DIR (prefix collision) and bypasses the
+    // check. Fix: compare lexically resolved paths with an explicit
+    // `path.sep` suffix so `.../me-evil` can never masquerade as
+    // `.../me/...`. Both source and destination are validated — a
+    // malformed archive must neither read from outside tmpDir nor write
+    // outside ME_DIR.
+    const meDirCanon = path.resolve(ME_DIR) + path.sep;
+    const tmpDirCanon = path.resolve(tmpDir) + path.sep;
 
-      // Security: ensure the dest path stays within ME_DIR
-      const realDest = path.resolve(destPath);
-      if (!realDest.startsWith(ME_DIR)) {
+    for (const relFile of archiveFiles) {
+      const srcPath = path.resolve(path.join(tmpDir, relFile));
+      const destPath = path.resolve(path.join(ME_DIR, relFile));
+
+      if (!isPathInside(meDirCanon, destPath) || !isPathInside(tmpDirCanon, srcPath)) {
         result.skipped++;
         result.details.push({ file: relFile, action: 'skipped' });
         continue;

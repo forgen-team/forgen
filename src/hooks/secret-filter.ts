@@ -33,6 +33,12 @@ export const SECRET_PATTERNS: SecretPattern[] = [
   { name: 'Password', pattern: /(password|passwd|pwd)\s*[=:]\s*["']?[^\s"']{8,}/i },
   { name: 'Private Key', pattern: /-----BEGIN (RSA |EC |DSA )?PRIVATE KEY-----/ },
   { name: 'Connection String', pattern: /(mongodb|postgres|mysql|redis):\/\/\w+:[^@]+@/ },
+  // 2026-04-21 follow-up audit #B: vendor-specific prefixes the generic
+  // `(sk|pk|api-key)[_-]` pattern does NOT match. Real-world leaks
+  // overwhelmingly use these formats.
+  { name: 'GitHub Token', pattern: /\b(ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{36,}\b/ },
+  { name: 'Google API Key', pattern: /\bAIza[0-9A-Za-z_-]{35}\b/ },
+  { name: 'Slack Token', pattern: /\bxox[abpors]-[A-Za-z0-9-]{10,}/ },
 ];
 
 /** 텍스트에서 민감 정보 패턴 감지 (순수 함수) */
