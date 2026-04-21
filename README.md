@@ -109,7 +109,7 @@ Facets are micro-adjusted based on accumulated evidence. If your corrections con
 
 ### Next session
 
-Updated rules are rendered with your corrections included. Compound knowledge is searchable via MCP. Claude gets better at being *your* Claude.
+Updated rules are rendered with your corrections included. Compound knowledge is searchable via MCP. Retrieval precision grows as your personal accumulation grows — the mechanism is in place from day 1 (starter-pack covers common dev queries on a fresh install), and the signal-to-noise ratio improves over roughly 2–4 weeks of real use as low-fitness solutions are auto-demoted and your specific patterns get promoted.
 
 ---
 
@@ -238,12 +238,16 @@ solution-injector matches: starter-error-handling-patterns (0.70)
 Claude sees: "Matched solutions: error-handling-patterns [pattern|0.70]
              Use try/catch with specific error types. Always log original error..."
                     ↓
-Claude writes better error handling code, informed by your accumulated patterns.
+Claude has your accumulated patterns in context while drafting the response.
 ```
+
+Precision gates (v0.3.2+): matches below relevance 0.3 or with only a single
+common-word tag overlap are filtered before injection so Claude's context
+doesn't get polluted by low-signal hits.
 
 ### 10 built-in skills
 
-Curated, compound-native skills. Each one integrates with accumulated knowledge — they get better every session.
+Curated, compound-native skills. Each integrates with your accumulated knowledge — effectiveness compounds as your personal solution base grows.
 
 **Core chain** (build → learn):
 

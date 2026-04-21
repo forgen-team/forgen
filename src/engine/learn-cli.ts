@@ -1,3 +1,4 @@
+import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { fixupSolutions } from './solution-fixup.js';
@@ -7,6 +8,8 @@ import { buildWeaknessReport, saveWeaknessReport } from './solution-weakness.js'
 import { listCandidates, promoteCandidate, rollbackSince } from './solution-candidate.js';
 
 const ME_SOLUTIONS = path.join(os.homedir(), '.forgen', 'me', 'solutions');
+const STATE_DIR = path.join(os.homedir(), '.forgen', 'state');
+const OUTCOMES_DIR = path.join(STATE_DIR, 'outcomes');
 
 export async function handleLearn(args: string[]): Promise<void> {
   const sub = args[0];
@@ -14,6 +17,7 @@ export async function handleLearn(args: string[]): Promise<void> {
   if (sub === 'quarantine') return runQuarantine(args.slice(1));
   if (sub === 'fitness') return runFitness(args.slice(1));
   if (sub === 'evolve') return runEvolve(args.slice(1));
+  if (sub === 'reset-outcomes') return runResetOutcomes(args.slice(1));
   printUsage();
 }
 
@@ -27,7 +31,54 @@ function printUsage(): void {
     forgen learn fitness [--json]         Show per-solution fitness (accept/correct/error ratios)
     forgen learn evolve [--save|--rollback <ts>|--promote <name>]
                                           Phase 4 evolution: weakness report + candidate lifecycle
+    forgen learn reset-outcomes [--apply] Archive pre-audit outcome history (dry-run by default).
+                                          Use after upgrading from <0.3.2 to start fitness fresh
+                                          under the new attribution gates. Old data is preserved
+                                          at ~/.forgen/state/outcomes.archive-<ts>/ (never deleted).
 `);
+}
+
+/**
+ * Archive the outcomes directory to a timestamped sibling so fitness
+ * computation starts fresh under v0.3.2's corrected attribution gates
+ * (match_score≥0.3, lag≤5min, top-3, single-tag rejection). Pre-0.3.2
+ * outcomes were recorded with blanket error-attribution on every tool
+ * failure in the session window, producing a 91% global error rate even
+ * for solutions that weren't actually causing the failures.
+ *
+ * Archive, never delete — users who want to audit their pre-0.3.2
+ * history can still read `outcomes.archive-<ts>/*.jsonl`.
+ */
+function runResetOutcomes(args: string[]): void {
+  const apply = args.includes('--apply');
+  if (!fs.existsSync(OUTCOMES_DIR)) {
+    console.log(`\n  No outcomes directory yet — nothing to reset.\n`);
+    return;
+  }
+  const files = fs.readdirSync(OUTCOMES_DIR).filter((f) => f.endsWith('.jsonl'));
+  if (files.length === 0) {
+    console.log(`\n  Outcomes directory is empty — nothing to reset.\n`);
+    return;
+  }
+  let totalLines = 0;
+  for (const f of files) {
+    try {
+      totalLines += fs.readFileSync(path.join(OUTCOMES_DIR, f), 'utf-8').split('\n').filter(Boolean).length;
+    } catch { /* ignore */ }
+  }
+  console.log(`\n  Outcomes snapshot: ${files.length} session files, ${totalLines} events.`);
+  if (!apply) {
+    console.log(`\n  Dry-run. Re-run with --apply to archive:`);
+    console.log(`    mv ~/.forgen/state/outcomes  →  ~/.forgen/state/outcomes.archive-<ts>`);
+    console.log(`    new empty ~/.forgen/state/outcomes/\n`);
+    return;
+  }
+  const archivePath = `${OUTCOMES_DIR}.archive-${Date.now()}`;
+  fs.renameSync(OUTCOMES_DIR, archivePath);
+  fs.mkdirSync(OUTCOMES_DIR, { recursive: true });
+  console.log(`\n  ✓ Archived to ${archivePath}`);
+  console.log(`  ✓ Fresh ${OUTCOMES_DIR} created.`);
+  console.log(`\n  Next fitness snapshot reflects v0.3.2 attribution gates only.\n`);
 }
 
 function runFixUp(args: string[]): void {
