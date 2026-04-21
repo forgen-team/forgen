@@ -37,15 +37,23 @@ export const ALWAYS_CONFIRM_TOOLS = new Set([
   'Bash', 'Write', 'Edit',
 ]);
 
-/** 도구 분류: 승인/확인/통과 결정 (순수 함수) */
+/**
+ * 도구 분류: pass-through 결정 (순수 함수).
+ *
+ * Audit clarification #4 (2026-04-21): 본 훅은 Claude의 기본 권한 흐름을
+ * 가로채지 않는다 — 모든 return 라벨은 "어떤 pass-through 경로인가"를
+ * 의미하며, `permissionDecision: 'allow'`를 강제하지 않는다. 과거 라벨
+ * `auto-approve-safe`, `autopilot-approve`는 승인으로 오해되어 audit log가
+ * 실제 실행 신뢰도와 어긋났다.
+ */
 export function classifyTool(
   toolName: string,
   isAutopilot: boolean,
-): 'auto-approve-safe' | 'autopilot-confirm' | 'autopilot-approve' | 'pass-through' {
-  if (SAFE_TOOLS.has(toolName)) return 'auto-approve-safe';
+): 'safe-pass-through' | 'autopilot-warn-pass-through' | 'autopilot-pass-through' | 'pass-through' {
+  if (SAFE_TOOLS.has(toolName)) return 'safe-pass-through';
   if (!isAutopilot) return 'pass-through';
-  if (ALWAYS_CONFIRM_TOOLS.has(toolName)) return 'autopilot-confirm';
-  return 'autopilot-approve';
+  if (ALWAYS_CONFIRM_TOOLS.has(toolName)) return 'autopilot-warn-pass-through';
+  return 'autopilot-pass-through';
 }
 
 /** autopilot 모드 활성 여부 확인 */
@@ -93,9 +101,17 @@ async function main(): Promise<void> {
   const toolName = data.tool_name ?? data.toolName ?? '';
   const sessionId = data.session_id ?? 'default';
 
-  // 안전 도구는 항상 승인
+  // Audit note #4 (2026-04-21): `approve()` / `approveWithWarning()` 둘 다
+  // Claude Code hook protocol에서 `permissionDecision: 'allow'`를 설정하지
+  // 않는다. 따라서 본 훅은 실제로 도구 실행을 "승인(force-allow)"하지 않고,
+  // Claude의 기본 권한 흐름으로 pass-through 시킨다 (systemMessage UI 경고는
+  // 선택사항). 과거 로그에서 `auto-approve-safe` / `autopilot-approve` 같은
+  // 결정 이름이 실제 효과와 어긋났기에 로그 라벨을 실효에 맞춰 정정했다.
+  //
+  // SAFE_TOOLS (Read/Glob/Grep 등): Claude 기본 정책상 이미 허용되는 도구이므로
+  // 이곳에서 별도 장치 없이 pass-through. 로그는 `safe-pass-through`로 기록.
   if (SAFE_TOOLS.has(toolName)) {
-    logPermissionRequest(sessionId, toolName, 'auto-approve-safe');
+    logPermissionRequest(sessionId, toolName, 'safe-pass-through');
     console.log(approve());
     return;
   }
@@ -109,21 +125,24 @@ async function main(): Promise<void> {
 
   // autopilot 모드 (2차 방어선):
   // pre-tool-use 훅이 위험 패턴(rm -rf, git push --force 등)을 이미 block/warn 처리함.
-  // 여기 도달하는 도구는 pre-tool-use를 통과한 것이므로, 승인하되 메시지로 추적 가능하게 함.
+  // 여기 도달하는 도구는 pre-tool-use를 통과한 것으로 pass-through + UI 경고.
+  // 여전히 Claude의 기본 confirmation은 사용자에게 노출된다 — 본 훅이 전체
+  // 승인을 가로채는 게 아니라 추적성을 위한 어노테이션이다.
   if (ALWAYS_CONFIRM_TOOLS.has(toolName)) {
-    logPermissionRequest(sessionId, toolName, 'autopilot-confirm');
+    logPermissionRequest(sessionId, toolName, 'autopilot-warn-pass-through');
 
     // Bash는 pre-tool-use를 통과했더라도 경고 강도를 높임 (임의 셸 실행 위험)
     const warningLevel = toolName === 'Bash'
-      ? `[Forgen] ⚠ Autopilot: Bash tool auto-approved — passed pre-tool-use validation. Beware of unexpected commands.`
-      : `[Forgen] Autopilot: ${toolName} tool execution auto-approved.`;
+      ? `[Forgen] ⚠ Autopilot: Bash tool — passed pre-tool-use validation. Beware of unexpected commands.`
+      : `[Forgen] Autopilot: ${toolName} tool use passed through with warning.`;
 
     console.log(approveWithWarning(`<compound-permission>\n${warningLevel}\n</compound-permission>`));
     return;
   }
 
-  // 기타 도구: autopilot 모드에서 자동 승인
-  logPermissionRequest(sessionId, toolName, 'autopilot-approve');
+  // 기타 도구: autopilot 모드에서도 pass-through (force-approve 아님).
+  // 과거 로그 라벨은 `autopilot-approve`였으나 실제 효과는 pass-through.
+  logPermissionRequest(sessionId, toolName, 'autopilot-pass-through');
   console.log(approve());
 }
 
