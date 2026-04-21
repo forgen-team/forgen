@@ -989,18 +989,11 @@ echo ""
 # ──────────────────────────────────────────────
 echo "  [Phase 8: Hoyeon Analysis — Full Feature Verification]"
 
-# 8-1. specify 스킬 실제 주입 (keyword → additionalContext)
-SPECIFY_RESULT=$(echo '{"prompt":"specify 결제 시스템","session_id":"e2e-hoyeon-1","cwd":"/tmp"}' | \
-  COMPOUND_CWD=/tmp node "$HOOKS_DIR/keyword-detector.js" 2>/dev/null)
-if echo "$SPECIFY_RESULT" | grep -q "Resolved.*Provisional\|resolved.*provisional\|R.*P.*U"; then
-  pass "specify skill: R/P/U 3-level evaluation injected"
-else
-  if echo "$SPECIFY_RESULT" | grep -q "specify"; then
-    pass "specify skill: skill content injected (specify keyword detected)"
-  else
-    fail "specify skill: not injected — $(echo "$SPECIFY_RESULT" | head -c 150)"
-  fi
-fi
+# 8-1. removed (2026-04-21): `specify` skill was deleted in commit f534227
+# (16-skill refactor). The old test asserted `specify` keyword injection — no
+# longer a feature. See docs/weakness-analysis-2026-04-14.md §2.1 for the
+# rationale (21 skills → 10 killer skills). `forge-loop` + `deep-interview`
+# now cover the former `specify` use case.
 
 # 8-2. deep-interview 스킬 주입 + Ambiguity Score
 DI_RESULT=$(echo '{"prompt":"deep-interview MVP 기획","session_id":"e2e-hoyeon-2","cwd":"/tmp"}' | \
@@ -1043,22 +1036,10 @@ else
   fail "intent-classifier: Korean implement not matched — $(echo "$IMPLEMENT_KO" | head -c 100)"
 fi
 
-# 8-6. 한글 keyword 매칭 (에코 모드, 마이그레이션)
-ECOMODE_KO=$(echo '{"prompt":"에코 모드 활성화","session_id":"e2e-hoyeon-6","cwd":"/tmp"}' | \
-  COMPOUND_CWD=/tmp node "$HOOKS_DIR/keyword-detector.js" 2>/dev/null)
-if echo "$ECOMODE_KO" | grep -qi "ecomode\|에코\|eco"; then
-  pass "keyword-detector: Korean '에코 모드' → ecomode matched"
-else
-  fail "keyword-detector: Korean ecomode not matched — $(echo "$ECOMODE_KO" | head -c 100)"
-fi
-
-MIGRATE_KO=$(echo '{"prompt":"마이그레이션 시작","session_id":"e2e-hoyeon-7","cwd":"/tmp"}' | \
-  COMPOUND_CWD=/tmp node "$HOOKS_DIR/keyword-detector.js" 2>/dev/null)
-if echo "$MIGRATE_KO" | grep -qi "migrate\|마이그레이션"; then
-  pass "keyword-detector: Korean '마이그레이션 시작' → migrate matched"
-else
-  fail "keyword-detector: Korean migrate not matched — $(echo "$MIGRATE_KO" | head -c 100)"
-fi
+# 8-6. removed (2026-04-21): `ecomode` and `migrate` skills were both in the
+# 16-skill deletion batch (commit f534227). Korean keyword matching for these
+# specific skills is no longer applicable. `intent-classifier` Korean
+# matching is still covered above (8-5) via the `implement` case.
 
 # 8-7. solution-injector 실제 솔루션 주입 (additionalContext 검증)
 SOL_RESULT=$(echo '{"prompt":"error handling typescript best practice","session_id":"e2e-hoyeon-8"}' | \
@@ -1137,16 +1118,23 @@ if [ -n "$RENDERER_JS" ] && [ -f "$RENDERER_JS" ]; then
   fi
 fi
 
-# 8-11. ALL_MODES includes specify (cancelforgen coverage)
+# 8-11. ALL_MODES now covers the v0.3 skill set (specify removed).
+# Verify the current-generation skills are enumerated so cancelforgen and
+# other mode-aware tools see them.
 MODES_CHECK=$(node -e "
   const { ALL_MODES } = require('$VERSION_DIR/dist/core/paths.js');
-  const has = ALL_MODES.includes('specify');
-  console.log(has ? 'OK:' + ALL_MODES.length + ' modes' : 'FAIL:missing');
+  const required = ['forge-loop', 'ship', 'retro', 'learn', 'calibrate'];
+  const missing = required.filter(m => !ALL_MODES.includes(m));
+  if (missing.length === 0) {
+    console.log('OK:' + ALL_MODES.length + ' modes, required v0.3 set present');
+  } else {
+    console.log('FAIL:missing ' + missing.join(','));
+  }
 " 2>/dev/null)
 if echo "$MODES_CHECK" | grep -q "^OK"; then
-  pass "ALL_MODES: specify included ($MODES_CHECK)"
+  pass "ALL_MODES: v0.3 skill set present ($MODES_CHECK)"
 else
-  fail "ALL_MODES: specify missing — $MODES_CHECK"
+  fail "ALL_MODES: v0.3 skills missing — $MODES_CHECK"
 fi
 
 # 8-12. revert→drift connection (boolean flag, not messages search)
