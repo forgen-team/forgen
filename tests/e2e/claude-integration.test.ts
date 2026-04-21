@@ -12,7 +12,7 @@
  * 주의: 이 테스트는 실제 API 호출을 하므로 비용이 발생합니다.
  * `vitest run tests/e2e/claude-integration.test.ts` 로 명시적으로 실행하세요.
  */
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { execFile } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -40,10 +40,18 @@ function claudeP(prompt: string, opts?: { allowedTools?: string; cwd?: string })
   });
 }
 
+// 2026-04-21: sandbox HOME so runHook child processes don't leak session
+// state files under names like `test-session` / `new-test-session` into the
+// developer's real ~/.forgen/state/.
+const E2E_TEST_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'forgen-claude-integration-'));
+
 /** hook 스크립트 직접 실행 (claude 없이 프로토콜만 검증) */
 function runHook(hookPath: string, input: unknown): Promise<{ stdout: string; stderr: string; exitCode: number }> {
   return new Promise((resolve) => {
-    const child = execFile('node', [hookPath], { timeout: 10_000 }, (error, stdout, stderr) => {
+    const child = execFile('node', [hookPath], {
+      timeout: 10_000,
+      env: { ...process.env, HOME: E2E_TEST_HOME },
+    }, (error, stdout, stderr) => {
       resolve({
         stdout: stdout?.trim() ?? '',
         stderr: stderr?.trim() ?? '',
@@ -365,4 +373,10 @@ echo '{"continue":true}'
       fs.unlinkSync(tmpHook);
     }
   }, TIMEOUT);
+});
+
+afterAll(() => {
+  try {
+    fs.rmSync(E2E_TEST_HOME, { recursive: true, force: true });
+  } catch { /* tolerate */ }
 });

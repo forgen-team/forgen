@@ -13,6 +13,10 @@ import * as os from 'node:os';
 const PROJECT_ROOT = path.resolve(import.meta.dirname, '../..');
 const DIST_HOOKS = path.join(PROJECT_ROOT, 'dist', 'hooks');
 
+// 2026-04-21: sandbox HOME so spawned hooks don't pollute real
+// ~/.forgen/state/ with session IDs like `chain1-test` / `chain5-test`.
+const E2E_TEST_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'forgen-chain-verify-'));
+
 interface HookResponse {
   continue: boolean;
   hookSpecificOutput?: {
@@ -32,7 +36,7 @@ function runHook(hookFile: string, input: object, timeoutMs = 10000): Promise<Ho
     }
     const child = spawn(process.execPath, [hookPath], {
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...process.env, COMPOUND_CWD: PROJECT_ROOT, HOME: process.env.HOME ?? '/tmp' },
+      env: { ...process.env, COMPOUND_CWD: PROJECT_ROOT, HOME: E2E_TEST_HOME },
     });
     let stdout = '';
     child.stdout.on('data', (d: Buffer) => { stdout += d.toString(); });
@@ -355,4 +359,10 @@ describe('Skill expansion', () => {
       .filter(f => f.endsWith('.md'));
     expect(commands.length).toBe(10);
   });
+});
+
+afterAll(() => {
+  try {
+    fs.rmSync(E2E_TEST_HOME, { recursive: true, force: true });
+  } catch { /* tolerate */ }
 });

@@ -22,6 +22,23 @@ import * as os from 'node:os';
 const PROJECT_ROOT = path.resolve(import.meta.dirname, '../..');
 const DIST_HOOKS = path.join(PROJECT_ROOT, 'dist', 'hooks');
 
+/**
+ * Isolated HOME for spawned hook child processes (2026-04-21 fix).
+ *
+ * The e2e suite exercises real hook binaries via child_process.spawn(),
+ * which cannot be intercepted by `vi.mock('node:os')`. Without an env
+ * override, every test call leaks session-scoped state files
+ * (checkpoint-, injection-cache-, solution-cache-, outcome-pending-,
+ * modified-files-, etc.) under session IDs like `e2e-tool-chain` into
+ * the developer's real `~/.forgen/state/`. An audit on 2026-04-21 caught
+ * this after noticing 10K+ files in the real state dir.
+ *
+ * Pointing HOME at a temp dir makes hooks write to the sandbox instead.
+ * The dir is created once before the suite and removed after so each run
+ * starts fresh and leaves nothing behind.
+ */
+const E2E_TEST_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'forgen-e2e-home-'));
+
 // ── Shared Helpers ──
 
 interface HookResponse {
@@ -44,7 +61,9 @@ function runHook(hookFile: string, input: unknown, env?: Record<string, string>,
     }
     const child = spawn(process.execPath, [hookPath], {
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...process.env, ...env, COMPOUND_CWD: PROJECT_ROOT, FORGEN_CWD: PROJECT_ROOT },
+      // HOME override ensures hooks' os.homedir()/paths.ts resolve inside
+      // the sandbox. Caller-supplied `env` still wins if it overrides HOME.
+      env: { ...process.env, HOME: E2E_TEST_HOME, ...env, COMPOUND_CWD: PROJECT_ROOT, FORGEN_CWD: PROJECT_ROOT },
     });
     let stdout = '';
     let stderr = '';
@@ -103,7 +122,7 @@ function writeSolutionFile(dir: string, name: string, opts: {
     }
     if (Array.isArray(v)) {
       if (v.length === 0) return `${k}: []`;
-      return `${k}:\n${v.map(i => `  - "${i}"`).join('\n')}`;
+      return `${k}:\n${v.map((i: unknown) => `  - "${i}"`).join('\n')}`;
     }
     if (v === null) return `${k}: null`;
     if (typeof v === 'string') return `${k}: "${v}"`;
@@ -951,4 +970,12 @@ describe('Scenario 7: MCP Tool Integration E2E', () => {
     expect(full!.status).toBe(topResult.status);
     expect(full!.content.length).toBeGreaterThan(0);
   });
+});
+
+// Clean up the sandbox HOME created for all runHook child processes so each
+// test run starts with a fresh state dir and leaves nothing on disk.
+afterAll(() => {
+  try {
+    fs.rmSync(E2E_TEST_HOME, { recursive: true, force: true });
+  } catch { /* tolerate — tmp dir may already be gone */ }
 });

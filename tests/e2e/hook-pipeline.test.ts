@@ -4,16 +4,25 @@
  * Spawns actual compiled hook scripts and validates stdin → stdout JSON protocol.
  * Unlike unit tests, this verifies the real I/O contract that Claude Code depends on.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterAll } from 'vitest';
 import { execFile } from 'node:child_process';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
 
 const DIST_DIR = path.join(__dirname, '../../dist/hooks');
 
+// 2026-04-21: sandbox HOME so spawned hooks don't write to the developer's
+// real ~/.forgen/state/ (session IDs like `e2e-test-session` used to leak).
+const E2E_TEST_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'forgen-hook-pipeline-'));
+
 function runHook(hookName: string, input: unknown): Promise<{ stdout: string; stderr: string; exitCode: number }> {
   return new Promise((resolve) => {
     const hookPath = path.join(DIST_DIR, `${hookName}.js`);
-    const child = execFile('node', [hookPath], { timeout: 10000 }, (error, stdout, stderr) => {
+    const child = execFile('node', [hookPath], {
+      timeout: 10000,
+      env: { ...process.env, HOME: E2E_TEST_HOME },
+    }, (error, stdout, stderr) => {
       resolve({
         stdout: stdout.trim(),
         stderr: stderr.trim(),
@@ -120,4 +129,10 @@ describe('Hook Pipeline E2E', () => {
       expect(output?.continue, `${hook} must include continue field`).toBeDefined();
     }
   });
+});
+
+afterAll(() => {
+  try {
+    fs.rmSync(E2E_TEST_HOME, { recursive: true, force: true });
+  } catch { /* tolerate */ }
 });
