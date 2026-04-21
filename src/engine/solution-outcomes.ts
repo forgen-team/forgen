@@ -2,6 +2,8 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { OUTCOMES_DIR, STATE_DIR } from '../core/paths.js';
 import { sanitizeId } from '../hooks/shared/sanitize-id.js';
+import { withFileLockSync, FileLockError } from '../hooks/shared/file-lock.js';
+import { atomicWriteJSON } from '../hooks/shared/atomic-write.js';
 import { createLogger } from '../core/logger.js';
 
 const log = createLogger('solution-outcomes');
@@ -59,12 +61,41 @@ function readPending(sessionId: string): PendingState {
 function writePending(sessionId: string, state: PendingState): void {
   const p = pendingPath(sessionId);
   fs.mkdirSync(STATE_DIR, { recursive: true });
-  fs.writeFileSync(p, JSON.stringify(state));
+  atomicWriteJSON(p, state, { mode: 0o600, dirMode: 0o700 });
 }
 
 function appendOutcome(event: OutcomeEvent): void {
   fs.mkdirSync(OUTCOMES_DIR, { recursive: true });
   fs.appendFileSync(outcomesPath(event.session_id), JSON.stringify(event) + '\n');
+}
+
+/**
+ * Run a read-modify-write pending-state mutation under a file lock
+ * (2026-04-21 audit fix #9).
+ *
+ * Prior code (`readPending` → in-memory mutate → `writePending`) was not
+ * serialised, so inject + correction + error hooks racing on the same
+ * session could lose or duplicate outcome events. The entire critical
+ * section now sits inside `withFileLockSync`; the lock file lives next
+ * to the pending file itself. A lock-acquire failure falls through
+ * fail-open (outcome tracking must never block the user).
+ */
+function mutatePending<T>(sessionId: string, fn: () => T): T | null {
+  const p = pendingPath(sessionId);
+  fs.mkdirSync(STATE_DIR, { recursive: true });
+  try {
+    let result: T | null = null;
+    withFileLockSync(p, () => {
+      result = fn();
+    });
+    return result;
+  } catch (e) {
+    if (e instanceof FileLockError) {
+      log.debug(`pending lock 실패 — skip (fail-open): ${e.message}`);
+      return null;
+    }
+    throw e;
+  }
 }
 
 /**
@@ -78,12 +109,14 @@ export function appendPending(
 ): void {
   if (!sessionId || injections.length === 0) return;
   try {
-    const state = readPending(sessionId);
-    const ts = Date.now();
-    for (const inj of injections) {
-      state.pending.push({ ...inj, ts });
-    }
-    writePending(sessionId, state);
+    mutatePending(sessionId, () => {
+      const state = readPending(sessionId);
+      const ts = Date.now();
+      for (const inj of injections) {
+        state.pending.push({ ...inj, ts });
+      }
+      writePending(sessionId, state);
+    });
   } catch (e) {
     log.debug(`appendPending failed: ${e instanceof Error ? e.message : String(e)}`);
   }
@@ -100,33 +133,36 @@ export function appendPending(
 export function flushAccept(sessionId: string, excludeSolutions: Set<string> = new Set()): number {
   if (!sessionId) return 0;
   try {
-    const state = readPending(sessionId);
-    if (state.pending.length === 0) return 0;
-    const now = Date.now();
-    const kept: PendingEntry[] = [];
-    let flushed = 0;
-    for (const p of state.pending) {
-      // P1-L1 fix (2026-04-20): 이전에는 excluded pending을 `continue`로 건너뛰면서
-      // `kept`에도 push 안 하고 appendOutcome도 안 해서 증거 없이 사라졌다.
-      // 이미 correct/error로 attribute된 항목은 보존 (나중 prompt에서 재처리 방지).
-      if (excludeSolutions.has(p.solution)) {
-        kept.push(p);
-        continue;
+    const result = mutatePending<number>(sessionId, () => {
+      const state = readPending(sessionId);
+      if (state.pending.length === 0) return 0;
+      const now = Date.now();
+      const kept: PendingEntry[] = [];
+      let flushed = 0;
+      for (const p of state.pending) {
+        // P1-L1 fix (2026-04-20): 이전에는 excluded pending을 `continue`로 건너뛰면서
+        // `kept`에도 push 안 하고 appendOutcome도 안 해서 증거 없이 사라졌다.
+        // 이미 correct/error로 attribute된 항목은 보존 (나중 prompt에서 재처리 방지).
+        if (excludeSolutions.has(p.solution)) {
+          kept.push(p);
+          continue;
+        }
+        appendOutcome({
+          ts: now,
+          session_id: sessionId,
+          solution: p.solution,
+          match_score: p.match_score,
+          injected_chars: p.injected_chars,
+          outcome: 'accept',
+          outcome_lag_ms: now - p.ts,
+          attribution: 'default',
+        });
+        flushed++;
       }
-      appendOutcome({
-        ts: now,
-        session_id: sessionId,
-        solution: p.solution,
-        match_score: p.match_score,
-        injected_chars: p.injected_chars,
-        outcome: 'accept',
-        outcome_lag_ms: now - p.ts,
-        attribution: 'default',
-      });
-      flushed++;
-    }
-    writePending(sessionId, { pending: kept, last_prompt_ts: now });
-    return flushed;
+      writePending(sessionId, { pending: kept, last_prompt_ts: now });
+      return flushed;
+    });
+    return result ?? 0;
   } catch (e) {
     log.debug(`flushAccept failed: ${e instanceof Error ? e.message : String(e)}`);
     return 0;
@@ -146,25 +182,28 @@ export function flushAccept(sessionId: string, excludeSolutions: Set<string> = n
 export function attributeCorrection(sessionId: string): string[] {
   if (!sessionId) return [];
   try {
-    const state = readPending(sessionId);
-    if (state.pending.length === 0) return [];
-    const now = Date.now();
-    const attributed: string[] = [];
-    for (const p of state.pending) {
-      appendOutcome({
-        ts: now,
-        session_id: sessionId,
-        solution: p.solution,
-        match_score: p.match_score,
-        injected_chars: p.injected_chars,
-        outcome: 'correct',
-        outcome_lag_ms: now - p.ts,
-        attribution: 'explicit',
-      });
-      attributed.push(p.solution);
-    }
-    writePending(sessionId, { pending: [], last_prompt_ts: state.last_prompt_ts });
-    return attributed;
+    const result = mutatePending<string[]>(sessionId, () => {
+      const state = readPending(sessionId);
+      if (state.pending.length === 0) return [];
+      const now = Date.now();
+      const attributed: string[] = [];
+      for (const p of state.pending) {
+        appendOutcome({
+          ts: now,
+          session_id: sessionId,
+          solution: p.solution,
+          match_score: p.match_score,
+          injected_chars: p.injected_chars,
+          outcome: 'correct',
+          outcome_lag_ms: now - p.ts,
+          attribution: 'explicit',
+        });
+        attributed.push(p.solution);
+      }
+      writePending(sessionId, { pending: [], last_prompt_ts: state.last_prompt_ts });
+      return attributed;
+    });
+    return result ?? [];
   } catch (e) {
     log.debug(`attributeCorrection failed: ${e instanceof Error ? e.message : String(e)}`);
     return [];
@@ -208,38 +247,41 @@ const MAX_ATTRIBUTED_PER_ERROR = 3;
 export function attributeError(sessionId: string): string[] {
   if (!sessionId) return [];
   try {
-    const state = readPending(sessionId);
-    if (state.pending.length === 0) return [];
-    const flaggedKey = `__error_flagged` as const;
-    const existing = (state as unknown as Record<string, unknown>)[flaggedKey];
-    const flagged = new Set<string>(Array.isArray(existing) ? (existing as string[]) : []);
-    const now = Date.now();
+    const result = mutatePending<string[]>(sessionId, () => {
+      const state = readPending(sessionId);
+      if (state.pending.length === 0) return [];
+      const flaggedKey = `__error_flagged` as const;
+      const existing = (state as unknown as Record<string, unknown>)[flaggedKey];
+      const flagged = new Set<string>(Array.isArray(existing) ? (existing as string[]) : []);
+      const now = Date.now();
 
-    const eligible = state.pending
-      .filter((p) => !flagged.has(p.solution))
-      .filter((p) => p.match_score >= MIN_ERROR_MATCH_SCORE)
-      .filter((p) => now - p.ts <= MAX_ATTRIBUTION_LAG_MS)
-      .sort((a, b) => b.match_score - a.match_score)
-      .slice(0, MAX_ATTRIBUTED_PER_ERROR);
+      const eligible = state.pending
+        .filter((p) => !flagged.has(p.solution))
+        .filter((p) => p.match_score >= MIN_ERROR_MATCH_SCORE)
+        .filter((p) => now - p.ts <= MAX_ATTRIBUTION_LAG_MS)
+        .sort((a, b) => b.match_score - a.match_score)
+        .slice(0, MAX_ATTRIBUTED_PER_ERROR);
 
-    const flaggedThisCall: string[] = [];
-    for (const p of eligible) {
-      appendOutcome({
-        ts: now,
-        session_id: sessionId,
-        solution: p.solution,
-        match_score: p.match_score,
-        injected_chars: p.injected_chars,
-        outcome: 'error',
-        outcome_lag_ms: now - p.ts,
-        attribution: 'window',
-      });
-      flagged.add(p.solution);
-      flaggedThisCall.push(p.solution);
-    }
-    (state as unknown as Record<string, unknown>)[flaggedKey] = Array.from(flagged);
-    writePending(sessionId, state);
-    return flaggedThisCall;
+      const flaggedThisCall: string[] = [];
+      for (const p of eligible) {
+        appendOutcome({
+          ts: now,
+          session_id: sessionId,
+          solution: p.solution,
+          match_score: p.match_score,
+          injected_chars: p.injected_chars,
+          outcome: 'error',
+          outcome_lag_ms: now - p.ts,
+          attribution: 'window',
+        });
+        flagged.add(p.solution);
+        flaggedThisCall.push(p.solution);
+      }
+      (state as unknown as Record<string, unknown>)[flaggedKey] = Array.from(flagged);
+      writePending(sessionId, state);
+      return flaggedThisCall;
+    });
+    return result ?? [];
   } catch (e) {
     log.debug(`attributeError failed: ${e instanceof Error ? e.message : String(e)}`);
     return [];
@@ -254,25 +296,28 @@ export function attributeError(sessionId: string): string[] {
 export function finalizeSession(sessionId: string): number {
   if (!sessionId) return 0;
   try {
-    const state = readPending(sessionId);
-    const now = Date.now();
-    let finalized = 0;
-    for (const p of state.pending) {
-      appendOutcome({
-        ts: now,
-        session_id: sessionId,
-        solution: p.solution,
-        match_score: p.match_score,
-        injected_chars: p.injected_chars,
-        outcome: 'unknown',
-        outcome_lag_ms: now - p.ts,
-        attribution: 'session_end',
-      });
-      finalized++;
-    }
-    const p = pendingPath(sessionId);
-    if (fs.existsSync(p)) fs.unlinkSync(p);
-    return finalized;
+    const result = mutatePending<number>(sessionId, () => {
+      const state = readPending(sessionId);
+      const now = Date.now();
+      let finalized = 0;
+      for (const p of state.pending) {
+        appendOutcome({
+          ts: now,
+          session_id: sessionId,
+          solution: p.solution,
+          match_score: p.match_score,
+          injected_chars: p.injected_chars,
+          outcome: 'unknown',
+          outcome_lag_ms: now - p.ts,
+          attribution: 'session_end',
+        });
+        finalized++;
+      }
+      const pendingFile = pendingPath(sessionId);
+      if (fs.existsSync(pendingFile)) fs.unlinkSync(pendingFile);
+      return finalized;
+    });
+    return result ?? 0;
   } catch (e) {
     log.debug(`finalizeSession failed: ${e instanceof Error ? e.message : String(e)}`);
     return 0;
