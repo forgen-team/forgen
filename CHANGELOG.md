@@ -7,9 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.4.0] - 2026-04-22
 
-### v0.4.0 — Trust Restoration
+### v0.4.0 — The Trust Layer
 
-"됐다는데 안됨" 자기모순을 구조적으로 차단하는 3축 강제 메커니즘 + rule lifecycle + release self-gate. 인터뷰 라운드 9~10 미션 "forgen이 자기 규칙을 forgen 자신에게 강제 적용" 달성.
+**When Claude says "done", forgen makes it prove it.** v0.4.0 adds turn-level self-verification at the Stop hook: Claude's completion claims get checked against rules you define, and blocks are fed back as `reason` that Claude reads and complies with on the next turn — **zero extra API calls**. Verified end-to-end on 10 scenarios at $1.74 total ([A1 spike report](docs/spike/mech-b-a1-verification-report.md)).
+
+Built on top of the v0.3.x personalization core (4-axis profile + compound knowledge + rule rendering): the Trust Layer = 3-axis enforcement (Mech-A/B/C) + rule lifecycle (T1-T5 + Meta) + release self-gate. Interview rounds 9~10 mission "forgen 이 자기 규칙을 forgen 자신에게 강제 적용" achieved — this repo's own development was stopped mid-commit by its own L1 rule when the maintainer claimed "완결" without running Docker e2e (evidence preserved in `.forgen/state/enforcement/violations.jsonl`).
 
 **ADR-001 — Mech-A/B/C 3축 강제 메커니즘** (Accepted)
 - Mech-A (hook-BLOCK): 기계 판정 가능 규칙 — PreToolUse deny / Stop artifact_check.

@@ -34,7 +34,7 @@
   },
   "author": "jang-ujin",
   "license": "MIT",
-  "description": "Code, forged for you — personalized Claude Code harness",
+  "description": "When Claude says 'done', forgen makes it prove it — turn-level self-verification + personalized rules, at $0 extra API cost.",
   "keywords": [
     "claude-code",
     "forgen",
