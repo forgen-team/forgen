@@ -212,6 +212,14 @@ const commands: Command[] = [
       await handleLifecycleScan(args);
     },
   },
+  {
+    name: 'last-block',
+    description: 'Show the most recent Mech-A/B block event with rule detail (R6-UX2).',
+    handler: async (_args) => {
+      const { handleInspect } = await import('./core/inspect-cli.js');
+      await handleInspect(['violations', '--last', '1']);
+    },
+  },
 ];
 
 /** 최소 편집 거리 (유사 명령 제안용) */

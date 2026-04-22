@@ -30,14 +30,13 @@ const DESTRUCTIVE_PATTERN = /\b(rm\s+-rf|rm\s+-fr|force|DROP\s+TABLE|credentials
 const COMPLETION_PATTERN = /(완료|complete|done|ready|shipped|finished|e2e|mock|verify|검증|배포)/i;
 const STYLE_PATTERN = /(문체|응답|설명|톤|어투|장황|간결|verbose|tone|style)/i;
 
-/**
- * Shared production trigger for Stop hook — A1 spike 에서 검증된 regex.
- * trigger 는 명시적 완료 선언 동사/어미 만, exclude 는 retraction/meta 포괄.
- */
-const STOP_COMPLETION_TRIGGER = '(완료했|완성됐|완성되|완성했|done\\.|ready\\.|shipped\\.|LGTM|finished\\.)';
-const STOP_COMPLETION_EXCLUDE = '(취소|철회|없음|없습니다|않았|하지\\s*않|아닙니다|not\\s*yet|no\\s*longer|retract|withdraw|아직\\s*(안|아))';
-const STOP_MOCK_TRIGGER = '(mock|stub|fake)';
-const STOP_MOCK_EXCLUDE = '(테스트|test|vi\\.mock|jest\\.mock|spec\\.)';
+// R6-F2: shared single source of truth — stop-guard 와 동일 regex 재사용.
+import {
+  DEFAULT_STOP_TRIGGER_RE as STOP_COMPLETION_TRIGGER,
+  DEFAULT_STOP_EXCLUDE_RE as STOP_COMPLETION_EXCLUDE,
+  MOCK_TRIGGER_RE as STOP_MOCK_TRIGGER,
+  MOCK_EXCLUDE_RE as STOP_MOCK_EXCLUDE,
+} from '../hooks/shared/stop-triggers.js';
 
 export function classify(rule: Rule): EnforceProposal {
   const reasoning: string[] = [];

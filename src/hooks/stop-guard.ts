@@ -33,12 +33,8 @@ import { compileSafeRegex, safeRegexTest } from './shared/safe-regex.js';
 
 const HOOK_NAME = 'stop-guard';
 
-/**
- * Shared production trigger for Stop hook — A1 spike 에서 검증된 regex.
- * Rule 에 custom trigger 미지정 시 fallback.
- */
-const DEFAULT_STOP_TRIGGER_RE = '(완료했|완성됐|완성되|완성했|done\\.|ready\\.|shipped\\.|LGTM|finished\\.)';
-const DEFAULT_STOP_EXCLUDE_RE = '(취소|철회|없음|없습니다|않았|하지\\s*않|아닙니다|not\\s*yet|no\\s*longer|retract|withdraw|아직\\s*(안|아))';
+// R6-F2: shared single source of truth.
+import { DEFAULT_STOP_TRIGGER_RE, DEFAULT_STOP_EXCLUDE_RE } from './shared/stop-triggers.js';
 
 /**
  * Stuck-loop guard 임계치.

@@ -21,6 +21,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import type { LifecycleEvent } from './types.js';
 import type { EnforcementMech, EnforceSpec, Rule } from '../../store/types.js';
+import { initLifecycle } from '../../store/rule-lifecycle.js';
 import { loadAllRules, saveRule } from '../../store/rule-store.js';
 
 const DRIFT_LOG_PATH = path.join(os.homedir(), '.forgen', 'state', 'enforcement', 'drift.jsonl');
@@ -195,16 +196,7 @@ export function applyPromotion(rule: Rule, candidate: PromotionCandidate, now: n
     return { rule_id: rule.rule_id, before_mech: before, after_mech: before, events: [], applied: false, reason: 'no Mech-B/C to promote' };
   }
 
-  const lifecycle = rule.lifecycle ?? {
-    phase: 'active' as const,
-    first_active_at: rule.created_at,
-    inject_count: 0,
-    accept_count: 0,
-    violation_count: 0,
-    bypass_count: 0,
-    conflict_refs: [],
-    meta_promotions: [],
-  };
+  const lifecycle = initLifecycle(rule);
 
   const promotions = updatedSpecs.map((spec, i) => ({
     at: new Date(now).toISOString(),
@@ -284,16 +276,7 @@ export function applyDemotion(rule: Rule, candidate: DemotionCandidate, now: num
     return { rule_id: rule.rule_id, before_mech: before, after_mech: before, events: [], applied: false, reason: 'no Mech-A/B to demote' };
   }
 
-  const lifecycle = rule.lifecycle ?? {
-    phase: 'active' as const,
-    first_active_at: rule.created_at,
-    inject_count: 0,
-    accept_count: 0,
-    violation_count: 0,
-    bypass_count: 0,
-    conflict_refs: [],
-    meta_promotions: [],
-  };
+  const lifecycle = initLifecycle(rule);
 
   const demotions = updatedSpecs.map((spec, i) => ({
     at: new Date(now).toISOString(),

@@ -149,12 +149,12 @@ describe('T2 — repeated_violation', () => {
 });
 
 describe('T3 — user_bypass', () => {
-  it('bypass_7d ≥ 5 → suppress event', () => {
+  it('bypass_7d ≥ 5 → flag event (R6-P1: suppress 에서 약화)', () => {
     const r = rule({ rule_id: 'r3' });
     const signals = new Map([[r.rule_id, sig({ bypass_7d: 5 })]]);
     const events = detectT3({ rules: [r], signals });
     expect(events).toHaveLength(1);
-    expect(events[0].suggested_action).toBe('suppress');
+    expect(events[0].suggested_action).toBe('flag');
   });
 
   it('bypass_7d < 5 → no event', () => {
@@ -163,10 +163,10 @@ describe('T3 — user_bypass', () => {
     expect(detectT3({ rules: [r], signals })).toHaveLength(0);
   });
 
-  it('already suppressed → skip', () => {
+  it('already flagged/suppressed → skip', () => {
     const r = rule({
       rule_id: 'r3',
-      lifecycle: { phase: 'suppressed', first_active_at: '', inject_count: 0, accept_count: 0, violation_count: 0, bypass_count: 10, conflict_refs: [], meta_promotions: [] },
+      lifecycle: { phase: 'flagged', first_active_at: '', inject_count: 0, accept_count: 0, violation_count: 0, bypass_count: 10, conflict_refs: [], meta_promotions: [] },
     });
     const signals = new Map([[r.rule_id, sig({ bypass_7d: 10 })]]);
     expect(detectT3({ rules: [r], signals })).toHaveLength(0);

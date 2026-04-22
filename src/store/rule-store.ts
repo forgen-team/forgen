@@ -12,6 +12,7 @@ import { ME_RULES } from '../core/paths.js';
 import { atomicWriteJSON, safeReadJSON } from '../hooks/shared/atomic-write.js';
 import type { Rule, RuleCategory, RuleScope, RuleStrength, RuleSource, RuleStatus } from './types.js';
 import { CURRENT_RULE_SCHEMA_VERSION } from './types.js';
+import { initLifecycle, bumpInject } from './rule-lifecycle.js';
 
 function rulePath(ruleId: string): string {
   return path.join(ME_RULES, `${ruleId}.json`);
@@ -178,31 +179,12 @@ export function markRulesInjected(ruleIds: string[], nowIso: string = new Date()
   for (const id of ruleIds) {
     const rule = loadRule(id);
     if (!rule) continue;
-    const lifecycle = rule.lifecycle ?? {
-      phase: 'active' as const,
-      first_active_at: rule.created_at,
-      inject_count: 0,
-      accept_count: 0,
-      violation_count: 0,
-      bypass_count: 0,
-      conflict_refs: [],
-      meta_promotions: [],
-    };
-    // R4-B2: 파일 corruption 으로 음수/NaN 가 들어와도 T2 violation_rate=1 로 잘못된 suppress 를
-    // 유발하지 않도록 하한 0 으로 정상화.
-    const safeCount = (n: unknown): number => (typeof n === 'number' && Number.isFinite(n) && n >= 0 ? n : 0);
+    // R6-F1: initLifecycle 이 정규화(카운터 ≥0, 배열 보장) 까지 포함.
+    const lifecycle = initLifecycle(rule);
     const updated: Rule = {
       ...rule,
-      lifecycle: {
-        ...lifecycle,
-        inject_count: safeCount(lifecycle.inject_count) + 1,
-        accept_count: safeCount(lifecycle.accept_count),
-        violation_count: safeCount(lifecycle.violation_count),
-        bypass_count: safeCount(lifecycle.bypass_count),
-        last_inject_at: nowIso,
-      },
+      lifecycle: bumpInject(lifecycle, nowIso),
     };
-    // saveRule bumps updated_at — pass through directly without re-bump
     atomicWriteJSON(rulePath(rule.rule_id), updated, { pretty: true });
   }
 }
