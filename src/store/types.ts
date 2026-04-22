@@ -121,7 +121,16 @@ export interface LifecycleState {
 
 // ── Rule ────────────────────────────────────────────────────────────────────
 
+/**
+ * Rule JSON schema version. v0.4.0 introduces `enforce_via` + `lifecycle` — 이들을
+ * 포함하는 schema 의 공식 버전은 1. 누락된 rule 파일은 pre-v0.4.0 으로 취급 (optional fields
+ * 만 비어있을 뿐 로드 가능). 미래 breaking change 시 이 값을 증가시키고 `migrate()` 체인으로 흡수.
+ */
+export const CURRENT_RULE_SCHEMA_VERSION = 1;
+
 export interface Rule {
+  /** R5-B3: 미래 breaking schema change 를 위한 version 필드. 없으면 v0 (pre-0.4.0) 으로 취급. */
+  schema_version?: number;
   rule_id: string;
   category: RuleCategory;
   scope: RuleScope;

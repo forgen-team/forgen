@@ -41,6 +41,27 @@ export const SECRET_PATTERNS: SecretPattern[] = [
   { name: 'Slack Token', pattern: /\bxox[abpors]-[A-Za-z0-9-]{10,}/ },
 ];
 
+/**
+ * 텍스트에서 민감 정보 패턴을 찾아 `[REDACTED:<NAME>]` 로 치환 (순수 함수).
+ *
+ * R5-G2: auto-compound-runner 가 사용자 transcript 를 Claude (Haiku) 로 송신하기 전
+ * 적용. `detectSecrets` 는 감지만, 이 함수는 실제 문자열에서 대체.
+ */
+export function redactSecrets(text: string): { redacted: string; hits: SecretPattern[] } {
+  const hits: SecretPattern[] = [];
+  let out = text;
+  for (const sp of SECRET_PATTERNS) {
+    // regex 복제 (global flag 없이 repeated test 되는 경우 lastIndex 안전)
+    const re = new RegExp(sp.pattern.source, (sp.pattern.flags.includes('g') ? sp.pattern.flags : sp.pattern.flags + 'g'));
+    if (re.test(out)) {
+      hits.push(sp);
+      const re2 = new RegExp(sp.pattern.source, (sp.pattern.flags.includes('g') ? sp.pattern.flags : sp.pattern.flags + 'g'));
+      out = out.replace(re2, `[REDACTED:${sp.name}]`);
+    }
+  }
+  return { redacted: out, hits };
+}
+
 /** 텍스트에서 민감 정보 패턴 감지 (순수 함수) */
 export function detectSecrets(text: string): SecretPattern[] {
   const found: SecretPattern[] = [];

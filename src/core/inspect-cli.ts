@@ -6,6 +6,7 @@
  */
 
 import * as fs from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
 import { loadProfile } from '../store/profile-store.js';
 import { loadAllRules, loadActiveRules } from '../store/rule-store.js';
@@ -107,9 +108,60 @@ export async function handleInspect(args: string[]): Promise<void> {
     return;
   }
 
+  // R5-G1: 2AM 디버깅용 jsonl tail — violations/bypass/drift
+  if (sub === 'violations' || sub === 'bypass' || sub === 'drift') {
+    const limit = Number(args[args.indexOf('--last') + 1]) || 20;
+    const fileMap: Record<string, string> = {
+      violations: 'violations.jsonl',
+      bypass: 'bypass.jsonl',
+      drift: 'drift.jsonl',
+    };
+    const p = path.join(os.homedir(), '.forgen', 'state', 'enforcement', fileMap[sub]);
+    if (!fs.existsSync(p)) {
+      console.log(`\n  No ${sub} data (${p} not found).\n`);
+      return;
+    }
+    const lines = fs.readFileSync(p, 'utf-8').trim().split('\n').filter(Boolean);
+    const tail = lines.slice(-limit);
+    console.log(`\n  ${sub} (last ${tail.length} of ${lines.length}):`);
+
+    // rule_id별 집계
+    const byRule = new Map<string, number>();
+    for (const line of lines) {
+      try {
+        const entry = JSON.parse(line);
+        const rid = entry.rule_id ?? 'unknown';
+        byRule.set(rid, (byRule.get(rid) ?? 0) + 1);
+      } catch { /* skip malformed */ }
+    }
+    if (byRule.size > 0) {
+      console.log('  Aggregate (rule_id → count):');
+      for (const [rid, count] of [...byRule.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10)) {
+        console.log(`    ${rid.slice(0, 24).padEnd(24)} ${count}`);
+      }
+    }
+
+    console.log('\n  Recent:');
+    for (const line of tail) {
+      try {
+        const e = JSON.parse(line);
+        const when = (e.at ?? '').slice(0, 19);
+        const rid = (e.rule_id ?? '-').slice(0, 10);
+        const kind = e.kind ?? e.source ?? '-';
+        const preview = (e.message_preview ?? e.reason_preview ?? e.pattern_preview ?? '').slice(0, 60);
+        console.log(`    ${when}  ${rid.padEnd(10)}  ${String(kind).padEnd(12)}  ${preview}`);
+      } catch { /* skip */ }
+    }
+    console.log('');
+    return;
+  }
+
   console.log(`  Usage:
-    forgen inspect profile   — 현재 profile 상태
-    forgen inspect rules     — active/suppressed 규칙 목록
-    forgen inspect evidence  — 최근 evidence 목록
-    forgen inspect session   — 현재/최근 세션 상태`);
+    forgen inspect profile               — 현재 profile 상태
+    forgen inspect rules                 — active/suppressed 규칙 목록
+    forgen inspect evidence              — 최근 evidence 목록
+    forgen inspect session               — 현재/최근 세션 상태
+    forgen inspect violations [--last N] — Mech-A/B block/deny 기록 (R5-G1)
+    forgen inspect bypass     [--last N] — T3 사용자 우회 기록
+    forgen inspect drift      [--last N] — stuck-loop force-approve 기록`);
 }

@@ -11,6 +11,7 @@ import * as crypto from 'node:crypto';
 import { ME_RULES } from '../core/paths.js';
 import { atomicWriteJSON, safeReadJSON } from '../hooks/shared/atomic-write.js';
 import type { Rule, RuleCategory, RuleScope, RuleStrength, RuleSource, RuleStatus } from './types.js';
+import { CURRENT_RULE_SCHEMA_VERSION } from './types.js';
 
 function rulePath(ruleId: string): string {
   return path.join(ME_RULES, `${ruleId}.json`);
@@ -117,7 +118,7 @@ export function loadAllRules(): Rule[] {
     for (const file of fs.readdirSync(ME_RULES)) {
       if (!file.endsWith('.json')) continue;
       const rule = safeReadJSON<Rule | null>(path.join(ME_RULES, file), null);
-      if (rule) rules.push(rule);
+      if (rule && isCompatibleSchema(rule, file)) rules.push(rule);
     }
   }
 
@@ -129,7 +130,7 @@ export function loadAllRules(): Rule[] {
     for (const file of fs.readdirSync(projectRulesDir)) {
       if (!file.endsWith('.json')) continue;
       const rule = safeReadJSON<Rule | null>(path.join(projectRulesDir, file), null);
-      if (!rule) continue;
+      if (!rule || !isCompatibleSchema(rule, file)) continue;
       const existingIdx = rules.findIndex((r) => r.rule_id === rule.rule_id);
       if (existingIdx >= 0) rules[existingIdx] = rule; // project override
       else rules.push(rule);
@@ -137,6 +138,20 @@ export function loadAllRules(): Rule[] {
   }
 
   return rules;
+}
+
+/**
+ * R5-B3: schema_version 호환성 체크.
+ * - undefined / 0 / CURRENT_RULE_SCHEMA_VERSION: OK
+ * - > CURRENT: 상위 버전 → graceful skip (downgrade 시 silent corruption 방지)
+ */
+function isCompatibleSchema(rule: Rule, filename: string): boolean {
+  const v = rule.schema_version;
+  if (v == null || v <= CURRENT_RULE_SCHEMA_VERSION) return true;
+  if (process.env.FORGEN_DEBUG_SIGNALS === '1') {
+    process.stderr.write(`[forgen:rule-store] ${filename} schema_version=${v} > supported ${CURRENT_RULE_SCHEMA_VERSION} — skipped\n`);
+  }
+  return false;
 }
 
 /**

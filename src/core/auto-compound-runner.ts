@@ -15,6 +15,7 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import { execFileSync, type ExecFileSyncOptions } from 'node:child_process';
 import { containsPromptInjection, filterSolutionContent } from '../hooks/prompt-injection-filter.js';
+import { redactSecrets } from '../hooks/secret-filter.js';
 import { createEvidence, saveEvidence, promoteSessionCandidates } from '../store/evidence-store.js';
 import { loadProfile } from '../store/profile-store.js';
 
@@ -204,8 +205,16 @@ function mergeOrCreateBehavior(dir: string, newContent: string, kind: string, to
 }
 
 try {
-  const summary = extractSummary(transcriptPath);
-  if (summary.length < 200) process.exit(0);
+  const rawSummary = extractSummary(transcriptPath);
+  if (rawSummary.length < 200) process.exit(0);
+
+  // R5-G2 (P0 security): transcript 를 Claude 로 송신하기 전 API key / 토큰 / 비밀번호 /
+  // private key blocks 를 [REDACTED:...] 로 치환. 사용자가 채팅에 pasted 한 자격증명이
+  // auto-compound 를 통해 외부 API 로 누출되는 채널 차단.
+  const { redacted: summary, hits: secretHits } = redactSecrets(rawSummary);
+  if (secretHits.length > 0) {
+    process.stderr.write(`[forgen-auto-compound] redacted ${secretHits.length} secret(s) before send: ${secretHits.map((s) => s.name).join(', ')}\n`);
+  }
 
   // 보안: 프롬프트 인젝션이 포함된 transcript는 분석하지 않음
   if (containsPromptInjection(summary)) {

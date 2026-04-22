@@ -21,6 +21,9 @@
  *   promote/demote_mech → phase 유지, meta_promotions 는 meta-reclassifier 가 직접 기록
  */
 
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import type {
   Rule,
   LifecycleState,
@@ -28,6 +31,25 @@ import type {
   RuleStatus,
 } from '../../store/types.js';
 import type { LifecycleEvent } from './types.js';
+
+/**
+ * R5-B1: rule 이 inactive 상태로 전이될 때 block-count 디렉터리의 잔여 파일 정리.
+ * phantom stuck-loop (retired 된 rule 이 다시 GC 전까지 counter 에 반영되는 문제) 차단.
+ */
+function sweepBlockCountsForRule(ruleId: string): void {
+  try {
+    const dir = path.join(os.homedir(), '.forgen', 'state', 'enforcement', 'block-count');
+    if (!fs.existsSync(dir)) return;
+    const safeRuleId = String(ruleId).replace(/[^a-zA-Z0-9_.-]/g, '_');
+    for (const file of fs.readdirSync(dir)) {
+      if (file.endsWith(`__${safeRuleId}.json`)) {
+        try { fs.unlinkSync(path.join(dir, file)); } catch { /* best-effort */ }
+      }
+    }
+  } catch { /* fail-open */ }
+}
+
+const INACTIVE_STATUSES = new Set<RuleStatus>(['removed', 'suppressed', 'superseded']);
 
 export function ensureLifecycle(rule: Rule): LifecycleState {
   return rule.lifecycle ?? {
@@ -72,25 +94,35 @@ export function applyEvent(rule: Rule, event: LifecycleEvent, now: number = Date
     phase: nextPhase ?? lifecycle.phase,
   };
 
-  // T5 merge: merged_into
+  // R5-B2: phase 전이 시 상호 배타적 포인터 정리.
   if (event.suggested_action === 'merge' && event.merged_into) {
     updatedLifecycle.merged_into = event.merged_into;
+    delete updatedLifecycle.superseded_by;
   }
-  // T1 supersede: superseded_by
   if (event.suggested_action === 'supersede' && event.superseded_by) {
     updatedLifecycle.superseded_by = event.superseded_by;
+    delete updatedLifecycle.merged_into;
   }
-  // T5 conflict 탐지만 된 단계 (flag) — conflict_refs 추가
   if (event.kind === 't5_conflict_detected' && event.evidence?.refs) {
     const refs = event.evidence.refs.filter((r) => r !== rule.rule_id);
     updatedLifecycle.conflict_refs = [
       ...new Set([...lifecycle.conflict_refs, ...refs]),
     ];
   }
+  // retired rule 은 더 이상 의미 있는 conflict 가 없으므로 정리.
+  if (event.suggested_action === 'retire') {
+    updatedLifecycle.conflict_refs = [];
+  }
+
+  const nextStatusValue = nextStatus ?? rule.status;
+  // R5-B1: inactive 전이 시 block-count orphan 파일 정리.
+  if (INACTIVE_STATUSES.has(nextStatusValue) && !INACTIVE_STATUSES.has(rule.status)) {
+    sweepBlockCountsForRule(rule.rule_id);
+  }
 
   return {
     ...rule,
-    status: nextStatus ?? rule.status,
+    status: nextStatusValue,
     lifecycle: updatedLifecycle,
     updated_at: new Date(now).toISOString(),
   };
