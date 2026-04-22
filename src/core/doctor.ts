@@ -2,17 +2,34 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { FORGEN_HOME, LAB_DIR, ME_BEHAVIOR, ME_DIR, ME_PHILOSOPHY, ME_SOLUTIONS, ME_RULES, ME_SKILLS, PACKS_DIR, SESSIONS_DIR, STATE_DIR } from './paths.js';
+import { FORGEN_HOME, LAB_DIR, ME_BEHAVIOR, ME_DIR, ME_SOLUTIONS, ME_RULES, ME_SKILLS, PACKS_DIR, SESSIONS_DIR, STATE_DIR } from './paths.js';
 import { getTimingStats } from '../hooks/shared/hook-timing.js';
 import { countSessionScopedFiles, pruneState } from './state-gc.js';
 
 /** ~/.claude/projects/ — Claude Code 세션 저장 경로 */
 const CLAUDE_PROJECTS_DIR = path.join(os.homedir(), '.claude', 'projects');
 
+interface FailedCheck {
+  section: string;
+  label: string;
+  hint?: string;
+}
+
+let currentSection = '';
+let failedChecks: FailedCheck[] = [];
+
+function section(name: string): void {
+  currentSection = name;
+  console.log(`  [${name}]`);
+}
+
 function check(label: string, condition: boolean, hint?: string): void {
   const icon = condition ? '✓' : '✗';
   const hintStr = !condition && hint ? ` — ${hint}` : '';
   console.log(`  ${icon} ${label}${hintStr}`);
+  if (!condition) {
+    failedChecks.push({ section: currentSection, label, hint });
+  }
 }
 
 function exists(p: string): boolean {
@@ -36,16 +53,17 @@ export interface DoctorOptions {
 }
 
 export async function runDoctor(opts: DoctorOptions = {}): Promise<void> {
+  failedChecks = [];
   console.log('\n  Forgen — Diagnostics\n');
 
-  console.log('  [Tools]');
+  section('Tools');
   check('claude CLI', commandExists('claude'));
   check('tmux', commandExists('tmux'));
   check('git', commandExists('git'));
   check('gh (GitHub CLI)', commandExists('gh'), 'Required for team PR features: brew install gh');
   console.log();
 
-  console.log('  [Plugins]');
+  section('Plugins');
   const ralphLoopInstalled = exists(
     path.join(os.homedir(), '.claude', 'plugins', 'cache', 'claude-plugins-official', 'ralph-loop')
   );
@@ -84,7 +102,7 @@ export async function runDoctor(opts: DoctorOptions = {}): Promise<void> {
     'Plugin registered but installPath missing on disk. Fix: npm run build && node scripts/postinstall.js');
   console.log();
 
-  console.log('  [Directories]');
+  section('Directories');
   check('~/.forgen/', exists(FORGEN_HOME));
   check('~/.forgen/me/', exists(ME_DIR));
   check('~/.forgen/me/solutions/', exists(ME_SOLUTIONS));
@@ -94,13 +112,11 @@ export async function runDoctor(opts: DoctorOptions = {}): Promise<void> {
   check('~/.forgen/sessions/', exists(SESSIONS_DIR));
   console.log();
 
-  console.log('  [Philosophy]');
-  check('philosophy.json', exists(ME_PHILOSOPHY));
-  console.log();
-
-  console.log('  [Environment]');
-  check('Inside tmux session', !!process.env.TMUX);
-  check('FORGEN_HARNESS env var', (process.env.FORGEN_HARNESS ?? process.env.COMPOUND_HARNESS) === '1');
+  section('Environment');
+  check('Inside tmux session', !!process.env.TMUX,
+    'FORGEN auto-compound relies on tmux. Launch: tmux new -s forgen');
+  check('FORGEN_HARNESS env var', (process.env.FORGEN_HARNESS ?? process.env.COMPOUND_HARNESS) === '1',
+    'Set by `forgen` / `fgx` launcher. Hooks assume harness mode is active.');
   console.log();
 
   // 솔루션/규칙 수
@@ -330,6 +346,15 @@ export async function runDoctor(opts: DoctorOptions = {}): Promise<void> {
     const report = pruneState({ dryRun: false });
     const mb = (report.bytesFreed / 1024 / 1024).toFixed(2);
     console.log(`  → Pruned ${report.pruned}/${report.scanned} files (${mb} MB freed, >${report.retentionDays}d old)`);
+
+    // ADR-002 T4 — 90d 미주입 rule retire. pruneState 와 함께 "하루 한번 정돈" 의미 공유.
+    try {
+      const { runDailyT4Decay } = await import('./state-gc.js');
+      const t4 = await runDailyT4Decay({ dryRun: false });
+      if (t4.retired > 0) {
+        console.log(`  → Retired ${t4.retired} rule(s) (T4 time-decay): ${t4.sample.join(', ')}`);
+      }
+    } catch { /* fail-open */ }
   }
   console.log();
 
@@ -341,6 +366,28 @@ export async function runDoctor(opts: DoctorOptions = {}): Promise<void> {
   } catch {
     // git 저장소가 아니거나 origin이 없으면 표시하지 않음
     console.log('  git remote: (none)');
+  }
+  console.log();
+
+  // [Summary] — 최종 상태 요약과 복구 액션을 한눈에 보이게
+  console.log('  [Summary]');
+  if (failedChecks.length === 0) {
+    console.log('  ✓ All diagnostics passed. Forgen is ready.');
+  } else {
+    console.log(`  ✗ ${failedChecks.length} check(s) failed:\n`);
+    const bySection = new Map<string, FailedCheck[]>();
+    for (const f of failedChecks) {
+      if (!bySection.has(f.section)) bySection.set(f.section, []);
+      bySection.get(f.section)!.push(f);
+    }
+    for (const [sec, items] of bySection) {
+      console.log(`    [${sec}]`);
+      for (const item of items) {
+        console.log(`      • ${item.label}`);
+        if (item.hint) console.log(`        → ${item.hint}`);
+      }
+    }
+    console.log('\n  Run `forgen doctor` again after applying the fixes above.');
   }
   console.log();
 }

@@ -12,6 +12,9 @@ import { ME_BEHAVIOR } from '../core/paths.js';
 import { atomicWriteJSON, safeReadJSON } from '../hooks/shared/atomic-write.js';
 import type { Evidence, EvidenceType, RuleCategory } from './types.js';
 import { createRule, saveRule, loadActiveRules } from './rule-store.js';
+import { detect as detectT1 } from '../engine/lifecycle/trigger-t1-correction.js';
+import { foldEvents } from '../engine/lifecycle/orchestrator.js';
+import { appendLifecycleEvents } from '../engine/lifecycle/meta-reclassifier.js';
 
 function evidencePath(evidenceId: string): string {
   return path.join(ME_BEHAVIOR, `${evidenceId}.json`);
@@ -43,6 +46,44 @@ export function createEvidence(params: {
 
 export function saveEvidence(evidence: Evidence): void {
   atomicWriteJSON(evidencePath(evidence.evidence_id), evidence, { pretty: true });
+}
+
+/**
+ * ADR-002 T1 — explicit_correction evidence 저장 + orchestrator 호출.
+ *
+ * saveEvidence 와의 차이:
+ *   - type='explicit_correction' 인 경우 T1 detect 실행 → 매칭된 rule 상태 전이 적용.
+ *   - orchestrator 호출은 best-effort (실패해도 evidence 저장은 유지).
+ *   - correction_kind 는 raw_payload.kind 에서 추론 (CorrectionRequest 와 호환).
+ *
+ * 기존 saveEvidence 를 호출하는 코드는 그대로 둬도 됨 (하위 호환). T1 emission 이 필요한
+ * 호출지(correction-record MCP, evidence-processor)만 이 함수로 전환.
+ */
+export function appendEvidence(evidence: Evidence): { saved: true; t1_events: number } {
+  saveEvidence(evidence);
+  if (evidence.type !== 'explicit_correction') return { saved: true, t1_events: 0 };
+
+  try {
+    const rawKind = (evidence.raw_payload as Record<string, unknown> | undefined)?.kind;
+    const correctionKind = rawKind === 'avoid-this' || rawKind === 'fix-now' || rawKind === 'prefer-from-now'
+      ? rawKind
+      : undefined;
+    const rules = loadActiveRules();
+    const events = detectT1({ evidence, correction_kind: correctionKind, rules });
+    if (events.length === 0) return { saved: true, t1_events: 0 };
+
+    const folded = foldEvents(rules, events);
+    for (const [ruleId, updated] of folded.entries()) {
+      const original = rules.find((r) => r.rule_id === ruleId);
+      if (!original || updated === original) continue;
+      saveRule(updated);
+    }
+    appendLifecycleEvents(events);
+    return { saved: true, t1_events: events.length };
+  } catch {
+    // best-effort: orchestrator 실패는 evidence 저장 자체를 막지 않는다.
+    return { saved: true, t1_events: 0 };
+  }
 }
 
 export function loadEvidence(evidenceId: string): Evidence | null {

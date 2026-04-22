@@ -32,17 +32,28 @@ const CATEGORY_AXIS_MAP: Record<RuleCategory, string[]> = {
 };
 
 function matchesRule(evidence: Evidence, rule: Rule): boolean {
-  const axes = CATEGORY_AXIS_MAP[rule.category] ?? [];
-  if (axes.some((a) => evidence.axis_refs.includes(a))) return true;
-
+  // 가장 강한 신호: 사용자가 명시적으로 rule_id 지목.
   if (evidence.candidate_rule_refs.includes(rule.rule_id)) return true;
 
-  const keyTokens = rule.render_key.split(/[._-]/).filter((t) => t.length > 2);
-  if (keyTokens.length > 0) {
-    const summaryLower = evidence.summary.toLowerCase();
-    if (keyTokens.some((t) => summaryLower.includes(t.toLowerCase()))) return true;
-  }
-  return false;
+  // 그 외: axis 일치만으로는 과매칭 (예: "typescript-any" correction 이 "early-return"
+  // rule 까지 끌어오는 FP). axis AND 키워드 둘 다 요구.
+  const axes = CATEGORY_AXIS_MAP[rule.category] ?? [];
+  const axisMatch = axes.some((a) => evidence.axis_refs.includes(a));
+  if (!axisMatch) return false;
+
+  const keyTokens = rule.render_key
+    .split(/[._-]/)
+    .filter((t) => t.length >= 3);
+  if (keyTokens.length === 0) return false;
+
+  const summaryLower = evidence.summary.toLowerCase();
+  const targetToken = ((evidence.raw_payload as Record<string, unknown> | undefined)?.target ?? '')
+    .toString()
+    .toLowerCase();
+  return keyTokens.some((t) => {
+    const tokLower = t.toLowerCase();
+    return summaryLower.includes(tokLower) || (targetToken && targetToken.includes(tokLower));
+  });
 }
 
 export function detect(input: T1Input): LifecycleEvent[] {

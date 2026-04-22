@@ -288,6 +288,34 @@ async function main(): Promise<void> {
   // 6. Compound negative signal (non-blocking)
   try { checkCompoundNegative(toolName, toolResponse, sessionId); } catch (e) { log.debug('compound negative check 실패', e); }
 
+  // 6b. Bypass detection (T3 signal for ADR-002 lifecycle).
+  // Scan Write/Edit content or Bash command against active rules' negative-intent policies.
+  // Fail-open: bypass detection must never block tool execution.
+  if (toolName === 'Write' || toolName === 'Edit' || toolName === 'Bash') {
+    try {
+      const content = typeof (toolInput as { content?: unknown }).content === 'string'
+        ? String((toolInput as { content: string }).content)
+        : typeof (toolInput as { new_string?: unknown }).new_string === 'string'
+        ? String((toolInput as { new_string: string }).new_string)
+        : typeof (toolInput as { command?: unknown }).command === 'string'
+        ? String((toolInput as { command: string }).command)
+        : '';
+      const target = content || toolResponse;
+      if (target) {
+        const [{ loadActiveRules }, { scanForBypass }, { recordBypass }] = await Promise.all([
+          import('../store/rule-store.js'),
+          import('../engine/lifecycle/bypass-detector.js'),
+          import('../engine/lifecycle/signals.js'),
+        ]);
+        const rules = loadActiveRules();
+        const candidates = scanForBypass({ rules, tool_name: toolName, tool_output: target, session_id: sessionId });
+        for (const c of candidates) {
+          recordBypass({ rule_id: c.rule_id, session_id: c.session_id, tool: c.tool, pattern_preview: c.pattern_preview });
+        }
+      }
+    } catch (e) { log.debug('bypass detect 실패', e); }
+  }
+
   // 7. Compound success hint (non-blocking)
   try {
     const successHint = getCompoundSuccessHint(toolName, toolResponse, sessionId);

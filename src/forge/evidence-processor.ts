@@ -14,7 +14,7 @@ import type {
   QualityFacets,
   AutonomyFacets,
 } from '../store/types.js';
-import { createEvidence, saveEvidence } from '../store/evidence-store.js';
+import { createEvidence, appendEvidence } from '../store/evidence-store.js';
 import { createRule, saveRule } from '../store/rule-store.js';
 
 // ── Correction → Evidence + Temporary Rule ──
@@ -40,7 +40,7 @@ export function processCorrection(req: CorrectionRequest): CorrectionResult {
       direction: req.kind === 'avoid-this' ? 'opposite' : 'same',
     },
   });
-  saveEvidence(evidence);
+  appendEvidence(evidence); // T1 lifecycle trigger fires here for explicit_correction
 
   // fix-now, avoid-this → temporary session rule
   let temporaryRule: Rule | null = null;

@@ -130,6 +130,52 @@ export function pruneState(opts: PruneOptions = {}): PruneReport {
 }
 
 /**
+ * ADR-002 T4 — daily rule decay scanner.
+ *
+ * `~/.forgen/me/rules` 전체를 훑어 `last_inject_at < now - decay_days` 인 active rule 을
+ * retire phase 로 전이시킨다. 실제 파일 삭제가 아니라 status='removed' + phase='retired'.
+ *
+ * 호출 지점: `forgen doctor --prune-state` 또는 `forgen lifecycle-scan --apply` 그리고
+ * 별도 cron/CI scheduler 에서도 호출 가능. dryRun=true 기본.
+ */
+export async function runDailyT4Decay(opts: {
+  decayDays?: number;
+  dryRun?: boolean;
+  now?: number;
+} = {}): Promise<{ scanned: number; retired: number; sample: string[]; dryRun: boolean }> {
+  const decayDays = opts.decayDays ?? 90;
+  const dryRun = opts.dryRun ?? true;
+  const now = opts.now ?? Date.now();
+
+  try {
+    const [{ loadAllRules, saveRule }, { detect: detectT4 }, { collectAllSignals }, { appendLifecycleEvents }, { foldEvents }] = await Promise.all([
+      import('../store/rule-store.js'),
+      import('../engine/lifecycle/trigger-t4-decay.js'),
+      import('../engine/lifecycle/signals.js'),
+      import('../engine/lifecycle/meta-reclassifier.js'),
+      import('../engine/lifecycle/orchestrator.js'),
+    ]);
+    const rules = loadAllRules();
+    const signals = collectAllSignals(rules, { now });
+    const events = detectT4({ rules, signals, decay_days: decayDays, ts: now });
+    const report = { scanned: rules.length, retired: events.length, sample: events.map((e) => e.rule_id.slice(0, 8)), dryRun };
+
+    if (!dryRun && events.length > 0) {
+      const folded = foldEvents(rules, events, now);
+      for (const [id, updated] of folded.entries()) {
+        const original = rules.find((r) => r.rule_id === id);
+        if (!original || updated === original) continue;
+        saveRule(updated);
+      }
+      appendLifecycleEvents(events, now);
+    }
+    return report;
+  } catch {
+    return { scanned: 0, retired: 0, sample: [], dryRun };
+  }
+}
+
+/**
  * Count session-scoped files in STATE_DIR without deleting. Used by doctor
  * to surface a warning when the directory is bloated.
  */

@@ -20,7 +20,7 @@ import { FORGEN_HOME, ME_DIR, ME_RULES, ME_BEHAVIOR, V1_RECOMMENDATIONS_DIR, V1_
 import { checkLegacyProfile, runLegacyCutover } from './legacy-detector.js';
 import { detectRuntimeCapability } from './runtime-detector.js';
 import { loadProfile, profileExists } from '../store/profile-store.js';
-import { loadActiveRules, cleanupStaleSessionRules } from '../store/rule-store.js';
+import { loadActiveRules, cleanupStaleSessionRules, markRulesInjected } from '../store/rule-store.js';
 import { composeSession } from '../preset/preset-manager.js';
 import { renderRules, DEFAULT_CONTEXT } from '../renderer/rule-renderer.js';
 import { saveSessionState, loadRecentSessions } from '../store/session-state-store.js';
@@ -109,6 +109,13 @@ export function bootstrapV1Session(): V1BootstrapResult {
   // 6. Rule 렌더링
   const allRules = [...personalRules];
   const renderedRules = renderRules(allRules, session, profile, DEFAULT_CONTEXT);
+
+  // 6b. Inject tracking (ADR-002 Meta signal) — rendered rules count as injected.
+  // Fail-open: tracking failure must not block bootstrap.
+  try {
+    const injected = allRules.filter((r) => r.status === 'active').map((r) => r.rule_id);
+    if (injected.length > 0) markRulesInjected(injected);
+  } catch { /* ignore */ }
 
   // 7. Mismatch 감지 (최근 3세션 rolling)
   let mismatchResult: MismatchResult | null = null;

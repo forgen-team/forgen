@@ -15,13 +15,13 @@ function rule(overrides: Partial<Rule> = {}): Rule {
     rule_id: 'r-' + Math.random().toString(36).slice(2, 8),
     category: 'quality',
     scope: 'me',
-    trigger: 't',
-    policy: 'p',
+    trigger: 'then-usage',
+    policy: 'use async/await not .then',
     strength: 'default',
     source: 'explicit_correction',
     status: 'active',
     evidence_refs: [],
-    render_key: 'quality_safety.t',
+    render_key: 'quality_safety.then-usage',
     created_at: '2026-04-01T00:00:00Z',
     updated_at: '2026-04-01T00:00:00Z',
     ...overrides,
@@ -48,23 +48,33 @@ function evidence(overrides: Partial<Evidence> = {}): Evidence {
     session_id: 's1',
     timestamp: '2026-04-22T00:00:00Z',
     source_component: 'correction-record',
-    summary: 'user asked to stop using .then',
+    summary: 'user asked to stop using then-usage pattern',
     axis_refs: ['quality_safety'],
     candidate_rule_refs: [],
     confidence: 0.9,
-    raw_payload: {},
+    raw_payload: { target: 'then-usage' },
     ...overrides,
   };
 }
 
 describe('T1 — explicit_correction', () => {
-  it('matches rule by category → axis mapping', () => {
+  it('matches rule by axis + render_key token overlap', () => {
     const r = rule({ rule_id: 'r1', category: 'quality' });
     const ev = evidence({ axis_refs: ['quality_safety'] });
     const events = detectT1({ evidence: ev, rules: [r] });
     expect(events).toHaveLength(1);
     expect(events[0].rule_id).toBe('r1');
     expect(events[0].kind).toBe('t1_explicit_correction');
+  });
+
+  it('axis matches but no key-token overlap → NOT matched (prevents FP)', () => {
+    const r = rule({ rule_id: 'r-unrelated', render_key: 'quality_safety.early-return' });
+    const ev = evidence({
+      axis_refs: ['quality_safety'],
+      summary: 'stop using mock in production',
+      raw_payload: { target: 'mock-usage' },
+    });
+    expect(detectT1({ evidence: ev, rules: [r] })).toHaveLength(0);
   });
 
   it('matches by candidate_rule_refs id', () => {
