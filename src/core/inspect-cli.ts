@@ -92,7 +92,8 @@ export async function handleInspect(args: string[]): Promise<void> {
     return;
   }
 
-  if (sub === 'evidence') {
+  // R9-IA2: user-facing name is "corrections"; "evidence" kept as back-compat alias.
+  if (sub === 'corrections' || sub === 'evidence') {
     const evidence = loadRecentEvidence(20);
     console.log('\n' + inspect.renderEvidence(evidence) + '\n');
     return;
