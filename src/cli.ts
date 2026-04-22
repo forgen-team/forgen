@@ -179,10 +179,13 @@ const commands: Command[] = [
   // 수동 재설치: node scripts/postinstall.js
   {
     name: 'uninstall',
-    description: 'Remove forgen from settings [--force]',
+    description: 'Remove forgen from settings [--force] [--purge (also deletes ~/.forgen/)]',
     handler: async (args) => {
       const { handleUninstall } = await import('./core/uninstall.js');
-      await handleUninstall(process.cwd(), { force: args.includes('--force') });
+      await handleUninstall(process.cwd(), {
+        force: args.includes('--force'),
+        purge: args.includes('--purge'),
+      });
     },
   },
   {

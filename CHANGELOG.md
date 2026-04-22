@@ -30,7 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - T1 explicit_correction: `evidence-store.appendEvidence` → `detectT1` → rule retire/supersede/flag. axis + render_key 이중 매칭으로 FP 차단.
 - T2 repeated_violation: 30d rolling window `violations_30d ≥ 3 AND rate > 0.3` → flag. 데이터 소스: `~/.forgen/state/enforcement/violations.jsonl` (stop-guard block 시 자동 append).
 - T3 user_bypass: `post-tool-use` 에서 `bypass-detector.scanForBypass` → `recordBypass`. 7d `bypass_count ≥ 5` → suppress.
-- T4 time_decay: `state-gc.runDailyT4Decay` — `forgen doctor --prune-state` 에서 매일 실행, 90d 미주입 rule retire.
+- T4 time_decay: `state-gc.runDailyT4Decay` — `forgen doctor --prune-state` 실행 시 90d 미주입 rule retire (별도 scheduler 없음; 사용자가 명시적으로 실행).
 - T5 conflict_detected: `rule-store.appendRule` 에서 T5 감지, 양쪽 `conflict_refs` 기록.
 - Meta 양방향: drift.jsonl 누적 → 강등 (A→B→C); rolling 20 injects + 0 violations → 승급 (B→A, C→B).
 - Orchestrator `applyEvent` / `foldEvents` pure — rule 파일 쓰기는 호출자 책임.

@@ -398,6 +398,12 @@ export async function main(): Promise<void> {
       message_preview: lastMessage.slice(0, 120),
     });
 
+    // G8: block 메시지에 override/비활성화 탈출구 힌트를 한 줄 추가.
+    // 2AM 디버깅 사용자가 JSON hook-config.json 을 못 찾아서 forgen uninstall 하는 상황 방지.
+    const reasonWithHint = `${reason}
+
+(rule:${hit.id.slice(0, 8)} — to disable this rule: edit ~/.forgen/me/rules/${hit.id}.json status→'suppressed', or \`forgen config hooks\` to adjust hook-level.)`;
+
     const count = incrementBlockCount(sessionId, hit.id);
     const threshold = getStuckLoopThreshold();
     if (count > threshold) {
@@ -415,7 +421,7 @@ export async function main(): Promise<void> {
       console.log(approve());
       return;
     }
-    console.log(blockStop(reason, hit.system_tag));
+    console.log(blockStop(reasonWithHint, hit.system_tag));
   } catch {
     console.log(failOpenWithTracking(HOOK_NAME));
   } finally {

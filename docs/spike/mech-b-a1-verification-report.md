@@ -367,7 +367,7 @@ v0.4.0 구현 시 이식할 주요 컴포넌트:
 | Meta | `src/engine/lifecycle/{types,meta-reclassifier,meta-cli}.ts` | 드리프트 스캔 → 강등. `forgen rule-meta-scan [--apply]` |
 | Tests | `tests/enforce-classifier.test.ts` (8) + `tests/meta-reclassifier.test.ts` (11) + `tests/stop-guard.test.ts` (rulesFromStore 6 추가) | 25 신규 |
 
-**전체 테스트 1806/1806 pass. TypeScript clean. forgen doctor: all pass.**
+**전체 테스트 1926/1926 pass (v0.4.0 최종). TypeScript clean. forgen doctor: all pass.**
 
 ---
 

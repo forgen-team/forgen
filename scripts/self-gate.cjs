@@ -127,22 +127,62 @@ function checkSecretsLeak() {
   scan(root);
 }
 
-// ── 3) enforce_via missing on strong/hard rules ──────────────────────────
-// ~/.forgen/me/rules 는 사용자 로컬. 여기서는 repo 내 ref rules (tests/fixtures 같은) 있으면 검사.
-// forgen 자체 L1 규칙 세트는 향후 repo 에 checked-in 될 예정. 지금은 tests/spike/.../scenarios.json 의 rules 검증.
+// ── 3) enforce_via coverage + dogfood rule regex 정합성 ─────────────────
+// ~/.forgen/me/rules 는 사용자 로컬. repo 에는 tests/spike/.../scenarios.json 과
+// .forgen/rules/*.json (ADR-003 Phase 1 Dogfood) 가 committed.
 function checkEnforceViaCoverage() {
+  // 3a. Spike scenarios — verifier 부재 체크
   const scenariosPath = path.join(REPO_ROOT, 'tests', 'spike', 'mech-b-inject', 'scenarios.json');
-  if (!fs.existsSync(scenariosPath)) return;
-  try {
-    const data = JSON.parse(fs.readFileSync(scenariosPath, 'utf-8'));
-    const rules = data.rules ?? [];
-    for (const r of rules) {
-      // spike rules inline verifier 를 가지지만 production 타입 EnforceSpec 형식은 아님.
-      // 여기서는 verifier 부재만 체크.
-      if (!r.verifier) fail('enforce_via-missing', `rule ${r.id} lacks verifier`);
+  if (fs.existsSync(scenariosPath)) {
+    try {
+      const data = JSON.parse(fs.readFileSync(scenariosPath, 'utf-8'));
+      const rules = data.rules ?? [];
+      for (const r of rules) {
+        if (!r.verifier) fail('enforce_via-missing', `spike rule ${r.id} lacks verifier`);
+      }
+    } catch (e) {
+      fail('enforce_via-missing', `cannot parse scenarios.json: ${String(e)}`);
     }
-  } catch (e) {
-    fail('enforce_via-missing', `cannot parse scenarios.json: ${String(e)}`);
+  }
+
+  // 3b. G12 — .forgen/rules/*.json dogfood regex 검증.
+  // 런타임에 new RegExp 가 throw 하면 Mech-A 전체가 침묵할 수 있으므로 CI 에서 선차단.
+  // compileSafeRegex 와 동일한 수준(nested quantifier / length) 검사.
+  const dogfoodDir = path.join(REPO_ROOT, '.forgen', 'rules');
+  if (fs.existsSync(dogfoodDir)) {
+    for (const file of fs.readdirSync(dogfoodDir)) {
+      if (!file.endsWith('.json')) continue;
+      const rulePath = path.join(dogfoodDir, file);
+      let rule;
+      try {
+        rule = JSON.parse(fs.readFileSync(rulePath, 'utf-8'));
+      } catch (e) {
+        fail('dogfood-rule-parse', `${file}: ${String(e)}`);
+        continue;
+      }
+      // 필수 필드 체크
+      for (const field of ['rule_id', 'category', 'scope', 'trigger', 'policy', 'strength', 'status']) {
+        if (!rule[field]) fail('dogfood-rule-missing-field', `${file} missing "${field}"`);
+      }
+      // enforce_via regex 검증
+      for (const spec of rule.enforce_via ?? []) {
+        const patterns = [
+          ['trigger_keywords_regex', spec.trigger_keywords_regex],
+          ['trigger_exclude_regex', spec.trigger_exclude_regex],
+          ['verifier.params.pattern', spec.verifier?.params?.pattern],
+        ];
+        for (const [fieldName, pat] of patterns) {
+          if (!pat) continue;
+          if (typeof pat !== 'string') { fail('dogfood-regex', `${file} ${fieldName} not a string`); continue; }
+          if (pat.length > 500) { fail('dogfood-regex', `${file} ${fieldName} length ${pat.length} > 500`); continue; }
+          // nested quantifier / overlapping alt / backreference — compileSafeRegex 와 동일 heuristic
+          if (/\([^)]*[+*][^)]*\)[+*]/.test(pat)) { fail('dogfood-regex', `${file} ${fieldName} nested quantifier (ReDoS risk)`); continue; }
+          if (/\\[1-9]/.test(pat)) { fail('dogfood-regex', `${file} ${fieldName} uses backreference`); continue; }
+          try { new RegExp(pat); }
+          catch (e) { fail('dogfood-regex', `${file} ${fieldName} compile error: ${String(e).slice(0, 80)}`); }
+        }
+      }
+    }
   }
 }
 

@@ -12,7 +12,7 @@
 
 - [ ] `npm run build` 성공 (tsc + copy-assets + chmod)
 - [ ] `npx tsc --noEmit` clean (경고 0)
-- [ ] `npm test` 전체 pass (현 기준 1888+ tests)
+- [ ] `npm test` 전체 pass (회귀 기준 변동, `npm test` 출력의 `Tests passed` 를 CHANGELOG 에 기록)
 - [ ] `node dist/cli.js doctor` `✓ All diagnostics passed`
 
 ## Self-gate (ADR-003)

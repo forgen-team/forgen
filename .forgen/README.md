@@ -11,20 +11,26 @@
 | `L1-no-rm-rf-unconfirmed` | 사용자 confirm 없는 rm -rf 금지 | A | PreToolUse |
 | `L1-no-secret-commit` | API key 패턴 커밋/푸시 금지 | A | PostToolUse |
 
-## 활성화 (로컬 개발자)
+## 활성화 (v0.4.0 부터 자동)
 
-프로젝트별 rules 는 아직 자동 로드되지 않습니다 (v0.4.1 예정). 수동 opt-in:
+프로젝트 로컬 `.forgen/rules/*.json` 은 **v0.4.0 부터 자동 로드됩니다**. `forgen` 을 이 저장소 cwd 에서 실행하면 `loadActiveRules` 가 `~/.forgen/me/rules/` 와 이 디렉토리를 병합해 로드하며, 같은 `rule_id` 가 있으면 프로젝트 rules 가 우선합니다 (git 이 정책 진실).
+
+### 검증
 
 ```bash
-# 이 디렉토리의 rules 를 ~/.forgen/me/rules/ 로 복사
-mkdir -p ~/.forgen/me/rules
-cp .forgen/rules/*.json ~/.forgen/me/rules/
-
-# 검증: forgen classify-enforce 가 enforce_via 이미 있는 것을 인지
-node dist/cli.js classify-enforce
+# Live smoke — 완료 선언이 실제로 block 되는지 (evidence 없을 때)
+echo '{"session_id":"live","stop_hook_active":true,"last_assistant_message":"구현 완료했습니다."}' | \
+  HOME=/tmp FORGEN_CWD=$(pwd) FORGEN_SPIKE_RULES=/tmp/empty.json \
+  node dist/hooks/stop-guard.js
+# → {"continue":true,"decision":"block","reason":"L1-e2e-before-done: ...","systemMessage":"rule:L1-e2e-before-done"}
 ```
 
-복사 후 Claude Code 에서 forgen hook 이 이 L1 규칙을 실제로 발화합니다. 개발 중 자신의 규칙에 막히는 경험 = ADR-003 미션 달성의 일차 증거.
+### 비활성화
+
+```bash
+# 테스트 / 격리 환경에서 프로젝트 rule 자동 로드를 끄려면
+FORGEN_DISABLE_PROJECT_RULES=1 forgen ...
+```
 
 ## 검증 (self-gate)
 

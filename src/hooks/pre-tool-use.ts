@@ -377,7 +377,10 @@ async function main(): Promise<void> {
         const confirmed = process.env.FORGEN_USER_CONFIRMED === '1';
         if (requiresFlag && !confirmed) {
           recordViolation({ rule_id: rule.rule_id, session_id: sessionId, source: 'pre-tool-guard', kind: 'deny', message_preview: command.slice(0, 120) });
-          console.log(deny(spec.block_message ?? `[${rule.rule_id}] policy violation: ${rule.policy.slice(0, 120)}`));
+          const baseMsg = spec.block_message ?? `[${rule.rule_id}] policy violation: ${rule.policy.slice(0, 120)}`;
+          // G8: override 힌트 — FORGEN_USER_CONFIRMED=1 으로 사용자 명시 승인 가능, 감사 로그 기록됨.
+          const msgWithHint = `${baseMsg}\n\n(override: set FORGEN_USER_CONFIRMED=1 (bypass will be audited in violations.jsonl))`;
+          console.log(deny(msgWithHint));
           return;
         }
         if (requiresFlag && confirmed) {

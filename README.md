@@ -497,7 +497,7 @@ forgen classify-enforce --apply  # Save proposed enforce_via (skips already-set 
 forgen classify-enforce --apply --force  # Overwrite existing enforce_via
 forgen rule-meta-scan            # Preview Mech demotion candidates (drift.jsonl → A→B→C)
 forgen rule-meta-scan --apply    # Persist demotions + meta_promotions history
-forgen lifecycle-scan            # Preview T1~T5 + Meta (both directions) triggers
+forgen lifecycle-scan            # Preview T2~T5 + Meta (T1 fires inline on correction, not via CLI)
 forgen lifecycle-scan --apply    # Apply all lifecycle state transitions
 ```
 

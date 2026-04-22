@@ -228,7 +228,7 @@ export interface LifecycleEvent {
 | T3 | post-tool-use hook (Bash/Write 후) | rule.policy 와 정반대 패턴이 command/file diff에 감지됨, bypass_count ≥ 5 in 7d | LifecycleEvent(t3) |
 | T4 | daily scheduler (state-gc.ts 확장) | `last_inject_at < now - 90d` | LifecycleEvent(t4) |
 | T5 | rule 생성/수정 시 | 같은 `category` + 상반되는 `policy` 자연어 매칭(간단 heuristic) | LifecycleEvent(t5) |
-| Meta | solution-fitness 주기 평가 | rolling 20 injects 중 violation 0 → A 승급 후보 / violation ≥ 5 → B 강등 후보 | LifecycleEvent(meta) |
+| Meta | drift.jsonl / signals | rolling 20 injects 중 violation 0 → A 승급 후보 / stuck_loop_force_approve 3회+ → B 강등 후보 (구현: meta-reclassifier.scanDriftForDemotion, scanSignalsForPromotion) | LifecycleEvent(meta) |
 
 ### Orchestrator 동작
 

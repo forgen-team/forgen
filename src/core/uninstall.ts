@@ -305,7 +305,7 @@ function cleanClaudeMd(cwd: string): void {
 }
 
 /** forgen uninstall 메인 */
-export async function handleUninstall(cwd: string, options: { force?: boolean }): Promise<void> {
+export async function handleUninstall(cwd: string, options: { force?: boolean; purge?: boolean }): Promise<void> {
   console.log('\n[forgen] Uninstalling Forgen\n');
   console.log('The following items will be cleaned up:');
   console.log('  1. Remove CH env vars/hooks/statusLine/enabledPlugins from ~/.claude/settings.json');
@@ -314,8 +314,15 @@ export async function handleUninstall(cwd: string, options: { force?: boolean })
   console.log('  4. Remove forgen block from CLAUDE.md');
   console.log('  5. Remove slash commands (~/.claude/commands/forgen/)');
   console.log('  6. Remove plugin artifacts (cache, installed_plugins.json, plugin directory)');
+  if (options.purge) {
+    console.log('  7. --purge: Delete ~/.forgen/ entirely (rules, me/, state/, solutions/, behavior/)');
+    console.log('     WARNING: this erases all accumulated corrections, rules, drift, and lifecycle history.');
+  } else {
+    console.log('');
+    console.log('Note: ~/.forgen/ directory is preserved. Use --purge to also delete it.');
+    console.log('      (manual: rm -rf ~/.forgen)');
+  }
   console.log('');
-  console.log('Note: ~/.forgen/ directory is preserved (manual deletion: rm -rf ~/.forgen)\n');
 
   if (!options.force) {
     if (!process.stdin.isTTY) {
@@ -336,6 +343,20 @@ export async function handleUninstall(cwd: string, options: { force?: boolean })
   cleanClaudeMd(cwd);
   cleanSlashCommands();
   cleanPluginArtifacts();
+
+  if (options.purge) {
+    try {
+      const forgenHome = path.join(os.homedir(), '.forgen');
+      if (fs.existsSync(forgenHome)) {
+        fs.rmSync(forgenHome, { recursive: true, force: true });
+        console.log('  ✓ Deleted ~/.forgen/ (all rules, state, solutions, behavior)');
+      } else {
+        console.log('  ✓ ~/.forgen/ already absent');
+      }
+    } catch (e) {
+      console.log(`  ✗ ~/.forgen/ deletion failed: ${(e as Error).message}`);
+    }
+  }
 
   console.log('\n[forgen] Uninstall complete. Restart Claude Code for a clean state.\n');
 }

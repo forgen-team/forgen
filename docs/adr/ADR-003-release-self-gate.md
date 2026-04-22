@@ -99,6 +99,7 @@
 ### `.github/workflows/self-gate.yml` (신규)
 
 ```yaml
+# 실제 ".github/workflows/self-gate.yml" 구현. 아래는 설계 스케치가 아닌 live 워크플로우.
 name: forgen-self-gate
 on:
   push:
@@ -112,16 +113,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # tag describe 필요
       - uses: actions/setup-node@v4
-        with: { node-version: '20' }
-      - run: npm ci
-      - run: npm run build
-      - name: Static self-gate
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - name: Install dependencies
+        run: npm ci
+      - name: Build
+        run: npm run build
+      - name: Static self-gate (mock-in-prod / secrets / enforce_via / release)
         run: node scripts/self-gate.cjs
-      - name: Runtime smoke self-gate
+      - name: Runtime smoke self-gate (hook consistency)
         run: node scripts/self-gate-runtime.cjs
-      - name: Docker e2e (existing 51 checks)
-        run: npm run test:docker-e2e
       - name: Release artifact consistency (tag only)
         if: startsWith(github.ref, 'refs/tags/v')
         run: node scripts/self-gate-release.cjs
