@@ -168,9 +168,9 @@ export async function handleInspect(args: string[]): Promise<void> {
   console.log(`  Usage:
     forgen inspect profile               — 현재 profile 상태
     forgen inspect rules                 — active/suppressed 규칙 목록
-    forgen inspect evidence              — 최근 evidence 목록
+    forgen inspect corrections           — 최근 corrections / behavior 기록 (alias: evidence)
     forgen inspect session               — 현재/최근 세션 상태
-    forgen inspect violations [--last N] — Mech-A/B block/deny 기록 (R5-G1)
-    forgen inspect bypass     [--last N] — T3 사용자 우회 기록
+    forgen inspect violations [--last N] — 최근 block 기록
+    forgen inspect bypass     [--last N] — 사용자 우회 기록
     forgen inspect drift      [--last N] — stuck-loop force-approve 기록`);
 }

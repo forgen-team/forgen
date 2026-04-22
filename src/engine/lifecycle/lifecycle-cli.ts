@@ -65,7 +65,7 @@ export async function handleLifecycleScan(args: string[]): Promise<void> {
     return;
   }
 
-  console.log(`  Events from T2~T5: ${events.length}`);
+  console.log(`  Rule health events: ${events.length}`);
   const byKind = new Map<string, number>();
   for (const e of events) byKind.set(e.kind, (byKind.get(e.kind) ?? 0) + 1);
   for (const [k, n] of byKind.entries()) console.log(`    ${k}: ${n}`);
@@ -114,6 +114,6 @@ export async function handleLifecycleScan(args: string[]): Promise<void> {
   }
   if (metaEvents.length > 0) appendLifecycleEvents(metaEvents, now);
 
-  console.log(`\n  Applied: ${saved} rule(s) updated by T2~T5, ${metaEvents.length} meta event(s).`);
+  console.log(`\n  Applied: ${saved} rule(s) updated, ${metaEvents.length} health event(s).`);
   console.log(`  Log: ${LIFECYCLE_DIR}/${new Date(now).toISOString().slice(0, 10)}.jsonl\n`);
 }
