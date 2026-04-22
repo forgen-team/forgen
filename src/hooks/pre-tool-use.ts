@@ -346,7 +346,38 @@ async function main(): Promise<void> {
   const toolInput = data.tool_input ?? data.toolInput ?? {};
   const sessionId = data.session_id ?? 'default';
 
-  // Bash 도구: 위험 명령어 감지
+  // ADR-001 Mech-A PreToolUse dispatcher — 사용자가 정의한 rule 이 빌트인 위험-명령 감지보다 먼저.
+  // 이렇게 해야 rule.block_message (맥락 있는 안내) 가 제네릭 "Dangerous command blocked" 대신 노출됨.
+  // fail-open: 예외는 hook 차단 안 함.
+  try {
+    const [{ loadActiveRules }, { recordViolation }] = await Promise.all([
+      import('../store/rule-store.js'),
+      import('../engine/lifecycle/signals.js'),
+    ]);
+    const rules = loadActiveRules();
+    for (const rule of rules) {
+      for (const spec of rule.enforce_via ?? []) {
+        if (spec.hook !== 'PreToolUse' || spec.mech !== 'A') continue;
+        const v = spec.verifier;
+        if (!v || v.kind !== 'tool_arg_regex') continue;
+        const pattern = String(v.params?.pattern ?? '');
+        if (!pattern) continue;
+        const command = typeof (toolInput as { command?: unknown }).command === 'string'
+          ? String((toolInput as { command: string }).command)
+          : '';
+        if (!new RegExp(pattern, 'i').test(command)) continue;
+        const requiresFlag = v.params?.requires_flag;
+        const confirmed = process.env.FORGEN_USER_CONFIRMED === '1';
+        if (requiresFlag && !confirmed) {
+          recordViolation({ rule_id: rule.rule_id, session_id: sessionId, source: 'pre-tool-guard', kind: 'deny', message_preview: command.slice(0, 120) });
+          console.log(deny(spec.block_message ?? `[${rule.rule_id}] policy violation: ${rule.policy.slice(0, 120)}`));
+          return;
+        }
+      }
+    }
+  } catch (e) { log.debug('enforce_via[PreToolUse] dispatch 실패', e); }
+
+  // Bash 도구: 위험 명령어 감지 (빌트인 safety net)
   const check = checkDangerousCommand(toolName, toolInput);
   if (check.action === 'block') {
     console.log(deny(`[Forgen] Dangerous command blocked: ${check.description}\nCommand: ${check.command}`));

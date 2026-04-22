@@ -58,7 +58,7 @@ export interface ViolationEntry {
   at: string;
   rule_id: string;
   session_id: string;
-  source: 'stop-guard' | 'pre-tool-guard' | 'evidence-store' | 'manual';
+  source: 'stop-guard' | 'pre-tool-guard' | 'post-tool-guard' | 'evidence-store' | 'manual';
   kind: 'block' | 'deny' | 'correction';
   message_preview?: string;
 }

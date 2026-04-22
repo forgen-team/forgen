@@ -288,6 +288,49 @@ async function main(): Promise<void> {
   // 6. Compound negative signal (non-blocking)
   try { checkCompoundNegative(toolName, toolResponse, sessionId); } catch (e) { log.debug('compound negative check 실패', e); }
 
+  // 6a. ADR-001 Mech-A PostToolUse dispatcher — pattern_match verifier.
+  // 도구 출력물 (Write content / Bash response 등) 에서 enforce_via[PostToolUse].pattern_match 매칭.
+  // PostToolUse 는 이미 실행된 후라 block 불가 → warning + violation 기록.
+  if (toolName === 'Write' || toolName === 'Edit' || toolName === 'Bash') {
+    try {
+      const target = ((): string => {
+        const c = (toolInput as { content?: unknown }).content;
+        if (typeof c === 'string') return c;
+        const ns = (toolInput as { new_string?: unknown }).new_string;
+        if (typeof ns === 'string') return ns;
+        const cmd = (toolInput as { command?: unknown }).command;
+        if (typeof cmd === 'string') return cmd;
+        return '';
+      })() || toolResponse;
+      if (target) {
+        const [{ loadActiveRules }, { recordViolation }] = await Promise.all([
+          import('../store/rule-store.js'),
+          import('../engine/lifecycle/signals.js'),
+        ]);
+        const rules = loadActiveRules();
+        for (const rule of rules) {
+          for (const spec of rule.enforce_via ?? []) {
+            if (spec.hook !== 'PostToolUse' || spec.mech !== 'A') continue;
+            const v = spec.verifier;
+            if (!v || v.kind !== 'pattern_match') continue;
+            const pattern = String(v.params?.pattern ?? '');
+            if (!pattern) continue;
+            if (!new RegExp(pattern).test(target)) continue;
+            recordViolation({
+              rule_id: rule.rule_id, session_id: sessionId,
+              source: 'post-tool-guard',
+              kind: 'block',
+              message_preview: target.slice(0, 120),
+            });
+            messages.push(
+              `<compound-rule-violation>\n[Forgen] Rule ${rule.rule_id.slice(0, 8)} pattern matched in ${toolName} output.\n${spec.block_message ?? rule.policy.slice(0, 120)}\n</compound-rule-violation>`
+            );
+          }
+        }
+      }
+    } catch (e) { log.debug('enforce_via[PostToolUse] dispatch 실패', e); }
+  }
+
   // 6b. Bypass detection (T3 signal for ADR-002 lifecycle).
   // Scan Write/Edit content or Bash command against active rules' negative-intent policies.
   // Fail-open: bypass detection must never block tool execution.

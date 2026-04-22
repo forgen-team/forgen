@@ -22,3 +22,14 @@ agents/ @wooo-jin
 
 # CI & release
 .github/ @wooo-jin
+
+# Release self-gate scripts (ADR-003) — change requires maintainer review to
+# prevent accidental weakening of the "forgen does not violate its own L1 rules"
+# invariant.
+scripts/self-gate.cjs @wooo-jin
+scripts/self-gate-runtime.cjs @wooo-jin
+scripts/self-gate-release.cjs @wooo-jin
+.github/workflows/self-gate.yml @wooo-jin
+
+# Dogfood L1 rules (ADR-003 Phase 1) — committed policy artifacts.
+.forgen/rules/ @wooo-jin
