@@ -33,6 +33,94 @@ export type RuleStrength = 'soft' | 'default' | 'strong' | 'hard';
 export type RuleSource = 'onboarding' | 'explicit_correction' | 'behavior_inference' | 'pack_overlay';
 export type RuleStatus = 'active' | 'suppressed' | 'removed' | 'superseded';
 
+// ── Enforcement axis (ADR-001) ──────────────────────────────────────────────
+// Rule 이 어떻게 강제되는가. 직교 축: strength(중요도) × mech(검증 방식).
+// 하나의 Rule 은 복수 mech 를 가질 수 있다 (예: 완료 선언 키워드 감지로 A, 문체로 B 둘 다).
+
+export type EnforcementMech = 'A' | 'B' | 'C';
+export type HookPoint = 'PreToolUse' | 'PostToolUse' | 'Stop' | 'UserPromptSubmit';
+
+export type VerifierKind =
+  | 'file_exists'
+  | 'pattern_match'
+  | 'tool_arg_regex'
+  | 'artifact_check'
+  | 'self_check_prompt';
+
+export interface VerifierSpec {
+  kind: VerifierKind;
+  /** 각 kind 별로 의미가 다름 — 예: self_check_prompt 는 `question`, artifact_check 는 `path`+`max_age_s`. */
+  params: Record<string, string | number | boolean>;
+}
+
+export interface EnforceSpec {
+  mech: EnforcementMech;
+  hook: HookPoint;
+  /** Mech-A/B 에서 필수, Mech-C 에서는 미사용. */
+  verifier?: VerifierSpec;
+  /** Mech-A BLOCK / Mech-B self-check 시 Claude 에게 전달할 reason. */
+  block_message?: string;
+  /** Mech-C drift-score.ts 키 — 정량 판정 불가 규칙의 장기 누적 편향 축. */
+  drift_key?: string;
+  /**
+   * Stop hook 전용: 어시스턴트 응답 텍스트에서 이 규칙을 발화시킬 정규식.
+   * 미지정 시 shared default (완료 선언 키워드 regex) 사용.
+   */
+  trigger_keywords_regex?: string;
+  /**
+   * Stop hook 전용: trigger 가 매칭되더라도 이 regex 가 매칭되면 발화 안 함.
+   * retraction/meta/테스트-맥락 등 false-positive 컨텍스트 차단용.
+   */
+  trigger_exclude_regex?: string;
+  /**
+   * UI 표시용 한 줄 태그 (Stop hook 의 `systemMessage` 로 전달).
+   * 예: "rule:R-B1 — e2e-before-done"
+   */
+  system_tag?: string;
+}
+
+// ── Rule lifecycle (ADR-002) ────────────────────────────────────────────────
+// Rule 은 영구 규범이 아니라 현재 유효한 가설. 상태 전이로 관리한다.
+// phase 와 별개로 mech 는 meta_promotions 이력으로 추적 (A↔B 재분류).
+
+export type LifecyclePhase =
+  | 'active'
+  | 'flagged'
+  | 'suppressed'
+  | 'retired'
+  | 'merged'
+  | 'superseded';
+
+export interface MetaPromotion {
+  at: string;
+  from_mech: EnforcementMech;
+  to_mech: EnforcementMech;
+  reason: 'consistent_adherence' | 'repeated_violation' | 'user_override' | 'stuck_loop_force_approve';
+  trigger_stats: { window_n: number; adherence_rate?: number; violation_count?: number };
+}
+
+export interface LifecycleState {
+  phase: LifecyclePhase;
+  first_active_at: string;
+  last_inject_at?: string;
+  last_violation_at?: string;
+  inject_count: number;
+  accept_count: number;
+  violation_count: number;
+  /** T3: 사용자가 rule 과 반대로 행동한 횟수 */
+  bypass_count: number;
+  /** T5: 충돌하는 rule_id 목록 */
+  conflict_refs: string[];
+  /** T5: 이 rule 이 흡수된 대상 rule_id */
+  merged_into?: string;
+  /** T1: 이 rule 을 교체한 rule_id */
+  superseded_by?: string;
+  /** Meta: mech 변경 이력 */
+  meta_promotions: MetaPromotion[];
+}
+
+// ── Rule ────────────────────────────────────────────────────────────────────
+
 export interface Rule {
   rule_id: string;
   category: RuleCategory;
@@ -46,6 +134,17 @@ export interface Rule {
   render_key: string;
   created_at: string;
   updated_at: string;
+  /**
+   * 이 rule 이 어떤 hook/verifier 로 강제되는가. optional — 기존 rule 은 null.
+   * `forgen classify-enforce` 명령이 기존 rule 을 자동 분류하여 채운다.
+   * ADR-001 §Data Model.
+   */
+  enforce_via?: EnforceSpec[];
+  /**
+   * Lifecycle 상태. optional — 기존 rule 은 load 시 phase='active' 로 auto-initialize.
+   * ADR-002 §Data Model.
+   */
+  lifecycle?: LifecycleState;
 }
 
 // ── Evidence ──

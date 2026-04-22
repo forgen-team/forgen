@@ -185,6 +185,22 @@ const commands: Command[] = [
       await handleUninstall(process.cwd(), { force: args.includes('--force') });
     },
   },
+  {
+    name: 'classify-enforce',
+    description: 'Propose enforce_via for existing rules (ADR-001 migration). --apply to save, --force to overwrite.',
+    handler: async (args) => {
+      const { handleClassifyEnforce } = await import('./engine/classify-enforce-cli.js');
+      await handleClassifyEnforce(args);
+    },
+  },
+  {
+    name: 'rule-meta-scan',
+    description: 'Scan drift.jsonl for stuck-loop force-approve events and demote Mech-A rules. --apply to persist.',
+    handler: async (args) => {
+      const { handleRuleMetaScan } = await import('./engine/lifecycle/meta-cli.js');
+      await handleRuleMetaScan(args);
+    },
+  },
 ];
 
 /** 최소 편집 거리 (유사 명령 제안용) */

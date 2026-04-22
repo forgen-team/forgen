@@ -26,8 +26,17 @@ import { readStdinJSON } from './shared/read-stdin.js';
 import { approve, blockStop, failOpenWithTracking } from './shared/hook-response.js';
 import { recordHookTiming } from './shared/hook-timing.js';
 import { isHookEnabled } from './hook-config.js';
+import { loadActiveRules } from '../store/rule-store.js';
+import type { Rule, EnforceSpec } from '../store/types.js';
 
 const HOOK_NAME = 'stop-guard';
+
+/**
+ * Shared production trigger for Stop hook — A1 spike 에서 검증된 regex.
+ * Rule 에 custom trigger 미지정 시 fallback.
+ */
+const DEFAULT_STOP_TRIGGER_RE = '(완료했|완성됐|완성되|완성했|done\\.|ready\\.|shipped\\.|LGTM|finished\\.)';
+const DEFAULT_STOP_EXCLUDE_RE = '(취소|철회|없음|없습니다|않았|하지\\s*않|아닙니다|not\\s*yet|no\\s*longer|retract|withdraw|아직\\s*(안|아))';
 
 /**
  * Stuck-loop guard 임계치.
@@ -67,8 +76,8 @@ interface StopHookInput {
   stop_hook_active?: boolean;
 }
 
-/** Spike-only rule loader. v0.4.0 final은 ~/.forgen/me/rules에서 로드. */
-function loadStopRules(): SpikeRule[] {
+/** Spike scenarios.json 로더 (테스트/스파이크용). */
+function loadSpikeRules(): SpikeRule[] {
   const override = process.env.FORGEN_SPIKE_RULES;
   const defaultPath = path.join(
     process.cwd(),
@@ -85,6 +94,58 @@ function loadStopRules(): SpikeRule[] {
   } catch {
     return [];
   }
+}
+
+/**
+ * 프로덕션 rule-store 로더.
+ * ~/.forgen/me/rules 의 Rule 중 `enforce_via` 에 `hook: 'Stop'` 이 있는 것만
+ * SpikeRule 내부 shape 로 변환해 반환한다.
+ *
+ * 변환 규칙:
+ *   - `trigger_keywords_regex` 미지정 → DEFAULT_STOP_TRIGGER_RE (shared)
+ *   - `trigger_exclude_regex` 미지정 → DEFAULT_STOP_EXCLUDE_RE (shared)
+ *   - verifier.kind 는 `self_check_prompt` 또는 `artifact_check` 지원
+ *   - 그 외 verifier 는 skip (PreToolUse 전용 tool_arg_regex 등)
+ */
+export function rulesFromStore(rules: Rule[]): SpikeRule[] {
+  const out: SpikeRule[] = [];
+  for (const rule of rules) {
+    const specs = rule.enforce_via ?? [];
+    for (let i = 0; i < specs.length; i++) {
+      const spec: EnforceSpec = specs[i];
+      if (spec.hook !== 'Stop') continue;
+      if (!spec.verifier) continue;
+      if (spec.verifier.kind !== 'self_check_prompt' && spec.verifier.kind !== 'artifact_check') continue;
+
+      out.push({
+        id: rule.rule_id,
+        mech: spec.mech,
+        hook: 'Stop',
+        trigger: {
+          response_keywords_regex: spec.trigger_keywords_regex ?? DEFAULT_STOP_TRIGGER_RE,
+          context_exclude_regex: spec.trigger_exclude_regex ?? DEFAULT_STOP_EXCLUDE_RE,
+        },
+        verifier: {
+          kind: spec.verifier.kind,
+          params: spec.verifier.params,
+        },
+        block_message: spec.block_message,
+        system_tag: spec.system_tag,
+      });
+    }
+  }
+  return out;
+}
+
+/** 전체 로더 — rule-store 우선, 비어 있으면 spike fallback. */
+function loadStopRules(): SpikeRule[] {
+  try {
+    const storeRules = rulesFromStore(loadActiveRules());
+    if (storeRules.length > 0) return storeRules;
+  } catch {
+    // fail-open: rule-store 로드 실패는 spike fallback 으로 자동 전이
+  }
+  return loadSpikeRules();
 }
 
 /** transcript_path 의 마지막 assistant 턴 텍스트를 반환. 실패 시 null. */

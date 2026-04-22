@@ -5,7 +5,7 @@
   { "name": "post-tool-use",          "tier": "compound-core", "event": "PostToolUse",        "matcher": "*",          "script": "hooks/post-tool-use.js",          "timeout": 3, "compoundCritical": true  },
   { "name": "pre-compact",            "tier": "compound-core", "event": "PreCompact",         "matcher": "*",          "script": "hooks/pre-compact.js",            "timeout": 3, "compoundCritical": false },
   { "name": "context-guard-stop",     "tier": "compound-core", "event": "Stop",               "matcher": "*",          "script": "hooks/context-guard.js",          "timeout": 5, "compoundCritical": false },
-  { "name": "stop-guard",             "tier": "compound-core", "event": "Stop",               "matcher": "*",          "script": "hooks/stop-guard.js",             "timeout": 10, "compoundCritical": false },
+  { "name": "stop-guard",             "tier": "compound-core", "event": "Stop",               "matcher": "*",          "script": "hooks/stop-guard.js",             "timeout": 10, "compoundCritical": true  },
   { "name": "pre-tool-use",           "tier": "compound-core", "event": "PreToolUse",         "matcher": "*",          "script": "hooks/pre-tool-use.js",           "timeout": 3, "compoundCritical": true  },
   { "name": "secret-filter",          "tier": "safety",        "event": "PostToolUse",        "matcher": "Write|Edit|Bash", "script": "hooks/secret-filter.js",     "timeout": 3, "compoundCritical": false },
   { "name": "slop-detector",          "tier": "safety",        "event": "PostToolUse",        "matcher": "Write|Edit",      "script": "hooks/slop-detector.js",     "timeout": 3, "compoundCritical": false },

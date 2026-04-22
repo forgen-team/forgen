@@ -347,12 +347,29 @@ v0.4.0 구현 시 이식할 주요 컴포넌트:
 4. R-B1 regex 설계 패턴 — trigger 를 **명시적 동사/어미** 로 좁히고 context_exclude 에 **retraction/meta** 포괄
 5. PreToolUse Mech-A verifier — 기존 `pre-tool-use.ts` 에 `enforce_via` 스캔 + tool_arg_regex 평가 추가
 
-### Day-5 후속 작업 (v0.4.0 릴리즈 전)
+### Day-5 후속 작업 (모두 완료 — v0.4.0 릴리즈 진입 가능)
 
-- [ ] ADR-001 상태 필드를 `Proposed` → `Accepted` 로 업데이트, Accepted 날짜·증거 링크(이 보고서) 명시
-- [ ] `hooks/hook-registry.json` stop-guard 의 `compoundCritical: false` → `true` (v0.4.0 승급 시점)
-- [ ] `enforce_via` 필드를 `src/store/types.ts` 에 정식 추가 + `forgen classify-enforce` 명령 구현 (ADR-001 §Migration)
-- [ ] ADR-002 Meta 트리거가 `drift.jsonl` 의 `stuck_loop_force_approve` 이벤트 누적을 읽어 rule 강등 자동화
+- [x] ADR-001 상태 필드 `Proposed` → `Accepted` 전환, 증거 링크 명시
+- [x] `hooks/hook-registry.json` stop-guard `compoundCritical: false` → `true` — 보호 훅 승급, `forgen doctor` 통과
+- [x] `src/store/types.ts` 정식 확장 — `EnforcementMech`, `HookPoint`, `VerifierSpec`, `EnforceSpec`, `LifecyclePhase`, `LifecycleState`, `MetaPromotion`. Rule 에 optional `enforce_via` + `lifecycle` 추가 (하위 호환)
+- [x] `forgen classify-enforce` 명령 — 기존 4 rules 자동 분류 검증 (e2e-before-done rule → Mech-A Stop+artifact_check, async-pref → Mech-C)
+- [x] `src/hooks/stop-guard.ts` — 실제 `~/.forgen/me/rules` 의 `enforce_via` 로드. spike scenarios.json 은 fallback. `rulesFromStore()` export + 6 cases
+- [x] ADR-002 Meta 트리거 `src/engine/lifecycle/` — `scanDriftForDemotion` + `applyDemotion` + `forgen rule-meta-scan` CLI. drift.jsonl → Mech-A→B→C 자동 강등, `meta_promotions` 이력 + `lifecycle/{date}.jsonl` 기록
+
+### 구현 산출물 (follow-up 세션)
+
+| 영역 | 파일 | 내용 |
+|------|------|------|
+| Types | `src/store/types.ts` | EnforceSpec(trigger regex 필드 포함) + Lifecycle 타입 |
+| CLI #1 | `src/engine/enforce-classifier.ts` + `classify-enforce-cli.ts` | 휴리스틱 분류 + `forgen classify-enforce [--apply] [--force]` |
+| Hook | `src/hooks/stop-guard.ts` | rule-store 로드 + spike fallback. `rulesFromStore()` export |
+| Registry | `hooks/hook-registry.json` + `hooks/hooks.json` | stop-guard compoundCritical:true, 20/20 active 재생성 |
+| Meta | `src/engine/lifecycle/{types,meta-reclassifier,meta-cli}.ts` | 드리프트 스캔 → 강등. `forgen rule-meta-scan [--apply]` |
+| Tests | `tests/enforce-classifier.test.ts` (8) + `tests/meta-reclassifier.test.ts` (11) + `tests/stop-guard.test.ts` (rulesFromStore 6 추가) | 25 신규 |
+
+**전체 테스트 1806/1806 pass. TypeScript clean. forgen doctor: all pass.**
+
+---
 
 ---
 

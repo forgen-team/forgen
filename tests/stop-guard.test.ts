@@ -26,7 +26,9 @@ const {
   resetBlockCount,
   logDriftEvent,
   getStuckLoopThreshold,
+  rulesFromStore,
 } = await import('../src/hooks/stop-guard.js');
+type StoreRule = import('../src/store/types.js').Rule;
 
 type SpikeRule = Parameters<typeof evaluateStop>[1][number];
 
@@ -233,6 +235,104 @@ describe('stuck-loop guard (block_count ceiling)', () => {
       if (original === undefined) delete process.env.FORGEN_STUCK_LOOP_THRESHOLD;
       else process.env.FORGEN_STUCK_LOOP_THRESHOLD = original;
     }
+  });
+});
+
+describe('rulesFromStore (Rule.enforce_via → internal SpikeRule shape)', () => {
+  function baseRule(overrides: Partial<StoreRule> = {}): StoreRule {
+    return {
+      rule_id: 'abcdef01',
+      category: 'quality',
+      scope: 'me',
+      trigger: 'completion-evidence',
+      policy: 'e2e before done',
+      strength: 'strong',
+      source: 'explicit_correction',
+      status: 'active',
+      evidence_refs: [],
+      render_key: 'quality_safety.completion-evidence',
+      created_at: '2026-04-22T00:00:00Z',
+      updated_at: '2026-04-22T00:00:00Z',
+      ...overrides,
+    };
+  }
+
+  it('converts Mech-A Stop + artifact_check into SpikeRule', () => {
+    const r = baseRule({
+      enforce_via: [{
+        mech: 'A',
+        hook: 'Stop',
+        verifier: { kind: 'artifact_check', params: { path: '.forgen/state/e2e-result.json', max_age_s: 3600 } },
+        block_message: 'e2e required',
+        trigger_keywords_regex: '(완료했)',
+        trigger_exclude_regex: '(취소)',
+        system_tag: 'rule:abcdef01 — e2e-before-done',
+      }],
+    });
+    const out = rulesFromStore([r]);
+    expect(out).toHaveLength(1);
+    expect(out[0].id).toBe('abcdef01');
+    expect(out[0].mech).toBe('A');
+    expect(out[0].trigger.response_keywords_regex).toBe('(완료했)');
+    expect(out[0].trigger.context_exclude_regex).toBe('(취소)');
+    expect(out[0].verifier.kind).toBe('artifact_check');
+    expect(out[0].system_tag).toContain('abcdef01');
+  });
+
+  it('uses shared default trigger regex when unspecified', () => {
+    const r = baseRule({
+      enforce_via: [{
+        mech: 'B',
+        hook: 'Stop',
+        verifier: { kind: 'self_check_prompt', params: { question: 'q' } },
+      }],
+    });
+    const out = rulesFromStore([r]);
+    expect(out).toHaveLength(1);
+    // default trigger includes '완료했'
+    expect(new RegExp(out[0].trigger.response_keywords_regex).test('구현 완료했습니다.')).toBe(true);
+    // default exclude excludes '취소'
+    expect(new RegExp(out[0].trigger.context_exclude_regex!).test('완료 선언을 취소합니다.')).toBe(true);
+  });
+
+  it('filters non-Stop enforce_via entries', () => {
+    const r = baseRule({
+      enforce_via: [
+        { mech: 'A', hook: 'PreToolUse', verifier: { kind: 'tool_arg_regex', params: { pattern: 'rm' } } },
+        { mech: 'A', hook: 'Stop', verifier: { kind: 'artifact_check', params: { path: 'x' } } },
+      ],
+    });
+    const out = rulesFromStore([r]);
+    expect(out).toHaveLength(1);
+    expect(out[0].verifier.kind).toBe('artifact_check');
+  });
+
+  it('skips rules with no enforce_via', () => {
+    const r = baseRule({ enforce_via: undefined });
+    expect(rulesFromStore([r])).toHaveLength(0);
+  });
+
+  it('skips verifier kinds not supported by Stop hook', () => {
+    const r = baseRule({
+      enforce_via: [
+        { mech: 'A', hook: 'Stop', verifier: { kind: 'tool_arg_regex' as 'artifact_check', params: {} } },
+      ],
+    });
+    expect(rulesFromStore([r])).toHaveLength(0);
+  });
+
+  it('handles rule with multiple Stop enforce_via entries (flattens to multiple SpikeRules)', () => {
+    const r = baseRule({
+      enforce_via: [
+        { mech: 'A', hook: 'Stop', verifier: { kind: 'artifact_check', params: { path: 'a.json' } } },
+        { mech: 'B', hook: 'Stop', verifier: { kind: 'self_check_prompt', params: { question: 'q' } } },
+      ],
+    });
+    const out = rulesFromStore([r]);
+    expect(out).toHaveLength(2);
+    expect(out.map((s) => s.mech).sort()).toEqual(['A', 'B']);
+    // both share the same rule_id as id (caller can dedupe if needed)
+    expect(out.every((s) => s.id === 'abcdef01')).toBe(true);
   });
 });
 
