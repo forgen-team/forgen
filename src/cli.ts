@@ -201,6 +201,14 @@ const commands: Command[] = [
       await handleRuleMetaScan(args);
     },
   },
+  {
+    name: 'lifecycle-scan',
+    description: 'Run all rule lifecycle triggers (T1~T5 + Meta). --apply to persist.',
+    handler: async (args) => {
+      const { handleLifecycleScan } = await import('./engine/lifecycle/lifecycle-cli.js');
+      await handleLifecycleScan(args);
+    },
+  },
 ];
 
 /** 최소 편집 거리 (유사 명령 제안용) */

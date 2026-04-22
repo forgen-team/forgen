@@ -28,6 +28,7 @@ import { recordHookTiming } from './shared/hook-timing.js';
 import { isHookEnabled } from './hook-config.js';
 import { loadActiveRules } from '../store/rule-store.js';
 import type { Rule, EnforceSpec } from '../store/types.js';
+import { recordViolation } from '../engine/lifecycle/signals.js';
 
 const HOOK_NAME = 'stop-guard';
 
@@ -74,6 +75,11 @@ interface StopHookInput {
   session_id?: string;
   transcript_path?: string;
   stop_hook_active?: boolean;
+  /**
+   * Claude Code 공식 Stop hook 이 직접 제공 (A1 spike Day-3 확인).
+   * 이 값이 있으면 transcript_path 파싱 생략.
+   */
+  last_assistant_message?: string;
 }
 
 /** Spike scenarios.json 로더 (테스트/스파이크용). */
@@ -148,12 +154,18 @@ function loadStopRules(): SpikeRule[] {
   return loadSpikeRules();
 }
 
-/** transcript_path 의 마지막 assistant 턴 텍스트를 반환. 실패 시 null. */
-function readLastAssistantMessage(transcriptPath?: string): string | null {
-  // Test/runner 주입 경로
+/** Stop hook input 에서 마지막 assistant 턴 텍스트를 반환. 실패 시 null. */
+function readLastAssistantMessage(input?: StopHookInput | null): string | null {
+  // Test/runner 주입 경로 (최우선)
   const injected = process.env.FORGEN_SPIKE_LAST_MESSAGE;
   if (injected) return injected;
 
+  // Claude Code 공식 필드 — Stop hook 이 직접 제공 (A1 spike Day-3 확인)
+  if (input && typeof input.last_assistant_message === 'string' && input.last_assistant_message) {
+    return input.last_assistant_message;
+  }
+
+  const transcriptPath = input?.transcript_path;
   if (!transcriptPath) return null;
   try {
     const lines = fs.readFileSync(transcriptPath, 'utf-8').trim().split('\n');
@@ -339,9 +351,7 @@ export async function main(): Promise<void> {
     }
 
     const input = await readStdinJSON<StopHookInput>();
-    const transcriptPath = input?.transcript_path;
-
-    const lastMessage = readLastAssistantMessage(transcriptPath);
+    const lastMessage = readLastAssistantMessage(input);
     if (!lastMessage) {
       console.log(approve());
       return;
@@ -363,6 +373,17 @@ export async function main(): Promise<void> {
     }
 
     const { hit, reason } = result;
+
+    // T2 signal: block 은 rule 위반 증거 — violations.jsonl 에 기록.
+    // (stuck-loop force approve 는 아래에서 처리되므로 실제 block 시에만 기록)
+    recordViolation({
+      rule_id: hit.id,
+      session_id: sessionId,
+      source: 'stop-guard',
+      kind: 'block',
+      message_preview: lastMessage.slice(0, 120),
+    });
+
     const count = incrementBlockCount(sessionId, hit.id);
     const threshold = getStuckLoopThreshold();
     if (count > threshold) {

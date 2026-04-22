@@ -289,10 +289,12 @@ describe('rulesFromStore (Rule.enforce_via → internal SpikeRule shape)', () =>
     });
     const out = rulesFromStore([r]);
     expect(out).toHaveLength(1);
+    const triggerRe = out[0].trigger.response_keywords_regex ?? '(?!)';
+    const excludeRe = out[0].trigger.context_exclude_regex ?? '(?!)';
     // default trigger includes '완료했'
-    expect(new RegExp(out[0].trigger.response_keywords_regex).test('구현 완료했습니다.')).toBe(true);
+    expect(new RegExp(triggerRe).test('구현 완료했습니다.')).toBe(true);
     // default exclude excludes '취소'
-    expect(new RegExp(out[0].trigger.context_exclude_regex!).test('완료 선언을 취소합니다.')).toBe(true);
+    expect(new RegExp(excludeRe).test('완료 선언을 취소합니다.')).toBe(true);
   });
 
   it('filters non-Stop enforce_via entries', () => {
@@ -337,6 +339,15 @@ describe('rulesFromStore (Rule.enforce_via → internal SpikeRule shape)', () =>
 });
 
 describe('stop-guard stdin e2e (fake Stop hook JSON → stdout)', () => {
+  function childEnv(extras: Record<string, string>): NodeJS.ProcessEnv {
+    // Isolate child from developer's real ~/.forgen/me/rules by pointing HOME
+    // to a throwaway sandbox dir. stop-guard.ts reads loadActiveRules() first;
+    // with empty sandbox ~/.forgen, it falls back to scenarios.json.
+    const childHome = `/tmp/forgen-stop-guard-child-${process.pid}-${Math.random().toString(36).slice(2, 8)}`;
+    fs.mkdirSync(childHome, { recursive: true });
+    return { ...process.env, ...extras, HOME: childHome };
+  }
+
   it('완료 선언 + 증거 없음 → stdout 에 decision:block + reason 포함', () => {
     const scriptPath = path.resolve(__dirname, '..', 'dist', 'hooks', 'stop-guard.js');
     if (!fs.existsSync(scriptPath)) {
@@ -348,11 +359,10 @@ describe('stop-guard stdin e2e (fake Stop hook JSON → stdout)', () => {
 
     const proc = spawnSync('node', [scriptPath], {
       input: JSON.stringify({ session_id: 'test', stop_hook_active: true }),
-      env: {
-        ...process.env,
+      env: childEnv({
         FORGEN_SPIKE_RULES: rulesPath,
         FORGEN_SPIKE_LAST_MESSAGE: '구현 완료했습니다.',
-      },
+      }),
       encoding: 'utf-8',
       timeout: 8000,
     });
@@ -372,11 +382,10 @@ describe('stop-guard stdin e2e (fake Stop hook JSON → stdout)', () => {
     const rulesPath = path.resolve(__dirname, 'spike', 'mech-b-inject', 'scenarios.json');
     const proc = spawnSync('node', [scriptPath], {
       input: JSON.stringify({ session_id: 'test', stop_hook_active: true }),
-      env: {
-        ...process.env,
+      env: childEnv({
         FORGEN_SPIKE_RULES: rulesPath,
         FORGEN_SPIKE_LAST_MESSAGE: '작업 진행 중입니다.',
-      },
+      }),
       encoding: 'utf-8',
       timeout: 8000,
     });

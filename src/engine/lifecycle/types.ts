@@ -33,5 +33,40 @@ export interface LifecycleEvent {
     metrics?: Record<string, number>;
   };
   suggested_action: LifecycleSuggestedAction;
+  /** T5 merge 전용: 흡수 대상 rule_id */
+  merged_into?: string;
+  /** T1 supersede 전용: 교체 rule_id */
+  superseded_by?: string;
   ts: number;
+}
+
+/**
+ * 트리거들이 공유하는 rule-level 시그널 집계.
+ * RuleState 는 Rule + signals (pure data). 각 detect() 는 이 상태 배열을 입력으로 받는다.
+ */
+export interface RuleSignals {
+  violations_30d: number;
+  violation_rate_30d: number;
+  bypass_7d: number;
+  last_inject_days_ago: number;
+  injects_rolling_n: number;
+  violations_rolling_n: number;
+  last_updated_days_ago: number;
+}
+
+export interface ViolationEntry {
+  at: string;
+  rule_id: string;
+  session_id: string;
+  source: 'stop-guard' | 'pre-tool-guard' | 'evidence-store' | 'manual';
+  kind: 'block' | 'deny' | 'correction';
+  message_preview?: string;
+}
+
+export interface BypassEntry {
+  at: string;
+  rule_id: string;
+  session_id: string;
+  tool: string;
+  pattern_preview: string;
 }

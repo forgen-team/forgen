@@ -116,6 +116,123 @@ export function demoteMech(from: EnforcementMech): EnforcementMech | null {
   return null;
 }
 
+export function promoteMech(from: EnforcementMech): EnforcementMech | null {
+  if (from === 'B') return 'A';
+  if (from === 'C') return 'B';
+  return null;
+}
+
+export interface PromotionCandidate {
+  rule_id: string;
+  injects_rolling_n: number;
+  violations_rolling_n: number;
+  current_mechs: EnforcementMech[];
+  reason: string;
+}
+
+/**
+ * rolling N 개 inject 중 violation 0 → Mech 승급 후보.
+ * inject 추적 인프라가 완비되기 전에는 `rolling_min_injects` (기본 20) 미만이면 skip.
+ */
+export function scanSignalsForPromotion(options: {
+  rules: Rule[];
+  rolling_min_injects?: number;
+  ts?: number;
+  signals: Map<string, import('./types.js').RuleSignals>;
+}): PromotionCandidate[] {
+  const minInjects = options.rolling_min_injects ?? 20;
+  const out: PromotionCandidate[] = [];
+  for (const rule of options.rules) {
+    if (rule.status !== 'active') continue;
+    const s = options.signals.get(rule.rule_id);
+    if (!s) continue;
+    if (s.injects_rolling_n < minInjects) continue;
+    if (s.violations_rolling_n > 0) continue;
+    const mechs = (rule.enforce_via ?? []).map((spec) => spec.mech);
+    const hasPromotable = mechs.some((m) => m === 'B' || m === 'C');
+    if (!hasPromotable) continue;
+    out.push({
+      rule_id: rule.rule_id,
+      injects_rolling_n: s.injects_rolling_n,
+      violations_rolling_n: s.violations_rolling_n,
+      current_mechs: [...new Set(mechs)],
+      reason: `rolling ${s.injects_rolling_n} injects, 0 violations — promotion candidate`,
+    });
+  }
+  return out;
+}
+
+export function applyPromotion(rule: Rule, candidate: PromotionCandidate, now: number = Date.now()): ApplyResult {
+  const specs: EnforceSpec[] = rule.enforce_via ?? [];
+  const before = specs.map((s) => s.mech);
+  const events: LifecycleEvent[] = [];
+  let changed = false;
+
+  const updatedSpecs = specs.map((spec) => {
+    const to = promoteMech(spec.mech);
+    if (to == null) return spec;
+    changed = true;
+    events.push({
+      kind: 'meta_promote_to_a',
+      rule_id: rule.rule_id,
+      evidence: {
+        source: 'signals',
+        refs: [],
+        metrics: { injects_rolling_n: candidate.injects_rolling_n, violations_rolling_n: candidate.violations_rolling_n },
+      },
+      suggested_action: 'promote_mech',
+      ts: now,
+    });
+    return { ...spec, mech: to };
+  });
+
+  if (!changed) {
+    return { rule_id: rule.rule_id, before_mech: before, after_mech: before, events: [], applied: false, reason: 'no Mech-B/C to promote' };
+  }
+
+  const lifecycle = rule.lifecycle ?? {
+    phase: 'active' as const,
+    first_active_at: rule.created_at,
+    inject_count: 0,
+    accept_count: 0,
+    violation_count: 0,
+    bypass_count: 0,
+    conflict_refs: [],
+    meta_promotions: [],
+  };
+
+  const promotions = updatedSpecs.map((spec, i) => ({
+    at: new Date(now).toISOString(),
+    from_mech: before[i],
+    to_mech: spec.mech,
+    reason: 'consistent_adherence' as const,
+    trigger_stats: {
+      window_n: candidate.injects_rolling_n,
+      adherence_rate: 1.0,
+    },
+  })).filter((p) => p.from_mech !== p.to_mech);
+
+  const updatedRule: Rule = {
+    ...rule,
+    enforce_via: updatedSpecs,
+    lifecycle: {
+      ...lifecycle,
+      meta_promotions: [...lifecycle.meta_promotions, ...promotions],
+    },
+    updated_at: new Date(now).toISOString(),
+  };
+
+  saveRule(updatedRule);
+
+  return {
+    rule_id: rule.rule_id,
+    before_mech: before,
+    after_mech: updatedSpecs.map((s) => s.mech),
+    events,
+    applied: true,
+  };
+}
+
 export interface ApplyResult {
   rule_id: string;
   before_mech: EnforcementMech[];
