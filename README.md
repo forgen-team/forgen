@@ -491,11 +491,25 @@ forgen forge --export           # Export profile
 ### Inspection
 
 ```bash
+forgen stats                    # One-screen trust-layer dashboard (rules, corrections, blocks 7d)
+forgen last-block               # Most recent block event with rule detail
 forgen inspect profile          # 4-axis profile with packs and facets
 forgen inspect rules            # Active and suppressed rules
-forgen inspect evidence         # Correction history
+forgen inspect corrections      # Correction history (alias: evidence)
 forgen inspect session          # Current session state
+forgen inspect violations       # Recent block events (--last N)
 forgen me                       # Personal dashboard (shortcut for inspect profile)
+```
+
+### Rule management
+
+```bash
+forgen rule list                # List active + suppressed rules
+forgen rule suppress <id>       # Disable a rule (hard rules refused)
+forgen rule activate <id>       # Re-activate a suppressed rule
+forgen rule scan [--apply]      # Run lifecycle triggers (promote/demote/retire)
+forgen rule health-scan         # Scan drift → Mech downgrade candidates
+forgen rule classify            # Propose enforce_via for legacy rules
 ```
 
 ### Knowledge management

@@ -414,11 +414,25 @@ forgen forge --export           # 프로필 내보내기
 ### 상태 확인
 
 ```bash
+forgen stats                    # 한 화면 Trust Layer 대시보드 (규칙·교정·block 7일)
+forgen last-block               # 가장 최근 block 이벤트와 rule 상세
 forgen inspect profile          # 4축 프로필 + 팩 + facet
 forgen inspect rules            # 활성/비활성 규칙
-forgen inspect evidence         # 교정 기록
+forgen inspect corrections      # 교정 기록 (alias: evidence)
 forgen inspect session          # 현재 세션 상태
+forgen inspect violations       # 최근 block 기록 (--last N)
 forgen me                       # 개인 대시보드 (inspect profile 단축키)
+```
+
+### 규칙 관리
+
+```bash
+forgen rule list                # 활성 + suppressed 규칙 목록
+forgen rule suppress <id>       # 규칙 비활성화 (hard 규칙은 거부)
+forgen rule activate <id>       # suppressed 규칙 재활성화
+forgen rule scan [--apply]      # 수명주기 트리거 실행 (승격/강등/은퇴)
+forgen rule health-scan         # drift → Mech 강등 후보 스캔
+forgen rule classify            # 레거시 규칙에 enforce_via 자동 제안
 ```
 
 ### 지식 관리
