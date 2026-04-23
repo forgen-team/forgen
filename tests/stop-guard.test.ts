@@ -24,6 +24,7 @@ const {
   evaluateStop,
   incrementBlockCount,
   resetBlockCount,
+  acknowledgeSessionBlocks,
   logDriftEvent,
   getStuckLoopThreshold,
   rulesFromStore,
@@ -240,6 +241,51 @@ describe('stuck-loop guard (block_count ceiling)', () => {
     const obj = JSON.parse(line);
     expect(obj.kind).toBe('stuck_loop_force_approve');
     expect(obj.count).toBe(4);
+  });
+
+  it('acknowledgeSessionBlocks: records ack + cleans up block-count for session', () => {
+    incrementBlockCount('sess-ack-1', 'R-B1');
+    incrementBlockCount('sess-ack-1', 'R-B1'); // count=2
+    incrementBlockCount('sess-ack-1', 'R-B2'); // count=1
+    incrementBlockCount('sess-other', 'R-B1'); // different session, untouched
+    const acked = acknowledgeSessionBlocks('sess-ack-1');
+    expect(acked).toBe(2); // 2 rules pending for sess-ack-1
+
+    const ackPath = path.join(TEST_HOME, '.forgen', 'state', 'enforcement', 'acknowledgments.jsonl');
+    expect(fs.existsSync(ackPath)).toBe(true);
+    const lines = fs.readFileSync(ackPath, 'utf-8').trim().split('\n');
+    expect(lines).toHaveLength(2);
+    const entries = lines.map((l) => JSON.parse(l));
+    const byRule = new Map(entries.map((e) => [e.rule_id, e]));
+    expect(byRule.get('R-B1')?.block_count).toBe(2);
+    expect(byRule.get('R-B2')?.block_count).toBe(1);
+    for (const e of entries) {
+      expect(e.session_id).toBe('sess-ack-1');
+      expect(typeof e.first_block_at).toBe('string');
+      expect(typeof e.last_block_at).toBe('string');
+    }
+
+    // sess-ack-1 block-count 파일들은 cleanup, sess-other 는 유지
+    const bcDir = path.join(TEST_HOME, '.forgen', 'state', 'enforcement', 'block-count');
+    const remaining = fs.readdirSync(bcDir).filter((f) => f.endsWith('.json'));
+    expect(remaining).toHaveLength(1);
+    expect(remaining[0]).toContain('sess-other');
+  });
+
+  it('acknowledgeSessionBlocks: no pending → 0, no ack file created', () => {
+    const acked = acknowledgeSessionBlocks('sess-empty');
+    expect(acked).toBe(0);
+    const ackPath = path.join(TEST_HOME, '.forgen', 'state', 'enforcement', 'acknowledgments.jsonl');
+    expect(fs.existsSync(ackPath)).toBe(false);
+  });
+
+  it('acknowledgeSessionBlocks: unknown/empty session → 0 (no-op)', () => {
+    incrementBlockCount('real-session', 'R-B1');
+    expect(acknowledgeSessionBlocks('unknown')).toBe(0);
+    expect(acknowledgeSessionBlocks('')).toBe(0);
+    // real-session 의 counter 는 건드려지지 않아야 한다
+    const bcDir = path.join(TEST_HOME, '.forgen', 'state', 'enforcement', 'block-count');
+    expect(fs.readdirSync(bcDir).filter((f) => f.endsWith('.json'))).toHaveLength(1);
   });
 
   it('getStuckLoopThreshold default is 3, env override works', () => {

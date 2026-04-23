@@ -80,6 +80,7 @@ export interface StatsSnapshot {
   correctionsTotal: number;
   corrections7d: number;
   blocks7d: number;
+  acks7d: number;
   bypass7d: number;
   drift7d: number;
   retired7d: number;
@@ -100,13 +101,18 @@ export function computeStats(): StatsSnapshot {
   const violations = readJsonl(path.join(ENFORCEMENT_DIR, 'violations.jsonl'));
   const bypass = readJsonl(path.join(ENFORCEMENT_DIR, 'bypass.jsonl'));
   const drift = readJsonl(path.join(ENFORCEMENT_DIR, 'drift.jsonl'));
+  const acks = readJsonl(path.join(ENFORCEMENT_DIR, 'acknowledgments.jsonl'));
+
+  // R9-PA2: violations 는 'block' + 'correction' 혼재 — 실제 block 만 카운트.
+  const realBlocks = violations.filter((e) => e.kind === 'block' || e.kind === undefined);
 
   return {
     activeRules,
     suppressedRules,
     correctionsTotal,
     corrections7d,
-    blocks7d: countWithin(violations, 7),
+    blocks7d: countWithin(realBlocks, 7),
+    acks7d: countWithin(acks, 7),
     bypass7d: countWithin(bypass, 7),
     drift7d: countWithin(drift, 7),
     retired7d: readLifecycleRetired(7),
@@ -127,7 +133,12 @@ export function renderStats(s: StatsSnapshot): string {
   lines.push(`  Corrections (total)   ${padNum(s.correctionsTotal)}    (+${s.corrections7d} last 7d)`);
   lines.push('');
   lines.push('  Last 7 days');
-  lines.push(`    Blocks              ${padNum(s.blocks7d)}    — times Claude was asked to retract`);
+  // R9-PA2: ack rate = block→retract→pass 루프가 실제 작동한 비율.
+  const ackRateLabel = s.blocks7d > 0
+    ? `(${Math.round((s.acks7d / s.blocks7d) * 100)}% acknowledged)`
+    : '';
+  lines.push(`    Blocks              ${padNum(s.blocks7d)}    — times Claude was asked to retract ${ackRateLabel}`);
+  lines.push(`    Acknowledgments     ${padNum(s.acks7d)}    — block → retract → pass loops`);
   lines.push(`    Bypass              ${padNum(s.bypass7d)}    — user overrides`);
   lines.push(`    Drift events        ${padNum(s.drift7d)}    — stuck-loop force-approves`);
   lines.push(`    Retired rules       ${padNum(s.retired7d)}    — superseded or timed out`);

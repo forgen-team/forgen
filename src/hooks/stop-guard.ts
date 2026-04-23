@@ -45,6 +45,7 @@ import { DEFAULT_STOP_TRIGGER_RE, DEFAULT_STOP_EXCLUDE_RE } from './shared/stop-
 const STUCK_LOOP_THRESHOLD = 3;
 const BLOCK_COUNT_DIR = path.join(os.homedir(), '.forgen', 'state', 'enforcement', 'block-count');
 const DRIFT_LOG = path.join(os.homedir(), '.forgen', 'state', 'enforcement', 'drift.jsonl');
+const ACK_LOG = path.join(os.homedir(), '.forgen', 'state', 'enforcement', 'acknowledgments.jsonl');
 
 interface VerifierSpec {
   kind: 'self_check_prompt' | 'artifact_check' | 'tool_arg_regex';
@@ -347,6 +348,53 @@ export function resetBlockCount(sessionId: string, ruleId: string): void {
   }
 }
 
+/**
+ * R9-PA2: approve 시점에 같은 session 의 pending block 을 찾아 ack 이벤트로 기록.
+ * Mech-B 의 핵심 가치(block → retract → pass)가 실제 작동했음을 관측 가능하게 한다.
+ * Best-effort: 실패해도 approve 자체는 영향받지 않는다.
+ *
+ * 기록 후 block-count 파일은 cleanup — 같은 session 의 같은 rule 이 다시 block 되면
+ * 새로운 카운트로 시작 (block-count 의미 보존).
+ */
+export function acknowledgeSessionBlocks(sessionId: string): number {
+  if (!sessionId || sessionId === 'unknown') return 0;
+  let acked = 0;
+  try {
+    if (!fs.existsSync(BLOCK_COUNT_DIR)) return 0;
+    const safeSession = String(sessionId).replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 80);
+    const prefix = `${safeSession}__`;
+    const now = new Date().toISOString();
+    for (const file of fs.readdirSync(BLOCK_COUNT_DIR)) {
+      if (!file.startsWith(prefix) || !file.endsWith('.json')) continue;
+      const full = path.join(BLOCK_COUNT_DIR, file);
+      let state: BlockCounterState | null = null;
+      try {
+        state = JSON.parse(fs.readFileSync(full, 'utf-8')) as BlockCounterState;
+      } catch { /* skip malformed */ }
+      if (!state || state.sessionId !== sessionId) {
+        try { fs.unlinkSync(full); } catch { /* ignore */ }
+        continue;
+      }
+      try {
+        fs.mkdirSync(path.dirname(ACK_LOG), { recursive: true });
+        fs.appendFileSync(ACK_LOG, JSON.stringify({
+          at: now,
+          session_id: state.sessionId,
+          rule_id: state.ruleId,
+          block_count: state.count,
+          first_block_at: state.firstBlockAt,
+          last_block_at: state.lastBlockAt,
+        }) + '\n');
+        acked += 1;
+      } catch { /* append failure: still try cleanup */ }
+      try { fs.unlinkSync(full); } catch { /* ignore */ }
+    }
+  } catch {
+    // fail-open — telemetry must never block approve
+  }
+  return acked;
+}
+
 export function logDriftEvent(event: {
   kind: string;
   session_id: string;
@@ -394,7 +442,9 @@ export async function main(): Promise<void> {
     const sessionId = input?.session_id ?? 'unknown';
 
     if (result.action === 'approve') {
-      // approve 시 모든 rule 에 대한 블록 카운터 초기화는 생략 (다음 block 시 자연 증가).
+      // R9-PA2: 같은 session 에 pending block 이 있었다면 retract→pass 루프가
+      // 실제 작동한 것 — acknowledgment 이벤트로 기록. block-count 는 cleanup.
+      acknowledgeSessionBlocks(sessionId);
       console.log(approve());
       return;
     }

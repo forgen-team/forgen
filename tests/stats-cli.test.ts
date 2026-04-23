@@ -32,6 +32,7 @@ describe('forgen stats — R9-PA1', () => {
     expect(s.activeRules).toBe(0);
     expect(s.correctionsTotal).toBe(0);
     expect(s.blocks7d).toBe(0);
+    expect(s.acks7d).toBe(0);
     expect(s.bypass7d).toBe(0);
     expect(s.drift7d).toBe(0);
     expect(s.retired7d).toBe(0);
@@ -59,12 +60,33 @@ describe('forgen stats — R9-PA1', () => {
     const recent = new Date(now - 2 * 86400_000).toISOString();
     const stale = new Date(now - 30 * 86400_000).toISOString();
     writeJsonl(path.join(TEST_HOME, '.forgen', 'state', 'enforcement', 'violations.jsonl'), [
-      { at: recent, rule_id: 'r1' },
-      { at: recent, rule_id: 'r1' },
-      { at: stale, rule_id: 'r1' },
+      { at: recent, rule_id: 'r1', kind: 'block' },
+      { at: recent, rule_id: 'r1', kind: 'block' },
+      { at: stale, rule_id: 'r1', kind: 'block' },
     ]);
     const s = computeStats();
     expect(s.blocks7d).toBe(2);
+  });
+
+  it('blocks7d counts only kind=block, excludes correction audit entries', () => {
+    const recent = new Date().toISOString();
+    writeJsonl(path.join(TEST_HOME, '.forgen', 'state', 'enforcement', 'violations.jsonl'), [
+      { at: recent, rule_id: 'r1', kind: 'block' },
+      { at: recent, rule_id: 'r1', kind: 'correction' }, // user bypass audit
+      { at: recent, rule_id: 'r1' }, // legacy entry with no kind
+    ]);
+    const s = computeStats();
+    expect(s.blocks7d).toBe(2); // block + legacy-undefined
+  });
+
+  it('counts acknowledgments within 7d', () => {
+    const now = Date.now();
+    writeJsonl(path.join(TEST_HOME, '.forgen', 'state', 'enforcement', 'acknowledgments.jsonl'), [
+      { at: new Date(now - 86400_000).toISOString(), session_id: 's1', rule_id: 'r1', block_count: 2 },
+      { at: new Date(now - 30 * 86400_000).toISOString(), session_id: 's2', rule_id: 'r1', block_count: 1 },
+    ]);
+    const s = computeStats();
+    expect(s.acks7d).toBe(1);
   });
 
   it('counts retired/supersede lifecycle events within 7d', () => {
