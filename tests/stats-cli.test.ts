@@ -68,15 +68,16 @@ describe('forgen stats — R9-PA1', () => {
     expect(s.blocks7d).toBe(2);
   });
 
-  it('blocks7d counts only kind=block, excludes correction audit entries', () => {
+  it('blocks7d includes block+deny+undefined, excludes correction audit entries', () => {
     const recent = new Date().toISOString();
     writeJsonl(path.join(TEST_HOME, '.forgen', 'state', 'enforcement', 'violations.jsonl'), [
-      { at: recent, rule_id: 'r1', kind: 'block' },
-      { at: recent, rule_id: 'r1', kind: 'correction' }, // user bypass audit
-      { at: recent, rule_id: 'r1' }, // legacy entry with no kind
+      { at: recent, rule_id: 'r1', kind: 'block' },       // Mech-B Stop block
+      { at: recent, rule_id: 'r1', kind: 'deny' },        // Mech-A PreToolUse deny
+      { at: recent, rule_id: 'r1', kind: 'correction' },  // user bypass audit (excluded)
+      { at: recent, rule_id: 'r1' },                       // legacy entry with no kind
     ]);
     const s = computeStats();
-    expect(s.blocks7d).toBe(2); // block + legacy-undefined
+    expect(s.blocks7d).toBe(3); // block + deny + legacy-undefined
   });
 
   it('counts acknowledgments within 7d', () => {

@@ -115,13 +115,17 @@ export async function runDoctor(opts: DoctorOptions = {}): Promise<void> {
   // That path is NOT loaded — personal rules live at ~/.forgen/me/rules/.
   const legacyRulesPath = path.join(FORGEN_HOME, 'rules');
   if (exists(legacyRulesPath) && legacyRulesPath !== ME_RULES) {
-    const files = fs.readdirSync(legacyRulesPath).filter((f) => f.endsWith('.json'));
-    if (files.length > 0) {
-      check(
-        `~/.forgen/rules/ (${files.length} orphan file(s))`,
-        false,
-        `This path is NOT loaded. Move files to ~/.forgen/me/rules/ or delete them.`,
-      );
+    try {
+      const files = fs.readdirSync(legacyRulesPath).filter((f) => f.endsWith('.json'));
+      if (files.length > 0) {
+        check(
+          `~/.forgen/rules/ (${files.length} orphan file(s))`,
+          false,
+          `This path is NOT loaded. Move files to ~/.forgen/me/rules/ or delete them.`,
+        );
+      }
+    } catch {
+      // permission / symlink issue — diagnostics must not crash
     }
   }
   console.log();

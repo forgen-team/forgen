@@ -103,8 +103,12 @@ export function computeStats(): StatsSnapshot {
   const drift = readJsonl(path.join(ENFORCEMENT_DIR, 'drift.jsonl'));
   const acks = readJsonl(path.join(ENFORCEMENT_DIR, 'acknowledgments.jsonl'));
 
-  // R9-PA2: violations 는 'block' + 'correction' 혼재 — 실제 block 만 카운트.
-  const realBlocks = violations.filter((e) => e.kind === 'block' || e.kind === undefined);
+  // R9-PA2: violations 는 'block' (stop-guard/post-tool) + 'deny' (pre-tool Mech-A)
+  // + 'correction' (user bypass audit) 혼재. 사용자 관점에서 "Block" 은 앞의 2종이며
+  // correction 은 제외해야 ack ratio 가 의미를 갖는다. legacy-undefined 엔트리도 포함.
+  const realBlocks = violations.filter((e) =>
+    e.kind === 'block' || e.kind === 'deny' || e.kind === undefined,
+  );
 
   return {
     activeRules,

@@ -370,8 +370,12 @@ export function acknowledgeSessionBlocks(sessionId: string): number {
       let state: BlockCounterState | null = null;
       try {
         state = JSON.parse(fs.readFileSync(full, 'utf-8')) as BlockCounterState;
-      } catch { /* skip malformed */ }
+      } catch {
+        // partial-write / malformed — 다음 scan 에서 다시 시도. 삭제하지 않음.
+        continue;
+      }
       if (!state || state.sessionId !== sessionId) {
+        // session prefix 매칭 됐는데 내부 sessionId 가 다름 → 안전하게 cleanup.
         try { fs.unlinkSync(full); } catch { /* ignore */ }
         continue;
       }
