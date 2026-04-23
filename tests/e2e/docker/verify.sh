@@ -1160,6 +1160,169 @@ fi
 echo ""
 
 # ──────────────────────────────────────────────
+# Phase 9: v0.4.0 Trust Layer — R9 additions
+# ──────────────────────────────────────────────
+echo "  [Phase 9: v0.4.0 Trust Layer]"
+
+# 9-1. `forgen stats` — 7-number dashboard exists & renders
+STATS_OUT=$(forgen stats 2>&1)
+if echo "$STATS_OUT" | grep -q "trust layer status"; then
+  pass "forgen stats: renders trust layer header"
+else
+  fail "forgen stats: missing 'trust layer status' header — $STATS_OUT"
+fi
+if echo "$STATS_OUT" | grep -q "Acknowledgments"; then
+  pass "forgen stats: Acknowledgments row present"
+else
+  fail "forgen stats: missing Acknowledgments row"
+fi
+if echo "$STATS_OUT" | grep -q "Drift events"; then
+  pass "forgen stats: Drift events row present"
+else
+  fail "forgen stats: missing Drift events row"
+fi
+
+# 9-2. `forgen rule <sub>` namespace dispatcher
+RULE_HELP=$(forgen rule help 2>&1)
+if echo "$RULE_HELP" | grep -q "forgen rule list"; then
+  pass "forgen rule help: namespace help shows list subcommand"
+else
+  fail "forgen rule help: missing namespace help — $RULE_HELP"
+fi
+
+RULE_LIST=$(forgen rule list 2>&1)
+INSPECT_RULES=$(forgen inspect rules 2>&1)
+if [ "$RULE_LIST" = "$INSPECT_RULES" ]; then
+  pass "forgen rule list ≡ forgen inspect rules (same output)"
+else
+  fail "forgen rule list diverges from inspect rules"
+fi
+
+# 9-3. Legacy top-level commands still work as aliases
+LEGACY_LIFECYCLE=$(forgen lifecycle-scan 2>&1 | head -2)
+NEW_SCAN=$(forgen rule scan 2>&1 | head -2)
+if [ -n "$LEGACY_LIFECYCLE" ] && [ -n "$NEW_SCAN" ]; then
+  pass "legacy forgen lifecycle-scan still runs"
+else
+  fail "legacy lifecycle-scan or rule scan broken"
+fi
+
+# 9-4. `forgen inspect corrections` alias works
+CORR_OUT=$(forgen inspect corrections 2>&1)
+EVI_OUT=$(forgen inspect evidence 2>&1)
+if [ "$CORR_OUT" = "$EVI_OUT" ]; then
+  pass "forgen inspect corrections ≡ inspect evidence (alias)"
+else
+  fail "forgen inspect corrections diverges from evidence"
+fi
+
+# 9-5. `forgen last-block` shorthand
+if forgen last-block 2>&1 | grep -qE "violations|No .+ data|Recent"; then
+  pass "forgen last-block: runs without error"
+else
+  fail "forgen last-block broken"
+fi
+
+# 9-6. stop-guard ack round-trip — block → retract → acknowledgments.jsonl gains entry
+TMP_HOME=$(mktemp -d)
+mkdir -p "$TMP_HOME/.forgen/state"
+SCENARIOS_JSON="$TMP_HOME/scenarios.json"
+# Inline the minimal rule scenario for SG-ACK
+cat > "$SCENARIOS_JSON" <<'JSON'
+{
+  "rules": [
+    {
+      "id": "R-E2E-ACK",
+      "mech": "B",
+      "hook": "Stop",
+      "trigger": {
+        "response_keywords_regex": "(완료했|완성됐|완성되|완성했|done\\.|ready\\.|shipped\\.|LGTM|finished\\.)",
+        "context_exclude_regex": "(취소|철회|없음|없습니다|않았|하지\\s*않|아닙니다|not\\s*yet|no\\s*longer|retract|withdraw|stuck-loop|force\\s*approve|block\\s*hook)"
+      },
+      "verifier": {
+        "kind": "self_check_prompt",
+        "params": {
+          "question": "Evidence required.",
+          "evidence_path": "e2e-result.json",
+          "max_age_s": 3600
+        }
+      },
+      "system_tag": "rule:R-E2E-ACK"
+    }
+  ]
+}
+JSON
+
+# Find stop-guard in the installed forgen (follow symlinks of global bin)
+FORGEN_BIN=$(which forgen)
+FORGEN_REAL=$(readlink -f "$FORGEN_BIN" 2>/dev/null || realpath "$FORGEN_BIN" 2>/dev/null || echo "$FORGEN_BIN")
+FORGEN_DIR=$(dirname "$FORGEN_REAL")
+STOP_GUARD_BIN="$FORGEN_DIR/hooks/stop-guard.js"
+if [ ! -f "$STOP_GUARD_BIN" ]; then
+  fail "stop-guard.js not found at $STOP_GUARD_BIN"
+else
+  SESSION_ID="e2e-ack-test"
+  HOOK_INPUT='{"session_id":"'"$SESSION_ID"'","stop_hook_active":true}'
+
+  # Step 1: block
+  STEP1=$(echo "$HOOK_INPUT" | HOME="$TMP_HOME" FORGEN_SPIKE_RULES="$SCENARIOS_JSON" FORGEN_SPIKE_LAST_MESSAGE="구현 완료했습니다." node "$STOP_GUARD_BIN" 2>&1)
+  if echo "$STEP1" | grep -q '"decision":"block"'; then
+    pass "v0.4.0 e2e: stop-guard blocks completion claim without evidence"
+  else
+    fail "v0.4.0 e2e: expected block, got: $STEP1"
+  fi
+  BC_FILES=$(ls "$TMP_HOME/.forgen/state/enforcement/block-count/" 2>/dev/null | wc -l)
+  if [ "$BC_FILES" -ge 1 ]; then
+    pass "v0.4.0 e2e: block-count file created on block"
+  else
+    fail "v0.4.0 e2e: block-count file missing"
+  fi
+
+  # Step 2: retract
+  STEP2=$(echo "$HOOK_INPUT" | HOME="$TMP_HOME" FORGEN_SPIKE_RULES="$SCENARIOS_JSON" FORGEN_SPIKE_LAST_MESSAGE="완료 선언을 취소합니다." node "$STOP_GUARD_BIN" 2>&1)
+  if echo "$STEP2" | grep -q '"continue":true'; then
+    pass "v0.4.0 e2e: stop-guard approves after retraction"
+  else
+    fail "v0.4.0 e2e: expected approve, got: $STEP2"
+  fi
+
+  # ack file gained entry; block-count file cleaned up
+  ACK_FILE="$TMP_HOME/.forgen/state/enforcement/acknowledgments.jsonl"
+  if [ -f "$ACK_FILE" ]; then
+    ACK_LINES=$(wc -l < "$ACK_FILE" | tr -d ' ')
+    if [ "$ACK_LINES" -ge 1 ]; then
+      pass "v0.4.0 e2e: acknowledgments.jsonl gained $ACK_LINES entry"
+    else
+      fail "v0.4.0 e2e: acknowledgments.jsonl empty"
+    fi
+  else
+    fail "v0.4.0 e2e: acknowledgments.jsonl not created"
+  fi
+
+  BC_AFTER=$(ls "$TMP_HOME/.forgen/state/enforcement/block-count/" 2>/dev/null | wc -l)
+  if [ "$BC_AFTER" -eq 0 ]; then
+    pass "v0.4.0 e2e: block-count cleaned up after ack"
+  else
+    fail "v0.4.0 e2e: block-count not cleaned (${BC_AFTER} remain)"
+  fi
+fi
+rm -rf "$TMP_HOME"
+
+# 9-7. `forgen doctor` legacy-path warning
+TMP_DOCTOR=$(mktemp -d)
+mkdir -p "$TMP_DOCTOR/.forgen/rules"
+echo '{}' > "$TMP_DOCTOR/.forgen/rules/orphan.json"
+DOCTOR_OUT=$(HOME="$TMP_DOCTOR" forgen doctor 2>&1)
+if echo "$DOCTOR_OUT" | grep -q "orphan"; then
+  pass "v0.4.0 e2e: forgen doctor warns on legacy ~/.forgen/rules/ orphan"
+else
+  fail "v0.4.0 e2e: forgen doctor missed orphan file — $(echo "$DOCTOR_OUT" | grep -i rule | head -3)"
+fi
+rm -rf "$TMP_DOCTOR"
+
+echo ""
+
+# ──────────────────────────────────────────────
 # Summary
 # ──────────────────────────────────────────────
 echo "═══════════════════════════════════════════"

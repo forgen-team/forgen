@@ -93,12 +93,80 @@ for (const sc of scenarios) {
   }
 }
 
+// R9-PA2 SG-ACK: full block → retract → acknowledgment round-trip.
+// Same session executes block, then retract; verify acknowledgments.jsonl
+// gains one entry and the block-count file is cleaned up.
+(() => {
+  const sandbox = makeSandboxHome();
+  const sessionId = `self-gate-ack-${process.pid}`;
+  const spawnCall = (lastMessage) => spawnSync('node', [STOP_GUARD], {
+    input: JSON.stringify({ session_id: sessionId, stop_hook_active: true }),
+    env: {
+      ...process.env,
+      HOME: sandbox,
+      FORGEN_SPIKE_RULES: SCENARIOS,
+      FORGEN_SPIKE_LAST_MESSAGE: lastMessage,
+    },
+    encoding: 'utf-8',
+    timeout: 10000,
+  });
+  const bcDir = path.join(sandbox, '.forgen', 'state', 'enforcement', 'block-count');
+  const ackPath = path.join(sandbox, '.forgen', 'state', 'enforcement', 'acknowledgments.jsonl');
+  try {
+    // Step 1: block
+    const blk = spawnCall('구현 완료했습니다.');
+    const blkLast = JSON.parse(blk.stdout.trim().split('\n').filter(Boolean).pop());
+    if (blkLast.decision !== 'block') {
+      failures.push({ id: 'SG-ACK/1', detail: `expected block, got ${JSON.stringify(blkLast)}` });
+    }
+    const bcFilesAfterBlock = fs.existsSync(bcDir)
+      ? fs.readdirSync(bcDir).filter((f) => f.endsWith('.json'))
+      : [];
+    if (bcFilesAfterBlock.length !== 1) {
+      failures.push({ id: 'SG-ACK/1', detail: `expected 1 block-count file, got ${bcFilesAfterBlock.length}` });
+    }
+
+    // Step 2: retract → approve + ack
+    const ack = spawnCall('완료 선언을 취소합니다. 증거 없음.');
+    const ackLast = JSON.parse(ack.stdout.trim().split('\n').filter(Boolean).pop());
+    if (ackLast.decision === 'block') {
+      failures.push({ id: 'SG-ACK/2', detail: `expected approve after retract, got block` });
+    }
+
+    const ackLines = fs.existsSync(ackPath)
+      ? fs.readFileSync(ackPath, 'utf-8').trim().split('\n').filter(Boolean)
+      : [];
+    if (ackLines.length !== 1) {
+      failures.push({ id: 'SG-ACK/2', detail: `expected 1 ack entry, got ${ackLines.length}` });
+    } else {
+      const entry = JSON.parse(ackLines[0]);
+      if (entry.session_id !== sessionId) {
+        failures.push({ id: 'SG-ACK/2', detail: `ack session_id mismatch: ${entry.session_id}` });
+      }
+      if (typeof entry.block_count !== 'number' || entry.block_count < 1) {
+        failures.push({ id: 'SG-ACK/2', detail: `ack block_count invalid: ${entry.block_count}` });
+      }
+    }
+
+    const bcFilesAfterAck = fs.existsSync(bcDir)
+      ? fs.readdirSync(bcDir).filter((f) => f.endsWith('.json'))
+      : [];
+    if (bcFilesAfterAck.length !== 0) {
+      failures.push({ id: 'SG-ACK/2', detail: `block-count not cleaned up: ${bcFilesAfterAck.length} remain` });
+    }
+  } finally {
+    fs.rmSync(sandbox, { recursive: true, force: true });
+  }
+})();
+
+const totalScenarios = scenarios.length + 1; // +1 for SG-ACK round-trip
+
 if (failures.length === 0) {
-  console.log(`  [self-gate-runtime] ✓ ${scenarios.length}/${scenarios.length} hook scenarios passed`);
+  console.log(`  [self-gate-runtime] ✓ ${totalScenarios}/${totalScenarios} hook scenarios passed`);
   process.exit(0);
 }
 
-console.error(`\n  [self-gate-runtime] ✗ ${failures.length}/${scenarios.length} failure(s):\n`);
+console.error(`\n  [self-gate-runtime] ✗ ${failures.length}/${totalScenarios} failure(s):\n`);
 for (const f of failures) {
   console.error(`    [${f.id}] ${f.detail}`);
 }

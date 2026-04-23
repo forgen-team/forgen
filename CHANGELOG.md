@@ -61,9 +61,10 @@ Built on top of the v0.3.x personalization core (4-axis profile + compound knowl
 - `FORGEN_USER_CONFIRMED=1` 으로 Mech-A PreToolUse 우회 시 violations.jsonl 에 `kind:'correction'` audit 엔트리 기록.
 
 **운영 지표**:
-- 전체 회귀 1965/1965 pass (168 files), TypeScript clean.
+- 전체 회귀 1973/1973 pass (169 files), TypeScript clean.
 - forgen doctor 20/20 hooks active; legacy `~/.forgen/rules/` orphan 감지 추가.
-- Self-gate 3단 체인 그린; Docker e2e 63/63.
+- Self-gate 정적 ✓ + 런타임 7/7 (SG-ACK round-trip 포함); Docker e2e 77/77 (Phase 9 R9 전체 검증).
+- `npm pack` tarball 539.3 kB, 332 파일, v0.4.0 메타데이터 확인.
 
 **관측성**:
 - `acknowledgments.jsonl` 신규 — Mech-B block → retract → pass 루프가 실제 작동한 세션 기록. `forgen stats` 의 `X% acknowledged` 라벨로 집계.
