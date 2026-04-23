@@ -1,0 +1,30 @@
+FROM ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Node 22 + git + bash (bash 은 기본 포함) + readlink (coreutils 포함)
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends curl ca-certificates git && \
+    curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
+    apt-get install -y nodejs && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN npm i -g @anthropic-ai/claude-code@latest 2>/dev/null || echo "Claude CLI install skipped"
+
+WORKDIR /workspace
+
+COPY *forgen*.tgz /tmp/forgen.tgz
+RUN npm i -g /tmp/forgen.tgz
+
+COPY verify.sh /workspace/verify.sh
+RUN chmod +x /workspace/verify.sh
+
+RUN mkdir -p /workspace/test-project && \
+    cd /workspace/test-project && \
+    git init && \
+    npm init -y && \
+    echo '{}' > tsconfig.json
+
+WORKDIR /workspace/test-project
+
+ENTRYPOINT ["/workspace/verify.sh"]
