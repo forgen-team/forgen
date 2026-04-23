@@ -110,6 +110,20 @@ export async function runDoctor(opts: DoctorOptions = {}): Promise<void> {
   check('~/.forgen/me/rules/', exists(ME_RULES));
   check('~/.forgen/packs/', exists(PACKS_DIR));
   check('~/.forgen/sessions/', exists(SESSIONS_DIR));
+
+  // R9-IA5: warn if a user dropped rule files at ~/.forgen/rules/ by mistake.
+  // That path is NOT loaded — personal rules live at ~/.forgen/me/rules/.
+  const legacyRulesPath = path.join(FORGEN_HOME, 'rules');
+  if (exists(legacyRulesPath) && legacyRulesPath !== ME_RULES) {
+    const files = fs.readdirSync(legacyRulesPath).filter((f) => f.endsWith('.json'));
+    if (files.length > 0) {
+      check(
+        `~/.forgen/rules/ (${files.length} orphan file(s))`,
+        false,
+        `This path is NOT loaded. Move files to ~/.forgen/me/rules/ or delete them.`,
+      );
+    }
+  }
   console.log();
 
   section('Environment');

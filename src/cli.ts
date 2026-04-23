@@ -221,6 +221,14 @@ const commands: Command[] = [
     },
   },
   {
+    name: 'stats',
+    description: 'One-screen dashboard: active rules, corrections, blocks/bypass/drift (7d).',
+    handler: async (args) => {
+      const { handleStats } = await import('./core/stats-cli.js');
+      await handleStats(args);
+    },
+  },
+  {
     name: 'last-block',
     description: 'Show the most recent Mech-A/B block event with rule detail (R6-UX2).',
     handler: async (_args) => {
@@ -447,6 +455,7 @@ function printHelp() {
                                     Inspect v1 state (alias: evidence → corrections)
     forgen rule <list|suppress|activate|scan|health-scan|classify>
                                     Rule management (see: forgen rule help)
+    forgen stats                    One-screen trust-layer dashboard
     forgen last-block               Show the most recent block event
     forgen compound                 Manage accumulated knowledge
     forgen dashboard                Compound system dashboard
