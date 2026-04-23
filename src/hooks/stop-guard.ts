@@ -28,7 +28,7 @@ import { recordHookTiming } from './shared/hook-timing.js';
 import { isHookEnabled } from './hook-config.js';
 import { loadActiveRules } from '../store/rule-store.js';
 import type { Rule, EnforceSpec } from '../store/types.js';
-import { recordViolation } from '../engine/lifecycle/signals.js';
+import { recordViolation, rotateIfBig } from '../engine/lifecycle/signals.js';
 import { compileSafeRegex, safeRegexTest } from './shared/safe-regex.js';
 
 const HOOK_NAME = 'stop-guard';
@@ -381,6 +381,7 @@ export function acknowledgeSessionBlocks(sessionId: string): number {
       }
       try {
         fs.mkdirSync(path.dirname(ACK_LOG), { recursive: true });
+        rotateIfBig(ACK_LOG);
         fs.appendFileSync(ACK_LOG, JSON.stringify({
           at: now,
           session_id: state.sessionId,
@@ -409,6 +410,7 @@ export function logDriftEvent(event: {
 }): void {
   try {
     fs.mkdirSync(path.dirname(DRIFT_LOG), { recursive: true });
+    rotateIfBig(DRIFT_LOG);
     fs.appendFileSync(DRIFT_LOG, JSON.stringify({ at: new Date().toISOString(), ...event }) + '\n');
   } catch {
     // best-effort

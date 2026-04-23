@@ -25,7 +25,14 @@ const BYPASS_WINDOW_DAYS = 7;
 /** H8: jsonl rotation threshold — append 시점마다 체크. */
 const ROTATION_THRESHOLD_BYTES = 10 * 1024 * 1024; // 10 MB
 
-function rotateIfBig(p: string): void {
+/**
+ * Best-effort size-based rotation. When `p` exceeds 10MB, renames to
+ * `<p>.<timestamp>` so the next write starts fresh. Missing file or rename
+ * failures are swallowed — the caller's append will still succeed or fail
+ * on its own merits. Exported so enforcement-path jsonl writers outside
+ * this file (drift.jsonl, acknowledgments.jsonl) reuse the same policy.
+ */
+export function rotateIfBig(p: string): void {
   try {
     const st = fs.statSync(p);
     if (st.size > ROTATION_THRESHOLD_BYTES) {

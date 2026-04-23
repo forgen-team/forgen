@@ -288,6 +288,32 @@ describe('stuck-loop guard (block_count ceiling)', () => {
     expect(fs.readdirSync(bcDir).filter((f) => f.endsWith('.json'))).toHaveLength(1);
   });
 
+  it('logDriftEvent rotates when drift.jsonl exceeds 10MB', () => {
+    const logPath = path.join(TEST_HOME, '.forgen', 'state', 'enforcement', 'drift.jsonl');
+    fs.mkdirSync(path.dirname(logPath), { recursive: true });
+    // 11MB filler — just above the 10MB threshold
+    fs.writeFileSync(logPath, 'x'.repeat(11 * 1024 * 1024));
+    logDriftEvent({ kind: 'stuck_loop_force_approve', session_id: 's', rule_id: 'R-B1', count: 4 });
+    const siblings = fs.readdirSync(path.dirname(logPath));
+    const rotated = siblings.filter((f) => f.startsWith('drift.jsonl.'));
+    expect(rotated.length).toBe(1);
+    // fresh drift.jsonl has exactly one new line (not 11MB)
+    expect(fs.statSync(logPath).size).toBeLessThan(1024);
+  });
+
+  it('acknowledgeSessionBlocks rotates acknowledgments.jsonl when >10MB', () => {
+    const ackPath = path.join(TEST_HOME, '.forgen', 'state', 'enforcement', 'acknowledgments.jsonl');
+    fs.mkdirSync(path.dirname(ackPath), { recursive: true });
+    fs.writeFileSync(ackPath, 'y'.repeat(11 * 1024 * 1024));
+    incrementBlockCount('sess-rot', 'R-B1');
+    const acked = acknowledgeSessionBlocks('sess-rot');
+    expect(acked).toBe(1);
+    const rotated = fs.readdirSync(path.dirname(ackPath))
+      .filter((f) => f.startsWith('acknowledgments.jsonl.'));
+    expect(rotated.length).toBe(1);
+    expect(fs.statSync(ackPath).size).toBeLessThan(1024);
+  });
+
   it('getStuckLoopThreshold default is 3, env override works', () => {
     const original = process.env.FORGEN_STUCK_LOOP_THRESHOLD;
     try {
