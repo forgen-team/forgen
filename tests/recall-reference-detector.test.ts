@@ -69,4 +69,39 @@ describe('detectRecallReferences — H4 완결', () => {
     const r = detectRecallReferences('retro 회고', sols);
     expect(r.newlyReferenced).toEqual([]);
   });
+
+  it('v0.4.1 확장: identifier 매칭 (함수/파일명 literal)', () => {
+    const sols: InjectedSolutionEntry[] = [
+      { name: 'some-pattern', identifiers: ['calculateTotal', 'CartItem'] },
+    ];
+    const r = detectRecallReferences('calculateTotal 함수를 썼다', sols);
+    expect(r.newlyReferenced).toEqual(['some-pattern']);
+  });
+
+  it('v0.4.1 확장: 복합 태그 2개 동시 매칭 = weak reference', () => {
+    const sols: InjectedSolutionEntry[] = [
+      { name: 'pattern-one', tags: ['red-green-refactor', 'fail-open-llm', 'tdd', 'test'] },
+    ];
+    const r = detectRecallReferences(
+      '이건 red-green-refactor 룹과 fail-open-llm 패턴이 결합된다',
+      sols,
+    );
+    expect(r.newlyReferenced).toEqual(['pattern-one']);
+  });
+
+  it('v0.4.1 확장: 일반 태그 단독 (tdd/test) 는 매칭 안 함 (오매칭 방지)', () => {
+    const sols: InjectedSolutionEntry[] = [
+      { name: 'pattern-two', tags: ['tdd', 'test', 'workflow'] },
+    ];
+    const r = detectRecallReferences('tdd 방식으로 test 작성', sols);
+    expect(r.newlyReferenced).toEqual([]);
+  });
+
+  it('v0.4.1 확장: 복합 태그 1개만이면 매칭 안 함 (2개 교차 필수)', () => {
+    const sols: InjectedSolutionEntry[] = [
+      { name: 'pattern-three', tags: ['red-green-refactor', 'something-specific'] },
+    ];
+    const r = detectRecallReferences('red-green-refactor 만 등장', sols);
+    expect(r.newlyReferenced).toEqual([]);
+  });
 });

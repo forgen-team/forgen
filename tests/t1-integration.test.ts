@@ -103,7 +103,10 @@ describe('T1 integration (appendEvidence → orchestrator)', () => {
 
     const after = loadRule(rule.rule_id);
     expect(after?.status).toBe('active');
-    expect(after?.lifecycle).toBeUndefined();
+    // v0.4.1 audit-trail: saveRule 이 lifecycle 자동 초기화. 기존 기대치
+    // (undefined) 는 구 동작.
+    expect(after?.lifecycle?.phase).toBe('active');
+    expect(after?.lifecycle?.violation_count).toBe(0);
   });
 
   it('lifecycle event appended to daily jsonl', () => {

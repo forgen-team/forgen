@@ -47,6 +47,14 @@ export function createRule(params: {
 
 export function saveRule(rule: Rule): void {
   rule.updated_at = new Date().toISOString();
+  // v0.4.1 audit-trail 불변식: rule 저장 시 lifecycle state 가 null/undefined 이면
+  // active phase 기본값 주입. 이전에는 old rule 파일이 lifecycle 없이 존재해 쌤 이후
+  // audit trail (phase/violation_count/meta_promotions) 추적 불가 — 이번 세션에서
+  // suppressed rule 의 lifecycle=null 발견. initLifecycle 은 기존 값이 있으면 normalize,
+  // 없으면 phase='active' + counters=0 초기화.
+  if (!rule.lifecycle) {
+    rule.lifecycle = initLifecycle(rule);
+  }
   atomicWriteJSON(rulePath(rule.rule_id), rule, { pretty: true });
 }
 

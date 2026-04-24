@@ -68,7 +68,9 @@ describe('T5 integration (appendRule)', () => {
     expect(result.conflicts_with).toHaveLength(0);
 
     const aAfter = loadRule(a.rule_id);
-    expect(aAfter?.lifecycle).toBeUndefined();
+    // v0.4.1: saveRule lifecycle 자동 초기화 → phase='active' 기본값.
+    expect(aAfter?.lifecycle?.phase).toBe('active');
+    expect(aAfter?.lifecycle?.conflict_refs).toEqual([]);
   });
 
   it('lifecycle event written to daily jsonl', async () => {

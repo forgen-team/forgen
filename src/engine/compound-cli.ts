@@ -83,6 +83,7 @@ export function listSolutions(): void {
   const order = ['mature', 'verified', 'candidate', 'experiment', 'retired'];
 
   console.log('\n  Compound Entries\n');
+  console.log('  (inj: 누적 주입, ref: 명시 참조, neg: 부정 피드백 — ref 측정은 v0.4.1+ 부터 시작됨)\n');
 
   let total = 0;
   for (const status of order) {
