@@ -60,11 +60,23 @@ function readLifecycleRetired(days: number): number {
 }
 
 function readLastExtraction(): string {
-  const p = path.join(STATE_DIR, 'last-extraction.json');
-  if (!fs.existsSync(p)) return 'never';
+  // v0.4.1 파일명 정합: auto-compound-runner 는 last-auto-compound.json 에 기록.
+  // 이전 코드가 last-extraction.json 을 찾아 "never" 가 만성적으로 표시됨 —
+  // 실은 매 auto-compound 세션마다 값이 업데이트되고 있는데도 stats 에 반영 X.
+  const candidates = ['last-auto-compound.json', 'last-extraction.json'];
+  let p: string | null = null;
+  for (const name of candidates) {
+    const candidate = path.join(STATE_DIR, name);
+    if (fs.existsSync(candidate)) { p = candidate; break; }
+  }
+  if (!p) return 'never';
   try {
-    const data = JSON.parse(fs.readFileSync(p, 'utf-8')) as { timestamp?: string; date?: string };
-    const ts = data.timestamp ?? data.date;
+    const data = JSON.parse(fs.readFileSync(p, 'utf-8')) as {
+      timestamp?: string;
+      date?: string;
+      completedAt?: string;
+    };
+    const ts = data.completedAt ?? data.timestamp ?? data.date;
     if (!ts) return 'never';
     const diffDays = Math.floor((Date.now() - Date.parse(ts)) / MS_PER_DAY);
     const dateStr = new Date(ts).toISOString().slice(0, 10);

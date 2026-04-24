@@ -150,8 +150,22 @@ export async function runDoctor(opts: DoctorOptions = {}): Promise<void> {
     console.log(`  Behavioral patterns: ${behavior}`);
   }
   if (exists(ME_RULES)) {
-    const rules = fs.readdirSync(ME_RULES).filter(isKnowledgeFile).length;
-    console.log(`  Personal rules: ${rules}`);
+    // v0.4.1 정확도: removed 상태 rule 은 "학습된 규칙" 에서 제외하고 별도 표시.
+    // 이전에는 디렉터리 파일 수만 세어 이미 제거된 rule 도 count 되어 판매 관점
+    // "살아있는 규칙" 수치가 부풀려짐. 실제 구매자 가치는 active + suppressed.
+    const ruleFiles = fs.readdirSync(ME_RULES).filter(isKnowledgeFile);
+    let active = 0, suppressed = 0, removed = 0;
+    for (const f of ruleFiles) {
+      try {
+        const d = JSON.parse(fs.readFileSync(path.join(ME_RULES, f), 'utf-8')) as { status?: string };
+        if (d.status === 'active') active++;
+        else if (d.status === 'suppressed') suppressed++;
+        else if (d.status === 'removed' || d.status === 'superseded') removed++;
+      } catch { /* skip */ }
+    }
+    const live = active + suppressed;
+    const removedTag = removed > 0 ? ` (${removed} removed/superseded)` : '';
+    console.log(`  Personal rules: ${live}  [active:${active} suppressed:${suppressed}]${removedTag}`);
   }
   console.log();
 
