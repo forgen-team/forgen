@@ -45,7 +45,18 @@ export function createEvidence(params: {
   };
 }
 
+/** TEST-4 / RC4: behavior_observation 의 summary 가 의미있는 내용을 담아야 분석 가능. */
+const MIN_BEHAVIOR_OBSERVATION_LEN = 20;
+
 export function saveEvidence(evidence: Evidence): void {
+  // TEST-4 / RC4: 빈/짧은 behavior_observation 은 저장 거부.
+  // 결함: ~/.forgen/me/behavior/*.json 다수에 summary="" 가 누적되어 학습 데이터가
+  // 분석 불가능한 형태로 쌓임. saveEvidence 가 마지막 게이트라 여기서 거른다.
+  // 다른 evidence type (explicit_correction, session_summary) 은 backward compat.
+  if (evidence.type === 'behavior_observation') {
+    const len = (evidence.summary ?? '').trim().length;
+    if (len < MIN_BEHAVIOR_OBSERVATION_LEN) return;
+  }
   atomicWriteJSON(evidencePath(evidence.evidence_id), evidence, { pretty: true });
 }
 

@@ -61,7 +61,7 @@ describe('evidence-store', () => {
   it('loadEvidenceBySession filters correctly', () => {
     saveEvidence(createEvidence({ type: 'explicit_correction', session_id: 'sess-1', source_component: 'H', summary: 's1', confidence: 0.8 }));
     saveEvidence(createEvidence({ type: 'explicit_correction', session_id: 'sess-2', source_component: 'H', summary: 's2', confidence: 0.8 }));
-    saveEvidence(createEvidence({ type: 'behavior_observation', session_id: 'sess-1', source_component: 'H', summary: 's3', confidence: 0.5 }));
+    saveEvidence(createEvidence({ type: 'behavior_observation', session_id: 'sess-1', source_component: 'H', summary: 'behavior observation with long enough summary', confidence: 0.5 }));
 
     expect(loadEvidenceBySession('sess-1')).toHaveLength(2);
     expect(loadEvidenceBySession('sess-2')).toHaveLength(1);
