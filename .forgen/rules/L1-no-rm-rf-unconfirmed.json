@@ -17,7 +17,7 @@
       "hook": "PreToolUse",
       "verifier": {
         "kind": "tool_arg_regex",
-        "params": { "pattern": "rm\\s+-rf", "requires_flag": "user_confirmed" }
+        "params": { "pattern": "rm\\s+-rf", "requires_flag": "user_confirmed", "match_target": "masked" }
       },
       "block_message": "L1-no-rm-rf-unconfirmed: confirm 없는 rm -rf 실행 시도. 사용자 승인 받고 재시도하라."
     }

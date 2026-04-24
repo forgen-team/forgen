@@ -354,10 +354,12 @@ async function main(): Promise<void> {
       { loadActiveRules },
       { recordViolation },
       { compileSafeRegex, safeRegexTest },
+      { preprocessForMatch },
     ] = await Promise.all([
       import('../store/rule-store.js'),
       import('../engine/lifecycle/signals.js'),
       import('./shared/safe-regex.js'),
+      import('./shared/command-parser.js'),
     ]);
     const rules = loadActiveRules();
     const command = typeof (toolInput as { command?: unknown }).command === 'string'
@@ -372,7 +374,13 @@ async function main(): Promise<void> {
         if (!pattern) continue;
         const re = compileSafeRegex(pattern, 'i');
         if (!re.regex) { log.debug(`rule ${rule.rule_id} unsafe regex: ${re.reason}`); continue; }
-        if (!safeRegexTest(re.regex, command)) continue;
+        // TEST-6 / RC5: quote-aware preprocessing. Default 'raw' = backward compat.
+        // Rules that target real command invocations should set match_target: 'masked'
+        // so quoted argument text (e.g. body of `forgen compound --solution "..."`)
+        // doesn't trigger false positive blocks.
+        const matchTarget = (v.params?.match_target ?? 'raw') as 'raw' | 'masked' | 'command_tokens';
+        const target = preprocessForMatch(command, matchTarget);
+        if (!safeRegexTest(re.regex, target)) continue;
         const requiresFlag = v.params?.requires_flag;
         const confirmed = process.env.FORGEN_USER_CONFIRMED === '1';
         if (requiresFlag && !confirmed) {
