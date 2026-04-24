@@ -80,5 +80,39 @@ describe('db-guard - extended', () => {
       const result = checkDangerousSql('Bash', { command: '' });
       expect(result.action).toBe('pass');
     });
+
+    describe('v0.4.1 TEST-6 quote-aware (DB CLI allowlist)', () => {
+      it('git commit 메시지의 quote 안 DROP TABLE 은 pass (false-positive 방지)', () => {
+        const cmd = 'git commit -m "feat: handle DROP TABLE edge case in migration"';
+        expect(checkDangerousSql('Bash', { command: cmd }).action).toBe('pass');
+      });
+
+      it('echo "DROP DATABASE" 같은 단순 echo 는 pass', () => {
+        expect(checkDangerousSql('Bash', { command: 'echo "DROP DATABASE prod"' }).action).toBe('pass');
+      });
+
+      it('psql -c "DROP TABLE" 은 여전히 block (True-Positive 유지)', () => {
+        expect(checkDangerousSql('Bash', { command: 'psql -c "DROP TABLE users"' }).action).toBe('block');
+      });
+
+      it('echo "DROP..." | psql 파이프 실행도 block (psql 실 실행 토큰)', () => {
+        // 파일 경로 `drop.sql` 자체에는 SQL 키워드가 없으므로 db-guard 가 볼 수 없다.
+        // command 문자열 안에 SQL 키워드가 있고 동시에 psql 이 실행 경로에 있을 때가 대상.
+        expect(checkDangerousSql('Bash', { command: 'echo "DROP TABLE accounts" | psql -d prod' }).action).toBe('block');
+      });
+
+      it('mysql -e "DROP TABLE" 도 block', () => {
+        expect(checkDangerousSql('Bash', { command: 'mysql -e "DROP TABLE accounts"' }).action).toBe('block');
+      });
+
+      it('quote 안에 psql 있지만 실행 토큰 아닌 경우 pass', () => {
+        const cmd = 'echo "to run psql -c DROP TABLE manually"';
+        expect(checkDangerousSql('Bash', { command: cmd }).action).toBe('pass');
+      });
+
+      it('raw DROP TABLE (quote 없음) 은 block 유지', () => {
+        expect(checkDangerousSql('Bash', { command: 'DROP TABLE my_table' }).action).toBe('block');
+      });
+    });
   });
 });
