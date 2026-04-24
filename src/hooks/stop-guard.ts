@@ -29,6 +29,9 @@ import { checkConclusionVerificationRatio } from '../checks/conclusion-verificat
 import { checkSelfScoreInflation } from '../checks/self-score-deflation.js';
 import { STATE_DIR } from '../core/paths.js';
 import { sanitizeId } from './shared/sanitize-id.js';
+import { detectRecallReferences, type InjectedSolutionEntry } from '../core/recall-reference-detector.js';
+import { appendImplicitFeedback } from '../store/implicit-feedback-store.js';
+import { atomicWriteJSON } from './shared/atomic-write.js';
 import { recordHookTiming } from './shared/hook-timing.js';
 import { isHookEnabled } from './hook-config.js';
 import { loadActiveRules } from '../store/rule-store.js';
@@ -429,6 +432,49 @@ export function getStuckLoopThreshold(): number {
 }
 
 /**
+ * H4 완결 (2026-04-24): recall_referenced emit 경로.
+ * Stop hook 에서 Claude 의 직전 응답 텍스트와 이 세션의 injection-cache 를 대조해,
+ * 주입된 솔루션 이름이 응답에 등장하면 `recall_referenced` 이벤트 기록. 동일
+ * 솔루션 중복 emit 방지용으로 injection-cache 의 해당 엔트리에 `_referenced: true`
+ * 플래그 세팅 후 atomic 재기록. fail-open — 어떤 단계든 throw 시 스킵.
+ */
+function emitRecallReferencesFailOpen(sessionId: string, lastMessage: string): void {
+  try {
+    const cachePath = path.join(STATE_DIR, `injection-cache-${sanitizeId(sessionId)}.json`);
+    if (!fs.existsSync(cachePath)) return;
+    const raw = fs.readFileSync(cachePath, 'utf-8');
+    const cache = JSON.parse(raw) as { solutions?: InjectedSolutionEntry[]; updatedAt?: string };
+    const sols = Array.isArray(cache.solutions) ? cache.solutions : [];
+    if (sols.length === 0) return;
+
+    const { newlyReferenced } = detectRecallReferences(lastMessage, sols);
+    if (newlyReferenced.length === 0) return;
+
+    const now = new Date().toISOString();
+    for (const name of newlyReferenced) {
+      appendImplicitFeedback({
+        type: 'recall_referenced',
+        category: 'positive',
+        solution: name,
+        at: now,
+        sessionId,
+      });
+    }
+
+    // 중복 emit 방지 — cache 에 플래그 저장 후 재기록
+    const refSet = new Set(newlyReferenced);
+    const updated = {
+      ...cache,
+      solutions: sols.map((s) => (refSet.has(s.name) ? { ...s, _referenced: true } : s)),
+      updatedAt: now,
+    };
+    atomicWriteJSON(cachePath, updated, { mode: 0o600, dirMode: 0o700 });
+  } catch {
+    /* fail-open */
+  }
+}
+
+/**
  * TEST-2 support: post-tool-use 가 저장한 modified-files-{sessionId}.json 에서
  * recentToolNames 윈도우를 로드. 파일이 없거나 깨져도 빈 배열로 fail-open.
  */
@@ -471,6 +517,11 @@ export async function main(): Promise<void> {
       console.log(approveWithOptionalExtractionNotice());
       return;
     }
+
+    // H4 완결: 응답 텍스트와 injection-cache 대조해 recall_referenced emit.
+    // block/approve 어느 경로이든 동일하게 기록 (참조는 응답 내용이 결정).
+    const sessionIdForRef = input?.session_id ?? 'unknown';
+    emitRecallReferencesFailOpen(sessionIdForRef, lastMessage);
 
     // TEST-2/3: rule-free meta guards — FORGEN_USER_CONFIRMED=1 우회 공통.
     if (process.env.FORGEN_USER_CONFIRMED !== '1') {
