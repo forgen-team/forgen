@@ -49,13 +49,18 @@ export interface ImportResult {
 }
 
 /**
- * Count .md files in a directory (non-recursive).
- * Returns 0 if the directory does not exist.
+ * Count knowledge files in a directory (non-recursive). `.md` (solutions) + `.json`
+ * (rules, behavior, evidence) 둘 다 포함.
+ *
+ * v0.4.1 (2026-04-24): 이전에는 `.md` 만 세서 rules/*.json 전부가 count=0, export
+ * 대상에서도 제외됐다. 실증: `forgen compound export` 결과 rules 0, behavior 18
+ * (618건의 .json 누락). 사용자 철학의 **핵심**인 rules 가 하네스에서 빠진 상태
+ * 라 "나와 같은 데이터 하네스" 비전이 반쪽이었다.
  */
 function countFiles(dir: string): number {
   try {
     if (!fs.existsSync(dir)) return 0;
-    return fs.readdirSync(dir).filter(f => f.endsWith('.md')).length;
+    return fs.readdirSync(dir).filter(f => f.endsWith('.md') || f.endsWith('.json')).length;
   } catch {
     return 0;
   }

@@ -94,7 +94,18 @@ export interface StatsSnapshot {
   assistToday: {
     recallHits: number;      // match-eval-log 의 오늘 entries (매칭 시도 수)
     surfaced: number;        // implicit-feedback 의 recommendation_surfaced 오늘
+    referenced: number;      // implicit-feedback 의 recall_referenced 오늘 (H4 완결)
     extractedToday: number;  // ~/.forgen/me/solutions 중 오늘 mtime
+  };
+  /**
+   * v0.4.1 철학 고도화 지표 — forge-profile.json 이 실제로 학습됐는지 한눈에.
+   * 값이 있으면 가시화, 없으면 undefined.
+   */
+  philosophy?: {
+    basePacks: string[];                // ["보수형","확인우선형",...]
+    trustPolicy: string;
+    axisScores: Record<string, number>; // {quality_safety:0.65,...}
+    lastReclassification: string | null;
   };
 }
 
@@ -112,13 +123,15 @@ function computeAssistToday(): StatsSnapshot['assistToday'] {
     if (Number.isFinite(ts) && ts >= cutoffMs) recallHits++;
   }
 
-  // surfaced: implicit-feedback 의 recommendation_surfaced 오늘
+  // surfaced + referenced — 같은 스트림 1회 loop 로.
   const feedback = readJsonl(path.join(STATE_DIR, 'implicit-feedback.jsonl'));
   let surfaced = 0;
+  let referenced = 0;
   for (const e of feedback) {
-    if (e.type !== 'recommendation_surfaced') continue;
     const ts = typeof e.at === 'string' ? Date.parse(e.at) : NaN;
-    if (Number.isFinite(ts) && ts >= cutoffMs) surfaced++;
+    if (!Number.isFinite(ts) || ts < cutoffMs) continue;
+    if (e.type === 'recommendation_surfaced') surfaced++;
+    else if (e.type === 'recall_referenced') referenced++;
   }
 
   // extracted today: solutions dir 에서 오늘 mtime 인 .md 파일
@@ -133,7 +146,33 @@ function computeAssistToday(): StatsSnapshot['assistToday'] {
     }
   } catch { /* fail-open */ }
 
-  return { recallHits, surfaced, extractedToday };
+  return { recallHits, surfaced, referenced, extractedToday };
+}
+
+/** v0.4.1: forge-profile 에서 고도화 지표 추출. 파일 없거나 깨지면 undefined. */
+function computePhilosophy(): StatsSnapshot['philosophy'] {
+  try {
+    const profilePath = path.join(os.homedir(), '.forgen', 'me', 'forge-profile.json');
+    if (!fs.existsSync(profilePath)) return undefined;
+    const d = JSON.parse(fs.readFileSync(profilePath, 'utf-8')) as {
+      axes?: Record<string, { score?: number }>;
+      base_packs?: Record<string, string>;
+      trust_preferences?: { desired_policy?: string };
+      metadata?: { last_reclassification_at?: string | null };
+    };
+    const axisScores: Record<string, number> = {};
+    for (const [k, v] of Object.entries(d.axes ?? {})) {
+      if (v && typeof v.score === 'number') axisScores[k] = v.score;
+    }
+    return {
+      basePacks: Object.values(d.base_packs ?? {}),
+      trustPolicy: d.trust_preferences?.desired_policy ?? 'unknown',
+      axisScores,
+      lastReclassification: d.metadata?.last_reclassification_at ?? null,
+    };
+  } catch {
+    return undefined;
+  }
 }
 
 export function computeStats(): StatsSnapshot {
@@ -171,6 +210,7 @@ export function computeStats(): StatsSnapshot {
     retired7d: readLifecycleRetired(7),
     lastExtraction: readLastExtraction(),
     assistToday: computeAssistToday(),
+    philosophy: computePhilosophy(),
   };
 }
 
@@ -201,8 +241,25 @@ export function renderStats(s: StatsSnapshot): string {
   lines.push('  Today (assist)');
   lines.push(`    Recall hits         ${padNum(s.assistToday.recallHits)}    — compound 매칭 시도 수`);
   lines.push(`    Surfaced            ${padNum(s.assistToday.surfaced)}    — 실제 주입된 솔루션 수`);
+  const ratio = s.assistToday.surfaced > 0
+    ? ` (${Math.round(100 * s.assistToday.referenced / s.assistToday.surfaced)}% referenced)`
+    : '';
+  lines.push(`    Referenced          ${padNum(s.assistToday.referenced)}    — Claude 응답에 인용됨${ratio}`);
   lines.push(`    Extracted           ${padNum(s.assistToday.extractedToday)}    — 오늘 새로 저장된 패턴`);
   lines.push('');
+
+  // v0.4.1 철학 고도화 단면 — "개인화가 어디까지 학습됐나" 1섹션.
+  if (s.philosophy) {
+    lines.push('  Philosophy (learned)');
+    lines.push(`    Base packs          ${s.philosophy.basePacks.join(' / ')}`);
+    lines.push(`    Trust policy        ${s.philosophy.trustPolicy}`);
+    const scores = Object.entries(s.philosophy.axisScores)
+      .map(([k, v]) => `${k}:${v.toFixed(2)}`)
+      .join('  ');
+    if (scores) lines.push(`    Axis scores         ${scores}`);
+    lines.push(`    Last reclass        ${s.philosophy.lastReclassification ?? 'never'}`);
+    lines.push('');
+  }
   lines.push(`  Last extraction: ${s.lastExtraction}`);
   lines.push('');
   return lines.join('\n');
