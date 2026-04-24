@@ -14,9 +14,21 @@
  * 순수 함수 — Stop hook block 경로에 붙는다.
  */
 
-/** 측정성 도구. fact-vs-agreement 와 동일 세트 (DRY 미루기: 서로 다른 관심사). */
+/**
+ * 측정성 도구 — **숫자 점수**를 뒷받침할 수 있는 실 **실행** 범주.
+ *
+ * v0.4.1 coverage fix (2026-04-24 buyer-day1 R4 관찰): 이전에는 Read/Edit/Write/
+ * Grep/Glob 도 측정으로 간주했으나, 파일 "읽기/수정" 은 "신뢰도 95/100" 같은
+ * 수치 판정을 뒷받침 못 함. Read 1회면 minMeasurements=1 충족되어 block 회피.
+ * 실제 구매자 시나리오: Claude 가 자가평가 전에 대상 파일 한 번 Read 하면
+ * TEST-2 무력화 — 가드의 본 의도 훼손.
+ *
+ * 새 기준: **실행 결과** 만 측정 — `Bash` (npm test / curl / node --check 등)
+ * 와 `NotebookEdit` (cell 실행). 읽기 전용 도구는 수치 점수의 근거가 될 수 없음.
+ */
 const MEASUREMENT_TOOLS = new Set([
-  'Bash', 'Edit', 'Write', 'Read', 'Grep', 'Glob', 'NotebookEdit',
+  'Bash',
+  'NotebookEdit',
 ]);
 
 /**

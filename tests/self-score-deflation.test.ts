@@ -58,7 +58,7 @@ describe('checkSelfScoreInflation — TEST-2', () => {
       recentTools: ['Bash', 'Read', 'Bash'],
     });
     expect(r.block).toBe(false);
-    expect(r.measurementCount).toBe(3);
+    expect(r.measurementCount).toBe(2); // v0.4.1: Read 는 측정 아님, Bash 2개만 count
   });
 
   it('Agent-only tools are not measurements (regression)', () => {
@@ -68,6 +68,27 @@ describe('checkSelfScoreInflation — TEST-2', () => {
     });
     expect(r.block).toBe(true);
     expect(r.measurementCount).toBe(0);
+  });
+
+  it('v0.4.1 coverage fix: Read/Edit/Write/Grep/Glob alone 은 수치 점수 근거 안 됨 → block', () => {
+    // buyer-day1 R4 실 관찰: Claude 가 자가평가 전 Read 한 번 하면 이전 구현에서는
+    // measurement=1 되어 block 회피. 이건 실 실행이 아니라 읽기만이라 수치 주장
+    // 뒷받침 불가. v0.4.1 부터 Bash / NotebookEdit 만 측정.
+    const r = checkSelfScoreInflation({
+      text: '신뢰도 95/100, 완벽도 72/100.',
+      recentTools: ['Read', 'Read', 'Edit', 'Write', 'Grep', 'Glob'],
+    });
+    expect(r.block).toBe(true);
+    expect(r.measurementCount).toBe(0);
+  });
+
+  it('v0.4.1 coverage fix: Bash 실행만 true measurement', () => {
+    const r = checkSelfScoreInflation({
+      text: '신뢰도 95/100.',
+      recentTools: ['Read', 'Bash', 'Edit'],
+    });
+    expect(r.block).toBe(false);
+    expect(r.measurementCount).toBe(1);
   });
 
   it('star rating flagged', () => {

@@ -27,6 +27,19 @@ describe('maskQuotedContent', () => {
     expect(maskQuotedContent('rm -rf $(pwd)')).toBe('rm -rf $()');
   });
 
+  it('v0.4.1: masks heredoc body (<<EOF ... EOF)', () => {
+    const cmd = `cat > /tmp/foo.json <<'EOF'\n{"cmd":"rm -rf /etc"}\nEOF`;
+    const masked = maskQuotedContent(cmd);
+    expect(masked).not.toMatch(/rm\s+-rf/);
+    expect(masked).toContain('<<HEREDOC>>');
+  });
+
+  it('v0.4.1: masks heredoc with indent variant (<<-EOF)', () => {
+    const cmd = `cat <<-MARK\n    rm -rf /etc\n    MARK`;
+    const masked = maskQuotedContent(cmd);
+    expect(masked).not.toMatch(/rm\s+-rf/);
+  });
+
   it('masks backtick substitution', () => {
     expect(maskQuotedContent('echo `rm -rf x`')).toBe('echo ``');
   });

@@ -25,12 +25,17 @@
  *
  * Limitations (documented, not silently broken):
  *   - escaped quotes inside quoted strings: best-effort only
- *   - heredoc bodies (<<EOF ... EOF): NOT masked (use match_target='raw' if needed)
+ *   - heredoc bodies (<<EOF ... EOF): masked as `<<HEREDOC>>` (v0.4.1+)
  *   - nested $(...) / `...`: outer level masked
  */
 export function maskQuotedContent(cmd: string): string {
   if (!cmd) return cmd;
   let out = cmd;
+  // v0.4.1 (2026-04-24) — heredoc body 마스킹 추가. 이전엔 `cat > f <<EOF\n rm -rf /tmp \nEOF`
+  // 처럼 heredoc 본문이 command string 에 포함돼 false-positive block 발생.
+  // 지원 형식: <<EOF / <<'EOF' / <<"EOF" / <<-EOF (indent 무시 변종).
+  // <<-MARK 은 indent 허용 (terminator 앞 whitespace). `\n\s*\2` 로 반영.
+  out = out.replace(/<<-?\s*(['"]?)([A-Za-z_][A-Za-z0-9_]*)\1[\s\S]*?\n\s*\2\b/g, '<<HEREDOC>>');
   // Order matters: command substitution before plain quotes (they may contain quotes themselves).
   out = out.replace(/\$\([^)]*\)/g, '$()');
   out = out.replace(/`[^`]*`/g, '``');

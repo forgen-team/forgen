@@ -24,6 +24,7 @@ import { isHookEnabled } from './hook-config.js';
 import { approve, approveWithWarning, deny, failOpenWithTracking } from './shared/hook-response.js';
 import { FORGEN_HOME, STATE_DIR } from '../core/paths.js';
 import { recordHookTiming } from './shared/hook-timing.js';
+import { maskQuotedContent } from './shared/command-parser.js';
 const FAIL_COUNTER_PATH = path.join(STATE_DIR, 'pre-tool-fail-counter.json');
 const FAIL_CLOSE_THRESHOLD = 3; // 연속 3회 파싱 실패 시에만 reject
 
@@ -40,6 +41,13 @@ interface DangerousPatternEntry {
   pattern: RegExp;
   description: string;
   severity: 'block' | 'warn';
+  /**
+   * match_target (v0.4.1): 'masked' (default) — quote/heredoc 본문 제거 후 매칭.
+   *   실 shell 실행 토큰 검사에 적합. 'raw' — 원본 command 그대로 매칭.
+   *   `python -c "..."`, `eval "..."` 처럼 **quote 안 본문이 실제 payload 로 실행**
+   *   되는 패턴에 사용.
+   */
+  matchTarget?: 'raw' | 'masked';
 }
 
 /** RegExp 안전성 검증 (ReDoS 방지) — 매칭/비매칭 양쪽 모두 테스트 */
@@ -67,7 +75,7 @@ function loadDangerousPatterns(): DangerousPatternEntry[] {
   // 1. 패키지 내장 패턴 (dangerous-patterns.json)
   try {
     const builtinPath = path.join(path.dirname(fileURLToPath(import.meta.url)), 'dangerous-patterns.json');
-    const raw: Array<{ pattern: string; description: string; severity: string; flags?: string }> =
+    const raw: Array<{ pattern: string; description: string; severity: string; flags?: string; match_target?: string }> =
       JSON.parse(fs.readFileSync(builtinPath, 'utf-8'));
     for (const entry of raw) {
       if (!isSafeRegex(entry.pattern, entry.flags ?? '')) {
@@ -78,12 +86,15 @@ function loadDangerousPatterns(): DangerousPatternEntry[] {
         pattern: new RegExp(entry.pattern, entry.flags ?? ''),
         description: entry.description,
         severity: entry.severity as 'block' | 'warn',
+        matchTarget: entry.match_target === 'raw' ? 'raw' : 'masked',
       });
     }
   } catch {
     // JSON 로드 실패 시 하드코딩 폴백 (최소 안전장치)
     results.push(
-      { pattern: /rm\s+(-rf|-fr)\s+[/~]/, description: 'rm -rf on root/home path', severity: 'block' },
+      // v0.4.1 false-positive fix: /tmp, /var/folders, /var/tmp 같은 임시 경로는
+      // 일반 개발에서 매일 정리 대상. 위험한 시스템 경로만 blacklist.
+      { pattern: /rm\s+(-rf|-fr)\s+(\/(?!tmp\b|var\/folders\b|var\/tmp\b)|~)/, description: 'rm -rf on root/home path', severity: 'block' },
       { pattern: /curl\s+.*\|\s*(ba)?sh/, description: 'curl pipe to shell', severity: 'block' },
       { pattern: /:\(\)\s*\{\s*:\|:&\s*\}\s*;:/, description: 'fork bomb', severity: 'block' },
     );
@@ -131,8 +142,15 @@ export function checkDangerousCommand(
     ? toolInput
     : (toolInput.command as string ?? '');
 
-  for (const { pattern, description, severity } of DANGEROUS_PATTERNS) {
-    if (pattern.test(command)) {
+  // v0.4.1 (2026-04-24) quote-aware built-in scan:
+  // 기본은 masked (quote/heredoc 본문 제거) — shell 실행 토큰 검사. 하지만
+  // `python -c "..."` / `eval "..."` 처럼 quote 안 본문이 실 payload 로 실행되는
+  // 패턴은 match_target:raw 로 지정해 원본 command 전체 검사.
+  const maskedCommand = maskQuotedContent(command);
+
+  for (const { pattern, description, severity, matchTarget } of DANGEROUS_PATTERNS) {
+    const target = matchTarget === 'raw' ? command : maskedCommand;
+    if (pattern.test(target)) {
       return { action: severity, description, command: command.slice(0, 100) };
     }
   }

@@ -23,7 +23,17 @@ describe('checkFactVsAgreement — TEST-1', () => {
       recentTools: ['Bash', 'Bash', 'Read'],
     });
     expect(r.alert).toBe(false);
-    expect(r.measurementCount).toBe(3);
+    // v0.4.1: Read 는 측정 아님, Bash 2회만 count
+    expect(r.measurementCount).toBe(2);
+  });
+
+  it('v0.4.1 coverage fix: Read/Edit/Write/Grep/Glob alone 은 사실 주장 근거 안 됨 → alert', () => {
+    const r = checkFactVsAgreement({
+      text: '검증됐습니다. 테스트 통과했습니다.',
+      recentTools: ['Read', 'Read', 'Edit', 'Write', 'Grep', 'Glob'],
+    });
+    expect(r.alert).toBe(true);
+    expect(r.measurementCount).toBe(0);
   });
 
   it('fact assertion + zero measurement → alert=true', () => {
@@ -65,7 +75,7 @@ describe('checkFactVsAgreement — TEST-1', () => {
 
     const r2 = checkFactVsAgreement({
       text: '통과했습니다.',
-      recentTools: ['Bash', 'Read'],
+      recentTools: ['Bash', 'Bash'], // v0.4.1: Read 는 측정 아님, Bash 2개로 충족
       minMeasurements: 2,
     });
     expect(r2.alert).toBe(false); // 2 >= 2

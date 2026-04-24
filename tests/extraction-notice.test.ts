@@ -7,37 +7,33 @@
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'node:fs';
-import * as os from 'node:os';
 import * as path from 'node:path';
 
+const { TEST_HOME } = vi.hoisted(() => ({
+  TEST_HOME: `/tmp/forgen-test-notice-${process.pid}`,
+}));
+
+vi.mock('node:os', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:os')>();
+  return { ...actual, homedir: () => TEST_HOME };
+});
+
+const { takeLastExtractionNotice } = await import('../src/core/extraction-notice.js');
+
 describe('extraction-notice — H2 Stop hook 추출 알림', () => {
-  let tmpHome: string;
-  let statePath: string;
+  const statePath = path.join(TEST_HOME, '.forgen', 'state', 'last-auto-compound.json');
 
   beforeEach(() => {
-    tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'forgen-notice-'));
-    statePath = path.join(tmpHome, '.forgen', 'state', 'last-auto-compound.json');
+    fs.rmSync(TEST_HOME, { recursive: true, force: true });
     fs.mkdirSync(path.dirname(statePath), { recursive: true });
-
-    vi.resetModules();
-    vi.doMock('node:os', async (orig) => {
-      const real = (await orig()) as typeof import('node:os');
-      return { ...real, homedir: () => tmpHome };
-    });
   });
 
   afterEach(() => {
-    vi.doUnmock('node:os');
-    vi.resetModules();
-    fs.rmSync(tmpHome, { recursive: true, force: true });
+    fs.rmSync(TEST_HOME, { recursive: true, force: true });
   });
 
-  async function freshImport() {
-    return await import('../src/core/extraction-notice.js');
-  }
-
   it('returns null when no state file', async () => {
-    const { takeLastExtractionNotice } = await freshImport();
+
     expect(takeLastExtractionNotice()).toBeNull();
   });
 
@@ -46,7 +42,7 @@ describe('extraction-notice — H2 Stop hook 추출 알림', () => {
       sessionId: 'S1', completedAt: new Date().toISOString(),
       extractedSolutions: 3, promotedRules: 1, noticeShown: true,
     }));
-    const { takeLastExtractionNotice } = await freshImport();
+
     expect(takeLastExtractionNotice()).toBeNull();
   });
 
@@ -55,7 +51,7 @@ describe('extraction-notice — H2 Stop hook 추출 알림', () => {
     fs.writeFileSync(statePath, JSON.stringify({
       sessionId: 'S1', completedAt: stale, extractedSolutions: 2, noticeShown: false,
     }));
-    const { takeLastExtractionNotice } = await freshImport();
+
     expect(takeLastExtractionNotice()).toBeNull();
   });
 
@@ -64,7 +60,7 @@ describe('extraction-notice — H2 Stop hook 추출 알림', () => {
       sessionId: 'S1', completedAt: new Date().toISOString(),
       extractedSolutions: 3, promotedRules: 2, noticeShown: false,
     }));
-    const { takeLastExtractionNotice } = await freshImport();
+
     const notice = takeLastExtractionNotice();
     expect(notice).toContain('3개 패턴 추출');
     expect(notice).toContain('2개 규칙 승격');
@@ -80,7 +76,7 @@ describe('extraction-notice — H2 Stop hook 추출 알림', () => {
       sessionId: 'S1', completedAt: new Date().toISOString(),
       extractedSolutions: 0, promotedRules: 0, noticeShown: false,
     }));
-    const { takeLastExtractionNotice } = await freshImport();
+
     expect(takeLastExtractionNotice()).toBeNull();
     // 재호출시에도 null (이미 소비됨)
     const persisted = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
@@ -92,7 +88,7 @@ describe('extraction-notice — H2 Stop hook 추출 알림', () => {
       sessionId: 'S1', completedAt: new Date().toISOString(),
       extractedSolutions: 1, promotedRules: 0, noticeShown: false,
     }));
-    const { takeLastExtractionNotice } = await freshImport();
+
     const notice = takeLastExtractionNotice();
     expect(notice).toContain('1개 패턴 추출');
     expect(notice).not.toContain('규칙 승격');

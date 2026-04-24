@@ -13,14 +13,18 @@
  *   Stop hook / session scorer / CLI 어느 쪽에서도 호출 가능.
  */
 
-/** 측정성 도구 — 실행 결과가 사실 주장을 뒷받침할 수 있는 카테고리. */
+/**
+ * 측정성 도구 — 실행 결과가 사실 주장을 뒷받침할 수 있는 카테고리.
+ *
+ * v0.4.1 coverage fix: TEST-2 와 같은 논리로, Read/Edit/Write/Grep/Glob 은 파일
+ * 내용 확인/수정이지 "통과/검증/완료" 같은 실 실행 주장을 뒷받침 못 함. 오직
+ * Bash (실 실행) + NotebookEdit (실행 결과) 만 strong measurement.
+ *
+ * 이전 넓은 집합은 신규 사용자 시나리오 (buyer-day1 R4) 에서 Claude 가 Read
+ * 한 번만 해도 alert 회피 → TEST-1 본 의도 훼손.
+ */
 const MEASUREMENT_TOOL_CATEGORIES = new Set([
-  'Bash',        // npm test / 빌드 / curl
-  'Edit',        // 실제 수정 확인 — weak measurement (파일 존재 증거)
-  'Write',       // 새 파일 생성 증거
-  'Read',        // 파일 내용 확인
-  'Grep',        // 패턴 존재 확인
-  'Glob',        // 파일 존재 확인
+  'Bash',
   'NotebookEdit',
 ]);
 

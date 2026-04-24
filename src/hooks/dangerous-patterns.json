@@ -1,5 +1,5 @@
 [
-  { "pattern": "rm\\s+(-rf|-fr)\\s+[/~]", "description": "rm -rf on root/home path", "severity": "block" },
+  { "pattern": "rm\\s+(-rf|-fr)\\s+(\\/(?!tmp\\b|var\\/folders\\b|var\\/tmp\\b)|~)", "description": "rm -rf on root/home path", "severity": "block" },
   { "pattern": "rm\\s+(-rf|-fr)\\s+\\.\\s", "description": "rm -rf on current directory", "severity": "block" },
   { "pattern": "git\\s+push\\s+.*--force(?!-)", "description": "git push --force", "severity": "warn" },
   { "pattern": "git\\s+reset\\s+--hard", "description": "git reset --hard", "severity": "warn" },
@@ -9,10 +9,10 @@
   { "pattern": ">\\s*\\/dev\\/sd[a-z]", "description": "write to block device", "severity": "block" },
   { "pattern": "mkfs\\s", "description": "mkfs (format filesystem)", "severity": "block" },
   { "pattern": ":\\(\\)\\s*\\{\\s*:\\|:&\\s*\\}\\s*;:", "description": "fork bomb", "severity": "block" },
-  { "pattern": "\\beval\\s+[\"'`]", "description": "eval with string (injection risk)", "severity": "warn" },
+  { "pattern": "\\beval\\s+[\"'`]", "description": "eval with string (injection risk)", "severity": "warn", "match_target": "raw" },
   { "pattern": "curl\\s+.*\\|\\s*(ba)?sh", "description": "curl pipe to shell", "severity": "block" },
   { "pattern": "wget\\s+.*\\|\\s*(ba)?sh", "description": "wget pipe to shell", "severity": "block" },
-  { "pattern": "python[23]?\\s+-c\\s+['\"].*(?:import\\s+os|subprocess|exec|eval)", "description": "python -c with dangerous imports", "severity": "warn" },
+  { "pattern": "python[23]?\\s+-c\\s+['\"].*(?:import\\s+os|subprocess|exec|eval)", "description": "python -c with dangerous imports", "severity": "warn", "match_target": "raw" },
   { "pattern": "\\bchmod\\s+[0-7]*777\\b", "description": "chmod 777 (overly permissive)", "severity": "warn" },
   { "pattern": "\\bdd\\s+.*of=\\/dev\\/", "description": "dd write to device", "severity": "block" }
 ]

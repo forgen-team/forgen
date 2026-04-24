@@ -9,41 +9,38 @@
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'node:fs';
-import * as os from 'node:os';
 import * as path from 'node:path';
 
+const { TEST_HOME } = vi.hoisted(() => ({
+  TEST_HOME: `/tmp/forgen-test-impl-fb-${process.pid}`,
+}));
+
+vi.mock('node:os', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:os')>();
+  return { ...actual, homedir: () => TEST_HOME };
+});
+
+const {
+  appendImplicitFeedback,
+  loadImplicitFeedback,
+  migrateImplicitFeedbackLog,
+  inferCategoryFromType,
+} = await import('../src/store/implicit-feedback-store.js');
+
 describe('implicit-feedback-store — TEST-5 category 스키마', () => {
-  let tmpHome: string;
-  let prevHome: string | undefined;
-  let logPath: string;
+  const logPath = path.join(TEST_HOME, '.forgen', 'state', 'implicit-feedback.jsonl');
 
   beforeEach(() => {
-    tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'forgen-impl-fb-'));
-    prevHome = process.env.HOME;
-    process.env.HOME = tmpHome;
-    logPath = path.join(tmpHome, '.forgen', 'state', 'implicit-feedback.jsonl');
-
-    // paths.ts 가 os.homedir() 를 모듈 로드 시 캐시하므로 매번 reset.
-    vi.resetModules();
-    vi.doMock('node:os', async (orig) => {
-      const real = (await orig()) as typeof import('node:os');
-      return { ...real, homedir: () => tmpHome };
-    });
+    fs.rmSync(TEST_HOME, { recursive: true, force: true });
+    fs.mkdirSync(path.dirname(logPath), { recursive: true });
   });
 
   afterEach(() => {
-    if (prevHome) process.env.HOME = prevHome;
-    vi.doUnmock('node:os');
-    vi.resetModules();
-    fs.rmSync(tmpHome, { recursive: true, force: true });
+    fs.rmSync(TEST_HOME, { recursive: true, force: true });
   });
 
-  async function freshImport() {
-    return (await import('../src/store/implicit-feedback-store.js')) as typeof import('../src/store/implicit-feedback-store.js');
-  }
-
   it('accepts drift_critical with explicit category=drift', async () => {
-    const { appendImplicitFeedback } = await freshImport();
+
     const ok = appendImplicitFeedback({
       type: 'drift_critical',
       category: 'drift',
@@ -58,7 +55,7 @@ describe('implicit-feedback-store — TEST-5 category 스키마', () => {
   });
 
   it('auto-infers category=drift when type=drift_critical and category omitted', async () => {
-    const { appendImplicitFeedback } = await freshImport();
+
     const ok = appendImplicitFeedback({
       type: 'drift_critical',
       at: new Date().toISOString(),
@@ -70,7 +67,7 @@ describe('implicit-feedback-store — TEST-5 category 스키마', () => {
   });
 
   it('rejects drift_critical with wrong category', async () => {
-    const { appendImplicitFeedback } = await freshImport();
+
     const ok = appendImplicitFeedback({
       type: 'drift_critical',
       category: 'edit',
@@ -82,7 +79,7 @@ describe('implicit-feedback-store — TEST-5 category 스키마', () => {
   });
 
   it('rejects revert_detected with wrong category', async () => {
-    const { appendImplicitFeedback } = await freshImport();
+
     const ok = appendImplicitFeedback({
       type: 'revert_detected',
       category: 'drift',
@@ -93,7 +90,7 @@ describe('implicit-feedback-store — TEST-5 category 스키마', () => {
   });
 
   it('rejects entry with unknown type and no category', async () => {
-    const { appendImplicitFeedback } = await freshImport();
+
     const ok = appendImplicitFeedback({
       type: 'mystery_signal',
       at: new Date().toISOString(),
@@ -103,7 +100,7 @@ describe('implicit-feedback-store — TEST-5 category 스키마', () => {
   });
 
   it('rejects entry missing required at/type', async () => {
-    const { appendImplicitFeedback } = await freshImport();
+
     // @ts-expect-error missing at field on purpose
     expect(appendImplicitFeedback({ type: 'repeated_edit', sessionId: 'S1' })).toBe(false);
     // @ts-expect-error missing type field on purpose
@@ -111,7 +108,7 @@ describe('implicit-feedback-store — TEST-5 category 스키마', () => {
   });
 
   it('H4: accepts recommendation_surfaced with category=positive', async () => {
-    const { appendImplicitFeedback } = await freshImport();
+
     const ok = appendImplicitFeedback({
       type: 'recommendation_surfaced',
       category: 'positive',
@@ -127,13 +124,13 @@ describe('implicit-feedback-store — TEST-5 category 스키마', () => {
   });
 
   it('H4: infers category=positive for recommendation_surfaced/recall_referenced', async () => {
-    const { inferCategoryFromType } = await freshImport();
+
     expect(inferCategoryFromType('recommendation_surfaced')).toBe('positive');
     expect(inferCategoryFromType('recall_referenced')).toBe('positive');
   });
 
   it('H4: rejects recommendation_surfaced with non-positive category', async () => {
-    const { appendImplicitFeedback } = await freshImport();
+
     const ok = appendImplicitFeedback({
       type: 'recommendation_surfaced',
       category: 'agent',
@@ -144,7 +141,7 @@ describe('implicit-feedback-store — TEST-5 category 스키마', () => {
   });
 
   it('infers category=agent for agent_* types', async () => {
-    const { appendImplicitFeedback } = await freshImport();
+
     const ok = appendImplicitFeedback({
       type: 'agent_unable',
       at: new Date().toISOString(),
@@ -165,7 +162,7 @@ describe('implicit-feedback-store — TEST-5 category 스키마', () => {
     ].map((e) => JSON.stringify(e)).join('\n') + '\n';
     fs.writeFileSync(logPath, legacy);
 
-    const { loadImplicitFeedback } = await freshImport();
+
     const entries = loadImplicitFeedback('S1');
     expect(entries).toHaveLength(3); // nonsense dropped
     const byType = Object.fromEntries(entries.map((e) => [e.type, e.category]));
@@ -188,7 +185,7 @@ describe('implicit-feedback-store — TEST-5 category 스키마', () => {
     ].map((e) => JSON.stringify(e)).join('\n') + '\n';
     fs.writeFileSync(logPath, legacy);
 
-    const { migrateImplicitFeedbackLog } = await freshImport();
+
     const result = migrateImplicitFeedbackLog();
     expect(result.migrated).toBe(2); // drift_critical + agent_timeout
     expect(result.dropped).toBe(1); // nonsense_noise
