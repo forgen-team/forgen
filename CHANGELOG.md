@@ -5,6 +5,36 @@ All notable changes to forgen will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.1] - 2026-04-24
+
+### v0.4.1 — 하네스가 당신을 담고 간다
+
+v0.4.0 이 Trust Layer (Claude 가 "완료"라고 하면 forgen 이 증명하게 한다) 를 세웠다면, v0.4.1 은 **구매자가 첫 block 을 즉시 경험**하고 **README 만 봐도 "하네스가 당신을 담고 간다" 는 비전을 이해**하게 만드는 릴리스. 내부적으로는 직전 회차에서 scope-out 했던 측정 갭 3건을 정직하게 재평가 → 실제로 닫았고, 10 시나리오 실 Claude signal 누적으로 검증.
+
+**3개 구조적 갭 마감** (`feat`)
+- `recall_referenced` 측정: name literal 단일 매칭 → identifier / 복합 태그 2개 교차 fallback 추가. Claude 가 slug 이름 대신 solution content 만 인용해도 잡힘. 일반 단어 단독은 false-positive 방지 위해 제외.
+- `Rule.lifecycle` 자동 초기화: `saveRule` 이 lifecycle 없으면 `phase='active'` + counters=0 주입. suppressed rule 의 audit trail (누가 언제 왜) 추적 가능.
+- `forgen compound list` 출력: `inj: / ref: / neg:` 컬럼에 "ref 측정은 v0.4.1+ 부터 시작됨" 주석. legacy 데이터 `ref:0` 을 "도움 안 됨" 으로 오독하는 혼란 해소.
+
+**README 리프레시** (`docs`)
+- **The harness carries you 섹션 신설**: "대화 → 추출 → 주입 → 반복" cycle + `forgen compound export/import` (개인 철학 번들을 tar.gz 로 이식) 연결. forgen 을 "rule 주입 tool" 로 축소 해석하는 오독 해소.
+- 한국어/일본어/중국어 README 동기화 ("하네스가 당신을 담고 간다" / "ハーネスがあなたを運ぶ" / "这个 harness 装载的是你").
+- **The first block 데모 일반화**: forgen-repo 전용 L1 rule → v0.4.1 내장 `builtin:self-score-inflation` (TEST-2) 기반 일반 시나리오로 교체. 구매자가 rule 작성 없이도 첫 block 을 바로 체감.
+- Commands 섹션에 `forgen recall` / `forgen migrate` / `forgen init` 추가.
+- Cold-start boost 설명: champion/active 솔루션 < 5 이면 `MIN_INJECT_RELEVANCE` 0.3 → 0.2 완화.
+
+**natural-accumulation e2e** (`test`)
+- 격리 `FORGEN_HOME` + 실 Claude API 10 시나리오로 "시간이 답" 이던 open signal 4종을 수십 분 내 실증:
+  - `recall_referenced` 0 → 2 (33% 참조율)
+  - `recommendation_surfaced` 1 → 6 (60% 주입률, cold-start boost 실효 확인)
+  - TEST-2 자연 block 0 → 3
+  - TEST-3 자연 block 0 → 2
+  - hook-errors 0 (전 경로 clean)
+
+**회귀**: vitest 2114/2114 (신규 테스트 4건 포함). typecheck 0.
+
+---
+
 ## [0.4.0] - 2026-04-23
 
 ### v0.4.0 — The Trust Layer
