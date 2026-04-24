@@ -481,19 +481,28 @@ export function collectLearningCurve(): LearningCurve {
       const files = fs.readdirSync(ME_BEHAVIOR).filter(f => f.endsWith('.json'));
       for (const f of files) {
         try {
+          // v0.4.1 정확도 수정: "교정 추이" 라벨은 explicit_correction evidence 만 포함.
+          // 이전에는 behavior_observation + session_summary 까지 전부 "교정" 으로
+          // 카운트되어 실측 488건 중 ~1건만 실제 교정인데 신뢰도 훼손. axis_hint 는
+          // raw_payload 에도 저장되므로 fallback 체크.
           const data = JSON.parse(fs.readFileSync(path.join(ME_BEHAVIOR, f), 'utf-8')) as {
             timestamp?: string;
+            type?: string;
             axis_hint?: string;
+            raw_payload?: { axis_hint?: string };
           };
           if (!data.timestamp) continue;
+          if (data.type && data.type !== 'explicit_correction') continue;
+
           const ts = new Date(data.timestamp).getTime();
           if (!Number.isFinite(ts)) continue;
           const age = now - ts;
           if (age < SEVEN_DAYS_MS) correctionsLast7d++;
           else if (age < 2 * SEVEN_DAYS_MS) correctionsPrev7d++;
 
-          if (data.axis_hint) {
-            axisCounts.set(data.axis_hint, (axisCounts.get(data.axis_hint) ?? 0) + 1);
+          const axisHint = data.axis_hint ?? data.raw_payload?.axis_hint;
+          if (axisHint) {
+            axisCounts.set(axisHint, (axisCounts.get(axisHint) ?? 0) + 1);
           }
           uniqueDays.add(new Date(ts).toISOString().slice(0, 10));
         } catch { /* 개별 파일 파싱 실패 무시 */ }

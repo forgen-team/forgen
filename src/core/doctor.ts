@@ -137,17 +137,20 @@ export async function runDoctor(opts: DoctorOptions = {}): Promise<void> {
     'Set by `forgen` / `fgx` launcher. Hooks assume harness mode is active.');
   console.log();
 
-  // 솔루션/규칙 수
+  // v0.4.1 파일 확장자 버그 수정: rules 는 .json, behavior 도 대부분 .json 포맷.
+  // 이전에 .md 만 count 해서 실 rules 4개인데 0 으로 표시되는 incident 관찰.
+  // (compound-export countFiles 와 동일 결함 — 일관된 수정).
+  const isKnowledgeFile = (f: string) => f.endsWith('.md') || f.endsWith('.json');
   if (exists(ME_SOLUTIONS)) {
-    const solutions = fs.readdirSync(ME_SOLUTIONS).filter((f) => f.endsWith('.md')).length;
+    const solutions = fs.readdirSync(ME_SOLUTIONS).filter(isKnowledgeFile).length;
     console.log(`  Personal solutions: ${solutions}`);
   }
   if (exists(ME_BEHAVIOR)) {
-    const behavior = fs.readdirSync(ME_BEHAVIOR).filter((f) => f.endsWith('.md')).length;
+    const behavior = fs.readdirSync(ME_BEHAVIOR).filter(isKnowledgeFile).length;
     console.log(`  Behavioral patterns: ${behavior}`);
   }
   if (exists(ME_RULES)) {
-    const rules = fs.readdirSync(ME_RULES).filter((f) => f.endsWith('.md')).length;
+    const rules = fs.readdirSync(ME_RULES).filter(isKnowledgeFile).length;
     console.log(`  Personal rules: ${rules}`);
   }
   console.log();
