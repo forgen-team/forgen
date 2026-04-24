@@ -528,6 +528,21 @@ ${sanitizedSummary.slice(0, 4000)}
     process.stderr.write(`[forgen-meta] ${e instanceof Error ? e.message : String(e)}\n`);
   }
 
+  // Step 5.5 (v0.4.1): state hygiene — 세션 스코프 ephemeral 파일 7일 retention
+  // 자동 정리. 이전에는 `forgen doctor --prune-state` 수동만 있어서 injection-cache
+  // 2343 / modified-files 431 처럼 수천 파일 누적. 몇 달 사용하면 10만+ 파일 → stat
+  // 호출 느려지고 디스크 낭비. auto-compound 마다 호출되면 자연스레 정돈.
+  try {
+    const { pruneState } = await import('./state-gc.js');
+    const report = pruneState({ dryRun: false });
+    if (report.pruned > 0) {
+      const mb = (report.bytesFreed / 1024 / 1024).toFixed(2);
+      process.stderr.write(`[forgen-gc] pruned ${report.pruned} stale state files (${mb} MB freed)\n`);
+    }
+  } catch (e) {
+    process.stderr.write(`[forgen-gc] state prune failed: ${e instanceof Error ? e.message : String(e)}\n`);
+  }
+
   // Step 6 (v0.4.1): rule lifecycle 자동 실행 — rule 의 violations/bypass/drift
   // 신호에 따른 자동 강등/승격. 이전에는 CLI (`forgen rule scan --apply`) 수동
   // 호출만 있어서 구매자가 몇 주 써도 rule 정비 안 됨 → 쓸모없는 rule 이 계속
