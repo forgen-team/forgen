@@ -62,8 +62,9 @@ async function main() {
   syncPluginVersion();
 
   try {
-    // Dist must exist (npm `prepare` runs the build before `prepack`
-    // so this is the normal state during publish).
+    // Dist must exist. npm 7+ runs `prepack` BEFORE `prepare`, so we
+    // can't rely on `prepare` building dist — package.json's `prepack`
+    // script runs `npm run build` first before invoking this file.
     const distHooksGenerator = path.resolve(__dirname, '..', 'dist', 'hooks', 'hooks-generator.js');
     if (!fs.existsSync(distHooksGenerator)) {
       console.error(`[forgen prepack] ${distHooksGenerator} not found. Run 'npm run build' first.`);
