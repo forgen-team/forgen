@@ -134,6 +134,55 @@ describe('planCodexInstall', () => {
     expect(fs.existsSync(r.configTomlPath)).toBe(false);
   });
 
+  it('P3-3: Codex skills/ 에 forgen 10 commands install (SKILL.md frontmatter)', () => {
+    const r = planCodexInstall({ pkgRoot: PKG_ROOT, codexHome });
+    expect(r.skillsInstalled).toBeGreaterThan(0);
+    expect(fs.existsSync(r.skillsPath)).toBe(true);
+    const skillDirs = fs.readdirSync(r.skillsPath);
+    expect(skillDirs.length).toBeGreaterThan(0);
+    // 각 skill 은 SKILL.md + frontmatter
+    const sampleSkill = skillDirs[0];
+    const skillContent = fs.readFileSync(path.join(r.skillsPath, sampleSkill, 'SKILL.md'), 'utf-8');
+    expect(skillContent).toMatch(/^---\nname:/);
+    expect(skillContent).toContain('description:');
+    expect(skillContent).toContain('<!-- forgen-managed -->');
+  });
+
+  it('P3-3: Codex skills install idempotent (사용자 작성 SKILL.md 보존)', () => {
+    const r1 = planCodexInstall({ pkgRoot: PKG_ROOT, codexHome });
+    // 사용자가 한 skill 을 직접 작성 (forgen-managed marker 없음)
+    const userSkillDir = path.join(r1.skillsPath, 'compound');
+    fs.writeFileSync(path.join(userSkillDir, 'SKILL.md'), '---\nname: compound\ndescription: USER\n---\n\nUSER edited');
+    const r2 = planCodexInstall({ pkgRoot: PKG_ROOT, codexHome });
+    expect(r2.skillsInstalled).toBeLessThan(r1.skillsInstalled); // user-modified 1개 skip
+    const userSkill = fs.readFileSync(path.join(userSkillDir, 'SKILL.md'), 'utf-8');
+    expect(userSkill).toContain('USER edited'); // 보존
+  });
+
+  it('P3-3: AGENTS.md 에 forgen-managed-rules block 인젝션 (override path)', () => {
+    const isolatedAgentsMd = path.join(codexHome, 'AGENTS.md');
+    const r = planCodexInstall({ pkgRoot: PKG_ROOT, codexHome, agentsMdPath: isolatedAgentsMd });
+    expect(r.agentsMdPath).toBe(isolatedAgentsMd);
+    expect(r.agentsMdInjected).toBe(true);
+    expect(fs.existsSync(isolatedAgentsMd)).toBe(true);
+    const content = fs.readFileSync(isolatedAgentsMd, 'utf-8');
+    expect(content).toContain('forgen-managed-rules');
+    expect(content).toContain('forgen-compound MCP');
+  });
+
+  it('P3-3: AGENTS.md 재실행 idempotent (block 1 개만 유지)', () => {
+    const isolatedAgentsMd = path.join(codexHome, 'AGENTS.md');
+    fs.mkdirSync(codexHome, { recursive: true });
+    fs.writeFileSync(isolatedAgentsMd, '# User existing\n\nUser content here\n');
+    planCodexInstall({ pkgRoot: PKG_ROOT, codexHome, agentsMdPath: isolatedAgentsMd });
+    planCodexInstall({ pkgRoot: PKG_ROOT, codexHome, agentsMdPath: isolatedAgentsMd });
+    const content = fs.readFileSync(isolatedAgentsMd, 'utf-8');
+    expect(content).toContain('User existing');
+    expect(content).toContain('User content here');
+    const beginCount = (content.match(/forgen-managed-rules/g) ?? []).length;
+    expect(beginCount).toBe(2); // begin + end markers, single block (not 4 = double block)
+  });
+
   it('CODEX_HOME env var 로 위치 재배치', () => {
     const original = process.env.CODEX_HOME;
     const altHome = tmpDir('codex-alt-');

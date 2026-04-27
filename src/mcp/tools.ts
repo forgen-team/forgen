@@ -529,4 +529,55 @@ export function registerTools(server: McpServer): void {
       };
     },
   );
+
+  // ── invoke-agent (P3-4/P3-5) ─────────────────────────────────────────
+  //
+  // forgen 의 13 sub-agents (assets/claude/agents/*.md) 를 MCP 도구로 노출.
+  // Claude 의 Task tool 동치를 host 무관 형태로 제공:
+  //   - Claude main agent: Task tool 우선 사용 (native, faster)
+  //   - Codex main agent: invoke-agent MCP 도구가 codex exec --json 으로 child spawn
+  // 실 작업: assets/claude/agents/<name>.md 의 system prompt 를 prefix 로,
+  // 사용자 task 를 prompt 로 child host CLI 호출 → 응답 반환.
+  server.registerTool(
+    'invoke-agent',
+    {
+      description: [
+        'Invoke a forgen sub-agent (specialized prompt) on a task and return its summary.',
+        'Use when delegation is helpful — e.g., focused exploration (ch-explore), implementation (ch-executor),',
+        'critical review (ch-critic), test writing (ch-test-engineer).',
+        'The sub-agent runs in a separate child process with isolated context and returns just the result.',
+        'Available agent names match files under assets/claude/agents/ (e.g., ch-explore, ch-executor, ch-critic).',
+      ].join('\n'),
+      inputSchema: {
+        agent_name: z.string().describe('Sub-agent identifier (e.g., "ch-explore", "ch-executor")'),
+        task: z.string().describe('What you want the sub-agent to do — natural language task description'),
+        timeout_ms: z.number().int().positive().max(300000).optional()
+          .describe('Child timeout in ms (default 60s, max 5m)'),
+      },
+      annotations: { readOnlyHint: false },
+    },
+    async ({ agent_name, task, timeout_ms }) => {
+      try {
+        const { invokeAgent } = await import('../host/invoke-agent.js');
+        const result = await invokeAgent({ agentName: agent_name, task, timeoutMs: timeout_ms });
+        const lines = [
+          `[invoke-agent] ${agent_name} (${result.host}, ${result.durationMs}ms)`,
+          '',
+          result.summary,
+        ];
+        if (result.usage) {
+          lines.push('', `Usage: input=${result.usage.input_tokens ?? '?'} output=${result.usage.output_tokens ?? '?'}`);
+        }
+        return {
+          content: [{ type: 'text' as const, text: lines.join('\n') }],
+        };
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        return {
+          content: [{ type: 'text' as const, text: `[invoke-agent] error: ${msg}` }],
+          isError: true,
+        };
+      }
+    },
+  );
 }

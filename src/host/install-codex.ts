@@ -28,6 +28,8 @@ export interface CodexInstallOptions {
   registerMcp?: boolean;
   /** hooks-generator releaseMode (default true: 환경 독립). */
   releaseMode?: boolean;
+  /** AGENTS.md 위치 override (default: pkgRoot 기준 자동 resolve). 격리 테스트용. */
+  agentsMdPath?: string;
 }
 
 export interface CodexInstallResult {
@@ -39,10 +41,19 @@ export interface CodexInstallResult {
   configTomlPath: string;
   mcpRegistered: boolean;
   mcpAlreadyPresent: boolean;
+  /** P3-3 (US-013): Codex skills/ 에 install 된 forgen 명령 수 */
+  skillsInstalled: number;
+  skillsPath: string;
+  /** P3-3: AGENTS.md (cwd) 에 forgen rule block 인젝션 여부 */
+  agentsMdPath: string;
+  agentsMdInjected: boolean;
 }
 
 const MCP_MARKER_BEGIN = '# >>> forgen-managed-mcp';
 const MCP_MARKER_END = '# <<< forgen-managed-mcp';
+const FORGEN_SKILL_MARKER = '<!-- forgen-managed -->';
+const AGENTS_MD_BEGIN = '<!-- >>> forgen-managed-rules -->';
+const AGENTS_MD_END = '<!-- <<< forgen-managed-rules -->';
 
 function resolveCodexHome(opts: CodexInstallOptions): string {
   return opts.codexHome ?? process.env.CODEX_HOME ?? path.join(os.homedir(), '.codex');
@@ -165,7 +176,7 @@ export function planCodexInstall(opts: CodexInstallOptions): CodexInstallResult 
     mcpContentToWrite = content;
   }
 
-  // 5) 실제 쓰기 (dryRun 이면 skip)
+  // 5) 실제 쓰기 (dryRun 이면 skip) — hooks.json + config.toml
   if (!opts.dryRun) {
     fs.mkdirSync(codexHome, { recursive: true });
     fs.writeFileSync(hooksPath, `${JSON.stringify(finalHooksFile, null, 2)}\n`, 'utf-8');
@@ -173,6 +184,19 @@ export function planCodexInstall(opts: CodexInstallOptions): CodexInstallResult 
       fs.writeFileSync(configTomlPath, mcpContentToWrite, 'utf-8');
     }
   }
+
+  // 6) P3-3 (US-013): Codex skills/ 에 forgen 10 commands install
+  //    Codex 의 skills 메커니즘 (codex-rs/core-skills) 구조: <skill-name>/SKILL.md
+  //    + frontmatter (name + description). forgen-managed marker 로 idempotent.
+  const skillsPath = path.join(codexHome, 'skills');
+  const sourceCommandsDir = path.join(opts.pkgRoot, 'assets', 'claude', 'commands');
+  const skillsResult = installCodexSkills({ sourceDir: sourceCommandsDir, targetDir: skillsPath, dryRun: opts.dryRun ?? false });
+
+  // 7) P3-3 (US-013): cwd/AGENTS.md 에 forgen rules block 인젝션 (managed marker)
+  //    Codex 가 AGENTS.md 를 자동 read (codex-rs/core/src/agents_md.rs 검증).
+  //    pkgRoot 의 git repo root 의 AGENTS.md, 또는 explicit override.
+  const agentsMdPath = opts.agentsMdPath ?? resolveAgentsMdPath(opts.pkgRoot);
+  const agentsResult = upsertForgenRulesInAgentsMd({ agentsMdPath, pkgRoot: opts.pkgRoot, dryRun: opts.dryRun ?? false });
 
   return {
     codexHome,
@@ -183,5 +207,96 @@ export function planCodexInstall(opts: CodexInstallOptions): CodexInstallResult 
     configTomlPath,
     mcpRegistered,
     mcpAlreadyPresent,
+    skillsInstalled: skillsResult.installed,
+    skillsPath,
+    agentsMdPath,
+    agentsMdInjected: agentsResult.injected,
   };
+}
+
+// ── P3-3: Codex skills install ────────────────────────────────────────
+
+function installCodexSkills(opts: { sourceDir: string; targetDir: string; dryRun: boolean }): { installed: number } {
+  const { sourceDir, targetDir, dryRun } = opts;
+  if (!fs.existsSync(sourceDir)) return { installed: 0 };
+  const files = fs.readdirSync(sourceDir).filter((f) => f.endsWith('.md'));
+  if (dryRun) return { installed: files.length };
+
+  fs.mkdirSync(targetDir, { recursive: true });
+  let count = 0;
+  for (const file of files) {
+    const skillName = file.replace(/\.md$/, '');
+    const skillDir = path.join(targetDir, skillName);
+    const skillFile = path.join(skillDir, 'SKILL.md');
+    if (fs.existsSync(skillFile)) {
+      const existing = fs.readFileSync(skillFile, 'utf-8');
+      if (!existing.includes(FORGEN_SKILL_MARKER)) continue; // 사용자 작성 — skip
+    }
+    const raw = fs.readFileSync(path.join(sourceDir, file), 'utf-8');
+    const descMatch = raw.match(/description:\s*(.+)/);
+    const desc = descMatch?.[1]?.trim() ?? skillName;
+    const bodyMatch = raw.match(/^---\n[\s\S]*?\n---\n([\s\S]*)$/);
+    const body = bodyMatch?.[1]?.trim() ?? raw;
+    const out = `---\nname: ${skillName}\ndescription: ${desc}\n---\n\n${FORGEN_SKILL_MARKER}\n\n${body}\n`;
+    fs.mkdirSync(skillDir, { recursive: true });
+    fs.writeFileSync(skillFile, out);
+    count += 1;
+  }
+  return { installed: count };
+}
+
+// ── P3-3: AGENTS.md inject ────────────────────────────────────────────
+
+function resolveAgentsMdPath(pkgRoot: string): string {
+  // pkgRoot 의 git root 가 있으면 그곳의 AGENTS.md, 아니면 cwd 의 AGENTS.md.
+  // 본 함수는 *install 시점* 에 호출되므로 pkgRoot 기준 가장 가까운 AGENTS.md.
+  let dir = pkgRoot;
+  for (let depth = 0; depth < 5; depth += 1) {
+    if (fs.existsSync(path.join(dir, '.git'))) return path.join(dir, 'AGENTS.md');
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return path.join(pkgRoot, 'AGENTS.md');
+}
+
+function buildForgenRulesBlock(pkgRoot: string): string {
+  // forgen 의 핵심 규칙 + 사용자 profile 안내 (가벼운 헤더만 — 실 rule 은 hook chain 이 inject)
+  const lines = [
+    AGENTS_MD_BEGIN,
+    '## forgen managed rules',
+    '',
+    '본 블록은 `forgen install codex` 가 자동 관리. 직접 편집 금지 — 다음 install 시 덮어쓰임.',
+    '',
+    '- forgen-compound MCP 가 ~/.codex/config.toml 에 등록됨. 학습된 솔루션을 `compound-search` 로 조회 가능.',
+    '- 사용자 교정은 `correction-record` MCP 도구로 즉시 박제 (kind: fix-now / prefer-from-now / avoid-this).',
+    '- forgen 의 4축 profile (quality_safety / autonomy / judgment_philosophy / communication_style) 이 응답 톤 + 검증 깊이를 가이드.',
+    '- 본 rule 은 cwd 의 AGENTS.md 가 자동 read 되는 Codex 의 user_instructions 경로로 흘러들어감.',
+    `- pkgRoot: ${pkgRoot}`,
+    AGENTS_MD_END,
+  ];
+  return lines.join('\n');
+}
+
+function upsertForgenRulesInAgentsMd(opts: { agentsMdPath: string; pkgRoot: string; dryRun: boolean }): { injected: boolean } {
+  const { agentsMdPath, pkgRoot, dryRun } = opts;
+  const block = buildForgenRulesBlock(pkgRoot);
+  let current = '';
+  if (fs.existsSync(agentsMdPath)) {
+    current = fs.readFileSync(agentsMdPath, 'utf-8');
+  }
+  const reMarker = new RegExp(`${escapeRegex(AGENTS_MD_BEGIN)}[\\s\\S]*?${escapeRegex(AGENTS_MD_END)}`, 'g');
+  const hasBlock = reMarker.test(current);
+  const newContent = hasBlock
+    ? current.replace(reMarker, block)
+    : `${current.replace(/\s+$/, '')}${current.length > 0 ? '\n\n' : ''}${block}\n`;
+
+  if (dryRun) return { injected: !hasBlock || newContent !== current };
+  fs.mkdirSync(path.dirname(agentsMdPath), { recursive: true });
+  fs.writeFileSync(agentsMdPath, newContent, 'utf-8');
+  return { injected: !hasBlock || newContent !== current };
+}
+
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
