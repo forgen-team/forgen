@@ -5,6 +5,82 @@ All notable changes to forgen will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.2] - 2026-04-27
+
+### v0.4.2 — Trust hotfix + 학습 회로 4축 확장
+
+v0.4.1 이 신뢰 회복 릴리스였다면, v0.4.2 는 **외부 진단(trust-hotfix-report)을 측정으로 검증해 5개 W 를 닫고**, 동시에 v0.4.1 자기 분석에서 발견된 **자동 학습이 4축 중 2축에만 닿는 결함(D1)** 과 **검증 레이어 invariant 부재(P1~P4)** 까지 한 사이클에 통합한 릴리스.
+
+**M1 — RC6 가드: forge-loop findings 자동 inject** (`feat`)
+- `src/hooks/shared/forge-loop-state.ts` 신규 — readForgeLoopState / renderForgeLoopForSession / renderForgeLoopForPrompt
+- `session-recovery` (SessionStart) + `forge-loop-progress` (UserPromptSubmit) 신규 hook 이 직전 forge-loop findings 또는 진행 중 stories 를 ≤1KB 로 inject
+- 자기증거: head -80 truncation 으로 directly 유실됐던 사례 invariant 박제
+- Stale 24h soft / 7d hard cap, XML escape
+
+**D1'' — auto-compound axis_refs 4축 분류 확장** (`feat`)
+- `src/core/behavior-classifier.ts` 신규 — 5분기 (workflow/thinking/preference + **safety/autonomy** 신규)
+- LLM prompt 카테고리 7종으로 확장 ([품질안전], [자율성] 추가)
+- 결과: behavior_observation 자동 추출이 4축 모두에 닿음 (이전 2축 → 4축)
+- 측정 자기증거: behavior 627건 중 quality 7 / autonomy 6 만 explicit_correction 경로로 들어왔던 결함 해결
+
+**P2 — false-positive corpus golden test** (`test`)
+- `tests/invariants/no-false-positive-block.test.ts` (FP1~5 + RC5-E9, 8 케이스)
+- `tests/invariants/true-positive-block.test.ts` (E5/E6 정당 block 5 케이스)
+- 신규 detector CI gate — vitest 가 tests/invariants/* 자동 포함
+
+**P3' — Blocking ALLOW-LIST 정책 + denyOrObserve helper** (`feat`)
+- `src/hooks/shared/blocking-allowlist.ts` (4개 멤버: stop-guard / pre-tool-use / secret-filter / db-guard)
+- `denyOrObserve(hookName, reason, observer?)` helper — ALLOW-LIST 외 hook 의 deny 시도가 자동 관찰 모드로 강등
+- 점진 마이그레이션 시작점 (기존 hook 들은 별도 PR)
+
+**P4 — fix:feat 비율 셀프 가드** (`feat`)
+- `src/core/git-stats.ts` — 최근 30커밋 fix:feat 비율 측정 (fix(test):/fix(docs): 제외)
+- forgen stats 에 "Repo health" 섹션 + forgen doctor 가 30% 초과 시 경고
+- v0.4.2 릴리즈 시점 측정값: **29%** (정상 범위, ⚠ 미발생)
+
+**W1 — 한국어 README 설치 명령 오타 fix** (`fix`)
+- `README.ko.md:86, 146` 의 `npm install -g /forgen` → `@wooojin/forgen`
+- `tests/readme-install-contract.test.ts` 4 로케일 일치 invariant
+
+**W2 — 온보딩 2/4 문항 계약 통일** (`fix`)
+- `src/cli.ts:164, 469` 도움말 `2-question` → `4-question`
+- `src/forge/onboarding.ts` 주석 4문항 갱신 + spec 경로 정정 (docs/history/)
+- `tests/onboarding-contract.test.ts` — askChoice 호출 수 vs help text 일치
+
+**W3 — agent 인벤토리 12↔13 정렬** (`fix`)
+- `README.md:381` "12 built-in agents" → "13" + ch-solution-evolver Plan-only 표 추가
+- `tests/agent-inventory-contract.test.ts` — agents/ 디렉토리 = README + verify-v3.sh 단일 source
+
+**W4 — hooks-generator releaseMode 옵션** (`feat`)
+- `generateHooksJson({ releaseMode: true })` 환경 독립 모드 — plugin 감지 + hook-config 비활성화 모두 무시
+- `prepack-hooks.cjs` 가 releaseMode=true 사용 (HOME swap 도 유지하여 double safety)
+- `tests/hooks-generator-release-mode.test.ts` — mock plugin / mock disable 양쪽 검증
+
+**W5 — 하드코딩 → HOOK_REGISTRY.length 동적 read** (`refactor`)
+- 3 자리 (plugin-coexistence / harness-e2e / chain-verification) 의 `21` 하드코딩 제거 → 동적 length
+- `tests/contract-single-source.test.ts` 자체 invariant — 향후 하드코딩 추가 시 자동 fail
+- A3 false-positive 가드: hook-timing/cache-lock-integration 의 다른 의미 20 은 건드리지 않음
+
+**D2 — autonomy axis confidence 직접 경로** (`fix`)
+- `bumpAxisConfidence(axis, delta)` — explicit_correction 의 axis_hint 가 즉시 confidence bump
+- `evidence-processor.ts` 에서 호출: avoid-this +0.04, 그 외 +0.02
+- 자기증거: autonomy explicit_correction 6건이 score 못 움직였던 결함 해결
+- facet 값은 안 건드리고 confidence 만 — 회귀 위험 최소
+
+**자기증거 박제** (`docs`)
+- `docs/issues/D2-autonomy-facet-stuck.md` — D2 root cause 추적
+- `docs/issues/W4-W5-self-evidence.md` — 본 forge-loop 1차에서 W4/W5 antipattern 을 단기 회피로 재생산한 사례 (RC7 후보)
+- compound 4 박제: rc6-meta-amnesia, rc7-diagnostic-self-fix, validator-layer-invariant, interview-axes-disconnect-RETRACTED
+
+**회귀**:
+- vitest **2215/2215** (199 files, 신규 13 테스트 파일)
+- Docker e2e **77/77 + ALL CHECKS PASSED** (round 12, mock_detected:false)
+- typecheck 0
+
+**Outstanding (별도 PR)**: P3' enforcement 의 기존 hook 마이그레이션, prepack-hooks.cjs 의 HOME swap 단순화
+
+---
+
 ## [0.4.1] - 2026-04-24
 
 ### v0.4.1 — 하네스가 당신을 담고 간다
