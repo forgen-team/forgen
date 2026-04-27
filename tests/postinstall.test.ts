@@ -14,7 +14,7 @@ vi.mock('node:os', async (importOriginal) => {
 const COMMANDS_DIR = path.join(TEST_HOME, '.claude', 'commands', 'forgen');
 const SETTINGS_PATH = path.join(TEST_HOME, '.claude', 'settings.json');
 const COMPOUND_HOME = path.join(TEST_HOME, '.forgen');
-const SKILLS_DIR = path.resolve(__dirname, '..', 'commands');
+const SKILLS_DIR = path.resolve(__dirname, '..', 'assets', 'claude', 'commands');
 
 function runPostinstall() {
   const { execFileSync } = require('node:child_process');
@@ -185,14 +185,13 @@ describe('postinstall', () => {
       expect(settings.enabledPlugins?.['forgen@forgen-local']).toBe(true);
     });
 
-    it('should create commands/ symlink pointing to skills/', () => {
+    it('plugin cache 가 assets/claude/commands/ 를 포함한다 (§7.2 자산 분리 후)', () => {
       runPostinstall();
 
       const cacheBase = path.join(TEST_HOME, '.claude', 'plugins', 'cache', 'forgen-local', 'forgen');
       const versions = fs.readdirSync(cacheBase);
-      const commandsDir = path.join(cacheBase, versions[0], 'commands');
+      const commandsDir = path.join(cacheBase, versions[0], 'assets', 'claude', 'commands');
       expect(fs.existsSync(commandsDir)).toBe(true);
-      // commands/ 안에 스킬 파일이 있어야 함
       const files = fs.readdirSync(commandsDir).filter((f: string) => f.endsWith('.md'));
       expect(files.length).toBeGreaterThan(0);
     });

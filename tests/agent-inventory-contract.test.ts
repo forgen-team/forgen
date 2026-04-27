@@ -13,7 +13,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 const REPO_ROOT = path.resolve(__dirname, '..');
-const AGENTS_DIR = path.join(REPO_ROOT, 'agents');
+const AGENTS_DIR = path.join(REPO_ROOT, 'assets', 'claude', 'agents');
 
 function getAgentNames(): string[] {
   return fs.readdirSync(AGENTS_DIR)

@@ -22,7 +22,7 @@ const REPO_ROOT = path.resolve(__dirname, '..');
 describe('Invariant: 단일 source — hook count (W5)', () => {
   it('HOOK_REGISTRY (TS) length === hook-registry.json (JSON) length', () => {
     const jsonData = JSON.parse(
-      fs.readFileSync(path.join(REPO_ROOT, 'hooks', 'hook-registry.json'), 'utf-8'),
+      fs.readFileSync(path.join(REPO_ROOT, 'assets', 'shared', 'hook-registry.json'), 'utf-8'),
     );
     expect(Array.isArray(jsonData)).toBe(true);
     expect(HOOK_REGISTRY.length).toBe(jsonData.length);
@@ -67,7 +67,7 @@ describe('Invariant: 단일 source — hook count (W5)', () => {
 
 describe('Invariant: 단일 source — agent count (W3 → W5)', () => {
   it('agents/ 디렉토리 = README + verify-v3.sh', () => {
-    const agentsDir = path.join(REPO_ROOT, 'agents');
+    const agentsDir = path.join(REPO_ROOT, 'assets', 'claude', 'agents');
     const agentCount = fs.readdirSync(agentsDir).filter(f => f.endsWith('.md')).length;
 
     const readme = fs.readFileSync(path.join(REPO_ROOT, 'README.md'), 'utf-8');

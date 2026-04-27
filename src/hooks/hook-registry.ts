@@ -53,7 +53,7 @@ export interface HookEntry {
  *     (Code Reflection + permission hints 주입 타이밍)
  *   - 같은 이벤트 내 훅은 배열 순서대로 실행됨
  */
-import registryData from '../../hooks/hook-registry.json' with { type: 'json' };
+import registryData from '../../assets/shared/hook-registry.json' with { type: 'json' };
 export const HOOK_REGISTRY: HookEntry[] = registryData as HookEntry[];
 
 /** 티어별 훅 목록 조회 */

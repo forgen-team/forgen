@@ -18,10 +18,10 @@ function extractCliCommands(): string[] {
 }
 
 function extractSlashSkills(): string[] {
-  const commandsDir = path.join(ROOT, 'commands');
+  const commandsDir = path.join(ROOT, 'assets', 'claude', 'commands');
   return fs.readdirSync(commandsDir)
     .filter((file) => file.endsWith('.md'))
-    .map((file) => read(path.join('commands', file)).match(/^name:\s*([^\n]+)$/m)?.[1]?.trim())
+    .map((file) => read(path.join('assets', 'claude', 'commands', file)).match(/^name:\s*([^\n]+)$/m)?.[1]?.trim())
     .filter((name): name is string => Boolean(name));
 }
 
@@ -39,7 +39,7 @@ describe('contract consistency', () => {
   });
 
   it('compound skill documents that CLI behavior is preview-first', () => {
-    const content = read('commands/compound.md');
+    const content = read(path.join('assets', 'claude', 'commands', 'compound.md'));
     expect(content).toContain('CLI `forgen compound`');
     expect(content).toContain('`--save`');
   });

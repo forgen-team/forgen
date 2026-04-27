@@ -89,7 +89,7 @@ function fixOwnership(...paths) {
 const HOME = resolveHome();
 
 // ── Paths ──
-const SKILLS_DIR = join(PKG_ROOT, 'commands');
+const SKILLS_DIR = join(PKG_ROOT, 'assets', 'claude', 'commands');
 const DIST_HOOKS = join(PKG_ROOT, 'dist', 'hooks');
 const COMMANDS_DIR = join(HOME, '.claude', 'commands', 'forgen');
 const CLAUDE_DIR = join(HOME, '.claude');
@@ -214,7 +214,7 @@ function registerPlugin() {
   if (!linked) {
     // 2차: 필수 디렉토리 복사
     mkdirSync(CACHE_DIR, { recursive: true });
-    const copyDirs = ['.claude-plugin', 'hooks', 'skills', 'commands', 'agents'];
+    const copyDirs = ['.claude-plugin', 'hooks', 'skills', 'assets'];
     for (const dir of copyDirs) {
       const src = join(PKG_ROOT, dir);
       if (existsSync(src)) {
@@ -330,7 +330,7 @@ function detectPluginConflicts() {
  * Claude Code 플러그인은 skills/{name}/SKILL.md 구조로 스킬을 인식.
  */
 function generateSkillsDir() {
-  const skillsSrc = join(PKG_ROOT, 'commands');
+  const skillsSrc = join(PKG_ROOT, 'assets', 'claude', 'commands');
   const skillsDst = join(PKG_ROOT, 'skills');
   if (!existsSync(skillsSrc)) return;
 
@@ -381,7 +381,7 @@ function generateSkillsDir() {
  */
 let HOOK_REGISTRY = [];
 try {
-  HOOK_REGISTRY = JSON.parse(readFileSync(join(PKG_ROOT, 'hooks', 'hook-registry.json'), 'utf-8'));
+  HOOK_REGISTRY = JSON.parse(readFileSync(join(PKG_ROOT, 'assets', 'shared', 'hook-registry.json'), 'utf-8'));
 } catch {
   console.warn('[forgen] hook-registry.json not found, skipping hook generation');
 }

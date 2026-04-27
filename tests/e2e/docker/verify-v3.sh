@@ -32,26 +32,26 @@ echo "  [Phase 0: Installation Structure]"
 
 command -v forgen &>/dev/null && pass "forgen CLI in PATH" || fail "forgen CLI missing"
 
-# 커밋된 스킬 수 (commands/)
-COMMAND_COUNT=$(ls $FORGEN_PKG/commands/*.md 2>/dev/null | wc -l | tr -d ' ')
-[ "$COMMAND_COUNT" = "10" ] && pass "commands/ has exactly 10 skills ($COMMAND_COUNT)" || fail "commands/ has $COMMAND_COUNT (expected 10)"
+# 커밋된 스킬 수 (assets/claude/commands/)
+COMMAND_COUNT=$(ls $FORGEN_PKG/assets/claude/commands/*.md 2>/dev/null | wc -l | tr -d ' ')
+[ "$COMMAND_COUNT" = "10" ] && pass "assets/claude/commands/ has exactly 10 skills ($COMMAND_COUNT)" || fail "assets/claude/commands/ has $COMMAND_COUNT (expected 10)"
 
 # 에이전트 소스 파일 수 (12 core + Phase 4 solution-evolver = 13)
-AGENT_COUNT=$(ls $FORGEN_PKG/agents/*.md 2>/dev/null | wc -l | tr -d ' ')
-[ "$AGENT_COUNT" = "13" ] && pass "agents/ has exactly 13 agents ($AGENT_COUNT)" || fail "agents/ has $AGENT_COUNT (expected 13)"
+AGENT_COUNT=$(ls $FORGEN_PKG/assets/claude/agents/*.md 2>/dev/null | wc -l | tr -d ' ')
+[ "$AGENT_COUNT" = "13" ] && pass "assets/claude/agents/ has exactly 13 agents ($AGENT_COUNT)" || fail "assets/claude/agents/ has $AGENT_COUNT (expected 13)"
 
 # 삭제되었어야 하는 파일들 확인
 for deleted in performance-reviewer.md security-reviewer.md refactoring-expert.md code-simplifier.md scientist.md qa-tester.md writer.md; do
-  [ ! -f "$FORGEN_PKG/agents/$deleted" ] && pass "deleted agent absent: $deleted" || fail "deleted agent still present: $deleted"
+  [ ! -f "$FORGEN_PKG/assets/claude/agents/$deleted" ] && pass "deleted agent absent: $deleted" || fail "deleted agent still present: $deleted"
 done
 
 for deleted in tdd.md refactor.md ecomode.md specify.md git-master.md migrate.md; do
-  [ ! -f "$FORGEN_PKG/commands/$deleted" ] && pass "deleted command absent: $deleted" || fail "deleted command still present: $deleted"
+  [ ! -f "$FORGEN_PKG/assets/claude/commands/$deleted" ] && pass "deleted command absent: $deleted" || fail "deleted command still present: $deleted"
 done
 
 # 신규 스킬 파일 존재
 for new in forge-loop.md ship.md retro.md learn.md calibrate.md; do
-  [ -f "$FORGEN_PKG/commands/$new" ] && pass "new skill present: $new" || fail "new skill missing: $new"
+  [ -f "$FORGEN_PKG/assets/claude/commands/$new" ] && pass "new skill present: $new" || fail "new skill missing: $new"
 done
 
 echo ""

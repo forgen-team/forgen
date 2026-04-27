@@ -147,7 +147,7 @@ function loadSkillContent(skillName: string): string | null {
   // forgen 패키지 내장 스킬
   const pkgSkillPath = path.resolve(
     path.dirname(fileURLToPath(import.meta.url)),
-    '..', '..', 'commands', `${skillName}.md`
+    '..', '..', 'assets', 'claude', 'commands', `${skillName}.md`
   );
   searchPaths.push(pkgSkillPath);
 

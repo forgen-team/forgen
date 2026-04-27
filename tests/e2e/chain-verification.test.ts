@@ -233,7 +233,7 @@ describe('Chain 4: auto-compound injection defense', () => {
 describe('Chain 5: skill-injector in hook-registry', () => {
   it('hook-registry.json에 skill-injector가 등록되어 있다', () => {
     const registry = JSON.parse(
-      fs.readFileSync(path.join(PROJECT_ROOT, 'hooks', 'hook-registry.json'), 'utf-8'),
+      fs.readFileSync(path.join(PROJECT_ROOT, 'assets', 'shared', 'hook-registry.json'), 'utf-8'),
     );
     const skillInjector = registry.find((h: { name: string }) => h.name === 'skill-injector');
     expect(skillInjector).toBeDefined();
@@ -243,7 +243,7 @@ describe('Chain 5: skill-injector in hook-registry', () => {
 
   it('hook-registry.json에 solution-injector가 등록되어 있다', () => {
     const registry = JSON.parse(
-      fs.readFileSync(path.join(PROJECT_ROOT, 'hooks', 'hook-registry.json'), 'utf-8'),
+      fs.readFileSync(path.join(PROJECT_ROOT, 'assets', 'shared', 'hook-registry.json'), 'utf-8'),
     );
     const solutionInjector = registry.find((h: { name: string }) => h.name === 'solution-injector');
     expect(solutionInjector).toBeDefined();
@@ -336,8 +336,8 @@ describe('Skill expansion', () => {
   ];
 
   for (const skill of expectedSkills) {
-    it(`commands/${skill}.md가 존재하고 올바른 frontmatter를 가진다`, () => {
-      const filePath = path.join(PROJECT_ROOT, 'commands', `${skill}.md`);
+    it(`assets/claude/commands/${skill}.md가 존재하고 올바른 frontmatter를 가진다`, () => {
+      const filePath = path.join(PROJECT_ROOT, 'assets', 'claude', 'commands', `${skill}.md`);
       expect(fs.existsSync(filePath)).toBe(true);
 
       const content = fs.readFileSync(filePath, 'utf-8');
@@ -356,7 +356,7 @@ describe('Skill expansion', () => {
   }
 
   it('총 스킬 수가 10개이다', () => {
-    const commands = fs.readdirSync(path.join(PROJECT_ROOT, 'commands'))
+    const commands = fs.readdirSync(path.join(PROJECT_ROOT, 'assets', 'claude', 'commands'))
       .filter(f => f.endsWith('.md'));
     expect(commands.length).toBe(10);
   });

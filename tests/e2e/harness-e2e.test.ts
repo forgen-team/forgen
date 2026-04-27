@@ -757,7 +757,7 @@ describe('Scenario 6: Settings Injection E2E', () => {
   });
 
   it('hook-registry.json의 모든 훅 스크립트가 dist/hooks/에 컴파일되어 있다', () => {
-    const registryPath = path.join(PROJECT_ROOT, 'hooks', 'hook-registry.json');
+    const registryPath = path.join(PROJECT_ROOT, 'assets', 'shared', 'hook-registry.json');
     const registry = JSON.parse(fs.readFileSync(registryPath, 'utf-8')) as Array<{ name: string; script: string }>;
 
     const missingHooks: string[] = [];

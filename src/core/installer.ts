@@ -132,7 +132,7 @@ export function installAgents(cwd: string, pkgRoot: string): void {
   fs.mkdirSync(targetDir, { recursive: true });
 
   const hashes = loadAgentHashes();
-  const sourceDir = path.join(pkgRoot, 'agents');
+  const sourceDir = path.join(pkgRoot, 'assets', 'claude', 'agents');
   try {
     installAgentsFromDir(sourceDir, targetDir, 'ch-', hashes);
     cleanupStaleAgents(sourceDir, targetDir, 'ch-', hashes);
@@ -180,7 +180,7 @@ function cleanupStaleCommands(commandsDir: string, validFiles: Set<string>): num
 
 /** 스킬을 Claude Code 슬래시 명령으로 설치 (패키지 내장만) */
 export function installSlashCommands(_cwd: string, pkgRoot: string): void {
-  let skillsDir = path.join(pkgRoot, 'commands');
+  let skillsDir = path.join(pkgRoot, 'assets', 'claude', 'commands');
   if (!fs.existsSync(skillsDir)) {
     skillsDir = path.join(pkgRoot, 'skills');
   }

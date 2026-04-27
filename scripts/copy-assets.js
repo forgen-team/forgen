@@ -1,10 +1,9 @@
-// TODO(§7.2 자산분리 2차 PR): 소스 경로 갱신 예정
-//   commands/  → assets/claude/commands/
-//   skills/    → assets/claude/skills/
-//   hooks/hooks.json → assets/claude/hooks/hooks.json (Claude 버전)
-//                    + assets/codex/hooks.json (절대경로 pre-expand 버전)
-//   hook-registry.json → assets/shared/hook-registry.json
-// 자세한 매핑은 assets/README.md 참고.
+// §7.2 자산분리 PR-2 적용 — 소스 경로 갱신 완료.
+//   commands/  → assets/claude/commands/   ✅
+//   agents/    → assets/claude/agents/     ✅
+//   hook-registry.json → assets/shared/    ✅
+//   skills/    : 빌드 산출물 (gitignored), 본 스크립트가 commands → skills 변환 (위치 유지)
+//   hooks/hooks.json: 빌드 산출물 (gitignored), prepack-hooks.cjs 가 생성 (위치 유지)
 
 import { cpSync, mkdirSync, readdirSync, readFileSync, writeFileSync, rmSync, existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -20,8 +19,8 @@ mkdirSync(dirname(dst), { recursive: true });
 cpSync(src, dst);
 console.log('[build] Copied dangerous-patterns.json');
 
-// 2. commands/*.md → skills/{name}/SKILL.md 생성 (Claude Code 플러그인 표준)
-const commandsDir = join(PKG_ROOT, 'commands');
+// 2. assets/claude/commands/*.md → skills/{name}/SKILL.md 생성 (Claude Code 플러그인 표준)
+const commandsDir = join(PKG_ROOT, 'assets', 'claude', 'commands');
 const skillsDir = join(PKG_ROOT, 'skills');
 if (existsSync(commandsDir)) {
   try { rmSync(skillsDir, { recursive: true, force: true }); } catch { /* ignore */ }

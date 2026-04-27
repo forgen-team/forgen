@@ -200,7 +200,7 @@ function collectSkills(): SkillMeta[] {
   const seen = new Map<string, string>(); // name → source dir
 
   // 패키지 내장 스킬 경로 (dist/../skills/)
-  const pkgSkillsDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'commands');
+  const pkgSkillsDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'assets', 'claude', 'commands');
 
   // 프로젝트 .forgen > 프로젝트 .compound > 개인 > 글로벌 > 패키지 내장
   const dirs = [

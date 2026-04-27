@@ -17,7 +17,7 @@
     "forge"
   ],
   "skills": "./skills/",
-  "agents": "agents/",
+  "agents": "assets/claude/agents/",
   "statusLine": {
     "type": "command",
     "command": "forgen me"

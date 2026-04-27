@@ -84,7 +84,7 @@ describe('plugin-detector 순수 로직', () => {
 describe('hooks.json 동적 생성', () => {
   it('hook-registry.json과 hook-registry.ts가 동일한 데이터를 반환한다', async () => {
     const jsonData = JSON.parse(
-      fs.readFileSync(path.join(process.cwd(), 'hooks', 'hook-registry.json'), 'utf-8'),
+      fs.readFileSync(path.join(process.cwd(), 'assets', 'shared', 'hook-registry.json'), 'utf-8'),
     );
     const { HOOK_REGISTRY } = await import('../src/hooks/hook-registry.js');
 

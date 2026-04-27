@@ -60,8 +60,7 @@
   },
   "files": [
     "dist/",
-    "agents/",
-    "commands/",
+    "assets/",
     "skills/",
     "starter-pack/",
     "scripts/postinstall.js",
