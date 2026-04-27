@@ -47,6 +47,64 @@ function commandExists(cmd: string): boolean {
   }
 }
 
+/** parity-result.json 내용에서 경과 시간을 사람이 읽기 좋은 문자열로 변환 */
+function relativeTime(isoString: string): string {
+  const diffMs = Date.now() - new Date(isoString).getTime();
+  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+  if (diffDays === 0) {
+    const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+    if (diffHours === 0) {
+      const diffMins = Math.floor(diffMs / (1000 * 60));
+      return `${diffMins}m ago`;
+    }
+    return `${diffHours}h ago`;
+  }
+  return `${diffDays}d ago`;
+}
+
+/** [Codex Parity] 섹션 렌더링 — ~/.forgen/state/parity-result.json 신선도 검사 */
+function renderCodexParity(): void {
+  console.log('  [Codex Parity]');
+  const parityPath = path.join(STATE_DIR, 'parity-result.json');
+
+  if (!fs.existsSync(parityPath)) {
+    console.log('  △ Codex parity 미실행 — tests/e2e/codex/run-parity.sh 또는 forgen parity codex');
+    return;
+  }
+
+  let data: { passed?: boolean | null; at?: string; version?: string; result?: string; note?: string };
+  try {
+    data = JSON.parse(fs.readFileSync(parityPath, 'utf-8'));
+  } catch {
+    console.log('  ✗ Codex parity — parity-result.json 파싱 실패');
+    return;
+  }
+
+  if (data.passed === null || data.passed === undefined) {
+    console.log('  △ Codex parity dry-run only — 실 실행 필요');
+    return;
+  }
+
+  if (!data.passed) {
+    const timeStr = data.at ? relativeTime(data.at) : 'unknown';
+    const detail = data.result ?? data.note ?? 'no detail';
+    console.log(`  ✗ Codex parity FAILED (at: ${timeStr}, detail: ${detail})`);
+    return;
+  }
+
+  // passed === true
+  const timeStr = data.at ? relativeTime(data.at) : 'unknown';
+  const version = data.version ? ` version ${data.version}` : '';
+  const diffMs = data.at ? Date.now() - new Date(data.at).getTime() : Infinity;
+  const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
+
+  if (diffMs > sevenDaysMs) {
+    console.log(`  △ Codex parity green but stale (last run: ${timeStr}) — 재실행 권장`);
+  } else {
+    console.log(`  ✓ Codex parity green (last run: ${timeStr},${version})`);
+  }
+}
+
 export interface DoctorOptions {
   /** When true, delete stale session-scoped state files instead of just
    *  reporting bloat. Triggered by `forgen doctor --prune-state`. */
@@ -437,6 +495,10 @@ export async function runDoctor(opts: DoctorOptions = {}): Promise<void> {
   } catch {
     console.log('  Unable to read host evidence data.');
   }
+  console.log();
+
+  // [Codex Parity] — parity-result.json 신선도 검사 (v0.4.2 패턴 확장)
+  renderCodexParity();
   console.log();
 
   // [Summary] — 최종 상태 요약과 복구 액션을 한눈에 보이게
