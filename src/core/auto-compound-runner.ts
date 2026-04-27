@@ -25,50 +25,57 @@ import { classifyBehaviorKind, mapKindToAxisRefs } from './behavior-classifier.j
 const COMPOUND_MODEL = 'haiku';
 
 /**
- * Host-aware exec retry — feat/codex-support P2-3.
- * 기존 execClaudeRetry 의 단일 'claude' 호출 → host-aware (profile.default_host).
- * args[0] 이 '-p' 인 형태 ([` -p`, prompt, '--model', model]) 의 호환성 유지:
- * 첫 인자가 -p 면 prompt 추출 → execHost. 다른 형태는 legacy claude 호출 (rare).
+ * Host-aware exec retry — feat/codex-support P2-3 (Phase 2 critic fix).
  *
- * Codex 메인 사용자도 자동 추출 (compound) + 학습 요약 작동 — Layer 3 옵션 B.
+ * 보안 회귀 방지: Claude 분기는 *args 그대로* execFileSync 호출 → P1-S1 의
+ * `--allowedTools Bash(forgen compound:*)` sandbox hardening 보존.
+ * Codex 분기에서만 -p prompt 추출 → execHost (codex 는 --allowedTools 모름).
+ *
+ * Codex retry 정책 fix: ETIMEDOUT 시 sleep 후 retry 는 *Claude only*. Codex 는
+ * 60-90s response 가 정상이라 timeout 누적 retry 가 무의미 (즉시 fail).
  */
 function execClaudeRetry(args: string[], opts: ExecFileSyncOptions): string {
-  // Lazy import — auto-compound-runner 가 detached subprocess 라 import cycle 회피.
-  // (require sync — ESM 환경에서 createRequire 통해)
-  const TRANSIENT = /ETIMEDOUT|ECONNRESET|ECONNREFUSED|EPIPE/;
+  const mod = createRequire(import.meta.url)('../host/exec-host.js') as typeof import('../host/exec-host.js');
+  // profile.default_host 로 host 결정 (lazy load)
+  const profileMod = createRequire(import.meta.url)('../store/profile-store.js') as typeof import('../store/profile-store.js');
+  const resolved = profileMod.resolveDefaultHost();
+  const host: 'claude' | 'codex' = resolved === 'codex' ? 'codex' : 'claude';
 
-  // -p prompt 패턴 추출
+  if (host === 'claude') {
+    // Claude 측은 기존 보안 hardening 보존: --allowedTools 등 args 그대로 전달.
+    const TRANSIENT = /ETIMEDOUT|ECONNRESET|ECONNREFUSED|EPIPE/;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        return execFileSync('claude', args, opts) as unknown as string;
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        if (attempt === 0 && TRANSIENT.test(msg)) {
+          process.stderr.write(`[forgen-auto-compound] transient error, retrying in 3s...\n`);
+          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 3000);
+          continue;
+        }
+        throw e;
+      }
+    }
+    throw new Error('unreachable');
+  }
+
+  // host === 'codex' — prompt 만 추출 (codex 는 --allowedTools 등 미인식).
   const pIdx = args.indexOf('-p');
   if (pIdx === -1 || !args[pIdx + 1]) {
-    // legacy non-prompt 호출 (rare) — 그대로 claude 호출
-    return execFileSync('claude', args, opts) as unknown as string;
+    throw new Error('execClaudeRetry: codex host requires -p prompt argument');
   }
   const prompt = args[pIdx + 1];
   const modelIdx = args.indexOf('--model');
   const model = modelIdx !== -1 ? args[modelIdx + 1] : undefined;
-
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      // dynamic require to avoid circular at module load
-      const mod = createRequire(import.meta.url)('../host/exec-host.js') as typeof import('../host/exec-host.js');
-      const r = mod.execHost({
-        prompt,
-        model,
-        timeout: typeof opts.timeout === 'number' ? opts.timeout : 30000,
-        cwd: typeof opts.cwd === 'string' ? opts.cwd : undefined,
-      });
-      return r.message;
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      if (attempt === 0 && TRANSIENT.test(msg)) {
-        process.stderr.write(`[forgen-auto-compound] transient error, retrying in 3s...\n`);
-        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 3000);
-        continue;
-      }
-      throw e;
-    }
-  }
-  throw new Error('unreachable');
+  const r = mod.execHost({
+    prompt,
+    model,
+    host: 'codex',
+    timeout: typeof opts.timeout === 'number' ? opts.timeout : 60000,
+    cwd: typeof opts.cwd === 'string' ? opts.cwd : undefined,
+  });
+  return r.message;
 }
 
 const [,, cwd, transcriptPath, sessionId] = process.argv;

@@ -47,8 +47,16 @@ export interface ExecHostResult {
  */
 export function execHost(opts: ExecHostOptions): ExecHostResult {
   const resolved = resolveDefaultHost(opts.host);
-  // 'ask' 는 자동 호출 컨텍스트라 silent fallback to claude (사용자에게 묻지 않음)
+  // 'ask' 는 자동 호출 컨텍스트라 명시 fallback. 그러나 Codex-only 사용자가 'ask'
+  // 설정 후 claude 가 PATH 에 없으면 ENOENT 발생 → 명시 안내. (Phase 2 critic fix)
   const host: 'claude' | 'codex' = resolved === 'codex' ? 'codex' : 'claude';
+  if (resolved === 'ask' && opts.host === undefined) {
+    // 자동 호출에서 'ask' 도달 — caller 가 명시 host 안 줬으므로 default fallback 안내.
+    process.stderr.write(
+      '[forgen exec-host] default_host="ask" — auto-call falling back to claude. ' +
+      'If claude CLI is missing, set: forgen config default-host {claude|codex}\n',
+    );
+  }
   const timeout = opts.timeout ?? 30000;
   const baseOpts: ExecFileSyncOptions = {
     encoding: 'utf-8',
@@ -66,11 +74,13 @@ export function execHost(opts: ExecHostOptions): ExecHostResult {
   }
 
   // host === 'codex'
+  // Phase 2 critic fix: -c approval_policy="never" 의 인용부호는 shell 처리 없이
+  // execFileSync 인자라 codex 가 literal `"never"` 로 받을 위험. quote 제거 + 실측 검증.
   const args = [
     'exec',
     '--json',
     '-s', 'read-only',
-    '-c', 'approval_policy="never"',
+    '-c', 'approval_policy=never',
     '--ephemeral',
     '--skip-git-repo-check',
     opts.prompt,

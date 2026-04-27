@@ -65,9 +65,15 @@ export function parseCodexJsonlOutput(stdout: string): CodexExecResult {
       const tid = (event as { thread_id?: string }).thread_id;
       if (typeof tid === 'string') threadId = tid;
     } else if (type === 'item.completed') {
-      const item = (event as { item?: { type?: string; text?: string } }).item;
-      if (item?.type === 'agent_message' && typeof item.text === 'string') {
-        segments.push(item.text);
+      const item = (event as { item?: { type?: string; text?: unknown } }).item;
+      if (item?.type === 'agent_message') {
+        // Phase 2 critic fix: text 가 string 아니면 schema drift 신호 → parseFailures 증가.
+        // (Codex 가 향후 array/object content 형식 도입 시 silent miss 방지)
+        if (typeof item.text === 'string') {
+          segments.push(item.text);
+        } else {
+          parseFailures += 1;
+        }
       }
     } else if (type === 'turn.completed') {
       const u = (event as { usage?: CodexUsage }).usage;
