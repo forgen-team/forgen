@@ -738,6 +738,39 @@ function main() {
   migrateLegacyStorage();
   ensureDirectories();
 
+  // ── 0. 기존 forgen entry 감지 (마이그레이션 모드 분기) ──
+  //
+  // feat/codex-support (P1-6, 2026-04-27): postinstall 이 호스트 인젝션을 *자동*
+  // 으로 하던 v0.4.x 동작을 변경. 새로운 정책:
+  //   - 기존 사용자 (settings.json 에 forgen hook entry 있음): 그대로 갱신 (행동
+  //     변화 없음 — 마이그레이션 안전). default_host 자동 설정 안내 banner 출력.
+  //   - 신규 사용자 (forgen entry 없음): host 인젝션 자동 안 함. "Run `forgen
+  //     install`" banner 만 출력. 사용자가 어느 host (Claude/Codex/Both) 에 등록할지
+  //     명시 선택.
+  //
+  // 사용자 의도와 무관한 Claude bias (postinstall 이 ~/.claude/ 자동 인젝션) 제거.
+  let isExistingForgenUser = false;
+  if (existsSync(SETTINGS_PATH)) {
+    try {
+      const probe = JSON.parse(readFileSync(SETTINGS_PATH, 'utf-8'));
+      const hooks = probe?.hooks ?? {};
+      for (const arr of Object.values(hooks)) {
+        if (!Array.isArray(arr)) continue;
+        for (const grp of arr) {
+          if (!grp?.hooks) continue;
+          for (const h of grp.hooks) {
+            const cmd = typeof h?.command === 'string' ? h.command : '';
+            if (cmd.includes('CLAUDE_PLUGIN_ROOT') || cmd.includes('/forgen-local/forgen/')) {
+              isExistingForgenUser = true;
+            }
+          }
+          if (isExistingForgenUser) break;
+        }
+        if (isExistingForgenUser) break;
+      }
+    } catch { /* settings.json 손상 시 fall-through, 단계 1 의 corrupt handling 이 처리 */ }
+  }
+
   // ── 1. settings.json 한 번 읽기 ──
   //
   // Audit finding #2/#10 (2026-04-21): prior `catch { settings = {} }`
@@ -816,7 +849,7 @@ function main() {
     console.error(`[forgen] hooks settings failed: ${err?.message ?? err}`);
   }
 
-  // ── 6. MCP 서버를 ~/.claude.json에 등록 (settings.json이 아닌 올바른 경로) ──
+  // ── 6. MCP 서버를 ~/.claude.json에 등록 ──
   let mcp = false;
   try {
     mcp = applyMcpToClaudeJson();
@@ -862,6 +895,28 @@ function main() {
   if (starterInstalled > 0) parts.push(`${starterInstalled} starter solutions`);
   if (parts.length > 0) {
     console.log(`[forgen] Installed: ${parts.join(', ')} → ${HOME}`);
+  }
+
+  // First-run banner (신규 사용자 안내) — feat/codex-support P1-6
+  if (!isExistingForgenUser) {
+    console.log('');
+    console.log('  ╭─ forgen — multi-host support ─────────────────────────────╮');
+    console.log('  │ binaries installed: forgen, fgx, forgen-mcp              │');
+    console.log('  │                                                            │');
+    console.log('  │ Next: register forgen on a host (Claude or Codex):        │');
+    console.log('  │   $ forgen install            (interactive 3-choice)      │');
+    console.log('  │   $ forgen install claude     (Claude only)               │');
+    console.log('  │   $ forgen install codex      (Codex only)                │');
+    console.log('  │   $ forgen install both       (둘 다)                      │');
+    console.log('  ╰────────────────────────────────────────────────────────────╯');
+    console.log('');
+  } else {
+    // 기존 사용자: default_host 안내
+    console.log('');
+    console.log('  [forgen] Multi-host support added. Existing forgen entry preserved.');
+    console.log('  Optional: `forgen config default-host {claude|codex|ask}` to set fgx default.');
+    console.log('  Optional: `forgen install codex` to register on Codex too.');
+    console.log('');
   }
 }
 

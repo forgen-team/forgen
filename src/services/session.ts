@@ -11,7 +11,10 @@
  * - CLI/fgx에서 수집한 런타임 값을 Harness, Spawn, Hook Generator에 일관되게 전달
  */
 
+import { createRequire } from 'node:module';
 import { type LaunchContext, type RuntimeHost } from '../core/types.js';
+
+const localRequire = createRequire(import.meta.url);
 
 /** 런타임 정규화: 외부 문자열을 내부 enum으로 변환 */
 function parseRuntime(raw: string | undefined): RuntimeHost | null {
@@ -29,16 +32,43 @@ function parseRuntime(raw: string | undefined): RuntimeHost | null {
 const DEFAULT_RUNTIME: RuntimeHost = 'claude';
 
 /**
+ * profile.default_host 를 읽어 runtime 결정.
+ * 'ask' 면 별도 prompt 책임 — 본 함수는 default 'claude' 로 fallback (caller 가 --ask 처리).
+ * profile-store import 가 cycle 위험이라 require 로 lazy.
+ */
+function readProfileDefaultRuntime(): RuntimeHost | null {
+  try {
+    const mod = localRequire('../store/profile-store.js') as { getDefaultHost?: () => 'claude' | 'codex' | 'ask' | undefined };
+    const stored = mod.getDefaultHost?.();
+    if (stored === 'claude' || stored === 'codex') return stored;
+    return null; // 'ask' 또는 미설정
+  } catch {
+    return null;
+  }
+}
+
+/**
  * CLI 인자를 파싱해 런타임 결정 + 런타임 플래그 제거
- * - --runtime codex
- * - --runtime=codex
+ * 우선순위 (높음→낮음):
+ *   1. --runtime <claude|codex> flag
+ *   2. FORGEN_RUNTIME env
+ *   3. profile.default_host (P1-4)
+ *   4. 'claude' fallback (legacy 호환)
  */
 export function resolveLaunchContext(args: string[]): LaunchContext {
   const runtimeFromEnv = parseRuntime(process.env.FORGEN_RUNTIME);
+  const runtimeFromProfile = runtimeFromEnv ? null : readProfileDefaultRuntime();
+  const initial = runtimeFromEnv ?? runtimeFromProfile ?? DEFAULT_RUNTIME;
+  const initialSource: LaunchContext['runtimeSource'] = runtimeFromEnv
+    ? 'env'
+    : runtimeFromProfile
+      ? 'profile'
+      : 'default';
+
   const result: LaunchContext = {
-    runtime: runtimeFromEnv ?? DEFAULT_RUNTIME,
+    runtime: initial,
     args: [],
-    runtimeSource: runtimeFromEnv ? 'env' : 'default',
+    runtimeSource: initialSource,
   };
 
   for (let i = 0; i < args.length; i += 1) {

@@ -363,33 +363,36 @@ export async function prepareHarness(
     // 3. 환경 확인
     const inTmux = !!process.env.TMUX;
 
-    // 4. Claude Code 설정 주입 (환경변수 + trust 기반 permissions).
+    // 4-7. Claude artifact 작업 (settings.json + agents + rules + slash commands).
     //
-    // Audit fix #1 (2026-04-21): acquireLock에서 live holder 감지 시
-    // SettingsLockError가 throw될 수 있다. 사용자 작업 자체를 실패시키지
-    // 않도록 warn 후 계속 진행 (이번 실행에서 settings는 기존 값 유지).
+    // feat/codex-support P1-7 (2026-04-27): runtime === 'codex' 시 *.claude/* 계열
+    // 작업은 *no-op*. Codex 측 동치 prep 은 Phase 3 (install-codex.ts 의 prompts +
+    // AGENTS.md inject) 에서 처리. 본 분기는 *Claude artifact 가 Codex 환경을
+    // 오염시키지 않도록* 보호하는 비대칭 게이트.
     const pkgRoot = getPackageRoot();
     const env = buildEnv(cwd, v1Result.session?.session_id, runtime);
-    try {
-      injectSettings(env, v1Result, runtime, cwd, pkgRoot);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      if (msg.includes('settings.json lock') || msg.includes('SettingsLockError')) {
-        console.error(`[forgen] ${msg} — settings 갱신 스킵, 이전 값 유지`);
-      } else {
-        throw e;
+    if (runtime === 'claude') {
+      // 4. settings.json 인젝션
+      try {
+        injectSettings(env, v1Result, runtime, cwd, pkgRoot);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        if (msg.includes('settings.json lock') || msg.includes('SettingsLockError')) {
+          console.error(`[forgen] ${msg} — settings 갱신 스킵, 이전 값 유지`);
+        } else {
+          throw e;
+        }
       }
+      // 5. 에이전트 설치
+      installAgents(cwd, pkgRoot);
+      // 6. 규칙 파일 생성 + 주입
+      const ruleFiles = generateClaudeRuleFiles(cwd, v1Result.renderedRules);
+      injectClaudeRuleFiles(cwd, ruleFiles);
+      // 7. 슬래시 명령 설치
+      installSlashCommands(cwd, pkgRoot);
+    } else {
+      log.debug(`prepareHarness: runtime=${runtime} — Claude artifact prep skipped (Phase 3 handles Codex prep)`);
     }
-
-    // 5. 에이전트 설치
-    installAgents(cwd, pkgRoot);
-
-    // 6. 규칙 파일 생성 및 주입 (v1 부트스트랩 결과의 renderedRules를 직접 전달)
-    const ruleFiles = generateClaudeRuleFiles(cwd, v1Result.renderedRules);
-    injectClaudeRuleFiles(cwd, ruleFiles);
-
-    // 7. 슬래시 명령 설치
-    installSlashCommands(cwd, pkgRoot);
 
     // 8. tmux 바인딩 등록
     if (inTmux) {

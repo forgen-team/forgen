@@ -241,6 +241,13 @@ export interface Profile {
     last_onboarding_at: string;
     last_reclassification_at: string | null;
   };
+  /**
+   * feat/codex-support — 사용자가 fgx/forgen 무인자 실행 시 spawn 할 host.
+   *   - 'claude' / 'codex': 명시 default
+   *   - 'ask': 매번 묻기 (interactive prompt)
+   *   - undefined: legacy / 미설정 → 'claude' fallback (마이그레이션 호환)
+   */
+  default_host?: 'claude' | 'codex' | 'ask';
 }
 
 // ── Pack Recommendation ──

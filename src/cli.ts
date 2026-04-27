@@ -122,8 +122,28 @@ const commands: Command[] = [
           const { displayHookStatus } = await import('./core/config-hooks.js');
           await displayHookStatus(process.cwd());
         }
+      } else if (sub === 'default-host') {
+        const value = args[1];
+        const valid = new Set(['claude', 'codex', 'ask']);
+        if (value === undefined) {
+          const { getDefaultHost } = await import('./store/profile-store.js');
+          const current = getDefaultHost();
+          console.log(`  current default_host: ${current ?? '(unset → claude fallback)'}`);
+          console.log('  Usage: forgen config default-host {claude|codex|ask}');
+        } else if (!valid.has(value)) {
+          console.log(`  Invalid value: ${value}. Use one of: claude, codex, ask`);
+          process.exit(1);
+        } else {
+          const { setDefaultHost } = await import('./store/profile-store.js');
+          const ok = setDefaultHost(value as 'claude' | 'codex' | 'ask');
+          if (!ok) {
+            console.log('  ✗ Profile not found. Run `forgen onboarding` first.');
+            process.exit(1);
+          }
+          console.log(`  ✓ default_host set to: ${value}`);
+        }
       } else {
-        console.log('Usage: forgen config hooks [--regenerate]');
+        console.log('Usage:\n  forgen config hooks [--regenerate]\n  forgen config default-host [claude|codex|ask]');
       }
     },
   },
@@ -145,30 +165,24 @@ const commands: Command[] = [
   },
   {
     name: 'install',
-    description: 'Install forgen into a host (codex). Usage: forgen install codex [--dry-run] [--no-mcp]',
+    description: 'Install forgen into a host. Usage: forgen install [claude|codex|both] [--dry-run] [--no-mcp]',
     handler: async (args) => {
-      const sub = args[0];
-      if (sub !== 'codex') {
-        console.log('Usage:\n  forgen install codex [--dry-run] [--no-mcp]\n\nNotes:\n  - Claude install is automatic via plugin cache (npm install).\n  - Codex 는 ~/.codex/hooks.json + config.toml 에 forgen 등록 (managed marker).');
+      const knownSubs = new Set(['claude', 'codex', 'both']);
+      const target = args[0] && knownSubs.has(args[0]) ? args[0] : args[0]?.startsWith('--') ? undefined : args[0];
+      if (target !== undefined && !knownSubs.has(target)) {
+        console.log('Usage:\n  forgen install [claude|codex|both] [--dry-run] [--no-mcp]\n\n  No arg → interactive 3-choice (Claude/Codex/Both).');
         return;
       }
       const dryRun = args.includes('--dry-run');
       const registerMcp = !args.includes('--no-mcp');
-      const { planCodexInstall } = await import('./host/install-codex.js');
-      // pkgRoot resolve: 본 binary 가 있는 dist/cli.js → 그 부모의 부모
-      const here = path.dirname(new URL(import.meta.url).pathname);
-      const pkgRoot = path.resolve(here, '..'); // dist/ 의 부모 = pkgRoot
-      const result = planCodexInstall({ pkgRoot, dryRun, registerMcp });
-      console.log(`\n  [forgen] Codex install ${dryRun ? '(dry-run)' : 'completed'}`);
-      console.log(`  CODEX_HOME:      ${result.codexHome}`);
-      console.log(`  hooks.json:      ${result.hooksPath}`);
-      console.log(`    forgen hooks:    ${result.hooksCount}`);
-      console.log(`    user-preserved:  ${result.preservedUserHookCount}`);
-      if (registerMcp) {
-        console.log(`  config.toml:     ${result.configTomlPath}`);
-        console.log(`    MCP forgen-compound: ${result.mcpAlreadyPresent ? 'already present (no-op)' : 'registered'}`);
+      const { runInstall, renderResult, resolvePkgRootFromBinary } = await import('./host/install-orchestrator.js');
+      const pkgRoot = resolvePkgRootFromBinary(import.meta.url);
+      const result = await runInstall({ target, pkgRoot, dryRun, registerMcp });
+      if (result === null) {
+        console.log('\n  [forgen] Install skipped.');
+        return;
       }
-      console.log('');
+      console.log(renderResult(result, dryRun));
     },
   },
   {

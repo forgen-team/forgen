@@ -119,3 +119,37 @@ export function bumpAxisConfidence(
   saveProfile(profile);
   return true;
 }
+
+/**
+ * feat/codex-support — default_host 영속화 헬퍼.
+ *
+ * fgx / forgen 무인자 실행 시 어느 host 를 spawn 할지 결정. 'ask' 면 매번 묻기.
+ * 미설정(undefined) 은 legacy 사용자 호환 — 'claude' 로 resolve.
+ */
+export type DefaultHost = 'claude' | 'codex' | 'ask';
+
+export function getDefaultHost(): DefaultHost | undefined {
+  const profile = loadProfile();
+  return profile?.default_host;
+}
+
+export function setDefaultHost(host: DefaultHost): boolean {
+  const profile = loadProfile();
+  if (!profile) return false;
+  profile.default_host = host;
+  profile.metadata.updated_at = new Date().toISOString();
+  saveProfile(profile);
+  return true;
+}
+
+/**
+ * Resolve effective host for runtime use.
+ * 우선순위: explicit override > profile.default_host > 'claude' fallback.
+ * 'ask' 는 caller 가 별도 처리 (interactive prompt).
+ */
+export function resolveDefaultHost(override?: 'claude' | 'codex'): 'claude' | 'codex' | 'ask' {
+  if (override) return override;
+  const stored = getDefaultHost();
+  if (stored === undefined) return 'claude';
+  return stored;
+}

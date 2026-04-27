@@ -157,19 +157,17 @@ describe('prepareHarness() integration', () => {
     expect(settings.env.COMPOUND_HARNESS).toBe('1');
   });
 
-  it('코덱스 런타임일 때 hooks 설정에 codex-adapter가 주입된다', async () => {
+  it('코덱스 런타임일 때 .claude/* 작업은 skip (P1-7 host-aware)', async () => {
+    // feat/codex-support P1-7: codex runtime 에서 prepareHarness 가 ~/.claude/settings.json
+    // 또는 cwd/.claude/* 를 건드리지 않아야 함. Codex 측 prep 은 forgen install codex
+    // (Phase 3 P3-3) 가 ~/.codex/ 에 별도 처리.
     await prepareHarness(TEST_CWD, { runtime: 'codex' });
 
-    const settings = JSON.parse(fs.readFileSync(TEST_SETTINGS_PATH, 'utf-8'));
-    const hooks = settings.hooks as
-      | Record<string, Array<{ hooks: Array<{ command: string }> }>>
-      | undefined;
-
-    const allCommands = Object.values(hooks ?? {}).flatMap(matchers =>
-      matchers.flatMap(entry => entry.hooks.map(handler => handler.command)),
-    );
-
-    expect(allCommands.some(command => command.includes('host/codex-adapter.js'))).toBe(true);
+    // settings.json 미작성 검증 (.claude/settings.json 자동 인젝션 안 함)
+    expect(fs.existsSync(TEST_SETTINGS_PATH)).toBe(false);
+    // .claude/agents/, .claude/rules/ 등 Claude artifact 도 미작성
+    expect(fs.existsSync(path.join(TEST_CWD, '.claude', 'agents'))).toBe(false);
+    expect(fs.existsSync(path.join(TEST_CWD, '.claude', 'rules'))).toBe(false);
   });
 
   it('compound staleness marker 생성', async () => {

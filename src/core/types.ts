@@ -115,7 +115,7 @@ export type RuntimeHost = 'claude' | 'codex';
 export interface LaunchContext {
   runtime: RuntimeHost;
   args: string[];
-  runtimeSource: 'flag' | 'env' | 'default';
+  runtimeSource: 'flag' | 'env' | 'profile' | 'default';
 }
 
 /** 훅 입력 이벤트 스키마 (버전 간 상위 호환용 최소 스펙) */
