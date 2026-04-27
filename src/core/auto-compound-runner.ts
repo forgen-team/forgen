@@ -13,6 +13,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { execFileSync, type ExecFileSyncOptions } from 'node:child_process';
+import { createRequire } from 'node:module';
 import { containsPromptInjection, filterSolutionContent } from '../hooks/prompt-injection-filter.js';
 import { redactSecrets } from '../hooks/secret-filter.js';
 import { createEvidence, saveEvidence, promoteSessionCandidates } from '../store/evidence-store.js';
@@ -23,23 +24,44 @@ import { classifyBehaviorKind, mapKindToAxisRefs } from './behavior-classifier.j
 /** Auto-compound에 사용할 모델 — background 추출이므로 haiku로 충분 */
 const COMPOUND_MODEL = 'haiku';
 
-/** execFileSync wrapper: transient 에러(ETIMEDOUT 등) 시 1회 재시도 */
+/**
+ * Host-aware exec retry — feat/codex-support P2-3.
+ * 기존 execClaudeRetry 의 단일 'claude' 호출 → host-aware (profile.default_host).
+ * args[0] 이 '-p' 인 형태 ([` -p`, prompt, '--model', model]) 의 호환성 유지:
+ * 첫 인자가 -p 면 prompt 추출 → execHost. 다른 형태는 legacy claude 호출 (rare).
+ *
+ * Codex 메인 사용자도 자동 추출 (compound) + 학습 요약 작동 — Layer 3 옵션 B.
+ */
 function execClaudeRetry(args: string[], opts: ExecFileSyncOptions): string {
+  // Lazy import — auto-compound-runner 가 detached subprocess 라 import cycle 회피.
+  // (require sync — ESM 환경에서 createRequire 통해)
   const TRANSIENT = /ETIMEDOUT|ECONNRESET|ECONNREFUSED|EPIPE/;
+
+  // -p prompt 패턴 추출
+  const pIdx = args.indexOf('-p');
+  if (pIdx === -1 || !args[pIdx + 1]) {
+    // legacy non-prompt 호출 (rare) — 그대로 claude 호출
+    return execFileSync('claude', args, opts) as unknown as string;
+  }
+  const prompt = args[pIdx + 1];
+  const modelIdx = args.indexOf('--model');
+  const model = modelIdx !== -1 ? args[modelIdx + 1] : undefined;
+
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      return execFileSync('claude', args, opts) as unknown as string;
+      // dynamic require to avoid circular at module load
+      const mod = createRequire(import.meta.url)('../host/exec-host.js') as typeof import('../host/exec-host.js');
+      const r = mod.execHost({
+        prompt,
+        model,
+        timeout: typeof opts.timeout === 'number' ? opts.timeout : 30000,
+        cwd: typeof opts.cwd === 'string' ? opts.cwd : undefined,
+      });
+      return r.message;
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       if (attempt === 0 && TRANSIENT.test(msg)) {
         process.stderr.write(`[forgen-auto-compound] transient error, retrying in 3s...\n`);
-        // Blocking synchronous sleep: Atomics.wait on a zero-initialized
-        // SharedArrayBuffer is the Node.js idiom for blocking the event
-        // loop without spawning child processes. This file runs as a
-        // detached subprocess (`auto-compound-runner`) so blocking is
-        // both safe and intentional. The 3000ms matches the backoff
-        // before retry. Alternative setTimeout would require making this
-        // function async, which would ripple through the entire runner.
         Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 3000);
         continue;
       }

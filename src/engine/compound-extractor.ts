@@ -19,6 +19,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { execHost } from '../host/exec-host.js';
 import { serializeSolutionV3, DEFAULT_EVIDENCE, extractTags } from './solution-format.js';
 import type { SolutionV3, SolutionType } from './solution-format.js';
 import { createLogger } from '../core/logger.js';
@@ -709,16 +710,11 @@ function enrichSolutionContent(
       diffSnippet.slice(0, 2000),
     ].join('\n');
 
-    const result = execFileSync('claude', ['-p', prompt, '--model', 'haiku'], {
-      timeout: 15000,
-      encoding: 'utf-8',
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
-
-    const enriched = (result as unknown as string).trim();
-    if (enriched.length > 30 && enriched.length < 1000) {
-      return enriched;
-    }
+    // feat/codex-support P2-2 — host-aware exec via profile.default_host.
+    // Codex 메인 사용자도 자동 추출 enrichment 가능 (해당 host CLI 호출).
+    // fail-open 정책 유지 — LLM enrichment 실패는 추출 자체를 막지 않음.
+    const { message } = execHost({ prompt, model: 'haiku', timeout: 15000 });
+    if (message.length > 30 && message.length < 1000) return message;
     return null;
   } catch {
     // fail-open: LLM enrichment failure should never block extraction
