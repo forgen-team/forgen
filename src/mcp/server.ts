@@ -15,6 +15,18 @@ if (!process.env.FORGEN_CWD && !process.env.COMPOUND_CWD) {
   process.env.COMPOUND_CWD = process.cwd(); // legacy compat
 }
 
+// Multi-host evidence attribution (spec §10-5):
+// 호출 host 가 spawn 시 `--host=<claude|codex>` 인자를 넘기면 본 process 의
+// FORGEN_HOST env 를 set 한다. evidence-store 의 detectHost() 가 이 env 를 읽어
+// correction-record 가 정확한 host 로 박제되게 한다. 미지정 시 기존 fallback
+// (FORGEN_HOST > CODEX_HOME 추론 > 'claude') 그대로.
+const hostArg = process.argv
+  .find((a) => a === '--host=claude' || a === '--host=codex')
+  ?.split('=')[1];
+if (hostArg === 'claude' || hostArg === 'codex') {
+  process.env.FORGEN_HOST = hostArg;
+}
+
 const INSTRUCTIONS = [
   'Forgen compound knowledge — accumulated patterns and solutions from past sessions.',
   '',

@@ -68,12 +68,14 @@ function readJsonFile<T>(p: string): T | null {
 
 function buildMcpBlock(pkgRoot: string): string {
   // forgen-mcp 는 dist/mcp/server.js. node 경로는 PATH 기반.
+  // `--host=codex` 인자는 server.ts 가 process.env.FORGEN_HOST 로 set 하여
+  // correction-record evidence 박제 시 host:"codex" 로 정확히 태깅되게 한다 (spec §10-5).
   const serverPath = path.join(pkgRoot, 'dist', 'mcp', 'server.js');
   return [
     MCP_MARKER_BEGIN,
     '[mcp_servers.forgen-compound]',
     'command = "node"',
-    `args = [${JSON.stringify(serverPath)}]`,
+    `args = [${JSON.stringify(serverPath)}, "--host=codex"]`,
     MCP_MARKER_END,
   ].join('\n');
 }
