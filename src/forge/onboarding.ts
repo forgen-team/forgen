@@ -1,8 +1,9 @@
 /**
  * Forgen v1 — Onboarding
  *
- * 2문항 온보딩, 점수 계산, pack 추천.
- * Authoritative spec: docs/plans/2026-04-03-forgen-onboarding-adaptation-spec.md §3-4
+ * 4문항 온보딩 (quality / autonomy / judgment / communication 4축), 점수 계산, pack 추천.
+ * Authoritative spec: docs/history/2026-04-03-tenetx-onboarding-adaptation-spec.md
+ *   (spec §3 은 v0.1 시점 2문항 기준 — v0.4 부터 4문항으로 확장됨, src/forge/onboarding-cli.ts:69-75 참조)
  */
 
 import type { QualityPack, AutonomyPack, JudgmentPack, CommunicationPack, TrustPolicy, PackRecommendation } from '../store/types.js';

@@ -252,13 +252,14 @@ describe('Chain 5: skill-injector in hook-registry', () => {
     expect(solutionInjector.compoundCritical).toBe(true);
   });
 
-  it('hooks.json에 20개 훅이 등록되어 있다', () => {
+  it('hooks.json description 이 HOOK_REGISTRY.length 와 일치 (W5)', async () => {
     const hooksJson = JSON.parse(
       fs.readFileSync(path.join(PROJECT_ROOT, 'hooks', 'hooks.json'), 'utf-8'),
     );
+    // W5: 하드코딩 제거 — HOOK_REGISTRY.length 가 단일 source
+    const { HOOK_REGISTRY } = await import('../../src/hooks/hook-registry.js');
     const desc = hooksJson.description as string;
-    // 20개 훅 중 일부가 active (플러그인 충돌에 따라 달라질 수 있음)
-    expect(desc).toMatch(/\d+\/20 active/);
+    expect(desc).toMatch(new RegExp(`\\d+/${HOOK_REGISTRY.length} active`));
   });
 
   it('skill-injector hook 스크립트가 dist에 존재한다', () => {

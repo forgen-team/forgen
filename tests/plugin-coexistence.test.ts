@@ -89,7 +89,9 @@ describe('hooks.json 동적 생성', () => {
     const { HOOK_REGISTRY } = await import('../src/hooks/hook-registry.js');
 
     expect(HOOK_REGISTRY).toEqual(jsonData);
-    expect(HOOK_REGISTRY.length).toBe(20);
+    // W5: 하드코딩 제거 — HOOK_REGISTRY.length 가 단일 source. JSON 과 TS export 가
+    // 같은 길이를 반환하는지만 검증 (위의 toEqual 이 그 이상의 보장).
+    expect(HOOK_REGISTRY.length).toBe(jsonData.length);
   });
 
   it('pre-tool-use가 db-guard와 rate-limiter보다 앞에 위치한다', async () => {

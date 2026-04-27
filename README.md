@@ -378,7 +378,7 @@ Curated, compound-native skills. Each integrates with your accumulated knowledge
 | `architecture-decision` | "adr" | Weighted trade-off matrix, ADR lifecycle, reversibility classification |
 | `docker` | "docker", "컨테이너" | Multi-stage builds, security hardening, 10 failure modes
 
-### 12 built-in agents
+### 13 built-in agents
 
 Sub-agents with physically separated tool access, `Failure_Modes_To_Avoid` sections, and Good/Bad examples. Invoked via `Agent(subagent_type: "ch-<name>")`. The `ch-` prefix avoids collisions with OMC / built-in Claude Code agents.
 
@@ -397,6 +397,7 @@ Sub-agents with physically separated tool access, `Failure_Modes_To_Avoid` secti
 | Agent | Model | Role |
 |-------|:-----:|------|
 | `ch-planner` | Opus | Strategic planning — decomposes tasks, identifies risks, creates actionable plans |
+| `ch-solution-evolver` | Opus | Propose 3 novel compound-solution candidates from a weakness report (Phase 4 evolution loop) |
 
 **Write-enabled (implementation / verification):**
 

@@ -44,6 +44,12 @@ interface GenerateOptions {
   pluginRoot?: string;
   /** 런타임 (claude|codex) */
   runtime?: RuntimeHost;
+  /**
+   * 환경 독립 산출물 모드 (W4, 2026-04-27).
+   * true 시 plugin 감지 + hook-config 비활성화 모두 건너뛰어 모든 hook 이 active.
+   * 배포(prepack), 테스트 결정론, runtime 환경 분리에 사용.
+   */
+  releaseMode?: boolean;
 }
 
 function splitCommand(raw: string): { script: string; args: string[] } {
@@ -80,25 +86,33 @@ function buildHookCommand(pluginRoot: string, rawScript: string, runtime: Runtim
  *   2. 충돌 훅 식별
  *   3. hook-config.json 설정 적용
  *   4. 활성 훅만 hooks.json 구조로 변환
+ *
+ * releaseMode: 환경 독립 산출물 모드 (W4, 2026-04-27).
+ *   - true 시 plugin 감지를 건너뛰고, hook-config.json 의 사용자 비활성화도 무시한다.
+ *   - 결과는 항상 모든 hook active — 배포 산출물 결정론화 + 테스트 안정화.
+ *   - prepack-hooks.cjs 는 이미 HOME swap 으로 같은 효과를 내지만, 본 옵션은
+ *     명시적 API 로 동일 보장을 제공해 테스트가 환경 독립 검증 가능.
+ *   - 자기증거: 본 세션이 사용자 HOME 에서 19/21 active 산출물을 받아 우회한
+ *     사례 — docs/issues/W4-W5-self-evidence.md 박제.
  */
 export function generateHooksJson(options?: GenerateOptions): HooksJson {
   const cwd = options?.cwd;
+  const releaseMode = options?.releaseMode ?? false;
   // biome-ignore lint/suspicious/noTemplateCurlyInString: CLAUDE_PLUGIN_ROOT is a Claude Code Plugin SDK variable resolved at runtime
   const pluginRoot = options?.pluginRoot ?? '${CLAUDE_PLUGIN_ROOT}/dist';
   const runtime = options?.runtime ?? 'claude';
 
-  // 다른 플러그인의 충돌 훅 감지
-  const hookConflicts = getHookConflicts(cwd);
-  const detectedPlugins = detectInstalledPlugins(cwd);
-  const hasOtherPlugins = detectedPlugins.length > 0;
+  // 다른 플러그인의 충돌 훅 감지 — releaseMode 시 건너뜀
+  const hookConflicts = releaseMode ? new Set<string>() : getHookConflicts(cwd);
+  const hasOtherPlugins = !releaseMode && detectInstalledPlugins(cwd).length > 0;
 
   // 활성 훅 필터링
   const activeHooks = HOOK_REGISTRY.filter(hook => {
-    // 1) hook-config.json에서 명시적 비활성화
-    if (!isHookEnabled(hook.name)) return false;
+    // 1) hook-config.json에서 명시적 비활성화 (releaseMode 시 무시)
+    if (!releaseMode && !isHookEnabled(hook.name)) return false;
 
     // 2) 다른 플러그인과 충돌하는 workflow 훅은 자동 비활성
-    //    (단, compound-critical 훅은 항상 유지)
+    //    (단, compound-critical 훅은 항상 유지. releaseMode 면 분기 조건이 false)
     if (hasOtherPlugins && hook.tier === 'workflow' && hookConflicts.has(hook.name) && !hook.compoundCritical) {
       return false;
     }

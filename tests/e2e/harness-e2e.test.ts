@@ -740,13 +740,14 @@ describe('Scenario 6: Settings Injection E2E', () => {
    * 실제 hooks.json 파일을 읽고 settings.json에 주입되는 과정을 검증.
    */
 
-  it('hooks.json에 20개 훅이 올바른 이벤트에 등록되어 있다', () => {
+  it('hooks.json description 이 HOOK_REGISTRY.length 와 일치 (W5)', async () => {
     const hooksJsonPath = path.join(PROJECT_ROOT, 'hooks', 'hooks.json');
     const hooksJson = JSON.parse(fs.readFileSync(hooksJsonPath, 'utf-8'));
 
-    // 20개 훅 중 active 수 확인
+    // W5: 단일 source — HOOK_REGISTRY.length 가 진실, hooks.json description 따라옴
+    const { HOOK_REGISTRY } = await import('../../src/hooks/hook-registry.js');
     const desc = hooksJson.description as string;
-    expect(desc).toMatch(/\d+\/20 active/);
+    expect(desc).toMatch(new RegExp(`\\d+/${HOOK_REGISTRY.length} active`));
 
     // hooks 객체의 이벤트 키 확인
     const events = Object.keys(hooksJson.hooks);

@@ -73,7 +73,10 @@ async function main() {
 
     const { writeHooksJson } = await import(distHooksGenerator);
     const hooksDir = path.resolve(__dirname, '..', 'hooks');
-    const result = writeHooksJson(hooksDir, { cwd: tmpHome });
+    // W4 (2026-04-27): releaseMode=true 명시. HOME swap 도 유지하여 double safety.
+    // releaseMode 단독으로도 결정론 보장하지만, 기존 HOME swap 관성으로 인한 임의
+    // 재발을 막기 위해 두 layer 모두 사용.
+    const result = writeHooksJson(hooksDir, { cwd: tmpHome, releaseMode: true });
 
     const hookRegistry = require(path.resolve(__dirname, '..', 'dist', 'hooks', 'hook-registry.js'));
     const expectedActive = hookRegistry.HOOK_REGISTRY.length;

@@ -161,7 +161,7 @@ const commands: Command[] = [
   },
   {
     name: 'onboarding',
-    description: 'v1 2-question onboarding flow',
+    description: 'v1 4-question onboarding flow',
     handler: async (_args) => {
       const { runOnboarding } = await import('./forge/onboarding-cli.js');
       await runOnboarding();
@@ -466,7 +466,7 @@ function printHelp() {
 
   Commands:
     forgen forge                    Personalize your coding profile
-    forgen onboarding               Run 2-question onboarding
+    forgen onboarding               Run 4-question onboarding
     forgen inspect [profile|rules|corrections|session]
                                     Inspect v1 state (alias: evidence → corrections)
     forgen rule <list|suppress|activate|scan|health-scan|classify>
