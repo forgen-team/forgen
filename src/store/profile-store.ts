@@ -91,3 +91,31 @@ export function isV1Profile(data: unknown): data is Profile {
   const p = data as Record<string, unknown>;
   return typeof p.model_version === 'string' && p.model_version.startsWith('2.');
 }
+
+/**
+ * D2 fix (2026-04-27): explicit_correction 누적 시 해당 축의 confidence 를 점진
+ * 상승시킨다. facet 값은 건드리지 않음 (회귀 위험 최소화) — confidence 가 score
+ * 집계 공식 (confidence × facet_avg + (1-confidence) × neutral_anchor) 의 가중치
+ * 라서, 사용자가 명시 교정을 누적한 축은 score 가 facet 평균을 더 강하게 반영.
+ *
+ * 자기증거: autonomy explicit_correction 6건이 score 를 못 움직였음 (facet 값
+ * 갱신 경로가 mismatch-detector 의 strong rule 승급에만 의존). 본 함수가 직접
+ * 경로를 추가.
+ *
+ * delta 기본 0.02 — 6건 누적 시 +0.12 → 0.45 → 0.57 (의미 있는 변동 가시화).
+ * clamp 0~1.
+ */
+export function bumpAxisConfidence(
+  axis: 'quality_safety' | 'autonomy' | 'judgment_philosophy' | 'communication_style',
+  delta: number = 0.02,
+): boolean {
+  const profile = loadProfile();
+  if (!profile) return false;
+  const target = profile.axes[axis];
+  if (!target || typeof target.confidence !== 'number') return false;
+  const next = Math.max(0, Math.min(1, target.confidence + delta));
+  if (next === target.confidence) return false;
+  target.confidence = next;
+  saveProfile(profile);
+  return true;
+}

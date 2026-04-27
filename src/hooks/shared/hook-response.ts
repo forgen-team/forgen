@@ -17,6 +17,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { STATE_DIR } from '../../core/paths.js';
+import { canBlock } from './blocking-allowlist.js';
 
 /** 통과 응답 (컨텍스트 없음, 모든 이벤트 공통) */
 export function approve(): string {
@@ -70,6 +71,34 @@ export function ask(reason: string): string {
       permissionDecisionReason: reason,
     },
   });
+}
+
+/**
+ * P3' enforcement helper (2026-04-27)
+ *
+ * ALLOW-LIST 에 있는 hook 만 진짜 deny — 아닌 경우 approve + 관찰 신호로 강등.
+ *
+ * 사용:
+ * ```ts
+ * import { canBlock } from './blocking-allowlist.js';
+ * if (someCondition) {
+ *   console.log(blockOrObserve(hookName, 'reason', logCallback));
+ *   return;
+ * }
+ * ```
+ *
+ * 점진 마이그레이션 — 본 helper 를 새로 사용하는 hook 은 ALLOW-LIST 외라면
+ * 자동 관찰 모드로 작동. 기존 hook 들은 별도 PR 에서 마이그레이션.
+ */
+export function denyOrObserve(hookName: string, reason: string, observer?: (msg: string) => void): string {
+  if (canBlock(hookName)) {
+    return deny(reason);
+  }
+  // ALLOW-LIST 외 — log only, approve
+  if (observer) {
+    try { observer(`[${hookName}] would-deny (observe-only): ${reason}`); } catch { /* fail-open */ }
+  }
+  return approve();
 }
 
 /**

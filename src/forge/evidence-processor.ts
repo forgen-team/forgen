@@ -17,6 +17,7 @@ import type {
 import { createEvidence, appendEvidence } from '../store/evidence-store.js';
 import { createRule, saveRule } from '../store/rule-store.js';
 import { classify, applyProposal } from '../engine/enforce-classifier.js';
+import { bumpAxisConfidence } from '../store/profile-store.js';
 
 // ── Correction → Evidence + Temporary Rule ──
 
@@ -42,6 +43,15 @@ export function processCorrection(req: CorrectionRequest): CorrectionResult {
     },
   });
   appendEvidence(evidence); // T1 lifecycle trigger fires here for explicit_correction
+
+  // D2 fix (2026-04-27): explicit_correction 의 axis_hint 가 axes confidence 에
+  // 직접 반영되도록 bump. autonomy 6건이 score 못 움직였던 결함 해결.
+  // 회귀 안전: facet 값은 안 건드리고 confidence 만 +0.02 (avoid-this 는 +0.04
+  // 로 더 강한 신호). docs/issues/D2-autonomy-facet-stuck.md 참조.
+  if (req.axis_hint) {
+    const bump = req.kind === 'avoid-this' ? 0.04 : 0.02;
+    try { bumpAxisConfidence(req.axis_hint, bump); } catch { /* fail-open */ }
+  }
 
   // fix-now, avoid-this → temporary session rule
   let temporaryRule: Rule | null = null;

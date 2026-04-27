@@ -336,6 +336,14 @@ async function main(): Promise<void> {
     }
   } catch { /* fail-open */ }
 
+  // US-M1 (RC6 가드): 직전 forge-loop findings 또는 진행 중 stories 자동 inject.
+  // 본 세션 자기증거 — head -80 truncation 으로 findings 누락 → 같은 가설 재발.
+  try {
+    const { readForgeLoopState, renderForgeLoopForSession } = await import('./shared/forge-loop-state.js');
+    const block = renderForgeLoopForSession(readForgeLoopState());
+    if (block) recoveryMessages.push(block);
+  } catch (e) { log.debug('forge-loop findings inject 실패', e); }
+
   const sessionId = sessionContext.sessionId;
 
   // 이전 세션 자동 compound (fire-and-forget)

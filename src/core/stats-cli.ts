@@ -10,6 +10,7 @@ import * as path from 'node:path';
 import { loadAllRules } from '../store/rule-store.js';
 import { loadAllEvidence } from '../store/evidence-store.js';
 import { STATE_DIR, ME_DIR } from './paths.js';
+import { computeFixFeatRatio, formatFixRatio } from './git-stats.js';
 
 // v0.4.1 격리 fix: 이전에는 os.homedir() 직접 사용해서 FORGEN_HOME env 로
 // 홈 격리해도 이 파일의 경로는 여전히 실 홈 가리켰음. paths.ts 상수 import.
@@ -281,6 +282,17 @@ export function renderStats(s: StatsSnapshot): string {
     lines.push(`    Last reclass        ${s.philosophy.lastReclassification ?? 'never'}`);
     lines.push('');
   }
+  // P4 셀프 가드 — 최근 30커밋 fix:feat 비율로 회귀 패턴 자가 노출.
+  // 30% 초과 시 "이거 고치면 저거 버그난다" 패턴 의심 → forgen doctor 가 경고.
+  try {
+    const ratio = computeFixFeatRatio();
+    if (ratio.available) {
+      lines.push('  Repo health (last 30 commits)');
+      lines.push(`    ${formatFixRatio(ratio)}`);
+      lines.push('');
+    }
+  } catch { /* fail-open: git 없거나 비-repo 환경 */ }
+
   lines.push(`  Last extraction: ${s.lastExtraction}`);
   lines.push('');
   return lines.join('\n');

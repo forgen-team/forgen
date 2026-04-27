@@ -18,6 +18,7 @@ import { redactSecrets } from '../hooks/secret-filter.js';
 import { createEvidence, saveEvidence, promoteSessionCandidates } from '../store/evidence-store.js';
 import { loadProfile } from '../store/profile-store.js';
 import { FORGEN_HOME, ME_DIR } from './paths.js';
+import { classifyBehaviorKind, mapKindToAxisRefs } from './behavior-classifier.js';
 
 /** Auto-compound에 사용할 모델 — background 추출이므로 haiku로 충분 */
 const COMPOUND_MODEL = 'haiku';
@@ -303,14 +304,15 @@ ${sanitizedSummary.slice(0, 6000)}
 관찰된 패턴을 다음 형식으로 1~3개만 출력해주세요 (없으면 "관찰된 패턴 없음"):
 - [카테고리] 패턴 설명 (관찰 근거)
 
-카테고리: 커뮤니케이션/작업습관/기술선호/의사결정/워크플로우
+카테고리: 커뮤니케이션/작업습관/기술선호/의사결정/워크플로우/품질안전/자율성
 
-특히 "워크플로우" 카테고리에 주목하세요:
-- 사용자가 반복하는 작업 순서 패턴 (예: "항상 테스트 먼저 작성 → 구현 → 리팩토링 순서로 진행")
-- 특정 상황에서의 판단 규칙 (예: "PR 리뷰 시 보안 → 테스트 → 코드 품질 순서로 확인")
-- 조건부 접근법 (예: "버그 수정 시 재현 테스트부터 작성, 성능 이슈면 프로파일링부터")
+각 카테고리 가이드:
+- "워크플로우": 반복하는 작업 순서, 판단 규칙, 조건부 접근법 (예: "테스트 먼저 → 구현 → 리팩토링 순서")
+- "품질안전": 검증/테스트/안전성 관련 강한 선호 (예: "프로덕션 배포 전 Docker e2e 의무", "mock-only 검증 거부")
+- "자율성": 확인/독립 결정 관련 선호 (예: "사소한 변경은 묻지 않고 진행", "큰 결정은 반드시 확인")
 
 워크플로우 패턴이 감지되면 반드시 구체적인 순서를 포함하세요.
+품질안전/자율성 패턴은 4축 개인화의 입력이므로 quality/autonomy 신호가 명확하면 반드시 해당 라벨을 사용하세요 (커뮤니케이션/작업습관 으로 흡수 금지).
 
 기존 패턴과 중복이면 건너뛰세요.${existingBehaviorPatterns}
 
@@ -344,11 +346,11 @@ ${sanitizedSummary.slice(0, 4000)}
       const today = new Date().toISOString().split('T')[0];
       const trimmed = userResult.trim();
 
-      // 카테고리에 따라 kind 분류
-      const kind = trimmed.includes('[워크플로우]') || trimmed.includes('순서') || trimmed.includes('→')
-        ? 'workflow'
-        : trimmed.includes('[의사결정]') ? 'thinking'
-        : 'preference';
+      // 카테고리에 따라 kind 분류 — D1'' (2026-04-27): quality/autonomy 라벨 추가.
+      // 이전 3분기(workflow/thinking/preference)는 quality_safety/autonomy 축으로
+      // 가는 자동 신호를 communication_style 로 흡수해 626건 중 자동 추출 0건이
+      // 이 두 축에 닿지 못했음. 5분기로 확장. (분류 로직은 behavior-classifier.ts)
+      const kind = classifyBehaviorKind(trimmed);
 
       // 기존 유사 패턴이 있으면 observedCount 누적
       const merged = mergeOrCreateBehavior(BEHAVIOR_DIR, trimmed, kind, today);
@@ -367,10 +369,7 @@ ${sanitizedSummary.slice(0, 4000)}
         session_id: sessionId,
         source_component: 'auto-compound-runner',
         summary: trimmed.slice(0, 200),
-        axis_refs: kind === 'workflow' ? ['judgment_philosophy']
-          : kind === 'preference' ? ['communication_style']
-          : kind === 'thinking' ? ['judgment_philosophy']
-          : [],
+        axis_refs: mapKindToAxisRefs(kind),
         confidence: 0.6,
         raw_payload: { kind, observedCount: 1 },
       });

@@ -402,6 +402,17 @@ export async function runDoctor(opts: DoctorOptions = {}): Promise<void> {
     // git 저장소가 아니거나 origin이 없으면 표시하지 않음
     console.log('  git remote: (none)');
   }
+  // P4 셀프 가드: fix:feat 비율 30% 초과 시 회귀 패턴 의심 경고.
+  try {
+    const { computeFixFeatRatio, formatFixRatio } = await import('./git-stats.js');
+    const ratio = computeFixFeatRatio();
+    if (ratio.available) {
+      console.log(`  ${formatFixRatio(ratio)}`);
+      if (ratio.exceedsThreshold) {
+        console.log('  ⚠ fix:feat 비율이 임계값을 초과했습니다. "이거 고치면 저거 버그난다" 패턴 의심 — 검증 레이어 invariant 점검 권장.');
+      }
+    }
+  } catch { /* fail-open */ }
   console.log();
 
   // [Summary] — 최종 상태 요약과 복구 액션을 한눈에 보이게
