@@ -144,6 +144,34 @@ const commands: Command[] = [
     },
   },
   {
+    name: 'install',
+    description: 'Install forgen into a host (codex). Usage: forgen install codex [--dry-run] [--no-mcp]',
+    handler: async (args) => {
+      const sub = args[0];
+      if (sub !== 'codex') {
+        console.log('Usage:\n  forgen install codex [--dry-run] [--no-mcp]\n\nNotes:\n  - Claude install is automatic via plugin cache (npm install).\n  - Codex 는 ~/.codex/hooks.json + config.toml 에 forgen 등록 (managed marker).');
+        return;
+      }
+      const dryRun = args.includes('--dry-run');
+      const registerMcp = !args.includes('--no-mcp');
+      const { planCodexInstall } = await import('./host/install-codex.js');
+      // pkgRoot resolve: 본 binary 가 있는 dist/cli.js → 그 부모의 부모
+      const here = path.dirname(new URL(import.meta.url).pathname);
+      const pkgRoot = path.resolve(here, '..'); // dist/ 의 부모 = pkgRoot
+      const result = planCodexInstall({ pkgRoot, dryRun, registerMcp });
+      console.log(`\n  [forgen] Codex install ${dryRun ? '(dry-run)' : 'completed'}`);
+      console.log(`  CODEX_HOME:      ${result.codexHome}`);
+      console.log(`  hooks.json:      ${result.hooksPath}`);
+      console.log(`    forgen hooks:    ${result.hooksCount}`);
+      console.log(`    user-preserved:  ${result.preservedUserHookCount}`);
+      if (registerMcp) {
+        console.log(`  config.toml:     ${result.configTomlPath}`);
+        console.log(`    MCP forgen-compound: ${result.mcpAlreadyPresent ? 'already present (no-op)' : 'registered'}`);
+      }
+      console.log('');
+    },
+  },
+  {
     name: 'notepad',
     description: 'Notepad (show|add|clear)',
     handler: async (args) => {
