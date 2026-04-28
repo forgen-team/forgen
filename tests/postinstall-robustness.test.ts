@@ -48,13 +48,28 @@ describe('V6: postinstall robustness on real-world settings.json', () => {
   beforeEach(() => fs.rmSync(TEST_HOME, { recursive: true, force: true }));
   afterEach(() => fs.rmSync(TEST_HOME, { recursive: true, force: true }));
 
-  it('empty-dir: fresh install creates valid settings.json with forgen hooks', () => {
+  it('empty-dir: fresh install — P1-6b 옵션 Y 신규 사용자 모드 (host 인젝션 skip + banner)', () => {
+    // P1-6b (2026-04-28): 신규 사용자 = settings.json 에 forgen entry 없음 → 자동
+    // 인젝션 안 함. forgen install 로 명시 register 가 정책. 검증: banner 출력 +
+    // forgen hooks 미인젝션.
     fs.mkdirSync(TEST_HOME, { recursive: true });
     const r = runPostinstall(TEST_HOME);
     expect(r.status).toBe(0);
+    const combined = (r.stdout ?? '') + (r.stderr ?? '');
+    expect(combined).toMatch(/forgen install|register forgen/i);
     const { parsed } = safeReadSettings(TEST_HOME);
-    expect(parsed).not.toBeNull();
-    expect((parsed as any).hooks).toBeDefined();
+    if (parsed !== null && (parsed as Record<string, unknown>).hooks) {
+      const hooks = (parsed as { hooks: Record<string, unknown[]> }).hooks;
+      const allCommands = Object.values(hooks).flatMap((events) =>
+        (events as Array<{ hooks?: Array<{ command?: string }> }>).flatMap(
+          (g) => (g.hooks ?? []).map((h) => h.command ?? ''),
+        ),
+      );
+      const forgenHooks = allCommands.filter((c) =>
+        c.includes('CLAUDE_PLUGIN_ROOT') || c.includes('forgen-local'),
+      );
+      expect(forgenHooks.length).toBe(0);
+    }
   });
 
   it('corrupt JSON: exit 0 + .corrupt backup + original preserved (data loss 방지)', () => {

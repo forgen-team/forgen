@@ -15,6 +15,11 @@ COPY *forgen*.tgz /tmp/forgen.tgz
 # 글로벌 설치 — 실제 사용자 환경과 동일
 RUN npm i -g /tmp/forgen.tgz
 
+# P1-6b (2026-04-28): postinstall 이 신규 사용자에겐 자동 host 인젝션 안 함 (사용자
+# 의도 보장 — Claude bias 제거). E2E 검증은 *명시 forgen install* 후 시나리오를 가정.
+# 실 사용자는 npm install -g forgen 후 forgen install [claude|codex|both] 실행.
+RUN forgen install claude
+
 # 테스트 스크립트 복사
 COPY verify.sh /workspace/verify.sh
 RUN chmod +x /workspace/verify.sh

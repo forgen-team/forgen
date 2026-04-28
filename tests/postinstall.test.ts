@@ -23,9 +23,34 @@ function runPostinstall() {
   });
 }
 
+/**
+ * P1-6b (옵션 Y): 신규 사용자에겐 자동 install 안 함. 본 테스트 swite 의 기존 시나리오는
+ * 모두 *기존 forgen 사용자 마이그레이션* 모드에서 자동 갱신 검증. seedExistingForgenUser
+ * 가 settings.json 에 forgen hook entry 1개 미리 박제 → isExistingForgenUser=true →
+ * postinstall 이 자동 install 모드.
+ */
+function seedExistingForgenUser() {
+  const claudeDir = path.dirname(SETTINGS_PATH);
+  fs.mkdirSync(claudeDir, { recursive: true });
+  fs.writeFileSync(SETTINGS_PATH, JSON.stringify({
+    hooks: {
+      UserPromptSubmit: [{
+        matcher: '*',
+        hooks: [{
+          type: 'command',
+          command: 'node "${CLAUDE_PLUGIN_ROOT}/dist/hooks/forgen-legacy.js"',
+          timeout: 3,
+        }],
+      }],
+    },
+  }, null, 2));
+}
+
 describe('postinstall', () => {
   beforeEach(() => {
     fs.rmSync(TEST_HOME, { recursive: true, force: true });
+    // P1-6b: 기존 사용자 마이그레이션 모드 trigger (옵션 Y)
+    seedExistingForgenUser();
   });
 
   afterEach(() => {

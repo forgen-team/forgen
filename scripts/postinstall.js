@@ -760,7 +760,17 @@ function main() {
           if (!grp?.hooks) continue;
           for (const h of grp.hooks) {
             const cmd = typeof h?.command === 'string' ? h.command : '';
-            if (cmd.includes('CLAUDE_PLUGIN_ROOT') || cmd.includes('/forgen-local/forgen/')) {
+            // P1-6b detection: forgen hook command path 식별. cross-platform (POSIX + Windows)
+            // 및 다양한 install 위치 (npm global, plugin cache, dev) 커버.
+            if (
+              cmd.includes('CLAUDE_PLUGIN_ROOT') ||
+              cmd.includes('/forgen-local/forgen/') ||
+              cmd.includes('\\forgen-local\\forgen\\') ||
+              cmd.includes('/forgen/dist/hooks/') ||
+              cmd.includes('\\forgen\\dist\\hooks\\') ||
+              cmd.includes('/@wooojin/forgen/') ||
+              cmd.includes('\\@wooojin\\forgen\\')
+            ) {
               isExistingForgenUser = true;
             }
           }
@@ -798,12 +808,16 @@ function main() {
   }
 
   // ── 2. 플러그인 등록 (installed_plugins.json + skills) ──
+  // P1-6b (옵션 Y): 신규 사용자에게는 자동 install 안 함. 기존 forgen 사용자만 갱신.
+  // 사용자 host 선택 권한 보장 (1원칙 = Claude bias 제거).
   let plugin = false;
-  try {
-    plugin = registerPlugin();
-    if (plugin) applyPluginSettings(settings);
-  } catch (err) {
-    console.error(`[forgen] plugin registration failed: ${err?.message ?? err}`);
+  if (isExistingForgenUser) {
+    try {
+      plugin = registerPlugin();
+      if (plugin) applyPluginSettings(settings);
+    } catch (err) {
+      console.error(`[forgen] plugin registration failed: ${err?.message ?? err}`);
+    }
   }
 
   // ── 3. hooks.json 동적 생성 ──
@@ -833,29 +847,35 @@ function main() {
     }
   }
 
-  // ── 4. 슬래시 커맨드 설치 ──
+  // ── 4. 슬래시 커맨드 설치 ── (기존 사용자만)
   let commands = 0;
-  try {
-    commands = installSlashCommands();
-  } catch (err) {
-    console.error(`[forgen] slash commands failed: ${err?.message ?? err}`);
+  if (isExistingForgenUser) {
+    try {
+      commands = installSlashCommands();
+    } catch (err) {
+      console.error(`[forgen] slash commands failed: ${err?.message ?? err}`);
+    }
   }
 
-  // ── 5. settings에 훅 설정 적용 ──
+  // ── 5. settings에 훅 설정 적용 ── (기존 사용자만)
   let hooks = false;
-  try {
-    hooks = applyHookSettings(settings);
-  } catch (err) {
-    console.error(`[forgen] hooks settings failed: ${err?.message ?? err}`);
+  if (isExistingForgenUser) {
+    try {
+      hooks = applyHookSettings(settings);
+    } catch (err) {
+      console.error(`[forgen] hooks settings failed: ${err?.message ?? err}`);
+    }
   }
 
-  // ── 6. MCP 서버를 ~/.claude.json에 등록 ──
+  // ── 6. MCP 서버 ~/.claude.json 등록 ── (기존 사용자만)
   let mcp = false;
-  try {
-    mcp = applyMcpToClaudeJson();
-    cleanLegacyMcpFromSettings(settings);
-  } catch (err) {
-    console.error(`[forgen] MCP server registration failed: ${err?.message ?? err}`);
+  if (isExistingForgenUser) {
+    try {
+      mcp = applyMcpToClaudeJson();
+      cleanLegacyMcpFromSettings(settings);
+    } catch (err) {
+      console.error(`[forgen] MCP server registration failed: ${err?.message ?? err}`);
+    }
   }
 
   // ── 7. settings.json 한 번 쓰기 (atomic) ──
