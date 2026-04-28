@@ -19,7 +19,7 @@ export interface ExecHostOptions {
   prompt: string;
   /** model 힌트 (claude: --model haiku, codex: 무시 — codex CLI 가 default 사용) */
   model?: string;
-  /** child process timeout (ms). default 30s. */
+  /** child process timeout (ms). 미지정 시 host 별 기본값: claude 30s, codex 90s. */
   timeout?: number;
   /** working directory */
   cwd?: string;
@@ -28,6 +28,18 @@ export interface ExecHostOptions {
   /** ENV vars 추가 (기존 process.env 위에 머지) */
   env?: NodeJS.ProcessEnv;
 }
+
+/**
+ * Host 별 기본 timeout. Phase 3 deferred fix:
+ *   - claude -p 는 보통 1~5s 응답이라 30s 충분.
+ *   - codex exec --json 은 cold start + reasoning 모드로 60~90s 정상이라
+ *     30s default 가 false-positive ETIMEDOUT 발생. 90s 마진 필요.
+ *   - 명시 timeout 옵션은 그대로 우선.
+ */
+export const DEFAULT_TIMEOUT_BY_HOST: Record<'claude' | 'codex', number> = {
+  claude: 30_000,
+  codex: 90_000,
+};
 
 export interface ExecHostResult {
   message: string;
@@ -57,7 +69,7 @@ export function execHost(opts: ExecHostOptions): ExecHostResult {
       'If claude CLI is missing, set: forgen config default-host {claude|codex}\n',
     );
   }
-  const timeout = opts.timeout ?? 30000;
+  const timeout = opts.timeout ?? DEFAULT_TIMEOUT_BY_HOST[host];
   const baseOpts: ExecFileSyncOptions = {
     encoding: 'utf-8',
     timeout,
