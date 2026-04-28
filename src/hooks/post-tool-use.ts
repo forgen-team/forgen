@@ -122,17 +122,23 @@ const AGENT_QUALITY_PATTERNS: Array<{ pattern: RegExp; signal: string; severity:
   { pattern: /(?:context (?:window|limit) (?:exceeded|reached)|too (?:large|long) to (?:read|process))/i, signal: 'agent_context_overflow', severity: 'warning', message: 'Agent hit context limits — output may be incomplete' },
 ];
 
-export function validateAgentOutput(toolResponse: string): AgentValidationResult | null {
-  if (!toolResponse || toolResponse.trim().length < AGENT_MIN_OUTPUT_LENGTH) {
+export function validateAgentOutput(toolResponse: unknown): AgentValidationResult | null {
+  // tool_response 는 string / object / array 모두 가능. main() 측에서 stringify 를 한 번 더
+  // 하지만 직접 호출 보호 (defense in depth).
+  if (typeof toolResponse !== 'string') {
+    toolResponse = toolResponse == null ? '' : JSON.stringify(toolResponse);
+  }
+  const r = toolResponse as string;
+  if (!r || r.trim().length < AGENT_MIN_OUTPUT_LENGTH) {
     return {
       signal: 'agent_empty_output',
       severity: 'warning',
-      message: `Agent returned minimal output (${toolResponse?.trim().length ?? 0} chars). Verify the result is usable.`,
+      message: `Agent returned minimal output (${r.trim().length} chars). Verify the result is usable.`,
     };
   }
 
   for (const p of AGENT_QUALITY_PATTERNS) {
-    if (p.pattern.test(toolResponse)) {
+    if (p.pattern.test(r)) {
       return { signal: p.signal, severity: p.severity, message: p.message };
     }
   }
@@ -172,7 +178,10 @@ async function main(): Promise<void> {
 
   const toolName = data.tool_name ?? data.toolName ?? '';
   const toolInput = data.tool_input ?? data.toolInput ?? {};
-  const toolResponse = data.tool_response ?? data.toolOutput ?? '';
+  // tool_response 는 string / object / array 모두 가능 (sub-agent 결과는 object 가 흔함).
+  // 모든 downstream 이 string 가정이라 stringify 로 normalize. 회귀 박제: tests/hooks/post-tool-use.test.ts
+  const rawResponse = data.tool_response ?? data.toolOutput ?? '';
+  const toolResponse: string = typeof rawResponse === 'string' ? rawResponse : JSON.stringify(rawResponse);
   const sessionId = data.session_id ?? 'default';
 
   const modState = loadModifiedFiles(sessionId);

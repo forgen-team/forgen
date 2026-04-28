@@ -35,7 +35,10 @@ describe('planClaudeInstall', () => {
     expect(r.mcpRegistered).toBe(true);
   });
 
-  it('settings.json 의 forgen hooks 가 ${CLAUDE_PLUGIN_ROOT} 사용 + enabledPlugins 등록', () => {
+  it('settings.json 의 forgen hooks 가 절대경로 박제 (CLAUDE_PLUGIN_ROOT 변수 미해석 회귀 차단)', () => {
+    // settings.json 컨텍스트에서는 ${CLAUDE_PLUGIN_ROOT} 가 Claude Code 에 의해 풀리지 않음 →
+    // "Hook command references ${CLAUDE_PLUGIN_ROOT} but the hook is not associated with a plugin" 에러.
+    // postinstall.js 와 동일하게 절대경로로 박혀야 함.
     const r = planClaudeInstall({ pkgRoot: PKG_ROOT, homeDir: tmpHome });
     const settings = JSON.parse(fs.readFileSync(r.settingsPath, 'utf-8'));
     expect(settings.hooks).toBeDefined();
@@ -43,7 +46,8 @@ describe('planClaudeInstall', () => {
     const allCommands = Object.values(settings.hooks as Record<string, Array<{ hooks: Array<{ command: string }> }>>)
       .flat()
       .flatMap((g) => g.hooks.map((h) => h.command));
-    expect(allCommands.some((c) => c.includes('CLAUDE_PLUGIN_ROOT'))).toBe(true);
+    expect(allCommands.every((c) => !c.includes('CLAUDE_PLUGIN_ROOT'))).toBe(true);
+    expect(allCommands.some((c) => c.includes(path.join(PKG_ROOT, 'dist', 'hooks')))).toBe(true);
   });
 
   it('사용자 비-forgen hook 보존 + 사용자 비-forgen MCP 보존', () => {
@@ -66,8 +70,9 @@ describe('planClaudeInstall', () => {
     const preCommands = (settings.hooks.PreToolUse as Array<{ hooks: Array<{ command: string }> }>)
       .flatMap((g) => g.hooks.map((h) => h.command));
     expect(preCommands).toContain('node /home/user/my-hook.js');
-    // forgen entry 도 존재
-    expect(preCommands.some((c) => c.includes('CLAUDE_PLUGIN_ROOT'))).toBe(true);
+    // forgen entry 도 절대경로로 존재 (CLAUDE_PLUGIN_ROOT 변수 박제 금지)
+    expect(preCommands.every((c) => !c.includes('CLAUDE_PLUGIN_ROOT'))).toBe(true);
+    expect(preCommands.some((c) => c.includes(path.join(PKG_ROOT, 'dist', 'hooks')))).toBe(true);
 
     const claudeJson = JSON.parse(fs.readFileSync(path.join(tmpHome, '.claude.json'), 'utf-8'));
     expect(claudeJson.mcpServers['user-mcp']).toBeDefined();

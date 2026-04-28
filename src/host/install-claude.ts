@@ -145,8 +145,9 @@ function writeSlashCommands(opts: { pkgRoot: string; targetDir: string; dryRun: 
 
 function injectHooksIntoSettings(opts: { pkgRoot: string; settingsPath: string; dryRun: boolean }): number {
   const { pkgRoot, settingsPath, dryRun } = opts;
+  // settings.json 컨텍스트는 ${CLAUDE_PLUGIN_ROOT} 미해석 — 절대 경로 박제 (postinstall.js 와 동일 노하우)
   const generated = generateHooksJson({
-    pluginRoot: '${CLAUDE_PLUGIN_ROOT}/dist', // Claude plugin SDK 가 런타임 resolve
+    pluginRoot: path.join(pkgRoot, 'dist'),
     runtime: 'claude',
     releaseMode: true,
   });

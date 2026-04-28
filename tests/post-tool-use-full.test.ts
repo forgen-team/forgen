@@ -163,6 +163,21 @@ describe('post-tool-use - extended', () => {
       expect(result!.signal).toBe('agent_context_overflow');
     });
 
+    // 회귀 박제: tool_response 가 object / array 인 경우 (sub-agent 결과 등)
+    // 과거 trim 호출 직전에 string 가정 → TypeError 폭발 했던 버그.
+    it('tool_response 가 object 인 경우에도 crash 없이 normalize', () => {
+      const result = validateAgentOutput({ items: ['a', 'b'] } as unknown);
+      // stringified JSON 길이가 충분하면 null, 짧으면 agent_empty_output. 둘 다 throw 없으면 통과.
+      expect(() => result).not.toThrow();
+    });
+
+    it('tool_response 가 null/undefined 일 때도 안전하게 empty 처리', () => {
+      expect(() => validateAgentOutput(null as unknown)).not.toThrow();
+      expect(() => validateAgentOutput(undefined as unknown)).not.toThrow();
+      const r = validateAgentOutput(null as unknown);
+      expect(r?.signal).toBe('agent_empty_output');
+    });
+
     it('null/undefined 입력을 안전하게 처리한다', () => {
       const result = validateAgentOutput(null as unknown as string);
       expect(result).not.toBeNull();
