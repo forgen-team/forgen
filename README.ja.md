@@ -182,22 +182,30 @@ Claude が `correction-record` MCP ツールを呼び出します。修正は、
 ## クイックスタート
 
 ```bash
-# 1. インストール
+# 1. インストール (グローバル CLI なので必ず -g)
 npm install -g @wooojin/forgen
 
-# 2. 初回実行 — 4問オンボーディング（英語/韓国語選択）
-forgen
+# 2. ホスト登録 — Claude Code / Codex / 両方
+forgen install both          # 3択インタラクティブ: claude / codex / both
+# または非対話:
+forgen install claude
+forgen install codex
 
-# 3. 以降毎日
-forgen
+# 3. 初回実行 — 4問オンボーディング (英語/韓国語選択)
+forgen                        # デフォルト: Claude
+forgen --runtime codex        # Codex で実行
+forgen config default-host codex   # 永続デフォルトホスト設定
 ```
 
 ### 前提条件
 
-- **Node.js** >= 20（SQLite セッション検索には >= 22 を推奨）
-- **Claude Code** インストール・認証済み（`npm i -g @anthropic-ai/claude-code`）
+- **Node.js** >= 20 (SQLite セッション検索には >= 22 を推奨)
+- **少なくとも 1 つのホスト** インストール・認証済み:
+  - **Claude Code** — `npm i -g @anthropic-ai/claude-code`
+  - **Codex CLI** — [Codex docs](https://github.com/openai/codex) を参照
+  - 両方利用可 — `forgen install both` が両方に hook/MCP を対称登録
 
-> **ベンダー依存:** forgen は Claude Code をラップします。Anthropic API または Claude Code の変更が動作に影響する可能性があります。Claude Code 1.0.x / 2.1.x でテスト済み。
+> **ベンダー依存:** forgen は Claude Code と Codex CLI を対称ラップします (Claude が動作基準、Codex が同等性拡張)。上流 API/CLI の変更が動作に影響する可能性があります。Claude Code 1.0.x / 2.1.x、Codex 0.x でテスト済み。
 
 ### 隔離 / CI / Docker での利用
 

@@ -182,22 +182,30 @@ Claude 调用 `correction-record` MCP 工具。纠正作为结构化证据存储
 ## 快速开始
 
 ```bash
-# 1. 安装
+# 1. 安装 (必须 -g — forgen 是全局 CLI)
 npm install -g @wooojin/forgen
 
-# 2. 首次运行 — 4题引导问卷（英语/韩语选择）
-forgen
+# 2. 注册主机 — Claude Code / Codex / 两者
+forgen install both          # 三选交互: claude / codex / both
+# 或非交互:
+forgen install claude
+forgen install codex
 
-# 3. 此后每天
-forgen
+# 3. 首次运行 — 4题引导问卷 (英语/韩语选择)
+forgen                        # 默认: Claude
+forgen --runtime codex        # 使用 Codex
+forgen config default-host codex   # 设置持久默认主机
 ```
 
 ### 前提条件
 
-- **Node.js** >= 20（SQLite 会话搜索推荐 >= 22）
-- **Claude Code** 已安装并认证（`npm i -g @anthropic-ai/claude-code`）
+- **Node.js** >= 20 (SQLite 会话搜索推荐 >= 22)
+- **至少安装一个主机** 并认证:
+  - **Claude Code** — `npm i -g @anthropic-ai/claude-code`
+  - **Codex CLI** — 参考 [Codex docs](https://github.com/openai/codex)
+  - 也可同时使用 — `forgen install both` 对两者对称注册 hook/MCP
 
-> **厂商依赖:** forgen 封装了 Claude Code。Anthropic API 或 Claude Code 的变更可能影响其行为。已在 Claude Code 1.0.x 版本下测试。
+> **厂商依赖:** forgen 对称包装 Claude Code 与 Codex CLI (Claude 为行为基准, Codex 以等价性扩展)。上游 API/CLI 变更可能影响行为。已在 Claude Code 1.0.x / 2.1.x、Codex 0.x 下测试。
 
 ---
 
