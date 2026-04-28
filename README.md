@@ -187,19 +187,27 @@ Updated rules are rendered with your corrections included. Compound knowledge is
 # 1. Install (MUST use -g — forgen is a global CLI)
 npm install -g @wooojin/forgen
 
-# 2. First run — 4-question onboarding (English or Korean)
-forgen
+# 2. Register forgen on your host(s) — Claude Code, Codex, or both
+forgen install both         # 3-choice interactive: claude / codex / both
+# or non-interactive:
+forgen install claude
+forgen install codex
 
-# 3. Every day after that
-forgen
+# 3. First run — 4-question onboarding (English or Korean)
+forgen                       # default: Claude
+forgen --runtime codex       # use Codex
+forgen config default-host codex   # set persistent default
 ```
 
 ### Prerequisites
 
 - **Node.js** >= 20 (>= 22 recommended for SQLite session search)
-- **Claude Code** installed and authenticated (`npm i -g @anthropic-ai/claude-code`)
+- **At least one host** installed and authenticated:
+  - **Claude Code** — `npm i -g @anthropic-ai/claude-code`
+  - **Codex CLI** — install per [Codex docs](https://github.com/openai/codex)
+  - Or both — `forgen install both` registers symmetric hooks/MCP for each
 
-> **Vendor dependency:** Forgen wraps Claude Code. Anthropic API or Claude Code changes may affect behavior. Tested with Claude Code 1.0.x / 2.1.x.
+> **Vendor dependency:** Forgen wraps Claude Code and Codex CLI symmetrically (Claude is the behavior reference; Codex extends with equivalence). Upstream API/CLI changes may affect behavior. Tested with Claude Code 1.0.x / 2.1.x and Codex 0.x.
 
 ### Isolated / CI / Docker usage
 

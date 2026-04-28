@@ -45,3 +45,6 @@ hooks/hooks.json
 
 # Build artifacts
 *.tgz
+
+# forgen install codex 가 cwd 에 자동 생성하는 사용자별 파일 (forgen-managed-rules 블록만 포함)
+AGENTS.md
