@@ -1,0 +1,10 @@
+node_modules/
+dist/
+coverage/
+reports/introspect/
+reports/smoke/
+reports/full/
+*.log
+.DS_Store
+.env
+.env.local
