@@ -27,6 +27,7 @@ import { approve, approveWithWarning, blockStop, failOpenWithTracking } from './
 import { takeLastExtractionNotice } from '../core/extraction-notice.js';
 import { checkConclusionVerificationRatio } from '../checks/conclusion-verification-ratio.js';
 import { checkSelfScoreInflation } from '../checks/self-score-deflation.js';
+import { checkFactVsAgreement } from '../checks/fact-vs-agreement.js';
 import { STATE_DIR } from '../core/paths.js';
 import { sanitizeId } from './shared/sanitize-id.js';
 import { detectRecallReferences, type InjectedSolutionEntry } from '../core/recall-reference-detector.js';
@@ -562,6 +563,21 @@ export async function main(): Promise<void> {
 (Override this turn: set FORGEN_USER_CONFIRMED=1 (audited).)`;
         console.log(blockStop(reasonText, 'rule:TEST-3 — conclusion/verification ratio'));
         return;
+      }
+
+      // TEST-1: 사실 vs 합의 — fact assertion 키워드가 있으나 측정 도구 호출 0건.
+      // 원 design intent (per fact-vs-agreement.ts): alert level only — block 은 TEST-2/3.
+      // 여기서는 measurement 신호를 violations.jsonl 에 'alert' kind 로 기록만 (block 안 함).
+      // wiring gap 발견 (forgen-eval introspect) → 측정 가능하게 wired up.
+      const fva = checkFactVsAgreement({ text: lastMessage, recentTools, minMeasurements: 1 });
+      if (fva.alert) {
+        recordViolation({
+          rule_id: 'builtin:fact-vs-agreement',
+          session_id: sessionId,
+          source: 'stop-guard',
+          kind: 'correction', // alert-level signal (not block) per fact-vs-agreement.ts design
+          message_preview: lastMessage.slice(0, 120),
+        });
       }
     }
 

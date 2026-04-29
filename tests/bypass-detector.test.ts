@@ -54,6 +54,49 @@ describe('extractBypassPatterns', () => {
     const r = rule({ policy: 'always include stack trace in error logs' });
     expect(extractBypassPatterns(r)).toHaveLength(0);
   });
+
+  // RC5/E9 fix — Korean generic verb "실행" should NOT be extracted as a pattern
+  it('L1-no-rm-rf-unconfirmed policy → "rm -rf"/"DROP"/"force-push", NOT "실행"', () => {
+    const r = rule({
+      rule_id: 'L1-no-rm-rf-unconfirmed',
+      policy: '파괴적 명령(rm -rf, DROP, force-push)은 사용자 확인 없이 실행하지 마라.',
+    });
+    const pats = extractBypassPatterns(r);
+    // Must NOT match generic Korean verb
+    expect(pats.some((p) => /^실행$/.test(p))).toBe(false);
+    expect(pats.some((p) => /^실행하지$/.test(p))).toBe(false);
+    // Should extract concrete examples from parens
+    expect(pats.some((p) => /rm/.test(p))).toBe(true);
+    expect(pats.some((p) => /DROP/.test(p))).toBe(true);
+  });
+
+  it('does NOT match generic word "실행" in tool output (RC5/E9 regression)', () => {
+    const r = rule({
+      rule_id: 'L1-no-rm-rf-unconfirmed',
+      policy: '파괴적 명령(rm -rf, DROP, force-push)은 사용자 확인 없이 실행하지 마라.',
+    });
+    const out = scanForBypass({
+      rules: [r],
+      tool_name: 'Bash',
+      tool_output: 'echo "테스트 실행 중"', // contains "실행" but not actual rm -rf
+      session_id: 's-test',
+    });
+    expect(out).toHaveLength(0);
+  });
+
+  it('DOES match actual "rm -rf" in Bash output', () => {
+    const r = rule({
+      rule_id: 'L1-no-rm-rf-unconfirmed',
+      policy: '파괴적 명령(rm -rf, DROP, force-push)은 사용자 확인 없이 실행하지 마라.',
+    });
+    const out = scanForBypass({
+      rules: [r],
+      tool_name: 'Bash',
+      tool_output: 'rm -rf /tmp/cache',
+      session_id: 's-test',
+    });
+    expect(out.length).toBeGreaterThan(0);
+  });
 });
 
 describe('scanForBypass', () => {

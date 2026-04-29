@@ -1,6 +1,6 @@
 {
   "name": "@wooojin/forgen",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "preferGlobal": true,
   "main": "dist/lib.js",
   "types": "./dist/lib.d.ts",
@@ -47,12 +47,15 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/wooo-jin/forgen.git"
+    "url": "https://github.com/forgen-team/forgen.git"
   },
   "engines": {
     "node": ">=20.0.0"
   },
   "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
   "bin": {
     "forgen": "./dist/cli.js",
     "fgx": "./dist/fgx.js",
