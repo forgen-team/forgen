@@ -1,0 +1,63 @@
+# forgen-eval — local development + smoke testbed orchestration
+#
+# Scope:
+#   `forgen-eval` service: builds + runs unit tests (always works, no GPU)
+#   `ollama` service: optional, for local judge models (requires GPU on host)
+#   `forgen-eval-data`: volume mount, expects clone at ../../forgen-eval-data
+#
+# Intentionally NOT bundled:
+#   - claude-mem: installs as Claude Code plugin on host (AGPL boundary, ADR-004 amendment).
+#     Containers cannot run the full forgen+mem arm — host-only.
+
+services:
+  forgen-eval:
+    build:
+      context: ../..
+      dockerfile: packages/forgen-eval/Dockerfile
+    image: forgen-eval:0.5.0-alpha
+    container_name: forgen-eval
+    environment:
+      - NODE_ENV=test
+      - FORGEN_EVAL_DATA_DIR=/data
+      - OLLAMA_HOST=http://ollama:11434
+    volumes:
+      - ../../../forgen-eval-data:/data:ro
+    networks:
+      - forgen-eval-net
+    depends_on:
+      ollama:
+        condition: service_healthy
+        required: false
+    restart: "no"
+
+  ollama:
+    image: ollama/ollama:0.5.4
+    container_name: forgen-eval-ollama
+    profiles: ["with-gpu"] # opt-in: `docker compose --profile with-gpu up`
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-models:/root/.ollama
+    networks:
+      - forgen-eval-net
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    restart: unless-stopped
+
+volumes:
+  ollama-models:
+    driver: local
+
+networks:
+  forgen-eval-net:
+    driver: bridge

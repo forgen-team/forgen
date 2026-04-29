@@ -1,0 +1,79 @@
+name: forgen-eval
+
+on:
+  pull_request:
+    paths:
+      - 'packages/forgen-eval/**'
+      - 'docs/adr/ADR-004-*'
+      - 'docs/adr/ADR-005-*'
+      - 'docs/adr/ADR-006-*'
+      - '.github/workflows/forgen-eval.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'packages/forgen-eval/**'
+
+jobs:
+  unit:
+    name: Type-check + unit tests (free tier)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Type-check forgen-eval
+        run: npx -w @wooojin/forgen-eval tsc --noEmit -p packages/forgen-eval/tsconfig.json
+      - name: Run forgen-eval unit tests
+        run: npx vitest run --no-coverage
+        working-directory: packages/forgen-eval
+
+  dataset-version-check:
+    name: Verify dataset pin resolves
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Read pinned commit
+        id: pin
+        run: |
+          COMMIT=$(jq -r '.commit' packages/forgen-eval/datasets-version.json 2>/dev/null || \
+                   curl -fsSL https://raw.githubusercontent.com/forgen-team/forgen-eval-data/main/datasets-version.json | jq -r '.commit')
+          echo "commit=$COMMIT" >> $GITHUB_OUTPUT
+      - name: Verify commit exists in forgen-eval-data
+        run: |
+          if [ "${{ steps.pin.outputs.commit }}" = "PLACEHOLDER_BOOTSTRAP" ]; then
+            echo "::warning::dataset version is bootstrap placeholder — replace before v0.5.0 release"
+            exit 0
+          fi
+          gh api repos/forgen-team/forgen-eval-data/commits/${{ steps.pin.outputs.commit }} > /dev/null
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Smoke testbed (requires Ollama + Qwen 72B + Llama 70B → self-hosted GPU runner only)
+  # Uncomment + configure when self-hosted runner is available.
+  # smoke:
+  #   name: Smoke testbed run (self-hosted GPU)
+  #   runs-on: [self-hosted, gpu, ollama]
+  #   if: github.event_name == 'pull_request'
+  #   steps:
+  #     - uses: actions/checkout@v6
+  #     - uses: actions/setup-node@v6
+  #     - run: npm ci
+  #     - name: Verify Ollama models present
+  #       run: |
+  #         ollama list | grep -q "qwen2.5:72b-instruct-q4_K_M" || ollama pull qwen2.5:72b-instruct-q4_K_M
+  #         ollama list | grep -q "llama3.3:70b-instruct-q4_K_M" || ollama pull llama3.3:70b-instruct-q4_K_M
+  #     - name: Install claude-mem
+  #       run: npx --yes claude-mem@12.4.8 install --ide claude-code
+  #     - name: Run smoke testbed
+  #       run: |
+  #         git clone --depth 1 https://github.com/forgen-team/forgen-eval-data /tmp/forgen-eval-data
+  #         FORGEN_EVAL_DATA_DIR=/tmp/forgen-eval-data npx -w @wooojin/forgen-eval node packages/forgen-eval/dist/runners/smoke.js
+  #     - name: Upload report
+  #       if: always()
+  #       uses: actions/upload-artifact@v6
+  #       with:
+  #         name: smoke-report
+  #         path: packages/forgen-eval/reports/smoke/*

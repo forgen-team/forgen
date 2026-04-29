@@ -1,0 +1,37 @@
+{
+  "name": "@wooojin/forgen-eval",
+  "version": "0.5.0-alpha.0",
+  "private": true,
+  "description": "Testbed for forgen behavioral-change measurement (γ/β/δ/ε/ζ/φ/ψ 7-axis). Compares forgen vs claude-mem vs vanilla vs full(forgen+mem) vs gstack arms.",
+  "license": "MIT",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "smoke": "node dist/runners/smoke.js",
+    "full": "node dist/runners/full.js",
+    "lint": "biome lint src/"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "peerDependencies": {
+    "@wooojin/forgen": ">=0.4.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "claude-mem": "12.4.8",
+    "typescript": "^5.4.0",
+    "vitest": "^2.0.0"
+  },
+  "keywords": [
+    "forgen",
+    "testbed",
+    "llm-judge",
+    "behavioral-evaluation",
+    "claude-mem",
+    "swe-bench-alternative"
+  ]
+}
