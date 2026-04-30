@@ -8,7 +8,7 @@ import type { V1HarnessContext } from './harness.js';
 import { loadGlobalConfig } from './global-config.js';
 import { createLogger } from './logger.js';
 import { STATE_DIR } from './paths.js';
-import { type RuntimeHost } from './types.js';
+import type { RuntimeHost } from './types.js';
 import { getHostRuntime } from '../host/host-runtime.js';
 
 const log = createLogger('spawn');

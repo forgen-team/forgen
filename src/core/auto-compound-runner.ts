@@ -228,7 +228,7 @@ function mergeOrCreateBehavior(dir: string, newContent: string, kind: string, to
         .replace(/^confidence:\s*[\d.]+/m, `confidence: ${Math.min(0.95, 0.6 + (currentCount * 0.1)).toFixed(2)}`);
       fs.writeFileSync(filePath, updated);
       return true;
-    } catch { continue; }
+    } catch { }
   }
   return false;
 }

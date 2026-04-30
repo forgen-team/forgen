@@ -15,7 +15,7 @@ import * as path from 'node:path';
 import { HOOK_REGISTRY, type HookEntry, type HookEventType } from './hook-registry.js';
 import { isHookEnabled } from './hook-config.js';
 import { detectInstalledPlugins, getHookConflicts } from '../core/plugin-detector.js';
-import { type RuntimeHost } from '../core/types.js';
+import type { RuntimeHost } from '../core/types.js';
 import { getHostRuntime } from '../host/host-runtime.js';
 
 // ── 타입 ──

@@ -83,7 +83,7 @@ export function buildSessionBrief(sessionId: string): SessionBrief {
   } catch { /* fail-open */ }
 
   // solutionsInjected: read injection-cache-*.json files, collect solutions[].name
-  let solutionsInjected: string[] = [];
+  const solutionsInjected: string[] = [];
   try {
     if (fs.existsSync(STATE_DIR)) {
       for (const f of fs.readdirSync(STATE_DIR)) {

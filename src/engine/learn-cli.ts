@@ -145,10 +145,12 @@ function runEvolve(args: string[]): void {
   const promoteIdx = args.indexOf('--promote');
 
   if (rollbackIdx >= 0 && args[rollbackIdx + 1]) {
-    return runEvolveRollback(args[rollbackIdx + 1]);
+    runEvolveRollback(args[rollbackIdx + 1]);
+    return;
   }
   if (promoteIdx >= 0 && args[promoteIdx + 1]) {
-    return runEvolvePromote(args[promoteIdx + 1]);
+    runEvolvePromote(args[promoteIdx + 1]);
+    return;
   }
 
   // Default: generate + optionally save weakness report, print proposer

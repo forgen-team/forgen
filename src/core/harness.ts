@@ -18,7 +18,7 @@ import { buildEnv, generateClaudeRuleFiles, registerTmuxBindings } from './confi
 import { createLogger } from './logger.js';
 import { HANDOFFS_DIR, ME_BEHAVIOR, ME_DIR, ME_RULES, ME_SKILLS, ME_SOLUTIONS, SESSIONS_DIR, STATE_DIR, FORGEN_HOME } from './paths.js';
 import { RULE_FILE_CAPS } from '../hooks/shared/injection-caps.js';
-import { type RuntimeHost } from './types.js';
+import type { RuntimeHost } from './types.js';
 import {
   rollbackSettings,
 } from './settings-lock.js';

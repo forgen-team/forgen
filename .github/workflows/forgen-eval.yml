@@ -25,7 +25,8 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Type-check forgen-eval
-        run: npx -w @wooojin/forgen-eval tsc --noEmit -p packages/forgen-eval/tsconfig.json
+        run: npx tsc --noEmit -p tsconfig.json
+        working-directory: packages/forgen-eval
       - name: Run forgen-eval unit tests
         run: npx vitest run --no-coverage
         working-directory: packages/forgen-eval

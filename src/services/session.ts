@@ -12,7 +12,7 @@
  */
 
 import { createRequire } from 'node:module';
-import { type LaunchContext, type RuntimeHost } from '../core/types.js';
+import type { LaunchContext, RuntimeHost } from '../core/types.js';
 
 const localRequire = createRequire(import.meta.url);
 
