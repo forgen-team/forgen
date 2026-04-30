@@ -3,8 +3,8 @@
 </p>
 
 <p align="center">
-  <strong>When Claude says "done", forgen makes it prove it.</strong><br/>
-  Turn-level self-verification + personalized rules, at <strong>$0 extra API cost</strong>.
+  <strong>When your agent says "done", forgen makes it prove it.</strong><br/>
+  Turn-level self-verification + personalized rules for <strong>Claude Code</strong> and <strong>Codex CLI</strong>, at <strong>$0 extra API cost</strong>.
 </p>
 
 <p align="center">
@@ -57,7 +57,9 @@ Claude:  "측정 없이 점수를 매겼습니다. 실 테스트부터 실행합
 
 The same mechanism also fires when Claude writes conclusions faster than evidence ("done. passed. shipped. verified." with no measurement context), or claims facts ("테스트가 통과합니다") without ever having executed them. You can also define **custom rules** (e.g. "require npm test evidence before saying 'done' in this repo") via `forgen compound --rule` — they slot into the same Stop-hook dispatcher.
 
-This is **Mech-B self-check prompt-inject**. It works because Claude Code's Stop hook accepts `decision: "block"` + `reason`, and Claude in the next turn reads that reason as input. We verified it end-to-end on 10 scenarios at $1.74 total cost ([A1 spike report](docs/spike/mech-b-a1-verification-report.md)), and v0.4.1 added built-in guards so you get the first block **without writing any rule**.
+This is **Mech-B self-check prompt-inject**. It works because Claude Code's Stop hook accepts `decision: "block"` + `reason`, and Claude in the next turn reads that reason as input. Codex CLI gets the same treatment via the symmetric host adapter (v0.4.3, [multi-host core design](docs/superpowers/specs/2026-04-27-forgen-multi-host-core-design.md)). We verified it end-to-end on 10 scenarios at $1.74 total cost ([A1 spike report](docs/spike/mech-b-a1-verification-report.md)), and v0.4.1 added built-in guards so you get the first block **without writing any rule**.
+
+> **v0.4.3 self-correction story:** the same guards detected their own 16-day false-positive (strict φ 65.66% — 84% from a single Korean-regex bug), and the [`forgen-eval`](packages/forgen-eval/) introspect testbed (alpha) flagged a `TEST-1` wiring gap on top of it. Both fixes shipped in v0.4.3 — forgen finding and fixing forgen. Details in [CHANGELOG](CHANGELOG.md).
 
 🎬 **See it happen** (27 seconds):
 
@@ -767,7 +769,27 @@ Safety rules are **hard constraints** -- they cannot be overridden by pack selec
 
 Forgen detects other Claude Code plugins (oh-my-claudecode, superpowers, claude-mem) at install time and automatically reduces its context injection by 50% ("yielding principle"). Core safety and compound hooks always remain active. Conflicting skills are skipped when another plugin already provides them.
 
-See [Coexistence Guide](docs/guides/with-omc.md) for details.
+### Better with claude-mem (recommended pairing)
+
+forgen and [claude-mem](https://github.com/thedotmack/claude-mem) solve **complementary** halves of the trust gap:
+
+| | forgen | claude-mem |
+|---|---|---|
+| **Job** | Enforcement — block unverified claims | Recall — inject relevant past sessions |
+| **Trigger** | Stop / PreToolUse hooks | UserPromptSubmit hook |
+| **Cost** | $0 (in-turn block/reason) | $0 (vector recall, local) |
+
+Install both as separate Claude Code plugins (Plugin model — forgen does not bundle claude-mem; AGPL-3.0 stays at arm's length). When both are present forgen's auto-detect yields context budget so claude-mem's recall has room to land, and the orchestration contract — order, failure isolation, Stop-hook ownership — is documented in [ADR-004](docs/adr/ADR-004-claude-mem-hook-orchestration.md). The pairing is one of the 5 arms tracked by [forgen-eval](packages/forgen-eval/) (see [claude-mem spike](docs/spike/2026-04-28-claude-mem-spike.md)).
+
+```
+You:        "fix the auth flow"
+claude-mem: ↓ recalls past auth-flow session, injects 3 relevant chunks
+forgen:     ↓ matches your "no mock as proof" rule, primes Stop guard
+Claude:     edits → declares done → forgen Stop hook blocks (no test ran)
+            → re-runs test → approved
+```
+
+See [Coexistence Guide](docs/guides/with-omc.md) for the full plugin-detection matrix.
 
 ---
 
@@ -777,6 +799,9 @@ See [Coexistence Guide](docs/guides/with-omc.md) for details.
 |----------|-------------|
 | [Hooks Reference](docs/reference/hooks-reference.md) | 19 hooks across 3 tiers — events, timeouts, behavior |
 | [Coexistence Guide](docs/guides/with-omc.md) | Using forgen alongside oh-my-claudecode |
+| [forgen-eval testbed](packages/forgen-eval/) | Alpha self-measurement package — multi-host parity, 7-axis metrics, drift detection (private workspace, v0.4.3+) |
+| [Multi-host core design](docs/superpowers/specs/2026-04-27-forgen-multi-host-core-design.md) | Codex/Claude symmetric host adapter spec |
+| [ADR-005 forgen-eval architecture](docs/adr/ADR-005-forgen-eval-module-architecture.md) | Self-measurement testbed module design |
 | [CHANGELOG](CHANGELOG.md) | Version history and release notes |
 
 ---

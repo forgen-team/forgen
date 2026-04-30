@@ -1,11 +1,11 @@
 {
   "$schema": "https://claude.ai/schemas/claude-plugin.json",
   "name": "forgen",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "description": "Claude Code harness — the more you use Claude, the better it gets",
   "author": {
     "name": "jang-ujin",
-    "url": "https://github.com/wooo-jin"
+    "url": "https://github.com/forgen-team"
   },
   "repository": "https://github.com/forgen-team/forgen",
   "homepage": "https://github.com/forgen-team/forgen",
