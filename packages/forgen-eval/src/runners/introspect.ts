@@ -470,9 +470,14 @@ async function computePostFixProjection(
   const ruleIds = Array.from(new Set(bypasses.map((b) => b.rule_id)));
   const silenced: string[] = [];
   for (const id of ruleIds) {
-    const rule = tryLoadRule(id);
+    const rule = tryLoadRule(id) as { status?: string } | null;
     if (!rule) {
       // Cannot load — be conservative, assume rule still active (count as remaining)
+      continue;
+    }
+    // Rule already retired (removed/superseded) → future bypass = 0 prospectively
+    if (rule.status === 'removed' || rule.status === 'superseded') {
+      silenced.push(id);
       continue;
     }
     const patterns = extractBypassPatterns(rule);

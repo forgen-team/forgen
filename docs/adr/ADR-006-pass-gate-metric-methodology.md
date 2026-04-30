@@ -306,6 +306,42 @@ PUBLIC (Dual judge): Cohen's κ ≥ 0.7 (substantial)
 | 메트릭 가중치 sensitivity analysis | **DEFERRED** — 첫 full run 결과 후 |
 | DEV human spot-check (분기별) | **DEFERRED** — release 후 정착 시 |
 
+## Amendment 2026-04-30 — PUBLIC baseline 현실화 (14B/8B)
+
+**Trigger**: 32GB Mac (가장 흔한 forgen 사용자 환경) 에서 70B Q4_K_M 모델
+2개 동시 로드 ≈ 80-90GB → 사실상 외부 재현 불가능. "PUBLIC track" 이름이
+무색.
+
+### 신규 baseline
+
+```
+PUBLIC baseline (32GB Mac OK):
+  Qwen 2.5 14B Q4_K_M (~9GB) + Llama 3.1 8B Q4_K_M (~5GB)
+  Cohen's κ ≥ 0.5 (moderate — smaller model variance 인정)
+
+PREMIUM track (선택):
+  Qwen 72B + Llama 70B Q4_K_M (cloud GPU ~$3/run 또는 ≥64GB hardware)
+  Cohen's κ ≥ 0.8 (judge 품질 ↑로 threshold 강화)
+```
+
+### Threshold 재조정 (PUBLIC track)
+
+| Metric | 70B 임계 | 14B/8B 임계 | 근거 |
+|---|---|---|---|
+| Cohen's κ | ≥ 0.7 | **≥ 0.5** | smaller model variance 인정 |
+| 폐기율 | ≤ 10% | **≤ 20%** | weak judge 폐기 ↑ 자연 |
+| φ (master gate) | ≤ 5% | ≤ 5% | release-blocker 동일 |
+| ψ (synergy) | > 0 | > 0 | sign 자체는 robust |
+| γ Cohen's d | ≥ 0.8 | ≥ 0.5 (medium) | weak judge 효과 크기 추정 보수적 |
+
+PREMIUM track 은 기존 70B 임계값 유지.
+
+### 정직 인정
+
+- 14B/8B → judge 품질 약함 (특히 4-likert 정밀도)
+- 그러나 외부 재현 가능성 우선 — "PUBLIC" 본래 의미 회복
+- forgen 본인 환경에서 자체 테스트 가능 → self-correcting harness 정합
+
 ## Related
 - **Depends on**: ADR-005 (forgen-eval 모듈 내 구현)
 - **Spec**: `docs/plans/2026-04-28-forgen-testbed-proof-spec.md` §5 (PASS Gate)
