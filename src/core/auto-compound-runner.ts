@@ -44,15 +44,24 @@ function execClaudeRetry(args: string[], opts: ExecFileSyncOptions): string {
   if (host === 'claude') {
     // Claude 측은 기존 보안 hardening 보존: --allowedTools 등 args 그대로 전달.
     const TRANSIENT = /ETIMEDOUT|ECONNRESET|ECONNREFUSED|EPIPE/;
-    for (let attempt = 0; attempt < 2; attempt++) {
+    const MAX_ATTEMPTS = 2;
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
       try {
         return execFileSync('claude', args, opts) as unknown as string;
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
-        if (attempt === 0 && TRANSIENT.test(msg)) {
-          process.stderr.write(`[forgen-auto-compound] transient error, retrying in 3s...\n`);
+        const match = msg.match(TRANSIENT);
+        if (attempt < MAX_ATTEMPTS && match) {
+          process.stderr.write(
+            `[forgen-auto-compound] ${match[0]} on attempt ${attempt}/${MAX_ATTEMPTS}, retrying in 3s (auto-recovery)...\n`,
+          );
           Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 3000);
           continue;
+        }
+        if (match) {
+          process.stderr.write(
+            `[forgen-auto-compound] ${match[0]} after ${attempt}/${MAX_ATTEMPTS} attempts — giving up (fail-open)\n`,
+          );
         }
         throw e;
       }

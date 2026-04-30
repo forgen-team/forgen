@@ -39,7 +39,8 @@ triggers:
 calibrate는 두 가지 데이터 소스를 사용합니다:
 
 ### 1차 소스: Evidence 파일
-`~/.forgen/me/evidence/` 디렉토리의 JSON 파일을 읽습니다.
+`~/.forgen/me/behavior/` 디렉토리의 JSON 파일을 읽습니다.
+(파일명: UUID.json — correction-record MCP 도구가 작성. 같은 디렉토리의 auto-*.md 는 auto-compound 산출이므로 calibrate 분석 대상 아님.)
 각 파일의 구조:
 ```json
 {
@@ -70,8 +71,8 @@ evidence 0건 + compound 교정 패턴 0건이면:
 ## Phase 1: Evidence 로드 및 검증
 
 ```bash
-ls ~/.forgen/me/evidence/ 2>/dev/null || echo "EMPTY"
-cat ~/.forgen/me/evidence/*.json 2>/dev/null || echo "NO_FILES"
+ls ~/.forgen/me/behavior/*.json 2>/dev/null || echo "EMPTY"
+cat ~/.forgen/me/behavior/*.json 2>/dev/null || echo "NO_FILES"
 ```
 
 로드한 JSON 파일마다 다음을 검증합니다:

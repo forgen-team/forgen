@@ -69,8 +69,8 @@ compound-list
 ### 1-3: 교정 기록
 
 ```bash
-ls -la ~/.forgen/me/evidence/ 2>/dev/null || echo "교정 데이터 없음"
-find ~/.forgen/me/evidence/ -name "*.json" -mtime -{period_days} 2>/dev/null | wc -l
+ls -la ~/.forgen/me/behavior/ 2>/dev/null || echo "교정 데이터 없음"
+find ~/.forgen/me/behavior/ -name "*.json" -mtime -{period_days} 2>/dev/null | wc -l
 ```
 
 ## Phase 2: 코드 활동 분석

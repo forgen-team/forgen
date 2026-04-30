@@ -28,6 +28,7 @@ import { takeLastExtractionNotice } from '../core/extraction-notice.js';
 import { checkConclusionVerificationRatio } from '../checks/conclusion-verification-ratio.js';
 import { checkSelfScoreInflation } from '../checks/self-score-deflation.js';
 import { checkFactVsAgreement } from '../checks/fact-vs-agreement.js';
+import { sanitizeForGuard } from '../checks/_shared/text-sanitizer.js';
 import { STATE_DIR } from '../core/paths.js';
 import { sanitizeId } from './shared/sanitize-id.js';
 import { detectRecallReferences, type InjectedSolutionEntry } from '../core/recall-reference-detector.js';
@@ -524,60 +525,69 @@ export async function main(): Promise<void> {
     const sessionIdForRef = input?.session_id ?? 'unknown';
     emitRecallReferencesFailOpen(sessionIdForRef, lastMessage);
 
-    // TEST-2/3: rule-free meta guards — FORGEN_USER_CONFIRMED=1 우회 공통.
+    // TEST-1/2/3: rule-free meta guards — FORGEN_USER_CONFIRMED=1 우회 공통.
+    // Pathfinder D7: 3중 보일러플레이트를 CHECKS 배열 + for-loop 디스패처로 통합.
+    // Pathfinder D4/D5: sanitizeForGuard 가 모든 체크 입력 단계에 일괄 적용.
     if (process.env.FORGEN_USER_CONFIRMED !== '1') {
       const sessionId = input?.session_id ?? 'unknown';
-
-      // TEST-2 (자가 점수 인플레이션): 숫자 점수 상승 선언 + 측정 도구 0회 → block.
-      // TEST-3 보다 강한 신호라 먼저 평가.
       const recentTools = loadRecentToolNames(sessionId);
-      const score = checkSelfScoreInflation({ text: lastMessage, recentTools });
-      if (score.block) {
+      const sanitized = sanitizeForGuard(lastMessage);
+
+      type GuardOutcome = { triggered: boolean; reason: string };
+      type GuardCheck = {
+        shortId: string;
+        ruleSlug: string;
+        kind: 'block' | 'correction';
+        run: () => GuardOutcome;
+      };
+
+      // 평가 순서: TEST-2 (강한 신호) → TEST-3 (텍스트 비율) → TEST-1 (alert-only).
+      const checks: GuardCheck[] = [
+        {
+          shortId: 'self-score-inflation',
+          ruleSlug: 'rule:TEST-2 — self-score inflation',
+          kind: 'block',
+          run: () => {
+            const r = checkSelfScoreInflation({ text: sanitized, recentTools });
+            return { triggered: r.block, reason: r.reason };
+          },
+        },
+        {
+          shortId: 'conclusion-ratio',
+          ruleSlug: 'rule:TEST-3 — conclusion/verification ratio',
+          kind: 'block',
+          run: () => {
+            const r = checkConclusionVerificationRatio({ text: sanitized });
+            return { triggered: r.block, reason: r.reason };
+          },
+        },
+        {
+          shortId: 'fact-vs-agreement',
+          ruleSlug: 'rule:TEST-1 — fact vs agreement',
+          kind: 'correction', // alert-level only per fact-vs-agreement.ts design
+          run: () => {
+            const r = checkFactVsAgreement({ text: sanitized, recentTools, minMeasurements: 1 });
+            return { triggered: r.alert, reason: r.reason };
+          },
+        },
+      ];
+
+      for (const c of checks) {
+        const out = c.run();
+        if (!out.triggered) continue;
         recordViolation({
-          rule_id: 'builtin:self-score-inflation',
+          rule_id: `builtin:${c.shortId}`,
           session_id: sessionId,
           source: 'stop-guard',
-          kind: 'block',
+          kind: c.kind,
           message_preview: lastMessage.slice(0, 120),
         });
-        const reasonText = `[forgen:stop-guard/self-score-inflation] ${score.reason}
+        if (c.kind !== 'block') continue;
+        const reasonText = `[forgen:stop-guard/${c.shortId}] ${out.reason}
 
 (Override this turn: set FORGEN_USER_CONFIRMED=1 (audited).)`;
-        console.log(blockStop(reasonText, 'rule:TEST-2 — self-score inflation'));
+        console.log(blockStop(reasonText, c.ruleSlug));
         return;
-      }
-
-      // TEST-3: 결론/검증 비율 — Claude 가 실제 측정 도구는 돌렸지만 서술이
-      // 결론-편향이면 여전히 block.
-      const ratio = checkConclusionVerificationRatio({ text: lastMessage });
-      if (ratio.block) {
-        recordViolation({
-          rule_id: 'builtin:conclusion-verification-ratio',
-          session_id: sessionId,
-          source: 'stop-guard',
-          kind: 'block',
-          message_preview: lastMessage.slice(0, 120),
-        });
-        const reasonText = `[forgen:stop-guard/conclusion-ratio] ${ratio.reason}
-
-(Override this turn: set FORGEN_USER_CONFIRMED=1 (audited).)`;
-        console.log(blockStop(reasonText, 'rule:TEST-3 — conclusion/verification ratio'));
-        return;
-      }
-
-      // TEST-1: 사실 vs 합의 — fact assertion 키워드가 있으나 측정 도구 호출 0건.
-      // 원 design intent (per fact-vs-agreement.ts): alert level only — block 은 TEST-2/3.
-      // 여기서는 measurement 신호를 violations.jsonl 에 'alert' kind 로 기록만 (block 안 함).
-      // wiring gap 발견 (forgen-eval introspect) → 측정 가능하게 wired up.
-      const fva = checkFactVsAgreement({ text: lastMessage, recentTools, minMeasurements: 1 });
-      if (fva.alert) {
-        recordViolation({
-          rule_id: 'builtin:fact-vs-agreement',
-          session_id: sessionId,
-          source: 'stop-guard',
-          kind: 'correction', // alert-level signal (not block) per fact-vs-agreement.ts design
-          message_preview: lastMessage.slice(0, 120),
-        });
       }
     }
 

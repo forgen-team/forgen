@@ -171,6 +171,11 @@ export function registerTools(server: McpServer): void {
         };
       }
 
+      // D11 — compound usage signal: 사용자 reuse 신호를 한 줄 기록.
+      // mature 승격 정책의 입력 데이터 (정책은 별도 사이클).
+      const usageMod = await import('../store/compound-usage-store.js');
+      usageMod.recordUsage(result.name, 'mcp');
+
       const header =
         `# ${result.name}\n` +
         `Status: ${result.status} | Confidence: ${result.confidence.toFixed(2)} | Type: ${result.type} | Scope: ${result.scope}\n` +

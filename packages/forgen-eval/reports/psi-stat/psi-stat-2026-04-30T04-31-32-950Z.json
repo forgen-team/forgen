@@ -1,0 +1,271 @@
+{
+  "N": 10,
+  "mean": 0.04198669711099851,
+  "ci": [
+    -0.08419279212073119,
+    0.15729837935424343
+  ],
+  "cases": [
+    {
+      "caseId": "syn-001",
+      "arms": {
+        "vanilla": {
+          "length": 253,
+          "blocks": 0,
+          "injects": 0
+        },
+        "forgenOnly": {
+          "length": 349,
+          "blocks": 0,
+          "injects": 0
+        },
+        "memOnly": {
+          "length": 2281,
+          "blocks": 0,
+          "injects": 1
+        },
+        "full": {
+          "length": 335,
+          "blocks": 0,
+          "injects": 1
+        }
+      },
+      "psiProxy": -0.06498602503227835
+    },
+    {
+      "caseId": "syn-002",
+      "arms": {
+        "vanilla": {
+          "length": 1357,
+          "blocks": 0,
+          "injects": 0
+        },
+        "forgenOnly": {
+          "length": 1311,
+          "blocks": 0,
+          "injects": 0
+        },
+        "memOnly": {
+          "length": 1127,
+          "blocks": 0,
+          "injects": 1
+        },
+        "full": {
+          "length": 1613,
+          "blocks": 0,
+          "injects": 1
+        }
+      },
+      "psiProxy": 0.3936430703739022
+    },
+    {
+      "caseId": "syn-003",
+      "arms": {
+        "vanilla": {
+          "length": 1188,
+          "blocks": 0,
+          "injects": 0
+        },
+        "forgenOnly": {
+          "length": 1197,
+          "blocks": 0,
+          "injects": 0
+        },
+        "memOnly": {
+          "length": 1436,
+          "blocks": 0,
+          "injects": 1
+        },
+        "full": {
+          "length": 1364,
+          "blocks": 0,
+          "injects": 1
+        }
+      },
+      "psiProxy": -0.008713762699511296
+    },
+    {
+      "caseId": "syn-004",
+      "arms": {
+        "vanilla": {
+          "length": 711,
+          "blocks": 0,
+          "injects": 0
+        },
+        "forgenOnly": {
+          "length": 879,
+          "blocks": 0,
+          "injects": 0
+        },
+        "memOnly": {
+          "length": 970,
+          "blocks": 0,
+          "injects": 1
+        },
+        "full": {
+          "length": 751,
+          "blocks": 0,
+          "injects": 1
+        }
+      },
+      "psiProxy": -0.121771603859119
+    },
+    {
+      "caseId": "syn-005",
+      "arms": {
+        "vanilla": {
+          "length": 627,
+          "blocks": 0,
+          "injects": 0
+        },
+        "forgenOnly": {
+          "length": 798,
+          "blocks": 0,
+          "injects": 0
+        },
+        "memOnly": {
+          "length": 448,
+          "blocks": 0,
+          "injects": 1
+        },
+        "full": {
+          "length": 712,
+          "blocks": 0,
+          "injects": 1
+        }
+      },
+      "psiProxy": 0.1793626321049382
+    },
+    {
+      "caseId": "syn-006",
+      "arms": {
+        "vanilla": {
+          "length": 2093,
+          "blocks": 0,
+          "injects": 0
+        },
+        "forgenOnly": {
+          "length": 926,
+          "blocks": 0,
+          "injects": 0
+        },
+        "memOnly": {
+          "length": 2264,
+          "blocks": 0,
+          "injects": 1
+        },
+        "full": {
+          "length": 1939,
+          "blocks": 0,
+          "injects": 1
+        }
+      },
+      "psiProxy": -0.3697535824899209
+    },
+    {
+      "caseId": "syn-007",
+      "arms": {
+        "vanilla": {
+          "length": 1637,
+          "blocks": 0,
+          "injects": 0
+        },
+        "forgenOnly": {
+          "length": 1398,
+          "blocks": 0,
+          "injects": 0
+        },
+        "memOnly": {
+          "length": 1223,
+          "blocks": 0,
+          "injects": 1
+        },
+        "full": {
+          "length": 740,
+          "blocks": 0,
+          "injects": 1
+        }
+      },
+      "psiProxy": -0.00010138270538706529
+    },
+    {
+      "caseId": "retro-001",
+      "arms": {
+        "vanilla": {
+          "length": 130,
+          "blocks": 0,
+          "injects": 0
+        },
+        "forgenOnly": {
+          "length": 181,
+          "blocks": 0,
+          "injects": 0
+        },
+        "memOnly": {
+          "length": 133,
+          "blocks": 0,
+          "injects": 1
+        },
+        "full": {
+          "length": 467,
+          "blocks": 0,
+          "injects": 1
+        }
+      },
+      "psiProxy": 0.19352929929044427
+    },
+    {
+      "caseId": "retro-002",
+      "arms": {
+        "vanilla": {
+          "length": 501,
+          "blocks": 0,
+          "injects": 0
+        },
+        "forgenOnly": {
+          "length": 488,
+          "blocks": 0,
+          "injects": 0
+        },
+        "memOnly": {
+          "length": 459,
+          "blocks": 0,
+          "injects": 1
+        },
+        "full": {
+          "length": 526,
+          "blocks": 0,
+          "injects": 1
+        }
+      },
+      "psiProxy": 0.12836981888175736
+    },
+    {
+      "caseId": "retro-003",
+      "arms": {
+        "vanilla": {
+          "length": 352,
+          "blocks": 0,
+          "injects": 0
+        },
+        "forgenOnly": {
+          "length": 285,
+          "blocks": 0,
+          "injects": 0
+        },
+        "memOnly": {
+          "length": 273,
+          "blocks": 0,
+          "injects": 1
+        },
+        "full": {
+          "length": 331,
+          "blocks": 0,
+          "injects": 1
+        }
+      },
+      "psiProxy": 0.09028850724515969
+    }
+  ],
+  "generatedAt": "2026-04-30T04:31:32.950Z"
+}
