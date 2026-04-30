@@ -233,11 +233,14 @@ testbed 결과 보고서에 pinned version + actual version 둘 다 기록.
 | persona 익명화 누설 | 저 | 고 | 식별자 검출 자동화 (regex + ML detector) |
 
 ### Follow-up
-- pnpm workspaces 마이그레이션 PR (또는 npm workspaces 활용)
-- `forgen-eval-data` repo 생성 + CC-BY-SA-4.0 LICENSE
-- 첫 persona 10개 외부 dataset에서 도출 + PR 검증
-- claude-mem@1.2.3 (또는 시점에 lock된 버전) pin
-- testbed CI: smoke (PR마다) + full (release 전 manual trigger)
+
+| 항목 | 상태 (2026-04-30) |
+|---|---|
+| Workspaces 도구 | ✓ **DONE** — npm workspaces 채택 (amendment) |
+| `forgen-eval-data` repo + CC-BY-SA-4.0 | ✓ **DONE** — https://github.com/forgen-team/forgen-eval-data |
+| persona 10개 외부 도출 | ✓ **DONE** — 4 academic + 3 github-issue + 3 forgen-user-anonymized (모두 `seed-unreviewed` 표시) |
+| claude-mem version pin | ✓ **DONE** — `claude-mem@12.4.8` in `packages/forgen-eval/package.json` devDep |
+| testbed CI: smoke + full | ✓ **DONE** (smoke) — `.github/workflows/forgen-eval.yml` (free-tier unit + dataset-version-check). full = self-hosted GPU runner, 주석 처리 |
 
 ## Amendment 2026-04-28 (post US-000 spike)
 

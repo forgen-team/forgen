@@ -298,10 +298,13 @@ PUBLIC (Dual judge): Cohen's κ ≥ 0.7 (substantial)
 | EC3 (φ > 5%) 발생 시 v0.5 출시 자체 차단 | 중 | 고 | 출시 전 internal full-run 5회로 사전 검출, threshold 미달 시 룰 정밀화 라운드 추가 |
 
 ### Follow-up
-- forgen-eval `src/metrics/*.ts` 구현 — 각 메트릭 1 파일.
-- 첫 full run 후 power 사후 분석 → spec §9 A2 검증.
-- 메트릭 가중치 sensitivity analysis 보고서 작성.
-- DEV human spot-check 프로세스 (분기별).
+
+| 항목 | 상태 (2026-04-30) |
+|---|---|
+| `src/metrics/*.ts` 구현 | ✓ **DONE** — gamma/beta/delta-epsilon-zeta/phi/psi 5 파일. vitest 22/22 PASS |
+| 첫 full run 후 power 사후 분석 | **DEFERRED to v0.5.0** — 70B baseline GPU 환경 필요 |
+| 메트릭 가중치 sensitivity analysis | **DEFERRED** — 첫 full run 결과 후 |
+| DEV human spot-check (분기별) | **DEFERRED** — release 후 정착 시 |
 
 ## Related
 - **Depends on**: ADR-005 (forgen-eval 모듈 내 구현)

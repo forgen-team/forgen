@@ -186,10 +186,13 @@ forgen config hooks --check
 | circular: forgen이 claude-mem 호출, claude-mem이 forgen 데이터 사용 | 저 | 고 | read-only consumer 계약으로 차단 |
 
 ### Follow-up
-- `scripts/install-claude-mem-orchestration.cjs` 작성 (settings.json auto-sort)
-- `forgen config hooks --check` 명령 구현 (`src/cli/config/hooks-check.ts`)
-- claude-mem maintainer에 협업 제안 PR/이슈 (mutual README 등재)
-- testbed `forgen+mem` arm 셋업 시 이 contract 사용 (ADR-005에서 소비)
+
+| 항목 | 상태 (2026-04-30) |
+|---|---|
+| `scripts/install-claude-mem-orchestration.cjs` 작성 | **SUPERSEDED** by amendment (Plugin model이 자동 chain — auto-sort 불필요) |
+| `forgen config hooks --check` 명령 구현 | **DEFERRED** (Plugin model로 우선순위 ↓, v0.5.x 백로그) |
+| claude-mem maintainer 협업 제안 PR/이슈 | **DEFERRED** (외부 outreach, 별도 결정) |
+| testbed `forgen+mem` arm 셋업 시 contract 사용 | ✓ **DONE** — `packages/forgen-eval/src/arms/real-arms.ts` `ForgenPlusMemArm` |
 
 ## Amendment 2026-04-28 (post US-000 spike)
 
