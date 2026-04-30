@@ -5,6 +5,31 @@ All notable changes to forgen will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Internal — pathfinder + Deep Interview fix cycle (2026-04-30 post-v0.4.3)
+
+**Pathfinder (stop-guard 3-check 구조 진단 + unify)** (`refactor`)
+- `PATHFINDER-2026-04-30/` — features → flowcharts → duplication report → unified proposal → handoff
+- `src/checks/_shared/text-sanitizer.ts` + tests — 3-check (`self-score-inflation`, `fact-vs-agreement`, `conclusion-verification-ratio`) measurement Set 중복 제거
+- `src/hooks/stop-guard.ts` — 3-check 디스패처 정리
+
+**Deep Interview D9/D11/D12 fix** (`fix`)
+- D9: `docs/guard-design-checklist.md` — guard 설계 invariant 명문화
+- D11: `src/store/compound-usage-store.ts` + tests + `src/mcp/tools.ts` wiring
+  - MCP `compound-read/list/search` 호출 시 `~/.forgen/state/compound-usage.jsonl` 에 사용 evidence 적재
+- D12: `assets/claude/commands/calibrate.md` + `retro.md` — `~/.forgen/me/evidence/` → `behavior/` 경로 drift 수정 (skill 카탈로그 정합성 회복)
+
+**Auto-compound retry 로깅 개선** (`chore`)
+- `src/core/auto-compound-runner.ts` — retry 메시지에 attempt count + 에러 코드 + fail-open 단언 (UX 명확화, 동작 변경 없음)
+
+### Hygiene
+- `package.json` self-dep 오염 (`@wooojin/forgen ^0.4.3`) 제거
+- `plugin.json` (root) 0.4.2 → 0.4.3 sync (이전 d4c640c 가 `.claude-plugin/plugin.json` 만 sync)
+- `package-lock.json` workspace + transitive peer dep 동기화
+
+**Verification**: vitest 2373/2373 PASS, Docker e2e 77/77 PASS (round 16)
+
 ## [0.4.3] — 2026-04-30 — Self-correcting hotfix + testbed prep (alpha)
 
 forgen-eval introspect testbed (이번 릴리즈에 포함된 자기 측정 시스템) 가

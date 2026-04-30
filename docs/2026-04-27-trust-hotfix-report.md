@@ -3,6 +3,24 @@
 > 작성일: 2026-04-27
 > 목적: 사용자 신뢰를 깨는 실제 오작동과 주장-현실 불일치를 제거하기 위한 내부용 핫픽스 기준 문서
 
+## STATUS: RESOLVED — 2026-04-30 (v0.4.3)
+
+이 문서의 약점 W1~W5 는 v0.4.3 릴리즈 사이클(2026-04-27 ~ 04-30)에 모두 해소됨. 본문은 *원형 그대로* 유지하되, 각 항목의 현재 상태는 다음과 같음:
+
+| ID | 약점 | 현재 상태 (2026-04-30) | 증거 |
+|----|------|-----------------------|------|
+| W1 | 한국어 README 설치 명령 오타 | ✅ FIXED | `README.ko.md:86,146` 모두 `npm install -g @wooojin/forgen` |
+| W2 | 온보딩 계약 드리프트 (2 vs 4문항) | ✅ FIXED | `src/cli.ts:231,537` 모두 4-question 명시; `src/forge/onboarding.ts:6` 주석은 history 설명으로 유지 |
+| W3 | 에이전트 인벤토리 드리프트 (12 vs 13) | ✅ FIXED | `assets/claude/agents/*.md` 13개 일관 |
+| W4 | 환경 의존적 훅 산출물 생성 | ✅ FIXED | commit `9fbbb7b fix(multi-host): hook 환경 의존성 + tool_response shape 회귀 — invariant 박제` |
+| W5 | 비결정적 검증 + 하드코딩된 개수 계약 | ✅ FIXED | commit `eab8c1f fix(v0.4.3): bypass-detector RC5/E9 + TEST-1 wiring`; vitest 2373/2373 결정적 PASS |
+
+W6 (대형 휴리스틱 핫패스) 와 W7 (계약 파일 중복) 은 본 핫픽스 범위 밖으로 남기되, **W6 의 stop-guard 부분은 2026-04-30 PATHFINDER 사이클(`PATHFINDER-2026-04-30/`)에서 일부 unify 진행됨** — 자세한 내용은 [Unreleased] CHANGELOG 참조.
+
+---
+
+
+
 ## 이 문서의 기준
 
 - 이 문서는 "아키텍처를 더 예쁘게 만드는 것"보다 "사용자가 기대한 동작과 실제 동작이 어긋나는 지점"을 우선한다.
