@@ -2,7 +2,7 @@
 
 Testbed for measuring forgen's behavioral-change identity (γ/β/δ/ε/ζ/φ/ψ 7-axis).
 
-**Status**: v0.5.0-alpha (scaffolding). Implementation in progress.
+**Status**: v0.4.3-alpha (scaffolding). Real testbed PASS gate (φ ≤ 5%) target deferred to v0.5.0.
 
 ## Why this exists
 

@@ -5,69 +5,78 @@ All notable changes to forgen will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.4.3] — 2026-04-29 — Hotfix: bypass-detector RC5/E9 + TEST-1 wiring
+## [0.4.3] — 2026-04-30 — Self-correcting hotfix + testbed prep (alpha)
 
-forgen-eval introspect testbed가 release-blocker로 노출한 두 결함의 hotfix.
+forgen-eval introspect testbed (이번 릴리즈에 포함된 자기 측정 시스템) 가
+release-blocker 두 결함을 자가 진단 + fix 까지 한 사이클에 검증한 릴리즈.
+큰 v0.5.0 testbed-proof 셀링은 실 PASS gate 통과 후로 미루고, 본 릴리즈는
+*hotfix + testbed scaffolding alpha* 로 정직하게 박음.
+
+### Hotfix (forgen body)
 
 **TEST-6 — bypass-detector false-positive fix** (`fix`)
 - `src/engine/lifecycle/bypass-detector.ts`: Korean stop list (실행/사용/선언/수행/처리/작성/호출/적용 + 변형) + parens-heuristic 정밀화
 - 기존 root cause: Korean regex `(\S+)\s*(?:말라|금지|하지\s*마|쓰지\s*마)` 가 정책 텍스트 "rm -rf 실행하지 마라" 에서 "실행" 만 추출 → 모든 코드의 "실행" 단어가 false positive (RC5/E9).
 - Parens-heuristic: `(rm -rf, DROP, force-push)` 같은 *예시 목록*은 토큰 추출하되, file path (`tests/e2e/docker/run-test.sh`) 와 exclusion notes (`프로덕션 코드 맥락 한정, 테스트 파일 내 vi.mock 은 제외`) 는 skip.
 - 자기증거: 16일 사용 데이터에서 strict φ 65.66% 의 84% 가 이 단일 버그 (3 L1 rules: no-rm-rf-unconfirmed, e2e-before-done, no-mock-as-proof). 향후 0 false positive 박힘.
-- 회귀 0: bypass-detector 14/14 + full forgen suite 2356/2356.
 
 **TEST-1 — fact-vs-agreement Stop hook wiring** (`fix`)
 - `src/hooks/stop-guard.ts`: `checkFactVsAgreement` import + alert-level invocation. `kind: 'correction'` (no block) — 원 design intent ("alert level only — block 은 TEST-2 에서") 준수.
 - 기존 결함: `src/checks/fact-vs-agreement.ts` 코드 존재했으나 어떤 hook 도 호출 안 함 (forgen-eval introspect 가 발견한 wiring gap).
-- 효과: TEST-1 alert 가 violations.jsonl `kind: 'correction'` 으로 기록 시작 → 측정 가능.
 
-**Self-evidence**: forgen 의 자기 검증 시스템(`packages/forgen-eval/src/runners/introspect.ts`)이 자기 자신의 패턴 매칭 버그를 6주 만에 정밀하게 짚어내고 fix 까지 검증한 첫 사이클. v0.4.0 trust restoration 미션이 self-correcting harness 로 한 발자국 더.
+### Repo / infra
 
-## [Unreleased] — v0.5.0 testbed-proof
-
-forgen이 claude-mem / hermes-agent / OMC / ECC / gstack 대비 *측정 가능한 차별*을 갖췄음을 증명하는 릴리즈. 정체성을 "extraction + enforcement (raw store 아님)"으로 박고, 7-축 메트릭 (γ/β/δ/ε/ζ/φ/ψ) × 5-arm × 2-tier (smoke/full) × 2-track (DEV/PUBLIC) testbed로 검증.
-
-**신규 — `@wooojin/forgen-eval` (별도 npm package, npm workspaces)** (`feat`)
-- `packages/forgen-eval/` — 본 forgen 본체 무게 0 영향 (peerDep 형태)
-- 7-축 메트릭 구현: γ_slope (Cohen's d + Wilcoxon r), β_likert (paired diff), δ/ε/ζ rate metrics, φ Wilson-CI master gate, ψ weighted synergy
-- κ (Cohen's + Fleiss') judge agreement
-- φ master gate priority — γ/β 통과해도 φ > 5%면 즉시 HARD FAIL
-- 5 arms 정의 (vanilla / forgen-only / claude-mem-only via CLI invoke / forgen+mem / gstack)
-- DEV (Sonnet 4.6 + Qwen 72B + Llama 70B Triple, Fleiss' κ ≥ 0.8) + PUBLIC (Qwen + Llama Dual, Cohen's κ ≥ 0.7) judge tracks
-- vitest 22/22 PASS — ADR-006 메트릭 공식 정확성 검증
-
-**신규 — `forgen-team/forgen-eval-data` 외부 dataset repo** (`feat`)
-- https://github.com/forgen-team/forgen-eval-data — CC-BY-SA-4.0
-- 10 personas (4 academic-dataset + 3 github-issue-corpus + 3 forgen-user-anonymized) — 모두 `review_status: seed-unreviewed`
-- correction-sequences synthetic (7) + retro-real (3) bootstrap
-- CURATION.md — 외부 PR 정책 (자체 작성 금지, 2-reviewer 강제)
-- forgen-eval은 commit hash pin으로 dataset version 추적
-
-**Architecture — claude-mem coexistence (Plugin model)** (`design`)
-- ADR-004 amendment — orchestration 가설 폐기, Plugin model 확정
-- (α) Minimal default + Full 권장 — forgen 본체에 claude-mem 의존성 추가 안 함 (AGPL 회피)
-- claude-mem은 `npx claude-mem install --ide claude-code`로 사용자가 별도 설치 → Claude Code가 자동 chain
-- Spec §10a — 6 사용자 시나리오 → 메트릭 매핑 narrative
-
-**Repo migration** (`chore`)
+**GitHub repo migration** (`chore`)
 - `wooo-jin/forgen` → `forgen-team/forgen` 이전 (1 star + 6 issues 자동 마이그레이션, redirect 자동)
-- npm scope `@wooojin/forgen` 그대로 유지 (별도 결정)
+- npm scope `@wooojin/forgen` 그대로 유지 (npm scope ≠ GitHub org 정상 패턴)
 - 11 파일 URL bulk 갱신 (READMEs + plugin.json + CONTRIBUTING + CHANGELOG + SECURITY)
 
-**Documentation**
+**npm workspaces enable** (`chore`)
+- `"workspaces": ["packages/*"]` 추가 — forgen-eval 같은 부속 alpha package 호스팅용
+- 본 forgen 패키지 무게 영향 0 (peerDep 모델, forgen-eval은 별도 publish)
+
+### Testbed scaffolding (alpha — private workspace)
+
+**`@wooojin/forgen-eval@0.4.3-alpha.0` (private, not published)** (`feat`)
+- `packages/forgen-eval/` — forgen 효용 검증 testbed scaffolding
+- 7-축 메트릭: γ_slope (Cohen's d + Wilcoxon r), β_likert, δ/ε/ζ rate, φ Wilson-CI master gate, ψ weighted synergy
+- κ (Cohen's + Fleiss') judge agreement
+- 5 arms (vanilla / forgen-only / claude-mem-only via CLI invoke / forgen+mem / gstack)
+- DEV (Sonnet 4.6 + Qwen + Llama Triple) + PUBLIC (Qwen + Llama Dual) judge tracks
+- vitest 22/22 PASS
+
+**`forgen-team/forgen-eval-data` 외부 dataset repo** (`feat`)
+- https://github.com/forgen-team/forgen-eval-data — CC-BY-SA-4.0
+- 10 personas (4 academic + 3 github-issue + 3 forgen-user-anonymized, seed-unreviewed)
+- CURATION.md — 외부 PR 정책 (자체 작성 금지, 2-reviewer 강제)
+
+**claude-mem coexistence (Plugin model)** (`design`)
+- ADR-004 amendment — orchestration 가설 폐기, Plugin model 확정 (사용자가 둘 다 별도 plugin install)
+- forgen 본체에 claude-mem 의존성 추가 안 함 (AGPL-3.0 회피)
+- spec §10a — 6 사용자 시나리오 → 메트릭 매핑 narrative
+
+### Documentation
+
 - `docs/plans/2026-04-28-forgen-testbed-proof-spec.md` — Deep Interview 11라운드 spec
 - `docs/spike/2026-04-28-claude-mem-spike.md` — claude-mem 실측 (AGPL/Plugin model 발견)
-- `docs/adr/ADR-004/005/006-*.md` — claude-mem orchestration / forgen-eval module / metric methodology
-- README §"Validated by testbed (v0.5.0)" — testbed 결과 (실 GPU run 후 placeholder 대체 예정)
+- `docs/adr/ADR-004/005/006-*.md` — coexistence / module / metrics ADRs
+- `docs/release/v0.5.0-checklist.md` — 미래 v0.5.0 게이트 (이 릴리즈는 *준비*)
 
-**v0.5.0 출시 게이트** (release blockers)
-- φ ≤ 5% (false positive rate, Wilson 95% CI upper bound)
-- ψ > 0 (synergy: full > max(forgen-only, mem-only))
-- κ_DEV ≥ 0.8 / κ_PUBLIC ≥ 0.7
-- discard rate ≤ 10%
-- 모든 effect 메트릭 통과 (γ d ≥ 0.8, β +0.5, δ 90%, ε 85%, ζ 85%)
+### 알려진 한계 — 정직 disclosure
 
-**Honest fallback**: testbed FAIL 시 (φ > 5%) — README에 "claude-mem 추천" 명시. 이건 정체성에 대한 자기 검증.
+**φ master gate 미통과 (current 10.53%, target ≤ 5%)** — 이 릴리즈는 *측정 시스템*이지 *PASS 입증*이 아님:
+- TEST-6 fix 적용으로 strict φ 65.66% → 10.53% (84% reduction). 미래 introspect 사이클에서 추가 감소 예상.
+- 남은 5.53pp 는 user-rule scope 영역 (예: `.then` async/await 룰의 사용자 우회). Pattern bug 아님.
+- 진짜 PASS gate (φ ≤ 5%) 통과 시 v0.5.0 출시.
+
+**Self-evidence**: forgen 의 자기 검증 시스템 (`packages/forgen-eval/src/runners/introspect.ts`) 이 자기 자신의 패턴 매칭 버그를 6주 만에 정밀하게 짚어내고 fix 까지 검증한 첫 사이클. v0.4.0 trust restoration 미션이 self-correcting harness 로 한 발자국 더.
+
+### 회귀 검증
+- vitest: 2356/2356 (216 files)
+- bypass-detector: 14/14 (3 RC5/E9 regression 신규)
+- forgen-eval: 22/22
+- Docker e2e: 77/77 (`~/.forgen/state/e2e-result.json` round 14)
+- 회귀: 0
 
 ## [0.4.2] - 2026-04-27
 

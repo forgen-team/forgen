@@ -1,6 +1,6 @@
 {
   "name": "@wooojin/forgen-eval",
-  "version": "0.5.0-alpha.0",
+  "version": "0.4.3-alpha.0",
   "private": true,
   "description": "Testbed for forgen behavioral-change measurement (γ/β/δ/ε/ζ/φ/ψ 7-axis). Compares forgen vs claude-mem vs vanilla vs full(forgen+mem) vs gstack arms.",
   "license": "MIT",
