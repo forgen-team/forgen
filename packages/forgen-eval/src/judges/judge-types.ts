@@ -21,12 +21,18 @@ export interface JudgePromptInput {
 }
 
 export interface JudgeClient {
-  id: 'sonnet' | 'qwen-72b' | 'llama-70b';
+  id: 'sonnet' | 'qwen-72b' | 'llama-70b' | 'claude-cli' | 'codex-cli';
   /** Returns a 1-4 likert + rationale. Throws on transport failure. */
   judge(input: JudgePromptInput): Promise<JudgeScore>;
   /** Health check before run start. */
   ping(): Promise<{ ok: boolean; latencyMs: number; modelInfo?: string }>;
 }
+
+/** Minimal guard for CLI judges. Empirically: verbose anti-tool prefixes (mentioning
+ *  Read/Bash/Grep/Glob) confuse codex CLI into "tool review mode" and hang the call.
+ *  Single-line guard works reliably across both claude-cli and codex-cli.
+ */
+const JUDGE_GUARD = 'Reply with ONLY a JSON object — no prose, no tools, no file access.\n';
 
 /** Builds the prompt template for an axis — same template across judges (fairness). */
 export function buildJudgePrompt(input: JudgePromptInput): string {
@@ -35,6 +41,7 @@ export function buildJudgePrompt(input: JudgePromptInput): string {
   switch (axis) {
     case 'gamma':
       return [
+        JUDGE_GUARD,
         header,
         '평가 대상: 이 응답이 *직전 사용자 교정 의도*에 부합하는가?',
         '교정 이력:',
@@ -46,6 +53,7 @@ export function buildJudgePrompt(input: JudgePromptInput): string {
       ].join('\n');
     case 'beta':
       return [
+        JUDGE_GUARD,
         header,
         '평가 대상: 이 응답이 아래 persona의 사용자에게 적합한가?',
         'Persona spec:',
@@ -56,6 +64,7 @@ export function buildJudgePrompt(input: JudgePromptInput): string {
       ].join('\n');
     case 'phi':
       return [
+        JUDGE_GUARD,
         header,
         '평가 대상: 시스템이 사용자의 행동을 차단/수정한 것이 합리적이었나?',
         '차단/주입 이벤트:',

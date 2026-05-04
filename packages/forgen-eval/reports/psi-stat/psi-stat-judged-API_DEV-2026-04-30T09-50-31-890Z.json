@@ -1,0 +1,386 @@
+{
+  "track": "API_DEV",
+  "judges": [
+    "claude-cli",
+    "codex-cli"
+  ],
+  "N": 3,
+  "mean": -0.08016908369036342,
+  "ci": [
+    -0.15000000000000002,
+    0
+  ],
+  "kappaPerAxis": {
+    "gamma": 0.34782608695652173,
+    "beta": 0.36842105263157887
+  },
+  "cases": [
+    {
+      "caseId": "syn-001",
+      "arms": {
+        "vanilla": {
+          "gamma": 4,
+          "beta": 1,
+          "blocks": 0,
+          "injects": 0,
+          "W": 0.55,
+          "rawScores": [
+            {
+              "judge": "claude-cli",
+              "axis": "gamma",
+              "score": 4
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "gamma",
+              "score": 4
+            },
+            {
+              "judge": "claude-cli",
+              "axis": "beta",
+              "score": 1
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "beta",
+              "score": 1
+            }
+          ]
+        },
+        "forgenOnly": {
+          "gamma": 2,
+          "beta": 2,
+          "blocks": 0,
+          "injects": 0,
+          "W": 0.35,
+          "rawScores": [
+            {
+              "judge": "claude-cli",
+              "axis": "gamma",
+              "score": 1
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "gamma",
+              "score": 3
+            },
+            {
+              "judge": "claude-cli",
+              "axis": "beta",
+              "score": 2
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "beta",
+              "score": 2
+            }
+          ]
+        },
+        "memOnly": {
+          "gamma": 3.5,
+          "beta": 1.75,
+          "blocks": 0,
+          "injects": 1,
+          "W": 0.6094927489289098,
+          "rawScores": [
+            {
+              "judge": "claude-cli",
+              "axis": "gamma",
+              "score": 3
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "gamma",
+              "score": 4
+            },
+            {
+              "judge": "claude-cli",
+              "axis": "beta",
+              "score": 2.5
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "beta",
+              "score": 1
+            }
+          ]
+        },
+        "full": {
+          "gamma": 2.5,
+          "beta": 1.5,
+          "blocks": 0,
+          "injects": 1,
+          "W": 0.4594927489289098,
+          "rawScores": [
+            {
+              "judge": "claude-cli",
+              "axis": "gamma",
+              "score": 3
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "gamma",
+              "score": 2
+            },
+            {
+              "judge": "claude-cli",
+              "axis": "beta",
+              "score": 2
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "beta",
+              "score": 1
+            }
+          ]
+        }
+      },
+      "psi": -0.15000000000000002
+    },
+    {
+      "caseId": "syn-002",
+      "arms": {
+        "vanilla": {
+          "gamma": 4,
+          "beta": 1.75,
+          "blocks": 0,
+          "injects": 0,
+          "W": 0.6,
+          "rawScores": [
+            {
+              "judge": "claude-cli",
+              "axis": "gamma",
+              "score": 4
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "gamma",
+              "score": 4
+            },
+            {
+              "judge": "claude-cli",
+              "axis": "beta",
+              "score": 2.5
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "beta",
+              "score": 1
+            }
+          ]
+        },
+        "forgenOnly": {
+          "gamma": 3.5,
+          "beta": 2,
+          "blocks": 0,
+          "injects": 0,
+          "W": 0.55,
+          "rawScores": [
+            {
+              "judge": "claude-cli",
+              "axis": "gamma",
+              "score": 4
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "gamma",
+              "score": 3
+            },
+            {
+              "judge": "claude-cli",
+              "axis": "beta",
+              "score": 2
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "beta",
+              "score": 2
+            }
+          ]
+        },
+        "memOnly": {
+          "gamma": 1,
+          "beta": 2,
+          "blocks": 0,
+          "injects": 1,
+          "W": 0.29282608226224316,
+          "rawScores": [
+            {
+              "judge": "claude-cli",
+              "axis": "gamma",
+              "score": 1
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "gamma",
+              "score": 1
+            },
+            {
+              "judge": "claude-cli",
+              "axis": "beta",
+              "score": 2
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "beta",
+              "score": 2
+            }
+          ]
+        },
+        "full": {
+          "gamma": 2,
+          "beta": 2.5,
+          "blocks": 0,
+          "injects": 1,
+          "W": 0.4594927489289098,
+          "rawScores": [
+            {
+              "judge": "claude-cli",
+              "axis": "gamma",
+              "score": 2
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "gamma",
+              "score": 2
+            },
+            {
+              "judge": "claude-cli",
+              "axis": "beta",
+              "score": 3
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "beta",
+              "score": 2
+            }
+          ]
+        }
+      },
+      "psi": -0.09050725107109026
+    },
+    {
+      "caseId": "syn-003",
+      "arms": {
+        "vanilla": {
+          "gamma": 3.5,
+          "beta": 2,
+          "blocks": 0,
+          "injects": 0,
+          "W": 0.55,
+          "rawScores": [
+            {
+              "judge": "claude-cli",
+              "axis": "gamma",
+              "score": 3
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "gamma",
+              "score": 4
+            },
+            {
+              "judge": "claude-cli",
+              "axis": "beta",
+              "score": 2
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "beta",
+              "score": 2
+            }
+          ]
+        },
+        "forgenOnly": {
+          "gamma": 4,
+          "beta": 2,
+          "blocks": 0,
+          "injects": 0,
+          "W": 0.6166666666666667,
+          "rawScores": [
+            {
+              "judge": "claude-cli",
+              "axis": "gamma",
+              "score": 4
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "gamma",
+              "score": 4
+            },
+            {
+              "judge": "claude-cli",
+              "axis": "beta",
+              "score": 2
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "beta",
+              "score": 2
+            }
+          ]
+        },
+        "memOnly": {
+          "gamma": 4,
+          "beta": 2,
+          "blocks": 0,
+          "injects": 1,
+          "W": 0.6928260822622432,
+          "rawScores": [
+            {
+              "judge": "claude-cli",
+              "axis": "gamma",
+              "score": 4
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "gamma",
+              "score": 4
+            },
+            {
+              "judge": "claude-cli",
+              "axis": "beta",
+              "score": 2
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "beta",
+              "score": 2
+            }
+          ]
+        },
+        "full": {
+          "gamma": 4,
+          "beta": 2,
+          "blocks": 0,
+          "injects": 1,
+          "W": 0.6928260822622432,
+          "rawScores": [
+            {
+              "judge": "claude-cli",
+              "axis": "gamma",
+              "score": 4
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "gamma",
+              "score": 4
+            },
+            {
+              "judge": "claude-cli",
+              "axis": "beta",
+              "score": 2
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "beta",
+              "score": 2
+            }
+          ]
+        }
+      },
+      "psi": 0
+    }
+  ],
+  "generatedAt": "2026-04-30T09:50:31.889Z"
+}

@@ -1,0 +1,142 @@
+{
+  "track": "API_DEV",
+  "judges": [
+    "claude-cli",
+    "codex-cli"
+  ],
+  "N": 1,
+  "mean": 0.016666666666666607,
+  "ci": [
+    0.016666666666666607,
+    0.016666666666666607
+  ],
+  "kappaPerAxis": {
+    "gamma": 0,
+    "beta": 0
+  },
+  "cases": [
+    {
+      "caseId": "syn-001",
+      "arms": {
+        "vanilla": {
+          "gamma": 1,
+          "beta": 1.5,
+          "blocks": 0,
+          "injects": 0,
+          "W": 0.18333333333333332,
+          "rawScores": [
+            {
+              "judge": "claude-cli",
+              "axis": "gamma",
+              "score": 1
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "gamma",
+              "score": 1
+            },
+            {
+              "judge": "claude-cli",
+              "axis": "beta",
+              "score": 1
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "beta",
+              "score": 2
+            }
+          ]
+        },
+        "forgenOnly": {
+          "gamma": 1,
+          "beta": 1.5,
+          "blocks": 0,
+          "injects": 0,
+          "W": 0.18333333333333332,
+          "rawScores": [
+            {
+              "judge": "claude-cli",
+              "axis": "gamma",
+              "score": 1
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "gamma",
+              "score": 1
+            },
+            {
+              "judge": "claude-cli",
+              "axis": "beta",
+              "score": 1
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "beta",
+              "score": 2
+            }
+          ]
+        },
+        "memOnly": {
+          "gamma": 1,
+          "beta": 1.5,
+          "blocks": 0,
+          "injects": 1,
+          "W": 0.25949274892890983,
+          "rawScores": [
+            {
+              "judge": "claude-cli",
+              "axis": "gamma",
+              "score": 1
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "gamma",
+              "score": 1
+            },
+            {
+              "judge": "claude-cli",
+              "axis": "beta",
+              "score": 1
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "beta",
+              "score": 2
+            }
+          ]
+        },
+        "full": {
+          "gamma": 1,
+          "beta": 1.75,
+          "blocks": 0,
+          "injects": 1,
+          "W": 0.27615941559557644,
+          "rawScores": [
+            {
+              "judge": "claude-cli",
+              "axis": "gamma",
+              "score": 1
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "gamma",
+              "score": 1
+            },
+            {
+              "judge": "claude-cli",
+              "axis": "beta",
+              "score": 1
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "beta",
+              "score": 2.5
+            }
+          ]
+        }
+      },
+      "psi": 0.016666666666666607
+    }
+  ],
+  "generatedAt": "2026-04-30T08:56:23.361Z"
+}

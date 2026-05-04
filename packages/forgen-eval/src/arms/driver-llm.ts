@@ -25,7 +25,7 @@ export class OllamaDriverLLM {
     this.host = cfg.host ?? process.env.OLLAMA_HOST ?? 'http://localhost:11434';
     this.model = cfg.model ?? process.env.OLLAMA_DRIVER_MODEL ?? 'qwen2.5:14b';
     this.temperature = cfg.temperature ?? 0.3;
-    this.maxTokens = cfg.maxTokens ?? 512;
+    this.maxTokens = cfg.maxTokens ?? Number(process.env.OLLAMA_DRIVER_MAX_TOKENS ?? 512);
   }
 
   async chat(history: ChatTurn[]): Promise<string> {

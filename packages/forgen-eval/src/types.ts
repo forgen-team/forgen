@@ -14,7 +14,15 @@ export type ArmId =
 
 export type TurnDepth = 1 | 5 | 10 | 50;
 
-export type Track = 'DEV' | 'PUBLIC';
+/**
+ * Track:
+ * - DEV: Sonnet API + 2 local 70B (Triple Fleiss' κ). Requires ANTHROPIC_API_KEY + 64GB RAM.
+ * - PUBLIC: 2 local 70B (Dual Cohen's κ). Local-only reproducibility.
+ * - API_DEV: claude CLI (subscription) + codex CLI (subscription) — v0.4.4 subscription-mode.
+ *   No API key, no local 70B. Different family judges (Anthropic Sonnet vs OpenAI gpt-5-codex)
+ *   for κ independence. *Internal evidence only*, not v0.5.0 release-proof.
+ */
+export type Track = 'DEV' | 'PUBLIC' | 'API_DEV';
 
 export type Tier = 'smoke' | 'full';
 
@@ -64,7 +72,7 @@ export interface InjectEvent {
 export interface JudgeScore {
   caseId: string;
   blindedArmId: string; // anonymized
-  judgeId: 'sonnet' | 'qwen-72b' | 'llama-70b';
+  judgeId: 'sonnet' | 'qwen-72b' | 'llama-70b' | 'claude-cli' | 'codex-cli';
   axis: 'gamma' | 'beta' | 'phi'; // δ/ε/ζ are derived from event traces, not judged directly
   score: 1 | 2 | 3 | 4;
   rationale: string;
