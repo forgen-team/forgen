@@ -274,6 +274,20 @@ Linux 컨테이너에서 `~/.claude.json` 만 마운트하면 refresh 토큰이 
                     (다음 세션: 업데이트된 규칙)
 ```
 
+### 2-layer 안전 적용
+
+학습된 제약이 모델이 우회를 시도해도 유지되도록 forgen은 **두 단계**에서 적용됩니다:
+
+| 단계 | Hook | 시점 | 차단 대상 |
+|---|---|---|---|
+| **Soft (컨텍스트)** | UserPromptSubmit (`notepad-injector`) | 매 turn 시작 전 | 활성 룰을 Claude 컨텍스트에 재주입 — 모델이 자율 준수하도록 유도. |
+| **Hard (도구)** | PreToolUse (`pre-tool-use` + `dangerous-patterns.json`) | 모든 Bash / Edit / Write 직전 | `rm -rf /`, `git push --force`, `DROP TABLE`, `mkfs`, `curl \| sh` 등 패턴 매칭 차단 — 모델 의도 무관하게 발동. |
+| **Hard (응답)** | Stop (`stop-guard` DANGEROUS-RESPONSE) | Claude 응답 직후 | 응답 텍스트 자체 패턴 매칭 — *제안된* 파괴 명령(예: `find … -exec rm`, `xargs rm` 우회)을 사용자가 보기 전에 차단. |
+
+Soft layer는 모델에게 "지켜줘"라고 요청하고, Hard layer는 요청하지 않습니다. driver 모델이 약해서 학습된 룰을 "창의적으로" 우회하려 해도 (예: `rm -rf` 금지 → `find -exec rm -r` 제안) Hard layer가 미리 차단합니다.
+
+오버라이드: 한 turn만 감사 우회는 `FORGEN_USER_CONFIRMED=1`, 특정 룰 영구 비활성화는 `forgen suppress-rule <rule_id>`.
+
 ### Compound 지식
 
 지식은 세션을 거치며 신뢰도 기반 라이프사이클로 축적됩니다:

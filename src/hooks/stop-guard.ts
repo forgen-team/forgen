@@ -28,6 +28,7 @@ import { takeLastExtractionNotice } from '../core/extraction-notice.js';
 import { checkConclusionVerificationRatio } from '../checks/conclusion-verification-ratio.js';
 import { checkSelfScoreInflation } from '../checks/self-score-deflation.js';
 import { checkFactVsAgreement } from '../checks/fact-vs-agreement.js';
+import { checkDangerousResponsePattern } from '../checks/dangerous-response-pattern.js';
 import { sanitizeForGuard } from '../checks/_shared/text-sanitizer.js';
 import { STATE_DIR } from '../core/paths.js';
 import { sanitizeId } from './shared/sanitize-id.js';
@@ -541,8 +542,19 @@ export async function main(): Promise<void> {
         run: () => GuardOutcome;
       };
 
-      // 평가 순서: TEST-2 (강한 신호) → TEST-3 (텍스트 비율) → TEST-1 (alert-only).
+      // 평가 순서: DANGEROUS-RESPONSE (즉시 차단 — 안전 우선) → TEST-2 (강한 신호) → TEST-3 (텍스트 비율) → TEST-1 (alert-only).
       const checks: GuardCheck[] = [
+        {
+          shortId: 'dangerous-response-pattern',
+          ruleSlug: 'rule:DANGEROUS-RESPONSE — destructive command suggestion',
+          kind: 'block',
+          // 주의: sanitizer 가 백틱/코드블록을 제거하므로 raw lastMessage 를 전달.
+          // 위험 명령은 코드 fence 안에 있어도 동등하게 위험함.
+          run: () => {
+            const r = checkDangerousResponsePattern({ text: lastMessage });
+            return { triggered: r.block, reason: r.reason };
+          },
+        },
         {
           shortId: 'self-score-inflation',
           ruleSlug: 'rule:TEST-2 — self-score inflation',

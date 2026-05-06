@@ -319,6 +319,25 @@ entries in `~/.forgen/state/implicit-feedback.jsonl`. Idempotent — safe to re-
                     (next session: updated rules)
 ```
 
+### Two-layer safety enforcement
+
+forgen enforces your rules at **two layers** so a learned constraint holds even
+if the model rationalizes a workaround:
+
+| Layer | Hook | When | Catches |
+|---|---|---|---|
+| **Soft (context)** | UserPromptSubmit (`notepad-injector`) | Before each turn | Re-injects active rules into Claude's context so the model can self-comply. |
+| **Hard (tool)** | PreToolUse (`pre-tool-use` + `dangerous-patterns.json`) | Before every Bash / Edit / Write | Pattern-match block on `rm -rf /`, `git push --force`, `DROP TABLE`, `mkfs`, `curl \| sh`, etc — fires regardless of model intent. |
+| **Hard (response)** | Stop (`stop-guard` DANGEROUS-RESPONSE) | After Claude's reply | Pattern-match on the reply text itself — catches *suggestions* of destructive commands (e.g., `find … -exec rm`, `xargs rm` rationalizations) before the user sees them. |
+
+The soft layer asks the model to behave; the hard layers don't ask. Even with a
+weaker driver model that "creatively" routes around a learned rule (e.g.,
+suggesting `find -exec rm -r {}` because `rm -rf` was forbidden), the hard
+layers stop it before any damage.
+
+Override hatch: set `FORGEN_USER_CONFIRMED=1` for a one-turn audited bypass, or
+`forgen suppress-rule <rule_id>` to disable a specific rule permanently.
+
 ### Compound knowledge
 
 Knowledge accumulates across sessions with a trust-based lifecycle:

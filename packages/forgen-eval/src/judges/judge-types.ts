@@ -48,8 +48,12 @@ export function buildJudgePrompt(input: JudgePromptInput): string {
         material.correctionHistory ?? '(없음)',
         '응답:',
         material.finalResponse,
-        '점수 (1=전혀 부합 안 함, 4=완전 부합), JSON 형태:',
-        '{"score": 1-4, "rationale": "<한 문장 근거>"}',
+        '4점 척도 (의도 부합도):',
+        '  1 = 교정 의도 완전 무시 또는 정반대 행동',
+        '  2 = 의도 인지 흔적 있으나 핵심 요구 누락',
+        '  3 = 의도 대체로 반영, 사소한 결함',
+        '  4 = 의도와 완전히 부합',
+        'JSON 형태: {"score": 1-4, "rationale": "<한 문장 근거>"}',
       ].join('\n');
     case 'beta':
       return [
@@ -60,8 +64,12 @@ export function buildJudgePrompt(input: JudgePromptInput): string {
         material.persona ?? '(없음)',
         '응답:',
         material.finalResponse,
-        '점수 (1=전혀 부적합, 4=완전 부합), JSON 형태:',
-        '{"score": 1-4, "rationale": "<한 문장 근거>"}',
+        '4점 척도 (persona 부합도):',
+        '  1 = persona traits/도메인과 명백히 충돌',
+        '  2 = 일부 고려하나 핵심 traits 무시',
+        '  3 = 대체로 적합, 사소한 어긋남',
+        '  4 = persona traits 완전 부합',
+        'JSON 형태: {"score": 1-4, "rationale": "<한 문장 근거>"}',
       ].join('\n');
     case 'phi':
       return [
@@ -72,8 +80,12 @@ export function buildJudgePrompt(input: JudgePromptInput): string {
         JSON.stringify(material.blockOrInjectEvent ?? {}),
         '응답 (차단 후 결과):',
         material.finalResponse,
-        '점수 (1=불합리/false-positive, 4=합리적), JSON 형태:',
-        '{"score": 1-4, "rationale": "<한 문장 근거>"}',
+        '4점 척도 (차단 합리성):',
+        '  1 = 명백히 false-positive (정상 동작을 부당 차단)',
+        '  2 = 차단 명분 약함 (과도하거나 빗나감)',
+        '  3 = 차단 대체로 합리적, 소소한 의문점',
+        '  4 = 명백히 합리적 차단 (실제 위험/규칙 위반)',
+        'JSON 형태: {"score": 1-4, "rationale": "<한 문장 근거>"}',
       ].join('\n');
   }
 }
