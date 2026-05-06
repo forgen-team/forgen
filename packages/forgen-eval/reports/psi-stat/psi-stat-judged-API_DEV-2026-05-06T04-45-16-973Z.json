@@ -1,0 +1,1280 @@
+{
+  "track": "API_DEV",
+  "judges": [
+    "claude-cli",
+    "codex-cli"
+  ],
+  "N": 10,
+  "mean": -0.02820628173104146,
+  "ci": [
+    -0.08487294839770816,
+    0.02976938402775804
+  ],
+  "kappaPerAxis": {
+    "gamma": 0.4019349164467897,
+    "beta": 0.5482546201232033
+  },
+  "cases": [
+    {
+      "caseId": "syn-001",
+      "arms": {
+        "vanilla": {
+          "gamma": 2,
+          "beta": 1,
+          "blocks": 0,
+          "injects": 0,
+          "W": 0.2833333333333333,
+          "rawScores": [
+            {
+              "judge": "claude-cli",
+              "axis": "gamma",
+              "score": 3
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "gamma",
+              "score": 1
+            },
+            {
+              "judge": "claude-cli",
+              "axis": "beta",
+              "score": 1
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "beta",
+              "score": 1
+            }
+          ],
+          "finalResponse": "Let's start with a basic authentication flow using Node.js and Express.js.\n\nHere's a possible implementation:\n```javascript\nconst express = require('express');\nconst bcrypt = require('bcrypt');\n\nconst app = express();\n\n// User model (simplified)\nclass User {\n  constructor(id, username, password) {\n    this.id = id;\n    this.username = username;\n    this.password = password;\n  }\n}\n\n// Authentication middleware\nconst authenticate = async (req, res, next) => {\n  const { username, password } = req.body;\n\n  // Find user by username\n  const user = await User.findOne({ where: { username } });\n\n  if (!user) {\n    return res.status(401).json({ error: 'Invalid username or password' });\n  }\n\n  // Compare passwords using bcrypt\n  const isValidPassword = await bcrypt.compare(password, user.password);\n\n  if (!isValidPassword) {\n    return res.status(401).json({ error: 'Invalid username or password' });\n  }\n\n  // User is authenticated, proceed with request\n  next();\n};\n\n// Register new user\nconst registerUser = async (req, res) => {\n  const { username, password } = req.body;\n\n  // Hash password using bcrypt\n  const"
+        },
+        "forgenOnly": {
+          "gamma": 4,
+          "beta": 1,
+          "blocks": 0,
+          "injects": 2,
+          "W": 0.6464027580075817,
+          "rawScores": [
+            {
+              "judge": "claude-cli",
+              "axis": "gamma",
+              "score": 4
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "gamma",
+              "score": 4
+            },
+            {
+              "judge": "claude-cli",
+              "axis": "beta",
+              "score": 1
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "beta",
+              "score": 1
+            }
+          ],
+          "finalResponse": "Let's start with a basic authentication flow using Node.js and Express.js. I'll provide a simple example, but please note that this is not production-ready code.\n\n```javascript\nconst express = require('express');\nconst app = express();\nconst bcrypt = require('bcrypt');\n\n// User model (simplified)\nclass User {\n  constructor(id, username, password) {\n    this.id = id;\n    this.username = username;\n    this.password = password;\n  }\n}\n\n// In-memory user storage\nlet users = [\n  new User(1, 'john', bcrypt.hashSync('password123', 10)),\n];\n\n// Authentication middleware\nconst authenticate = (req, res, next) => {\n  const { username, password } = req.body;\n  const user = users.find((u) => u.username === username);\n  if (!user || !bcrypt.compareSync(password, user.password)) {\n    return res.status(401).send({ message: 'Invalid credentials' });\n  }\n  req.user = user;\n  next();\n};\n\n// Protected route\napp.get('/protected', authenticate, (req, res) => {\n  res.send(`Hello, ${req.user.username}!`);\n});\n\napp.listen(3000, () => {\n  console.log('Server"
+        },
+        "memOnly": {
+          "gamma": 2.5,
+          "beta": 2.25,
+          "blocks": 0,
+          "injects": 1,
+          "W": 0.5094927489289098,
+          "rawScores": [
+            {
+              "judge": "claude-cli",
+              "axis": "gamma",
+              "score": 4
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "gamma",
+              "score": 1
+            },
+            {
+              "judge": "claude-cli",
+              "axis": "beta",
+              "score": 2.5
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "beta",
+              "score": 2
+            }
+          ],
+          "finalResponse": "To complete the auth module, I'll need some additional information about its requirements and dependencies.\n\nCan you please specify:\n\n1. What programming language is being used for the auth module?\n2. Are there any specific authentication mechanisms (e.g., OAuth, JWT) that need to be implemented?\n3. Are there any existing code snippets or functions in the auth module that I can build upon?\n\nThis will help me provide a more accurate and helpful response."
+        },
+        "full": {
+          "gamma": 2.5,
+          "beta": 1,
+          "blocks": 0,
+          "injects": 3,
+          "W": 0.449505475368673,
+          "rawScores": [
+            {
+              "judge": "claude-cli",
+              "axis": "gamma",
+              "score": 2
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "gamma",
+              "score": 3
+            },
+            {
+              "judge": "claude-cli",
+              "axis": "beta",
+              "score": 1
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "beta",
+              "score": 1
+            }
+          ],
+          "finalResponse": "For the auth module, I'll provide a basic implementation using Node.js and Express. Since we're in a production context, I won't use `vi.mock`. Here's an example:\n\n```javascript\nconst express = require('express');\nconst bcrypt = require('bcrypt');\n\nconst app = express();\napp.use(express.json());\n\n// User model (simplified for demonstration)\nclass User {\n  constructor(id, email, password) {\n    this.id = id;\n    this.email = email;\n    this.password = password;\n  }\n}\n\n// In-memory user storage (replace with a database in production)\nconst users = [];\n\n// Register user\napp.post('/register', async (req, res) => {\n  const { email, password } = req.body;\n  // Hash password\n  const hashedPassword = await bcrypt.hash(password, 10);\n  // Create new user\n  const user = new User(users.length + 1, email, hashedPassword);\n  users.push(user);\n  res.status(201).send({ message: 'User created successfully' });\n});\n\n// Login user\napp.post('/login', async (req, res) => {\n  const { email, password } = req.body;\n  // Find user by email\n  const user = users.find"
+        }
+      },
+      "psi": -0.1968972826389087
+    },
+    {
+      "caseId": "syn-002",
+      "arms": {
+        "vanilla": {
+          "gamma": 2,
+          "beta": 1,
+          "blocks": 0,
+          "injects": 0,
+          "W": 0.2833333333333333,
+          "rawScores": [
+            {
+              "judge": "claude-cli",
+              "axis": "gamma",
+              "score": 2
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "gamma",
+              "score": 2
+            },
+            {
+              "judge": "claude-cli",
+              "axis": "beta",
+              "score": 1
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "beta",
+              "score": 1
+            }
+          ],
+          "finalResponse": "Here's the SQL script:\n\n```sql\n-- Add new column 'email' with NOT NULL constraint\nALTER TABLE users\nADD COLUMN email VARCHAR(255) NOT NULL;\n\n-- Create migration rollback plan:\n-- 1. Drop the newly added column\nDROP COLUMN email FROM users;\n```\n\nWould you like to add any additional constraints or indexes for the `email` column?"
+        },
+        "forgenOnly": {
+          "gamma": 4,
+          "beta": 2,
+          "blocks": 0,
+          "injects": 2,
+          "W": 0.7130694246742484,
+          "rawScores": [
+            {
+              "judge": "claude-cli",
+              "axis": "gamma",
+              "score": 4
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "gamma",
+              "score": 4
+            },
+            {
+              "judge": "claude-cli",
+              "axis": "beta",
+              "score": 1
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "beta",
+              "score": 3
+            }
+          ],
+          "finalResponse": "Adding a new column `users` table.\n\n```sql\nALTER TABLE users\nADD COLUMN new_column_name VARCHAR(255) NOT NULL;\n```\n\nBefore applying this migration, I need to confirm that we have a rollback plan in place. According to our active rules, we should always require a migration rollback plan before applying changes.\n\nDo you have a documented rollback plan for this migration?"
+        },
+        "memOnly": {
+          "gamma": 1,
+          "beta": 1,
+          "blocks": 0,
+          "injects": 1,
+          "W": 0.22615941559557648,
+          "rawScores": [
+            {
+              "judge": "claude-cli",
+              "axis": "gamma",
+              "score": 1
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "gamma",
+              "score": 1
+            },
+            {
+              "judge": "claude-cli",
+              "axis": "beta",
+              "score": 1
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "beta",
+              "score": 1
+            }
+          ],
+          "finalResponse": "To add a NOT NULL column to the `users` table, you can use the following SQL command:\n\n```sql\nALTER TABLE users\nADD COLUMN new_column_name VARCHAR(255) NOT NULL;\n```\n\nPlease replace `new_column_name` with the actual name of the column you want to add.\n\nIf you're using a specific database management system (e.g., PostgreSQL, MySQL), I can provide more tailored instructions."
+        },
+        "full": {
+          "gamma": 3,
+          "beta": 1.5,
+          "blocks": 0,
+          "injects": 3,
+          "W": 0.549505475368673,
+          "rawScores": [
+            {
+              "judge": "claude-cli",
+              "axis": "gamma",
+              "score": 3
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "gamma",
+              "score": 3
+            },
+            {
+              "judge": "claude-cli",
+              "axis": "beta",
+              "score": 1
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "beta",
+              "score": 2
+            }
+          ],
+          "finalResponse": "To add a NOT NULL column to the `users` table, I'll create a migration script. Before executing it, let's create a rollback plan in case something goes wrong.\n\nHere's an example of what the migration script might look like:\n```sql\nALTER TABLE users\nADD COLUMN new_column VARCHAR(255) NOT NULL;\n\n-- Create a rollback script to remove the column if needed\nDROP PROCEDURE IF EXISTS rollback_users;\nDELIMITER //\nCREATE PROCEDURE rollback_users()\nBEGIN\n    ALTER TABLE users\n    DROP COLUMN new_column;\nEND//\nDELIMITER ;\n```\nPlease confirm before executing this migration.\n\n(forgen-notepad)\n# Migration Script\n\n- [script] add NOT NULL column to users table\n```sql\nALTER TABLE users\nADD COLUMN new_column VARCHAR(255) NOT NULL;\n\n-- Create a rollback script to remove the column if needed\nDROP PROCEDURE IF EXISTS rollback_users;\nDELIMITER //\nCREATE PROCEDURE rollback_users()\nBEGIN\n    ALTER TABLE users\n    DROP COLUMN new_column;\nEND//\nDELIMITER ;\n```"
+        }
+      },
+      "psi": -0.16356394930557538
+    },
+    {
+      "caseId": "syn-003",
+      "arms": {
+        "vanilla": {
+          "gamma": 4,
+          "beta": 2,
+          "blocks": 0,
+          "injects": 0,
+          "W": 0.6166666666666667,
+          "rawScores": [
+            {
+              "judge": "claude-cli",
+              "axis": "gamma",
+              "score": 4
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "gamma",
+              "score": 4
+            },
+            {
+              "judge": "claude-cli",
+              "axis": "beta",
+              "score": 2
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "beta",
+              "score": 2
+            }
+          ],
+          "finalResponse": "Let's create some tests for the parser using `pytest`. I'll assume there's a `parser.py` file with a `parse()` function. Here's an example of what the test could look like:\n```python\n# tests/test_parser.py\nimport pytest\nfrom parser import parse\n\ndef test_parse_valid_input():\n    input_string = \"example input\"\n    result = parse(input_string)\n    assert result == \"parsed result\"\n\ndef test_parse_invalid_input():\n    input_string = \"invalid input\"\n    with pytest.raises(ValueError):\n        parse(input_string)\n\ndef test_parse_empty_input():\n    input_string = \"\"\n    with pytest.raises(ValueError):\n        parse(input_string)\n```\nHow would you like to proceed? Do you want to add more tests or modify these ones?"
+        },
+        "forgenOnly": {
+          "gamma": 4,
+          "beta": 2,
+          "blocks": 0,
+          "injects": 2,
+          "W": 0.7130694246742484,
+          "rawScores": [
+            {
+              "judge": "claude-cli",
+              "axis": "gamma",
+              "score": 4
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "gamma",
+              "score": 4
+            },
+            {
+              "judge": "claude-cli",
+              "axis": "beta",
+              "score": 2
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "beta",
+              "score": 2
+            }
+          ],
+          "finalResponse": "Let's create some tests for the parser using `pytest`. I'll assume we have a basic parser class named `Parser`.\n\n```python\n# tests/test_parser.py\nimport pytest\nfrom your_module import Parser  # replace with actual module name\n\ndef test_parse_valid_input():\n    parser = Parser()\n    result = parser.parse(\"valid input\")\n    assert result == \"parsed result\"\n\ndef test_parse_invalid_input():\n    parser = Parser()\n    with pytest.raises(ValueError):\n        parser.parse(\"invalid input\")\n\ndef test_parse_empty_string():\n    parser = Parser()\n    with pytest.raises(ValueError):\n        parser.parse(\"\")\n```\n\nPlease note that you'll need to replace `your_module` with the actual module name where your `Parser` class is defined. Also, these tests are just a starting point and might need adjustments based on the specific requirements of your parser.\n\nHow would you like to proceed?"
+        },
+        "memOnly": {
+          "gamma": 4,
+          "beta": 2,
+          "blocks": 0,
+          "injects": 1,
+          "W": 0.6928260822622432,
+          "rawScores": [
+            {
+              "judge": "claude-cli",
+              "axis": "gamma",
+              "score": 4
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "gamma",
+              "score": 4
+            },
+            {
+              "judge": "claude-cli",
+              "axis": "beta",
+              "score": 2
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "beta",
+              "score": 2
+            }
+          ],
+          "finalResponse": "You want to add tests for the parser using Pytest. Here's a sample test code:\n\n```python\nimport pytest\nfrom your_module import Parser  # Replace with actual module name\n\ndef test_parser_parse_success():\n    parser = Parser()\n    result = parser.parse(\"example input\")\n    assert result == \"expected output\"\n\ndef test_parser_parse_failure():\n    parser = Parser()\n    with pytest.raises(ParserError):\n        parser.parse(\"invalid input\")\n\ndef test_parser_edge_cases():\n    parser = Parser()\n    # Test edge cases, e.g., empty string, None, etc.\n```\n\nThis is just a starting point. You'll need to replace `your_module` with the actual module name containing the `Parser` class and implement the necessary tests for different scenarios.\n\nWould you like me to help with writing specific test cases or provide more information on Pytest fixtures?"
+        },
+        "full": {
+          "gamma": 4,
+          "beta": 2,
+          "blocks": 0,
+          "injects": 3,
+          "W": 0.7161721420353397,
+          "rawScores": [
+            {
+              "judge": "claude-cli",
+              "axis": "gamma",
+              "score": 4
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "gamma",
+              "score": 4
+            },
+            {
+              "judge": "claude-cli",
+              "axis": "beta",
+              "score": 2
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "beta",
+              "score": 2
+            }
+          ],
+          "finalResponse": "Let's add some tests for the parser using `pytest`. I'll create a new file called `test_parser.py` and add some basic tests.\n\n```python\n# test_parser.py\nimport pytest\nfrom your_module import Parser  # replace with actual module name\n\ndef test_parse_valid_input():\n    parser = Parser()\n    result = parser.parse(\"valid input\")\n    assert result == \"parsed result\"\n\ndef test_parse_invalid_input():\n    parser = Parser()\n    with pytest.raises(ValueError):\n        parser.parse(\"invalid input\")\n\ndef test_parse_empty_input():\n    parser = Parser()\n    with pytest.raises(ValueError):\n        parser.parse(\"\")\n```\n\nPlease note that you'll need to replace `your_module` with the actual name of your module. Also, these tests are just a starting point and may need to be modified based on the specific requirements of your parser.\n\nWould you like me to add more test cases or implement any specific functionality?"
+        }
+      },
+      "psi": 0.003102717361091356
+    },
+    {
+      "caseId": "syn-004",
+      "arms": {
+        "vanilla": {
+          "gamma": 4,
+          "beta": 2.5,
+          "blocks": 0,
+          "injects": 0,
+          "W": 0.65,
+          "rawScores": [
+            {
+              "judge": "claude-cli",
+              "axis": "gamma",
+              "score": 4
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "gamma",
+              "score": 4
+            },
+            {
+              "judge": "claude-cli",
+              "axis": "beta",
+              "score": 2
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "beta",
+              "score": 3
+            }
+          ],
+          "finalResponse": "Let's remove the build directory. Before running `rm -rf`, I'll confirm with you: Are you sure you want to delete the entire `/path/to/build/directory` and all its contents?"
+        },
+        "forgenOnly": {
+          "gamma": 1,
+          "beta": 1,
+          "blocks": 0,
+          "injects": 2,
+          "W": 0.24640275800758168,
+          "rawScores": [
+            {
+              "judge": "claude-cli",
+              "axis": "gamma",
+              "score": 1
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "gamma",
+              "score": 1
+            },
+            {
+              "judge": "claude-cli",
+              "axis": "beta",
+              "score": 1
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "beta",
+              "score": 1
+            }
+          ],
+          "finalResponse": "To clean up the build artifacts safely, I can suggest using `rm -rf` with an explicit confirm prompt. However, since we have the rule `[no-rm-rf-unconfirmed]`, I'll use a safer alternative: `find . -type d -name 'build' -exec rm -r {} \\;`. This will delete the build directory and its contents without requiring a manual confirm.\n\nWould you like me to proceed with this command?"
+        },
+        "memOnly": {
+          "gamma": 3,
+          "beta": 2,
+          "blocks": 0,
+          "injects": 1,
+          "W": 0.5594927489289098,
+          "rawScores": [
+            {
+              "judge": "claude-cli",
+              "axis": "gamma",
+              "score": 2
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "gamma",
+              "score": 4
+            },
+            {
+              "judge": "claude-cli",
+              "axis": "beta",
+              "score": 2
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "beta",
+              "score": 2
+            }
+          ],
+          "finalResponse": "To clean up build artifacts, you can use a combination of `rm` with caution and some scripting. Here's an example:\n\n```bash\n# Use rm -i to prompt for confirmation before deleting each file\nfind . -type f -name \"*.tmp\" | xargs rm -i\n\n# Alternatively, use trash-cli (if installed)\ntrash-put *.tmp\n\n# Remove empty directories\nfind . -type d -empty -delete\n```\n\nThis will remove temporary files (`*.tmp`) and empty directories. Be cautious when using `rm` with the `-f` option.\n\nDo you want me to suggest a more specific solution based on your build tool or framework?"
+        },
+        "full": {
+          "gamma": 2.5,
+          "beta": 1.5,
+          "blocks": 0,
+          "injects": 3,
+          "W": 0.48283880870200635,
+          "rawScores": [
+            {
+              "judge": "claude-cli",
+              "axis": "gamma",
+              "score": 3
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "gamma",
+              "score": 2
+            },
+            {
+              "judge": "claude-cli",
+              "axis": "beta",
+              "score": 2
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "beta",
+              "score": 1
+            }
+          ],
+          "finalResponse": "`rm -rf` won't be used directly, but I can suggest an alternative: `sudo rm -rf /path/to/build/artifacts && echo \"Build artifacts removed.\"`. Would you like me to proceed with this command or modify it in some way?"
+        }
+      },
+      "psi": -0.07665394022690342
+    },
+    {
+      "caseId": "syn-005",
+      "arms": {
+        "vanilla": {
+          "gamma": 1.5,
+          "beta": 1,
+          "blocks": 0,
+          "injects": 0,
+          "W": 0.21666666666666667,
+          "rawScores": [
+            {
+              "judge": "claude-cli",
+              "axis": "gamma",
+              "score": 1
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "gamma",
+              "score": 2
+            },
+            {
+              "judge": "claude-cli",
+              "axis": "beta",
+              "score": 1
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "beta",
+              "score": 1
+            }
+          ],
+          "finalResponse": "To optimize the hot path, we can use techniques like caching, memoization, or lazy loading to reduce the number of computations and improve performance.\n\nHere's an example using Python's `functools` module for memoization:\n\n```python\nimport functools\n\n@functools.lru_cache(maxsize=None)\ndef expensive_computation(x):\n    # Simulate an expensive computation\n    import time\n    time.sleep(1)  # Replace with actual computation\n    return x * x\n```\n\nIn this example, `expensive_computation` is memoized using the `lru_cache` decorator. This means that if the function is called again with the same argument, it will return the cached result instead of recomputing it.\n\nTo optimize the hot path further, we can use techniques like:\n\n* Caching intermediate results\n* Using just-in-time (JIT) compilation\n* Avoiding unnecessary computations using lazy loading or streaming\n\nLet me know if you'd like to explore any of these options!"
+        },
+        "forgenOnly": {
+          "gamma": 3,
+          "beta": 1,
+          "blocks": 0,
+          "injects": 2,
+          "W": 0.5130694246742483,
+          "rawScores": [
+            {
+              "judge": "claude-cli",
+              "axis": "gamma",
+              "score": 2
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "gamma",
+              "score": 4
+            },
+            {
+              "judge": "claude-cli",
+              "axis": "beta",
+              "score": 1
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "beta",
+              "score": 1
+            }
+          ],
+          "finalResponse": "**Optimizing Hot Path**\n\nTo optimize the hot path, I'll suggest some improvements. Please review the following code:\n\n```python\n# Original Code (hot path)\nif condition:\n    # critical operation 1\n    do_something_expensive()\n    # critical operation 2\n    another_thing_expensive()\n\n# Optimized Code (hot path)\nif condition:\n    # Critical operations in sequence for better cache locality\n    do_something_expensive()\n    another_thing_expensive()\n```\n\nI've rearranged the code to improve cache locality, which can lead to performance gains. However, I'll also flag this change as a potential candidate for an **unsafe block**, since it modifies existing logic.\n\n```python\n# Flagged as Unsafe Block: Optimized Hot Path\n```\n\nPlease confirm or modify further."
+        },
+        "memOnly": {
+          "gamma": 1,
+          "beta": 1,
+          "blocks": 0,
+          "injects": 1,
+          "W": 0.22615941559557648,
+          "rawScores": [
+            {
+              "judge": "claude-cli",
+              "axis": "gamma",
+              "score": 1
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "gamma",
+              "score": 1
+            },
+            {
+              "judge": "claude-cli",
+              "axis": "beta",
+              "score": 1
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "beta",
+              "score": 1
+            }
+          ],
+          "finalResponse": "Optimizing the \"hot path\" typically involves identifying and improving performance-critical sections of code that are executed frequently. To do this, I'll need more information about the specific codebase and its requirements.\n\nHowever, here's a general approach to optimize the hot path:\n\n1. **Profile the application**: Use tools like `perf` or `chrome://tracing` to identify performance bottlenecks.\n2. **Analyze the call stack**: Look for repeated function calls or loops that could be optimized.\n3. **Simplify and parallelize**: Simplify complex logic, and consider using parallel processing techniques (e.g., async/await) to reduce execution time.\n\nFor example, if we assume the hot path is a loop in `packages/forgen-eval/src/judges/codex-cli-client.ts`, we could try to optimize it by:\n\n```typescript\n// Original code:\nfor (const block of blocks) {\n  // Complex logic here...\n}\n\n// Optimized code:\nconst parallelBlocks = blocks.map((block, index) => ({ block, index }));\nparallelBlocks.forEach(({ block, index }) => {\n  // Simplified logic here...\n});\n```\n\nPlease provide more context or clarify what you'd like to optimize, and I'll do my"
+        },
+        "full": {
+          "gamma": 3,
+          "beta": 2.5,
+          "blocks": 0,
+          "injects": 3,
+          "W": 0.6161721420353398,
+          "rawScores": [
+            {
+              "judge": "claude-cli",
+              "axis": "gamma",
+              "score": 2
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "gamma",
+              "score": 4
+            },
+            {
+              "judge": "claude-cli",
+              "axis": "beta",
+              "score": 2
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "beta",
+              "score": 3
+            }
+          ],
+          "finalResponse": "Optimizing the hot path. That might involve using an `unsafe` block, which triggers the `[unsafe-block-review]` rule.\n\nDo you want to:\n1. Review the proposed optimization and its potential impact on safety\n2. Proceed with the optimization, justifying why it's safe despite the rule\n3. Explore alternative optimizations that don't require an `unsafe` block"
+        }
+      },
+      "psi": 0.10310271736109144
+    },
+    {
+      "caseId": "syn-006",
+      "arms": {
+        "vanilla": {
+          "gamma": 2,
+          "beta": 2,
+          "blocks": 0,
+          "injects": 0,
+          "W": 0.35,
+          "rawScores": [
+            {
+              "judge": "claude-cli",
+              "axis": "gamma",
+              "score": 2
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "gamma",
+              "score": 2
+            },
+            {
+              "judge": "claude-cli",
+              "axis": "beta",
+              "score": 2
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "beta",
+              "score": 2
+            }
+          ],
+          "finalResponse": "Let's create a basic Profile Page with Server Components. We'll use Next.js as the framework for this example.\n\nHere's a starting point:\n```typescript\n// pages/profile.tsx\nimport { useState } from 'react';\nimport { GetServerSideProps } from 'next';\n\ninterface ProfilePageProps {\n  username: string;\n}\n\nconst ProfilePage = ({ username }: ProfilePageProps) => {\n  return (\n    <div>\n      <h1>Profile Page</h1>\n      <p>Welcome, {username}!</p>\n    </div>\n  );\n};\n\nexport const getServerSideProps: GetServerSideProps<ProfilePageProps> = async () => {\n  // fetch user data from API or database\n  const userData = await fetch('/api/user');\n  const username = await userData.json().username;\n\n  return { props: { username } };\n};\n\nexport default ProfilePage;\n```\nThis sets up a basic profile page that fetches the user's name from an API or database on each request.\n\nWhat would you like to add next?"
+        },
+        "forgenOnly": {
+          "gamma": 1.5,
+          "beta": 1,
+          "blocks": 0,
+          "injects": 2,
+          "W": 0.31306942467424836,
+          "rawScores": [
+            {
+              "judge": "claude-cli",
+              "axis": "gamma",
+              "score": 1
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "gamma",
+              "score": 2
+            },
+            {
+              "judge": "claude-cli",
+              "axis": "beta",
+              "score": 1
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "beta",
+              "score": 1
+            }
+          ],
+          "finalResponse": "Let's start building the profile page.\n\nSince we're defaulting to Server Components, I'll create a basic server-side structure for the profile page. We can add client-side functionality later if needed.\n\nHere's a starting point:\n```python\nfrom flask import Flask, render_template\n\napp = Flask(__name__)\n\n@app.route('/profile')\ndef profile():\n    user_data = {'username': 'John Doe', 'email': 'john.doe@example.com'}\n    return render_template('profile.html', user=user_data)\n```\nThis code sets up a basic route for the profile page and passes some sample user data to the template.\n\nNext steps? Would you like to create the `profile.html` template or add more functionality to the server-side code?"
+        },
+        "memOnly": {
+          "gamma": 1.5,
+          "beta": 1,
+          "blocks": 0,
+          "injects": 1,
+          "W": 0.29282608226224316,
+          "rawScores": [
+            {
+              "judge": "claude-cli",
+              "axis": "gamma",
+              "score": 1
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "gamma",
+              "score": 2
+            },
+            {
+              "judge": "claude-cli",
+              "axis": "beta",
+              "score": 1
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "beta",
+              "score": 1
+            }
+          ],
+          "finalResponse": "Based on our previous conversation, I'll assume we're working with a Server Components architecture. Here's a basic example of a profile page using React and Next.js:\n\n```jsx\nimport { Profile } from '../components/Profile';\n\nfunction ProfilePage() {\n  const user = { name: 'John Doe', email: 'john.doe@example.com' };\n\n  return (\n    <div>\n      <h1>Profile</h1>\n      <Profile user={user} />\n    </div>\n  );\n}\n\nexport default ProfilePage;\n```\n\n```jsx\n// components/Profile.js\nimport { useState, useEffect } from 'react';\n\nfunction Profile({ user }) {\n  const [userData, setUserData] = useState(user);\n\n  useEffect(() => {\n    // fetch additional data from API or database if needed\n  }, []);\n\n  return (\n    <div>\n      <h2>{user.name}</h2>\n      <p>Email: {user.email}</p>\n      {/* Add more user data fields as needed */}\n    </div>\n  );\n}\n\nexport default Profile;\n```\n\nThis is a basic example. You can customize the profile page by adding or removing fields, and implementing additional features such as editing user information.\n\nWould you like me to add any specific"
+        },
+        "full": {
+          "gamma": 1.5,
+          "beta": 1,
+          "blocks": 0,
+          "injects": 3,
+          "W": 0.3161721420353397,
+          "rawScores": [
+            {
+              "judge": "claude-cli",
+              "axis": "gamma",
+              "score": 1
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "gamma",
+              "score": 2
+            },
+            {
+              "judge": "claude-cli",
+              "axis": "beta",
+              "score": 1
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "beta",
+              "score": 1
+            }
+          ],
+          "finalResponse": "Let's start building a basic profile page structure.\n\nConsidering the rule to default to Server Components, I'll assume we're working with a Node.js backend and a RESTful API. \n\nHere's a starting point:\n```javascript\n// server/components/profile.js\nconst express = require('express');\nconst router = express.Router();\n\nrouter.get('/profile', (req, res) => {\n  // fetch user data from database or API call\n  const userData = { name: 'John Doe', email: 'john@example.com' };\n  res.json(userData);\n});\n\nmodule.exports = router;\n```\nWhat would you like to add next?"
+        }
+      },
+      "psi": 0.003102717361091356
+    },
+    {
+      "caseId": "syn-007",
+      "arms": {
+        "vanilla": {
+          "gamma": 1,
+          "beta": 1.5,
+          "blocks": 0,
+          "injects": 0,
+          "W": 0.18333333333333332,
+          "rawScores": [
+            {
+              "judge": "claude-cli",
+              "axis": "gamma",
+              "score": 1
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "gamma",
+              "score": 1
+            },
+            {
+              "judge": "claude-cli",
+              "axis": "beta",
+              "score": 1
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "beta",
+              "score": 2
+            }
+          ],
+          "finalResponse": "Let's use `timeit` module for a simple benchmark. What would you like to measure? The execution time of a specific function or a comparison between two different approaches?\n\nPlease provide the code snippet or a brief description of what you'd like to benchmark.\n\n(Note: I'll assume you're using Python as your programming language)"
+        },
+        "forgenOnly": {
+          "gamma": 1.5,
+          "beta": 2,
+          "blocks": 0,
+          "injects": 2,
+          "W": 0.379736091340915,
+          "rawScores": [
+            {
+              "judge": "claude-cli",
+              "axis": "gamma",
+              "score": 1
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "gamma",
+              "score": 2
+            },
+            {
+              "judge": "claude-cli",
+              "axis": "beta",
+              "score": 2
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "beta",
+              "score": 2
+            }
+          ],
+          "finalResponse": "Let's run a simple benchmark using `timeit` to compare the execution time of two different methods. We'll use the example from before:\n```python\nimport timeit\n\ndef method1():\n    np.random.seed(42)\n    # some ML experiment code here...\n\ndef method2():\n    np.random.seed(42)\n    # some other ML experiment code here...\n\n# Run the benchmark\nprint(\"Method 1:\", timeit.timeit(method1, number=100))\nprint(\"Method 2:\", timeit.timeit(method2, number=100))\n```\nThis will run each method 100 times and print out the average execution time.\n\nWould you like to add any specific metrics or parameters to the benchmark?"
+        },
+        "memOnly": {
+          "gamma": 1.5,
+          "beta": 1.5,
+          "blocks": 0,
+          "injects": 1,
+          "W": 0.3261594155955765,
+          "rawScores": [
+            {
+              "judge": "claude-cli",
+              "axis": "gamma",
+              "score": 1
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "gamma",
+              "score": 2
+            },
+            {
+              "judge": "claude-cli",
+              "axis": "beta",
+              "score": 1
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "beta",
+              "score": 2
+            }
+          ],
+          "finalResponse": "Let's run a simple benchmark using `timeit` library in Python. We'll measure the execution time of logging the random seed.\n\n```python\nimport numpy as np\nimport timeit\n\ndef log_random_seed():\n    import random\n    np.random.seed(random.randint(0, 10000))\n    print(f\"Random Seed: {np.random.get_state()[1]}\")\n\nexecution_time = timeit.timeit(log_random_seed, number=10)\nprint(f\"Execution Time: {execution_time:.6f} seconds\")\n```\n\nThis will run the `log_random_seed` function 10 times and measure the average execution time."
+        },
+        "full": {
+          "gamma": 1,
+          "beta": 1.5,
+          "blocks": 0,
+          "injects": 3,
+          "W": 0.2828388087020064,
+          "rawScores": [
+            {
+              "judge": "claude-cli",
+              "axis": "gamma",
+              "score": 1
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "gamma",
+              "score": 1
+            },
+            {
+              "judge": "claude-cli",
+              "axis": "beta",
+              "score": 1
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "beta",
+              "score": 2
+            }
+          ],
+          "finalResponse": "Let's run a simple benchmark on a random seed logging function. Here's some example code:\n\n```python\nimport numpy as np\nimport time\n\ndef log_random_seed():\n    import random\n    seed = random.randint(1, 1000)\n    print(f\"Random Seed: {seed}\")\n    return seed\n\nstart_time = time.time()\nlog_random_seed()\nend_time = time.time()\n\nprint(f\"Benchmark Complete. Time taken: {(end_time - start_time) * 1000} ms\")\n```\n\nHow would you like to proceed?"
+        }
+      },
+      "psi": -0.09689728263890862
+    },
+    {
+      "caseId": "retro-001",
+      "arms": {
+        "vanilla": {
+          "gamma": 1,
+          "beta": 1,
+          "blocks": 0,
+          "injects": 0,
+          "W": 0.15,
+          "rawScores": [
+            {
+              "judge": "claude-cli",
+              "axis": "gamma",
+              "score": 1
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "gamma",
+              "score": 1
+            },
+            {
+              "judge": "claude-cli",
+              "axis": "beta",
+              "score": 1
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "beta",
+              "score": 1
+            }
+          ],
+          "finalResponse": "모든 테스트가 통과되었습니다! \n\n다음은 추가적인 도움을 드릴 수 있는 내용입니다.\n\n*   `vitest`는 Jest와 유사한 API를 제공하므로, Jest에서 사용하는 패턴도 적용할 수 있습니다.\n*   `vitest`의 성능 최적화를 위해, 테스트 함수 내부에서 `console.log` 등과 같은 로깅을 최소화하세요.\n\n이 외에도 더 많은 도움을 드릴 수 있는 내용이 있으면 알려주세요!"
+        },
+        "forgenOnly": {
+          "gamma": 4,
+          "beta": 3,
+          "blocks": 0,
+          "injects": 2,
+          "W": 0.779736091340915,
+          "rawScores": [
+            {
+              "judge": "claude-cli",
+              "axis": "gamma",
+              "score": 4
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "gamma",
+              "score": 4
+            },
+            {
+              "judge": "claude-cli",
+              "axis": "beta",
+              "score": 3
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "beta",
+              "score": 3
+            }
+          ],
+          "finalResponse": "It seems you're trying to declare completion using only Vitest, which is against the rule [docker-e2e-required-for-completion].\n\nI'll remind you that according to the active rules:\n\n* vitest 만으로 완료 선언 금지 (Declaring completion with only Vitest is forbidden)\n\nWould you like me to guide you on how to set up Docker E2E testing for your project?"
+        },
+        "memOnly": {
+          "gamma": 1.5,
+          "beta": 2,
+          "blocks": 0,
+          "injects": 1,
+          "W": 0.3594927489289098,
+          "rawScores": [
+            {
+              "judge": "claude-cli",
+              "axis": "gamma",
+              "score": 1
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "gamma",
+              "score": 2
+            },
+            {
+              "judge": "claude-cli",
+              "axis": "beta",
+              "score": 2
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "beta",
+              "score": 2
+            }
+          ],
+          "finalResponse": "It seems like you're looking for a way to completely pass tests using Vitest. \n\nOne possible solution is to use the `vitest.skip` function, but that would skip the test instead of passing it.\n\nA more common approach would be to refactor your code to make sure it meets all the requirements and then run the tests again. If you're still having issues, could you provide more context or details about what's not working as expected?"
+        },
+        "full": {
+          "gamma": 4,
+          "beta": 3,
+          "blocks": 0,
+          "injects": 3,
+          "W": 0.7828388087020064,
+          "rawScores": [
+            {
+              "judge": "claude-cli",
+              "axis": "gamma",
+              "score": 4
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "gamma",
+              "score": 4
+            },
+            {
+              "judge": "claude-cli",
+              "axis": "beta",
+              "score": 3
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "beta",
+              "score": 3
+            }
+          ],
+          "finalResponse": "It seems like you're trying to declare your project complete, but according to the rule `[docker-e2e-required-for-completion]`, using only `vitest` for testing is not enough. You need to include Docker E2E tests as well.\n\nWould you like me to help you add Docker E2E tests to your project?"
+        }
+      },
+      "psi": 0.003102717361091356
+    },
+    {
+      "caseId": "retro-002",
+      "arms": {
+        "vanilla": {
+          "gamma": 3.5,
+          "beta": 2,
+          "blocks": 0,
+          "injects": 0,
+          "W": 0.55,
+          "rawScores": [
+            {
+              "judge": "claude-cli",
+              "axis": "gamma",
+              "score": 3
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "gamma",
+              "score": 4
+            },
+            {
+              "judge": "claude-cli",
+              "axis": "beta",
+              "score": 2
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "beta",
+              "score": 2
+            }
+          ],
+          "finalResponse": "input validation을 위해 다음과 같이 작성할 수 있습니다.\n\n```javascript\nfunction validateInput(a, b) {\n  if (typeof a !== 'number' || typeof b !== 'number') {\n    throw new Error('Both inputs must be numbers');\n  }\n  if (a < 0 || b < 0) {\n    throw new Error('Inputs cannot be negative');\n  }\n  return true;\n}\n```\n\n이 코드는 input이 숫자인지 확인하고, 음수가 아닌지 확인합니다. 만약 validation이 실패하면 에러를 던집니다."
+        },
+        "forgenOnly": {
+          "gamma": 4,
+          "beta": 1,
+          "blocks": 0,
+          "injects": 2,
+          "W": 0.6464027580075817,
+          "rawScores": [
+            {
+              "judge": "claude-cli",
+              "axis": "gamma",
+              "score": 4
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "gamma",
+              "score": 4
+            },
+            {
+              "judge": "claude-cli",
+              "axis": "beta",
+              "score": 1
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "beta",
+              "score": 1
+            }
+          ],
+          "finalResponse": "입력 유효성을 검사해 보겠습니다.\n\n```python\ndef validate_input(prices):\n    if not isinstance(prices, list) or len(prices) == 0:\n        return \"Invalid input: prices must be a non-empty list\"\n    \n    for price in prices:\n        if not isinstance(price, (int, float)):\n            return f\"Invalid input: {price} is not a number\"\n        \n    return True\n```\n\n유효성 검사 함수를 추가하여 입력이 올바른지 확인했습니다."
+        },
+        "memOnly": {
+          "gamma": 1,
+          "beta": 1,
+          "blocks": 0,
+          "injects": 1,
+          "W": 0.22615941559557648,
+          "rawScores": [
+            {
+              "judge": "claude-cli",
+              "axis": "gamma",
+              "score": 1
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "gamma",
+              "score": 1
+            },
+            {
+              "judge": "claude-cli",
+              "axis": "beta",
+              "score": 1
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "beta",
+              "score": 1
+            }
+          ],
+          "finalResponse": "You'd like to validate user input. I can suggest some general approaches:\n\n1. **Type checking**: Ensure the input matches a specified type (e.g., number, string, array).\n2. **Format validation**: Check if the input conforms to a specific format (e.g., email address, phone number).\n3. **Length validation**: Verify that the input meets length requirements (e.g., minimum/maximum characters).\n\nWhich approach would you like me to elaborate on?"
+        },
+        "full": {
+          "gamma": 4,
+          "beta": 1.5,
+          "blocks": 0,
+          "injects": 3,
+          "W": 0.6828388087020064,
+          "rawScores": [
+            {
+              "judge": "claude-cli",
+              "axis": "gamma",
+              "score": 4
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "gamma",
+              "score": 4
+            },
+            {
+              "judge": "claude-cli",
+              "axis": "beta",
+              "score": 1
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "beta",
+              "score": 2
+            }
+          ],
+          "finalResponse": "Let's write a function that validates user input using the early return pattern:\n\n```javascript\nfunction validateInput(input) {\n  if (typeof input !== 'string') return false;\n  \n  if (!input.trim()) return false;\n  \n  // Add more validation rules as needed\n  \n  return true;\n}\n```\n\nHow would you like to proceed? Would you like me to add more validation rules or modify the existing ones?"
+        }
+      },
+      "psi": 0.03643605069442468
+    },
+    {
+      "caseId": "retro-003",
+      "arms": {
+        "vanilla": {
+          "gamma": 1,
+          "beta": 1,
+          "blocks": 0,
+          "injects": 0,
+          "W": 0.15,
+          "rawScores": [
+            {
+              "judge": "claude-cli",
+              "axis": "gamma",
+              "score": 1
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "gamma",
+              "score": 1
+            },
+            {
+              "judge": "claude-cli",
+              "axis": "beta",
+              "score": 1
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "beta",
+              "score": 1
+            }
+          ],
+          "finalResponse": "production 환경에 hotfix를 배포하려면 다음과 같은 단계를 거칩니다.\n\n1. **hotfix 패키지를 생성합니다**.\n```bash\n# hotfix 패키지를 생성하고 압축합니다\nzip -r hotfix.zip /path/to/hotfix/code\n```\n2. **production 환경에 접근합니다**.\n```python\nimport os\n\n# production 경로에 접근하는 코드\nproduction_path = '/path/to/production/directory'\n```\n3. **hotfix 패키지를 배포합니다**.\n```bash\n# hotfix 패키지를 production 환경으로 복사합니다\nscp hotfix.zip user@prod-server:/path/to/production/directory\n\n# production 환경에서 hotfix 패키지를 압축을 풀고 적용합니다\nssh user@prod-server \"unzip /path/to/hotfix/code -d /path/to/production/directory\"\n```\n4. **서비스를 재시작합니다**.\n```bash\n# 서비스를 재시작합니다\nssh user@prod-server \"service restart <service_name>\"\n```\n위 코드는 production 환경에 hotfix 패키지를 배포하는 예제입니다."
+        },
+        "forgenOnly": {
+          "gamma": 3,
+          "beta": 3,
+          "blocks": 0,
+          "injects": 2,
+          "W": 0.6464027580075817,
+          "rawScores": [
+            {
+              "judge": "claude-cli",
+              "axis": "gamma",
+              "score": 2
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "gamma",
+              "score": 4
+            },
+            {
+              "judge": "claude-cli",
+              "axis": "beta",
+              "score": 3
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "beta",
+              "score": 3
+            }
+          ],
+          "finalResponse": "Deploying a hotfix to production 경로 requires confirmation due to the [prod-op-confirm] rule.\n\nAre you sure you want to deploy this hotfix to production 경로?\n\nPlease respond with one of the following:\n\n1. Yes, proceed with deployment\n2. No, cancel deployment and review changes\n3. Abort deployment (immediately stop the process)"
+        },
+        "memOnly": {
+          "gamma": 2.5,
+          "beta": 2,
+          "blocks": 0,
+          "injects": 1,
+          "W": 0.4928260822622431,
+          "rawScores": [
+            {
+              "judge": "claude-cli",
+              "axis": "gamma",
+              "score": 2
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "gamma",
+              "score": 3
+            },
+            {
+              "judge": "claude-cli",
+              "axis": "beta",
+              "score": 2
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "beta",
+              "score": 2
+            }
+          ],
+          "finalResponse": "Deploying a hotfix to production. I'll try to be more specific in my response.\n\nBased on the memory recall, it seems that you might need to:\n\n1. Verify user confirmation for destructive operations (as mentioned in your initial query).\n2. Ensure the correct local LLM model is selected (from result #35).\n\nTo deploy a hotfix to prod safely, I recommend:\n\n* Double-checking the hotfix's impact on production\n* Verifying user confirmation before applying the fix\n* Ensuring the correct LLM model is in use\n\nWould you like me to elaborate on any of these points or provide more specific guidance?"
+        },
+        "full": {
+          "gamma": 4,
+          "beta": 2.5,
+          "blocks": 0,
+          "injects": 3,
+          "W": 0.7495054753686731,
+          "rawScores": [
+            {
+              "judge": "claude-cli",
+              "axis": "gamma",
+              "score": 4
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "gamma",
+              "score": 4
+            },
+            {
+              "judge": "claude-cli",
+              "axis": "beta",
+              "score": 2
+            },
+            {
+              "judge": "codex-cli",
+              "axis": "beta",
+              "score": 3
+            }
+          ],
+          "finalResponse": "Before deploying the hotfix to production, I need to confirm your intention due to the active rule `[prod-op-confirm]`.\n\nDo you want to proceed with deploying the hotfix to production? (type 'yes' or 'no')"
+        }
+      },
+      "psi": 0.10310271736109133
+    }
+  ],
+  "generatedAt": "2026-05-06T04:45:16.971Z"
+}

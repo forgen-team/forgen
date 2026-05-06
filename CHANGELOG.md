@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Internal — forgen-eval testbed 5-layer fix (2026-05-06)
+
+기존 ψ 측정이 신호를 못 잡던 root cause를 모두 식별·수정. 측정 인프라 신뢰도 회복 후 첫 진짜 forgen 효과 신호 확보.
+
+**5 layers fixed**:
+1. **Judge contamination** — `claude` CLI judge가 사용자 전역 `~/.claude/CLAUDE.md` 로드 → forgen 동작 어시스턴트로 빙의 (β score=0 / NaN 다발). `--system-prompt` override + codex `--ignore-user-config --ignore-rules --ephemeral`로 격리.
+2. **Persona stub** — `loadPersonaSpec()` 도입, 실제 `personas/persona-XXX.json` 로드해 β-axis judge에 전달 (이전엔 `'persona persona-001'` 같은 ID 문자열만 전달).
+3. **Trigger turn hook 누락** — `ForgenOnlyArm`이 correctionSequence turns에서만 forgen hook 호출, **trigger turn은 우회** → trigger 응답이 vanilla와 동일. 트리거 단계에 UPS + Stop hook pipeline 추가.
+4. **Notepad 미초기화** — `notepad-injector.js`가 `cwd/.compound/notepad.md`를 읽는데 테스트 harness가 비어있는 cwd 전달. `seedForgenNotepad()`로 케이스별 임시 cwd + correctionSequence 사전 학습 상태 시뮬레이션.
+5. **Hooks dir 경로 오류 (root cause)** — `forgen-bridge.ts`가 하드코딩 `/Users/jang-ujin/study/forgen/dist/hooks` (실제는 `forgen-team/forgen`) → 모든 hook 호출이 silently 실패하고 try/catch가 삼킴. `forgenOnly` arm이 **세션 내내 vanilla로 동작**. `import.meta.url` 기반 상대 경로로 자동 해결.
+6. (추가) **Bridge 응답 shape 오류** — `UserPromptSubmitResult.additionalContext` 가 top level이 아니라 `hookSpecificOutput.additionalContext` 안에 위치. 인터페이스/접근 코드 동시 수정.
+
+**Findings (격리 + 5-layer fix 후 N=10)**:
+- ψ (composition: full vs best single arm): mean -0.028, CI [-0.085, 0.030] — 0 교차 (composition 우위는 약함)
+- **δ (forgen vs vanilla, 진짜 효과)**: **mean +0.216, 8/10 win** — forgen이 vanilla 대비 명확히 우수
+- κ_β: 0.008 (오염) → 0.548 (수정 후) — judge 합의 60% 근접
+- syn-004 (rm-rf 케이스) -0.403: **driver(llama 8B)가 룰 글자만 보고 의도 무회피 — `find -exec rm -r` 같은 더 위험한 우회 제안**. 룰 inject 포맷이 작은 모델에서 brittle한 product 결함 표면화.
+- retro-001/-003 (실데이터): forgen이 "vitest만으로 완료선언 금지" 등 학습 룰을 정확 적용해 책임감 있는 거부 응답 생성 (큰 win).
+
+**v0.4.4 status**: 측정 인프라 fix + 첫 진짜 신호 확보. 그러나 hard gate(ψ>0)는 ψ 정의가 composition 측정이라 부적합 — v0.5.0에서 metric 재정의 필요. v0.4.4 npm publish는 보류.
+
+**Files**:
+- `packages/forgen-eval/src/arms/forgen-bridge.ts` — `__dirname` 기반 hooks 경로 + `hookSpecificOutput` shape
+- `packages/forgen-eval/src/arms/real-arms.ts` — `seedForgenNotepad()` + trigger turn hook pipeline + cleanup
+- `packages/forgen-eval/src/judges/claude-cli-client.ts` — `--system-prompt` 격리
+- `packages/forgen-eval/src/judges/codex-cli-client.ts` — `--ignore-user-config --ignore-rules --ephemeral`
+- `packages/forgen-eval/src/judges/judge-types.ts` — JUDGE_GUARD 단일 라인 + β/φ 프롬프트 placeholder 정합화
+- `packages/forgen-eval/src/runners/demo-psi-stat-judged.ts` — `loadPersonaSpec()` + finalResponse 리포트 저장 (정성 분석)
+- `packages/forgen-eval/reports/psi-stat/*.json` — pre/post-fix audit trail (6 reports)
+
 ### Internal — pathfinder + Deep Interview fix cycle (2026-04-30 post-v0.4.3)
 
 **Pathfinder (stop-guard 3-check 구조 진단 + unify)** (`refactor`)

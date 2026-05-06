@@ -13,12 +13,30 @@
  *   - Total ≈ 5-7 min/case. N=10 → ~60-70 min wall.
  */
 
+import { readFileSync, existsSync } from 'node:fs';
+import { join } from 'node:path';
 import { VanillaArm, ForgenOnlyArm, ClaudeMemOnlyArm, ForgenPlusMemArm } from '../arms/real-arms.js';
 import type { ArmContext } from '../arms/types.js';
 import { loadTestCases } from '../datasets/loader.js';
 import type { ArmResponse, Track } from '../types.js';
 import type { JudgeAxis, JudgeClient } from '../judges/index.js';
 import { ClaudeCliClient, CodexCliClient, SonnetClient } from '../judges/index.js';
+
+/** Load persona spec JSON for β-axis judging. Cached per personaId. */
+const personaCache = new Map<string, string>();
+function loadPersonaSpec(rootDir: string, personaId: string): string {
+  if (personaCache.has(personaId)) return personaCache.get(personaId)!;
+  const path = join(rootDir, 'personas', `${personaId}.json`);
+  if (!existsSync(path)) {
+    const stub = `(persona spec missing: ${personaId})`;
+    personaCache.set(personaId, stub);
+    return stub;
+  }
+  const spec = JSON.parse(readFileSync(path, 'utf-8'));
+  const text = JSON.stringify(spec, null, 2);
+  personaCache.set(personaId, text);
+  return text;
+}
 
 const DATA_DIR = process.env.FORGEN_EVAL_DATA_DIR ?? '/tmp/forgen-eval-data';
 const N = Number(process.env.PSI_STAT_N ?? 10);
@@ -32,6 +50,8 @@ interface PerArmScore {
   W: number;
   /** Per-judge raw scores for κ computation. */
   rawScores: { judge: string; axis: JudgeAxis; score: number }[];
+  /** Captured for qualitative review (which arm produced what response). */
+  finalResponse: string;
 }
 
 interface ScoredCase {
@@ -192,7 +212,7 @@ async function main() {
     }
     if (!armResp.vanilla || !armResp.forgenOnly || !armResp.memOnly || !armResp.full) continue;
 
-    const persona = `persona ${c.personaId}, scenario ${c.scenario}`;
+    const persona = loadPersonaSpec(DATA_DIR, c.personaId);
     const correctionHistory = formatCorrectionHistory(c.correctionSequence);
     const armScores: ScoredCase['arms'] = {};
     for (const [k, r] of Object.entries(armResp)) {
@@ -212,7 +232,7 @@ async function main() {
         if (!kappaInputs[key]) kappaInputs[key] = [];
         kappaInputs[key].push(rs.score);
       }
-      armScores[k] = { gamma: gamma.mean, beta: beta.mean, blocks, injects, W, rawScores };
+      armScores[k] = { gamma: gamma.mean, beta: beta.mean, blocks, injects, W, rawScores, finalResponse: r.finalResponse };
       console.log(
         `  ${k}: judge ${((Date.now() - tj) / 1000).toFixed(1)}s γ=${gamma.mean.toFixed(2)} β=${beta.mean.toFixed(2)} W=${W.toFixed(3)}`,
       );

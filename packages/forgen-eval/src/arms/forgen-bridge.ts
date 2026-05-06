@@ -10,9 +10,15 @@
 
 import { spawn } from 'node:child_process';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const FORGEN_HOOKS_DIR = process.env.FORGEN_HOOKS_DIR ?? '/Users/jang-ujin/study/forgen/dist/hooks';
+/** Resolve hooks dir relative to this file so the eval works from any clone path.
+ *  Layout: <repo>/packages/forgen-eval/{src|dist}/arms/forgen-bridge.{ts|js}
+ *  → 4 levels up reaches <repo>, then dist/hooks/ contains compiled hook scripts.
+ */
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const FORGEN_HOOKS_DIR = process.env.FORGEN_HOOKS_DIR ?? join(__dirname, '../../../../dist/hooks');
 
 export interface UserPromptSubmitPayload {
   prompt: string;
@@ -22,8 +28,12 @@ export interface UserPromptSubmitPayload {
 
 export interface UserPromptSubmitResult {
   continue: boolean;
-  additionalContext?: string;
   systemMessage?: string;
+  /** Claude Code hook protocol shape — additionalContext lives nested here, not at top level. */
+  hookSpecificOutput?: {
+    hookEventName?: string;
+    additionalContext?: string;
+  };
 }
 
 export interface StopHookPayload {

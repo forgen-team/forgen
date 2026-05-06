@@ -19,6 +19,30 @@ import {
   newSessionId,
 } from './forgen-bridge.js';
 import { execSync } from 'node:child_process';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+
+/** Materialize correctionSequence as a notepad.md so notepad-injector has rules to inject.
+ *  Without this, forgen treats every case as a fresh session with no learned rules.
+ *  Returns the temp project root (caller is responsible for cleanup).
+ */
+function seedForgenNotepad(c: TestCase): string {
+  const tempCwd = fs.mkdtempSync(path.join(os.tmpdir(), 'forgen-eval-arm-'));
+  const compoundDir = path.join(tempCwd, '.compound');
+  fs.mkdirSync(compoundDir, { recursive: true });
+  const lines = [
+    '# Active Rules (forgen learned from prior corrections)',
+    '',
+    ...c.correctionSequence.map((t) => {
+      const ruleId = t.expectedRule ?? 'rule';
+      return `- [${ruleId}] ${t.userMsg}`;
+    }),
+    '',
+  ];
+  fs.writeFileSync(path.join(compoundDir, 'notepad.md'), lines.join('\n'), 'utf-8');
+  return tempCwd;
+}
 
 const DRIVER = new OllamaDriverLLM();
 
@@ -68,25 +92,28 @@ export class ForgenOnlyArm implements Arm {
 
   async runCase(c: TestCase, ctx: ArmContext): Promise<ArmResponse> {
     const sessionId = newSessionId();
+    const armCwd = seedForgenNotepad(c);
     const history: ChatTurn[] = [{ role: 'system', content: baseSystem(c.personaId) }];
     const blockEvents: BlockEvent[] = [];
     const injectEvents: InjectEvent[] = [];
 
+    try {
     for (const turn of c.correctionSequence.slice(0, ctx.turnDepth)) {
       // 1. UserPromptSubmit hook — forgen may inject rules into context
       try {
         const ups = await userPromptSubmitHook({
           prompt: turn.userMsg,
           session_id: sessionId,
-          cwd: process.cwd(),
+          cwd: armCwd,
         });
-        if (ups.additionalContext && ups.additionalContext.length > 0) {
+        const upsCtx = ups.hookSpecificOutput?.additionalContext;
+        if (upsCtx && upsCtx.length > 0) {
           injectEvents.push({
             ruleId: 'forgen-rule-inject',
-            injectedText: ups.additionalContext.slice(0, 500),
+            injectedText: upsCtx.slice(0, 500),
             ts: new Date().toISOString(),
           });
-          history.push({ role: 'system', content: `[forgen rules]\n${ups.additionalContext}` });
+          history.push({ role: 'system', content: `[forgen rules]\n${upsCtx}` });
         }
       } catch (e) {
         // Hook failure — treat as no-op for this turn (don't fail whole arm)
@@ -123,8 +150,53 @@ export class ForgenOnlyArm implements Arm {
       history.push({ role: 'assistant', content: response });
     }
 
+    // Trigger phase — must run the same forgen hook pipeline to actually test
+    // the learned rule's effect. Without this the trigger response bypasses
+    // forgen entirely and forgenOnly degenerates to vanilla.
+    try {
+      const upsT = await userPromptSubmitHook({
+        prompt: c.trigger.prompt,
+        session_id: sessionId,
+        cwd: armCwd,
+      });
+      const upsTCtx = upsT.hookSpecificOutput?.additionalContext;
+      if (upsTCtx && upsTCtx.length > 0) {
+        injectEvents.push({
+          ruleId: 'forgen-rule-inject',
+          injectedText: upsTCtx.slice(0, 500),
+          ts: new Date().toISOString(),
+        });
+        history.push({ role: 'system', content: `[forgen rules]\n${upsTCtx}` });
+      }
+    } catch {
+      // no-op
+    }
+
     history.push({ role: 'user', content: c.trigger.prompt });
-    const finalResponse = await DRIVER.chat(history);
+    let finalResponse = await DRIVER.chat(history);
+
+    try {
+      const stopT = await stopGuardHook({
+        transcript_path: '/dev/null',
+        stop_hook_active: false,
+        session_id: sessionId,
+        response: finalResponse,
+      });
+      if (stopT.decision === 'block' && stopT.reason) {
+        blockEvents.push({
+          ruleId: 'forgen-stop-block',
+          reason: stopT.reason.slice(0, 500),
+          ts: new Date().toISOString(),
+        });
+        history.push({
+          role: 'system',
+          content: `[Previous response was blocked by forgen: ${stopT.reason}]\nProduce a corrected response.`,
+        });
+        finalResponse = await DRIVER.chat(history);
+      }
+    } catch {
+      // no-op
+    }
 
     return {
       caseId: c.id,
@@ -134,6 +206,9 @@ export class ForgenOnlyArm implements Arm {
       blockEvents,
       injectEvents,
     };
+    } finally {
+      try { fs.rmSync(armCwd, { recursive: true, force: true }); } catch { /* best-effort */ }
+    }
   }
 }
 

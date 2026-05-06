@@ -95,6 +95,9 @@ export class CodexCliClient implements JudgeClient {
       [
         'exec',
         '--json',
+        '--ignore-user-config',
+        '--ignore-rules',
+        '--ephemeral',
         '-s',
         'read-only',
         '-c',
@@ -120,7 +123,7 @@ export class CodexCliClient implements JudgeClient {
     const start = Date.now();
     try {
       const stdout = await runCodex(
-        ['exec', '--json', '-s', 'read-only', '-c', 'approval_policy="never"', '--skip-git-repo-check', 'Reply with just: ok'],
+        ['exec', '--json', '--ignore-user-config', '--ignore-rules', '--ephemeral', '-s', 'read-only', '-c', 'approval_policy="never"', '--skip-git-repo-check', 'Reply with just: ok'],
         { cwd: this.cwd, timeoutMs: 60_000 },
       );
       const text = extractCodexText(stdout);

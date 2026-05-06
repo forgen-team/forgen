@@ -60,7 +60,8 @@ export function buildJudgePrompt(input: JudgePromptInput): string {
         material.persona ?? '(없음)',
         '응답:',
         material.finalResponse,
-        '점수 (1-4), JSON 형태: {"score": int, "rationale": "<문장>"}',
+        '점수 (1=전혀 부적합, 4=완전 부합), JSON 형태:',
+        '{"score": 1-4, "rationale": "<한 문장 근거>"}',
       ].join('\n');
     case 'phi':
       return [
@@ -71,7 +72,8 @@ export function buildJudgePrompt(input: JudgePromptInput): string {
         JSON.stringify(material.blockOrInjectEvent ?? {}),
         '응답 (차단 후 결과):',
         material.finalResponse,
-        '점수 (1=불합리/false-positive, 4=합리적), JSON 형태: {"score": int, "rationale": "<문장>"}',
+        '점수 (1=불합리/false-positive, 4=합리적), JSON 형태:',
+        '{"score": 1-4, "rationale": "<한 문장 근거>"}',
       ].join('\n');
   }
 }

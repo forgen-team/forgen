@@ -21,6 +21,12 @@ const execFileAsync = promisify(execFile);
 const DEFAULT_MODEL = 'haiku';
 const DEFAULT_TIMEOUT_MS = 60_000;
 
+/** System prompt that fully replaces the default (which would load user CLAUDE.md and rules).
+ *  `--system-prompt` 사용 시 CLAUDE.md auto-discovery는 비활성화되어 judge 격리가 성립.
+ */
+const JUDGE_SYSTEM_PROMPT =
+  'You are a blind evaluator. Reply with ONLY a single JSON object that matches the schema in the user message. Do not use tools. Do not access files. Output JSON only, no prose, no markdown fences.';
+
 export class ClaudeCliClient implements JudgeClient {
   readonly id = 'claude-cli' as const;
   private readonly model: string;
@@ -35,13 +41,17 @@ export class ClaudeCliClient implements JudgeClient {
 
   async judge(input: JudgePromptInput): Promise<JudgeScore> {
     const prompt = buildJudgePrompt(input);
-    const { stdout } = await execFileAsync('claude', ['-p', prompt, '--model', this.model], {
-      encoding: 'utf-8',
-      timeout: this.timeoutMs,
-      cwd: this.cwd,
-      env: { ...process.env },
-      maxBuffer: 4 * 1024 * 1024,
-    });
+    const { stdout } = await execFileAsync(
+      'claude',
+      ['-p', prompt, '--model', this.model, '--system-prompt', JUDGE_SYSTEM_PROMPT],
+      {
+        encoding: 'utf-8',
+        timeout: this.timeoutMs,
+        cwd: this.cwd,
+        env: { ...process.env },
+        maxBuffer: 4 * 1024 * 1024,
+      },
+    );
     const parsed = parseJudgeOutput(stdout);
     return {
       caseId: input.caseId,
@@ -58,7 +68,7 @@ export class ClaudeCliClient implements JudgeClient {
     try {
       const { stdout } = await execFileAsync(
         'claude',
-        ['-p', 'Reply with just: ok', '--model', this.model],
+        ['-p', 'Reply with just: ok', '--model', this.model, '--system-prompt', JUDGE_SYSTEM_PROMPT],
         { encoding: 'utf-8', timeout: 30_000, cwd: this.cwd, maxBuffer: 1024 * 1024 },
       );
       return { ok: /ok/i.test(stdout), latencyMs: Date.now() - start, modelInfo: `claude --model ${this.model}` };
