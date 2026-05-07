@@ -114,12 +114,87 @@ function communicationPackRules(pack: CommunicationPack): string[] {
   }
 }
 
+// ── Facet-driven rules ──
+// 4축 facet 값의 양 극단(≤0.15, ≥0.85)에서만 추가 규칙을 emit. 중간 값은
+// pack 기본 규칙으로 충분하다고 본다 — 12-bucket pack lookup 위에 *연속 값
+// 차별화*를 얇게 얹는 설계.
+//
+// Threshold 정당화: 0.5 가 default 이고 자동 갱신은 ±0.1 단위 (auto-compound-runner).
+// 0.15/0.85 = 3 단계 강한 신호 누적 후에야 발화 → 노이즈에 둔감.
+
+const FACET_HIGH = 0.85;
+const FACET_LOW = 0.15;
+
+interface FacetRule {
+  section: SectionName;
+  rule: string;
+}
+
+function facetDrivenRules(profile: Profile): FacetRule[] {
+  const out: FacetRule[] = [];
+  const q = profile.axes.quality_safety.facets;
+  const a = profile.axes.autonomy.facets;
+  const j = profile.axes.judgment_philosophy.facets;
+  const c = profile.axes.communication_style.facets;
+
+  // Quality
+  if (q.verification_depth >= FACET_HIGH) {
+    out.push({ section: 'How To Validate', rule: '완료 선언 전 실행 로그 / 테스트 결과 / e2e 증거를 응답에 첨부' });
+  }
+  if (q.stop_threshold >= FACET_HIGH) {
+    out.push({ section: 'Working Defaults', rule: '첫 실패 시 즉시 멈추고 진단 — 무진단 재시도 금지' });
+  }
+  if (q.change_conservatism >= FACET_HIGH) {
+    out.push({ section: 'Working Defaults', rule: '의뢰 범위 외 리팩토링/일반화 금지 — 최소 diff 우선' });
+  } else if (q.change_conservatism <= FACET_LOW) {
+    out.push({ section: 'Working Defaults', rule: '명확성을 위한 리팩토링은 허용 — 디버그 중 발견된 인접 결함도 같은 PR 가능' });
+  }
+
+  // Autonomy
+  if (a.confirmation_independence >= FACET_HIGH) {
+    out.push({ section: 'When To Ask', rule: '목표 합의 후 단계별 재확인 생략 — 마무리 시점 한 번만 보고' });
+  } else if (a.confirmation_independence <= FACET_LOW) {
+    out.push({ section: 'When To Ask', rule: '비-사소한 단계마다 사용자 확인을 받고 진행' });
+  }
+  if (a.approval_threshold >= FACET_HIGH) {
+    out.push({ section: 'When To Ask', rule: '비가역 작업(force push, 데이터 삭제, 외부 broadcast) 전 명시 승인 필수' });
+  }
+
+  // Judgment
+  if (j.minimal_change_bias >= FACET_HIGH) {
+    out.push({ section: 'Working Defaults', rule: '직면한 문제만 해결 — 인접 개선/추상화 제안은 별도 보고' });
+  }
+  if (j.abstraction_bias >= FACET_HIGH) {
+    out.push({ section: 'Working Defaults', rule: '반복 패턴 발견 시 재사용 가능한 추상화로 통합 제안' });
+  } else if (j.abstraction_bias <= FACET_LOW) {
+    out.push({ section: 'Working Defaults', rule: '명확성을 해치는 추상화 금지 — 인라인 중복 허용' });
+  }
+  if (j.evidence_first_bias >= FACET_HIGH) {
+    out.push({ section: 'How To Report', rule: '결론·가설 명시 전 근거(파일:라인, 로그, 측정값)를 먼저 표면화' });
+  }
+
+  // Communication
+  if (c.verbosity <= FACET_LOW) {
+    out.push({ section: 'How To Report', rule: '코드 표시가 필요하지 않으면 답변은 3문장 이내' });
+  } else if (c.verbosity >= FACET_HIGH) {
+    out.push({ section: 'How To Report', rule: '결정 배경·대안·tradeoff 를 답변에 포함' });
+  }
+  if (c.structure >= FACET_HIGH) {
+    out.push({ section: 'How To Report', rule: '다중 포인트 답변은 헤더/표/리스트로 구조화' });
+  }
+  if (c.teaching_bias >= FACET_HIGH) {
+    out.push({ section: 'How To Report', rule: 'why/how 를 함께 설명 — what 만 답하지 말 것' });
+  }
+
+  return out;
+}
+
 // ── Main Render ──
 
 export function renderRules(
   rules: Rule[],
   state: SessionEffectiveState,
-  _profile: Profile,
+  profile: Profile,
   ctx: RenderContext = DEFAULT_CONTEXT,
 ): string {
   // 1. active만 수집
@@ -156,6 +231,13 @@ export function renderRules(
     // communication pack 기본 규칙
     for (const rule of communicationPackRules(state.communication_pack)) {
       sections.get('How To Report')!.push(rule);
+    }
+
+    // 4축 facet 극단값 → 추가 규칙 (12-bucket pack 위에 연속 값 차별화).
+    // 각 facet 0.5 default 이고 자동 갱신 ±0.1 단위이므로, 0.85/0.15 임계값은
+    // 여러 세션에 걸친 강한 신호 누적 후에만 발화한다.
+    for (const fr of facetDrivenRules(profile)) {
+      sections.get(fr.section)!.push(fr.rule);
     }
   }
 

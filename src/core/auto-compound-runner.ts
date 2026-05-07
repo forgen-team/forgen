@@ -440,7 +440,9 @@ ${profileContext}
   "pack_direction": null 또는 "opposite_quality" 또는 "opposite_autonomy",
   "profile_delta": {
     "quality_safety": { "verification_depth": 0.0, "stop_threshold": 0.0, "change_conservatism": 0.0 },
-    "autonomy": { "confirmation_independence": 0.0, "assumption_tolerance": 0.0, "scope_expansion_tolerance": 0.0, "approval_threshold": 0.0 }
+    "autonomy": { "confirmation_independence": 0.0, "assumption_tolerance": 0.0, "scope_expansion_tolerance": 0.0, "approval_threshold": 0.0 },
+    "judgment_philosophy": { "minimal_change_bias": 0.0, "abstraction_bias": 0.0, "evidence_first_bias": 0.0 },
+    "communication_style": { "verbosity": 0.0, "structure": 0.0, "teaching_bias": 0.0 }
   }
 }
 
@@ -506,6 +508,26 @@ ${sanitizedSummary.slice(0, 4000)}
           if (parsed.profile_delta.autonomy) {
             const d = parsed.profile_delta.autonomy;
             const f = profile.axes.autonomy.facets;
+            for (const [k, v] of Object.entries(d)) {
+              if (typeof v === 'number' && Math.abs(v) > 0.001 && k in f) {
+                f[k] = clamp(f[k] + v);
+                changed = true;
+              }
+            }
+          }
+          if (parsed.profile_delta.judgment_philosophy) {
+            const d = parsed.profile_delta.judgment_philosophy;
+            const f = profile.axes.judgment_philosophy.facets;
+            for (const [k, v] of Object.entries(d)) {
+              if (typeof v === 'number' && Math.abs(v) > 0.001 && k in f) {
+                f[k] = clamp(f[k] + v);
+                changed = true;
+              }
+            }
+          }
+          if (parsed.profile_delta.communication_style) {
+            const d = parsed.profile_delta.communication_style;
+            const f = profile.axes.communication_style.facets;
             for (const [k, v] of Object.entries(d)) {
               if (typeof v === 'number' && Math.abs(v) > 0.001 && k in f) {
                 f[k] = clamp(f[k] + v);

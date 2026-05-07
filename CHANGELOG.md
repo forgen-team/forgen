@@ -45,15 +45,45 @@ forgen 효과가 robust 하게 확인됨.
 - **Reports as audit trail** (`chore`)
   - `packages/forgen-eval/reports/psi-stat/*.json` 7건 (5월 4-6일) — pre-isolation, post-isolation, broken sleep run, fixed run, post-rubric, post-hardening 의 비교 가능한 측정 시리즈.
 
-**Final measurement (post-hardening N=10)**:
-- ψ master gate **PASS** (mean +0.098, CI [+0.002, +0.222], all metrics in `docs/release/v0.4.4-checklist.md`)
-- δ(forgen-vanilla) **+0.223**, CI [+0.134, +0.326], 10/10 cases positive
-- κ_γ 0.560 / κ_β 0.559 — 0.6 직전 (subscription-mode CLI judge 한계, v0.5.0 70B/Sonnet 에서 정밀화 예정)
-- fallback 3.1%, syn-004 forgenOnly γ 1.00→3.25 (rm-rf 우회 차단 후 안전 응답으로 전환)
+- **4축 personalization P1 — facet 임계값 분기 활성화** (`feat`)
+  - `src/renderer/rule-renderer.ts` — `_profile` → `profile` 활성화. 13개 facet (3 quality + 4 autonomy + 3 judgment + 3 communication) 의 0.85 / 0.15 임계값 분기 도입.
+  - 이전엔 facet 값이 inspect-print 외 어디에도 사용되지 않았음 (12-bucket pack lookup 만 활성). 본 변경으로 4축이 *연속 값* 으로 응답에 영향.
+  - `tests/renderer/rule-renderer.test.ts` — facet 0.1 vs 0.9 byte-diff 회귀 테스트 5건 (verification_depth, verbosity, approval_threshold 등).
+
+- **judgment / communication 축 facet delta 갱신 경로** (`feat`)
+  - `src/core/auto-compound-runner.ts` — `profile_delta` 스키마 + 적용 분기에 `judgment_philosophy`, `communication_style` 케이스 추가. 이전엔 quality_safety / autonomy 2축만 자동 갱신, 나머지 2축은 0.5/0.45 default 영원 고정.
+
+- **시맨틱 룰 FP 좁히기** (`fix`)
+  - `src/checks/fact-vs-agreement.ts` — `EVIDENCE_INDICATORS` 추가 (test counts `\d+/\d+`, exit code, timing, vitest output 형식, diff hunks 등 9 패턴). 응답에 측정 증거가 paste 되어 있으면 alert 억제 → "Docker e2e 77/77 PASS" 류 정량 사실 보고 FP 감소. tests/fact-vs-agreement.test.ts 4 케이스 추가 (총 13).
+  - `~/.forgen/me/rules/L1-no-mock-as-proof.json` — `trigger_exclude_regex` 에 `<observation>`, `<summary>`, observer 메타 패턴 추가. 메타-설명 응답 FP 감소.
+  - `~/.forgen/me/rules/L1-e2e-before-done.json` — TDD 진행 보고(`RED→GREEN`, `[N/M]`, `다음 단계`, `진행 상황`) 제외 패턴 추가.
+
+**Final measurement (post-hardening + post-narrowing, 두 N=10 합산 N=20)**:
+- ψ master gate: 두 측정 모두 borderline 0 (run1 −0.026, run2 +0.001) — composition-synergy metric 으로는 회귀
+- **δ(forgenOnly−vanilla) N=20 = +0.161, CI [+0.068, +0.256]** — *진짜 forgen 효과* metric, 0 위로 robust. 14/20 cases positive.
+- δ(full−vanilla) N=10 (run2): +0.218, CI [+0.117, +0.323]
+- κ_γ ~0.38 / κ_β ~0.41 — subscription-mode CLI judge 한계 (haiku 가 4점 척도 안정 분류 어려움)
+- fallback 5/160 = 3.1% (≤ 10% 게이트)
+- forgenOnly arm block 이벤트 발화 — DANGEROUS-RESPONSE 패턴이 driver 우회 응답을 차단
+
+**Production data sample (8일, 230 violations)**:
+- 9 distinct rules 발화: fact-vs-agreement 67, L1-no-mock-as-proof 56, self-score-inflation 41, L1-no-rm-rf-unconfirmed (PreToolUse) 23, dangerous-response-pattern (신설, 첫날) 20, L1-e2e-before-done 15, etc.
+- Stratified random sample N=30 → precision 60.7%. **Hard layer (PreToolUse + dangerous-response-pattern) 100% (6/6)**, semantic Stop-guard 룰 43-60%.
+- drift 자가복구 14건 — stuck-loop 상황 force-approve 후 drift 기록 (메타 안전성).
+
+**Host parity status**:
+- ✅ **Claude (claude)**: 모든 hook 동작 확정 (이번 세션 라이브 self-validated 다수)
+- ⚠️ **Codex (codex)**: PreToolUse hard layer + UserPromptSubmit soft layer 동등. Stop hook response-text 검사 (DANGEROUS-RESPONSE, L1-no-mock-as-proof 자가검증 등) 는 *best-effort* — codex CLI 가 Stop input 에 `last_assistant_message` 또는 `transcript_path` 를 제공해야 발화. 미제공 시 silently auto-approve (안전). 실 codex 사용 데이터로 다음 1주 검증 예정 (gap 발견 시 v0.4.5 보완).
 
 **v0.4.4 Does NOT claim**:
-- v0.5.0 release-proof. v0.5.0 은 70B 로컬 / Sonnet API 기반 강judge 로 κ ≥ 0.7 + 더 큰 N 으로 처음부터 사전 등록 (pre-registered).
+- v0.5.0 release-proof. v0.5.0 은 70B 로컬 / Sonnet API 기반 강judge 로 κ ≥ 0.7 + 더 큰 N 으로 *사전 등록* metric (δ 우선) 으로 처음부터 측정 예정.
 - 외부 재현 — 실행에 Claude Max + Codex subscription 필요.
+- ψ master gate PASS — 두 N=10 측정 모두 borderline 0. ψ 자체가 composition-synergy 측정이라 "forgen이 vanilla 대비 좋은가" 질문에 부적합 metric 임이 본 사이클에서 확인됨. δ 가 답이고 δ 는 양수.
+
+**Lessons (post-mortem)**:
+- 측정 인프라 5-layer 결함 (특히 hooks dir 하드코딩) 으로 이전 모든 ψ 측정이 실은 vanilla-vs-vanilla 였음. 5월 6일 hardening + bridge fix 후에야 forgen 메커니즘이 testbed 에서 실제로 발화 시작.
+- ψ 정의 ("full vs best single arm composition") 가 주 product 질문 ("forgen 이 vanilla 대비 좋은가") 과 어긋남을 늦게 발견. v0.5.0 metric 재정의 필요.
+- 1주일 production data 가 enforcement 메커니즘 활성을 입증하나, FP precision (특히 시맨틱 룰 43-60%) 은 별도 트랙 개선 과제.
 
 ### Internal — pathfinder + Deep Interview fix cycle (2026-04-30 post-v0.4.3)
 

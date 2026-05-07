@@ -94,4 +94,38 @@ describe('checkFactVsAgreement — TEST-1', () => {
     const r = checkFactVsAgreement({ text: '', recentTools: [] });
     expect(r.alert).toBe(false);
   });
+
+  // v0.4.4 (2026-05-06): FP 감소 — 응답에 측정 증거가 paste 되어 있으면 alert 억제.
+  // 이전엔 "Docker 77/77 PASS" 같은 정량 사실 보고도 recentTools=[]면 alert.
+  it('evidence indicators 2+ 매칭 시 alert 억제 (test count + duration)', () => {
+    const r = checkFactVsAgreement({
+      text: 'Docker e2e 77/77 PASS, duration 232s, all tests passed.',
+      recentTools: [],
+    });
+    expect(r.alert).toBe(false);
+  });
+
+  it('evidence indicator 1개만으론 alert 유지 (단일 신호 약함)', () => {
+    const r = checkFactVsAgreement({
+      text: 'PASS — 검증 완료.', // FACT_ASSERTION 매칭, evidence 0개
+      recentTools: [],
+    });
+    expect(r.alert).toBe(true);
+  });
+
+  it('vitest output 형식 fact 보고는 alert 안 함', () => {
+    const r = checkFactVsAgreement({
+      text: 'Test Files 218 passed | Tests 2382 passed | duration 53.21s — 검증 완료.',
+      recentTools: [],
+    });
+    expect(r.alert).toBe(false);
+  });
+
+  it('exit code + timing 정량 증거 → alert 안 함', () => {
+    const r = checkFactVsAgreement({
+      text: 'docker run exit code 0 in 12.3s — all tests pass.',
+      recentTools: [],
+    });
+    expect(r.alert).toBe(false);
+  });
 });

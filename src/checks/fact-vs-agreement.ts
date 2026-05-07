@@ -51,6 +51,27 @@ const AGREEMENT_SOFTENERS: RegExp[] = [
   /(그럴\s*것\s*같|맞을\s*것\s*같)/,
 ];
 
+/**
+ * 측정-증거 지표 — 실제 실행/측정 결과가 응답에 *paste 되어 있다*는 신호.
+ *
+ * v0.4.4 (2026-05-06): FP 감소. "Docker e2e 77/77 PASS" 같은 *정량 사실 보고*
+ * 가 recentTools 윈도우 밖 측정 (예: 이전 turn Bash 결과, 사용자 paste, CI 로그
+ * 인용)이라 Bash 카운트가 0이지만 본질적으로 measurement-backed 응답.
+ *
+ * 임계: 본 패턴이 2+ 매칭되면 alert 억제 (응답이 측정 증거를 *제시*하고 있다고 본다).
+ */
+const EVIDENCE_INDICATORS: RegExp[] = [
+  /\b\d+\/\d+\b/,                           // test counts: "77/77", "22/22"
+  /\bexit\s*code\s*[:=]?\s*\d+/i,           // exit code
+  /\b\d+(\.\d+)?\s*(ms|s|sec|seconds)\b/i,  // timings: "232s", "1.5ms"
+  /\b(?:Test|Spec)s?\s*Files?\s+\d+/i,      // vitest "Test Files 218"
+  /\b(?:Tests?:?\s+)?\d+\s+passed?\b/i,     // "2382 passed"
+  /\b(?:CI|HEAD|sha|commit)\s*[:=]?\s*[a-f0-9]{7,}/i, // commit ref
+  /^[+-]{3}\s/m,                            // diff hunks
+  /\bcoverage\s*[:=]?\s*\d+(\.\d+)?%/i,     // coverage %
+  /^\s*✓\s|^\s*✗\s|^\s*PASS\b|^\s*FAIL\b/m, // test runner output markers
+];
+
 /** TEST-1 판정 입력. */
 export interface FactCheckInput {
   /** Claude 의 최근 턴 응답 텍스트. */
@@ -104,8 +125,13 @@ export function checkFactVsAgreement(input: FactCheckInput): FactCheckResult {
 
   const measurementCount = recentTools.filter((t) => MEASUREMENT_TOOL_CATEGORIES.has(t)).length;
 
+  // Evidence indicator suppression — 응답에 측정 결과가 *paste* 되어 있으면
+  // recentTools 윈도우 밖 측정으로 보고 alert 억제 (FP 감소).
+  const evidenceIndicators = findMatches(text, EVIDENCE_INDICATORS, 99);
+  const hasMeasurementEvidence = evidenceIndicators.length >= 2;
+
   const hasFactAssertion = factAssertions.length > 0;
-  const measurementMissing = measurementCount < minMeasurements;
+  const measurementMissing = measurementCount < minMeasurements && !hasMeasurementEvidence;
 
   const alert = hasFactAssertion && measurementMissing;
 

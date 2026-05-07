@@ -110,4 +110,75 @@ describe('renderRules', () => {
     expect(output).toContain('## Warnings');
     expect(output).toContain('Trust 하향');
   });
+
+  // v0.4.4 (2026-05-06): facet 극단값이 렌더 출력 차별성을 만드는지 검증.
+  // 사용자 피드백 + Agent B 정적 분석에서 "facet 값이 미사용"으로 드러난 결함 fix.
+  describe('facet-driven rules (4축 P1)', () => {
+    function profileWithFacets(o: {
+      verification_depth?: number; stop_threshold?: number; change_conservatism?: number;
+      confirmation_independence?: number; approval_threshold?: number;
+      minimal_change_bias?: number; abstraction_bias?: number; evidence_first_bias?: number;
+      verbosity?: number; structure?: number; teaching_bias?: number;
+    }) {
+      const p = createProfile('u', '균형형', '균형형', '승인 완화', 'onboarding');
+      // override only specified facets; rest stays at default 0.5/0.45
+      Object.assign(p.axes.quality_safety.facets, {
+        verification_depth: o.verification_depth ?? p.axes.quality_safety.facets.verification_depth,
+        stop_threshold: o.stop_threshold ?? p.axes.quality_safety.facets.stop_threshold,
+        change_conservatism: o.change_conservatism ?? p.axes.quality_safety.facets.change_conservatism,
+      });
+      Object.assign(p.axes.autonomy.facets, {
+        confirmation_independence: o.confirmation_independence ?? p.axes.autonomy.facets.confirmation_independence,
+        approval_threshold: o.approval_threshold ?? p.axes.autonomy.facets.approval_threshold,
+      });
+      Object.assign(p.axes.judgment_philosophy.facets, {
+        minimal_change_bias: o.minimal_change_bias ?? p.axes.judgment_philosophy.facets.minimal_change_bias,
+        abstraction_bias: o.abstraction_bias ?? p.axes.judgment_philosophy.facets.abstraction_bias,
+        evidence_first_bias: o.evidence_first_bias ?? p.axes.judgment_philosophy.facets.evidence_first_bias,
+      });
+      Object.assign(p.axes.communication_style.facets, {
+        verbosity: o.verbosity ?? p.axes.communication_style.facets.verbosity,
+        structure: o.structure ?? p.axes.communication_style.facets.structure,
+        teaching_bias: o.teaching_bias ?? p.axes.communication_style.facets.teaching_bias,
+      });
+      return p;
+    }
+
+    it('verification_depth 극단값이 렌더 출력에 차별 만든다 (low vs high)', () => {
+      const ctx = { ...DEFAULT_CONTEXT, include_pack_summary: true };
+      const low = renderRules([], makeState(), profileWithFacets({ verification_depth: 0.1 }), ctx);
+      const high = renderRules([], makeState(), profileWithFacets({ verification_depth: 0.9 }), ctx);
+      expect(low).not.toEqual(high);
+      expect(high).toContain('e2e 증거');
+      expect(low).not.toContain('e2e 증거');
+    });
+
+    it('verbosity 극단값이 How To Report 차별 만든다', () => {
+      const ctx = { ...DEFAULT_CONTEXT, include_pack_summary: true };
+      const low = renderRules([], makeState(), profileWithFacets({ verbosity: 0.1 }), ctx);
+      const high = renderRules([], makeState(), profileWithFacets({ verbosity: 0.9 }), ctx);
+      expect(low).not.toEqual(high);
+      expect(low).toMatch(/3\s*문장|≤\s*3/);
+      expect(high).toMatch(/배경|tradeoff|대안/);
+    });
+
+    it('approval_threshold 0.9 → 비가역 작업 승인 룰 추가', () => {
+      const ctx = { ...DEFAULT_CONTEXT, include_pack_summary: true };
+      const out = renderRules([], makeState(), profileWithFacets({ approval_threshold: 0.9 }), ctx);
+      expect(out).toMatch(/비가역|force\s*push|broadcast/i);
+    });
+
+    it('중간 값 (0.5)은 추가 facet 룰 없음 — pack 기본만', () => {
+      const ctx = { ...DEFAULT_CONTEXT, include_pack_summary: true };
+      const middle = renderRules([], makeState(), profileWithFacets({}), ctx);
+      // verification_depth 0.5 default → "e2e 증거" 추가 룰 없어야 함
+      expect(middle).not.toContain('e2e 증거');
+    });
+
+    it('include_pack_summary=false 면 facet 룰도 미적용 (DEFAULT_CONTEXT)', () => {
+      // facet 룰은 pack 분기와 같은 조건에서만 emit (동일 lifecycle)
+      const out = renderRules([], makeState(), profileWithFacets({ verification_depth: 0.9 }));
+      expect(out).not.toContain('e2e 증거');
+    });
+  });
 });
