@@ -55,6 +55,10 @@ import type { SolutionV3, SolutionStatus, SolutionFrontmatter } from '../src/eng
 
 function createSolution(dir: string, name: string, status: SolutionStatus, evidence: Partial<typeof DEFAULT_EVIDENCE> = {}, confidence?: number, created?: string): string {
   fs.mkdirSync(dir, { recursive: true });
+  // Default to 30 days ago so fixtures don't bit-rot into the staleness threshold
+  // (experiment=60d, candidate=90d, verified/mature=120d). Tests that need specific
+  // aging pass `created` explicitly (e.g. eightDaysAgo, recentDate).
+  const defaultCreated = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
   const sol: SolutionV3 = {
     frontmatter: {
       name, version: 1, status,
@@ -62,7 +66,7 @@ function createSolution(dir: string, name: string, status: SolutionStatus, evide
       type: 'pattern', scope: 'me',
       tags: ['test', name], identifiers: ['TestIdent'],
       evidence: { ...DEFAULT_EVIDENCE, ...evidence },
-      created: created ?? '2026-01-01', updated: created ?? '2026-01-01',
+      created: created ?? defaultCreated, updated: created ?? defaultCreated,
       supersedes: null, extractedBy: 'manual',
     },
     context: 'test', content: 'test',
