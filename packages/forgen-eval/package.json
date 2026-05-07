@@ -22,7 +22,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
-    "claude-mem": "12.4.8",
+    "claude-mem": "12.7.4",
     "typescript": "^5.4.0",
     "vitest": "^2.0.0"
   },
