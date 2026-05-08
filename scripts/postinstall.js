@@ -729,7 +729,7 @@ function cleanLegacyMcpFromSettings(settings) {
  * 이전 방식(3곳에서 각각 read-modify-write)은 중간에 다른 프로세스가
  * settings.json을 수정하면 데이터 유실 가능성이 있었습니다.
  */
-function main() {
+async function main() {
   // W-V2: 로컬 설치 시 전역 설정 수정 방지
   if (!process.env.npm_config_global && process.env.INIT_CWD && process.env.INIT_CWD !== PKG_ROOT) {
     // npm install (로컬) — postinstall 스킵
@@ -906,6 +906,39 @@ function main() {
   // sudo 실행 시 파일 소유권을 실제 유저로 변경
   fixOwnership(join(HOME, '.claude'), join(HOME, '.forgen'));
 
+  // ── 9. Self-check: 설치 산출물이 현재 Node 에서 실제로 로드되는지 확인 ──
+  //
+  // Why: 0.4.4 이전 빌드는 `import ... with { type: 'json' }` 를 사용해 Node
+  //   20.0-20.9 에서 모든 훅이 SyntaxError 로 깨졌다. 사용자는 npm i -g 가 정상
+  //   종료된 직후에야 "각종 훅들이 에러난다"는 증상을 보았다. self-check 가 있었
+  //   다면 install 시점에 즉시 실패를 노출했을 것.
+  //
+  // 동작: dist/hooks/hook-registry.js 를 dynamic import 로 로드 → HOOK_REGISTRY
+  //   배열에 entry 가 있는지 확인. 실패 시 stderr 로 구체적 원인 + Node 버전을
+  //   알리고 npm install 자체는 깨뜨리지 않음 (postinstall 정책 유지).
+  let selfCheckOk = false;
+  let selfCheckErr = '';
+  try {
+    const registryUrl = new URL('../dist/hooks/hook-registry.js', import.meta.url);
+    const mod = await import(registryUrl.href);
+    if (Array.isArray(mod?.HOOK_REGISTRY) && mod.HOOK_REGISTRY.length > 0) {
+      selfCheckOk = true;
+    } else {
+      selfCheckErr = 'HOOK_REGISTRY is empty or not an array';
+    }
+  } catch (err) {
+    selfCheckErr = err?.message ?? String(err);
+  }
+  if (!selfCheckOk) {
+    console.error('');
+    console.error(`[forgen] WARNING: hook self-check FAILED on Node ${process.version}.`);
+    console.error(`[forgen]   reason: ${selfCheckErr}`);
+    console.error('[forgen]   훅이 Claude Code 실행 시 로드 실패할 수 있습니다.');
+    console.error('[forgen]   Node 20.10+ 또는 22.x 사용을 권장합니다.');
+    console.error('[forgen]   문제 지속 시: https://github.com/forgen-team/forgen/issues');
+    console.error('');
+  }
+
   const parts = [];
   if (plugin) parts.push('plugin');
   if (hooksJsonResult) parts.push(`hooks.json (${hooksJsonResult.active}/${hooksJsonResult.total} active)`);
@@ -940,9 +973,7 @@ function main() {
   }
 }
 
-try {
-  main();
-} catch (err) {
+main().catch((err) => {
   // postinstall 실패가 npm install을 깨뜨리지 않되, 원인은 표시
   console.error(`[forgen] postinstall warning: ${err?.message ?? err}`);
-}
+});

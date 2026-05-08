@@ -65,12 +65,22 @@ function writePluginCache(opts: { pkgRoot: string; cacheDir: string; pluginsDir:
   fs.mkdirSync(cacheParent, { recursive: true });
 
   // 1차: symlink 시도 (개발 환경)
+  // Why warn on fallback: Windows 비관리자 / macOS SIP 환경에서 symlink 가 EPERM
+  //   으로 거부되면 조용히 cpSync 폴백을 탔는데, 사용자는 "왜 install 이 느리지"
+  //   를 알 길이 없었다. 폴백 진입을 stderr 로 알려서 진단성 확보.
   let linked = false;
+  let symlinkErr: unknown = null;
   try {
     fs.symlinkSync(pkgRoot, cacheDir, 'dir');
     linked = true;
-  } catch {
-    // symlink 실패 → cp fallback
+  } catch (e) {
+    symlinkErr = e;
+  }
+  if (!linked && symlinkErr) {
+    const code = (symlinkErr as NodeJS.ErrnoException).code ?? 'UNKNOWN';
+    process.stderr.write(
+      `[forgen] symlink ${pkgRoot} → ${cacheDir} failed (${code}); falling back to cpSync.\n`,
+    );
   }
 
   if (!linked) {
