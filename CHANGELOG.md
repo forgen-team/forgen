@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — forgen-eval testbed 측정 결함 (ADR-007)
+
+`forgen-eval` ψ-stat 측정의 두 구조적 결함 식별 + 수정. 본 fix 이전 모든
+ψ 측정 보고는 "ADR-007 이전 testbed 결함 위에서 산출됨" disclaimer 적용.
+**v0.4.4 release note 의 mean ψ=+0.098 master gate PASS 도 본 disclaimer 대상**
+(haiku judge + 결함 arm + 결함 mem 위 측정).
+
+- **[testbed-P0] ForgenPlusMemArm single-session 결합** (`commit 25c8ac0`)
+  - 이전 구현은 forgen-only LLM 세션과 mem-only LLM 세션을 *각각* 돌리고
+    forgen 응답만 채택 — Driver 가 `qwen2.5:14b @ temp=0.3` 비결정 호출이라
+    `full.W − forgenOnly.W` 가 LLM stochastic noise 로 양/음 ±0.3 흔들림.
+    ψ 가 forgen+mem coexistence 신호 대신 LLM 분산을 측정.
+  - 한 LLM 세션 안에서 forgen UPS rule + claude-mem recall 을 둘 다 system
+    message 로 주입한 뒤 한 번 chat → forgen Stop guard 평가 구조로 재작성.
+
+- **[testbed-P0] claude-mem 콘텐츠 직접 fetch** (`commit d65b4a4`)
+  - 이전 mem recall 은 `claude-mem search` CLI 출력 (검색 결과 *테이블* —
+    세션 ID + 제목만) 을 그대로 inject. LLM 컨텍스트로는 사실상 메타-noise
+    이고, 응답을 verbose / cautious / "context 더 주세요" 쪽으로 shift 시켜
+    sonnet judge 의 actionable advice 점수를 깎았음.
+  - 신규 `claudeMemRecallActual()` helper — 검색 후 ID 파싱 →
+    `~/.claude-mem/claude-mem.db` 의 `observations.narrative` /
+    `session_summaries.learned` 직접 조회 → 상위 N hit 의 실제 콘텐츠 inject
+    (`[#ID]\n<content>` 포맷). DB 미설치 환경에서 graceful no-op.
+
+- **신규 분석 도구**: `src/runners/probe-mem-inject.ts` — judge 호출 없이
+  ForgenOnly + Full arm inject 텍스트와 응답을 콘솔에 덤프하는 정성 probe.
+  cross-talk 가설 검증에 사용.
+
+- **신규 ADR**: `docs/adr/ADR-007-testbed-arm-isolation.md` — 두 결함의 발견
+  경위, 영향 받은 측정 목록, 재측정 계획, 회귀 가드 명시.
+
 ### Fixed — Node 20.x 환경 호환성 (P0/P1)
 
 `npm i -g @wooojin/forgen` 이후 "각종 훅이 에러난다"는 사용자 보고에 대응한 환경
