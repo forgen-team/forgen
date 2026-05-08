@@ -260,25 +260,126 @@ export class ClaudeMemOnlyArm implements Arm {
   }
 }
 
-/** Combined: forgen + claude-mem coexistence (Plugin model). */
-export class ForgenPlusMemArm extends ForgenOnlyArm {
-  override readonly id: Arm['id'] = 'forgen-plus-mem';
-  // Reuses ForgenOnly's hook chain. claude-mem's plugin hooks run independently when
-  // installed system-wide — since we're hook-bridging directly, we synthesize the recall
-  // path here for the simulation.
-  override async runCase(c: TestCase, ctx: ArmContext): Promise<ArmResponse> {
-    // Strategy: Run forgen hooks first (rule inject + block), then add claude-mem recall
-    // for additional context. Both inject events captured.
-    const forgen = await super.runCase(c, ctx);
-    const memArm = new ClaudeMemOnlyArm();
-    const mem = await memArm.runCase(c, { ...ctx, armId: 'claude-mem-only' });
-    return {
-      ...forgen,
-      armId: 'forgen-plus-mem',
-      injectEvents: [...forgen.injectEvents, ...mem.injectEvents.map((e) => ({ ...e, ruleId: `mem:${e.ruleId}` }))],
-      // Use forgen's finalResponse since enforcement is the differentiator
-      finalResponse: forgen.finalResponse,
+/**
+ * Combined: forgen + claude-mem coexistence (single-session bridge).
+ *
+ * 2026-05-08 fix (testbed structural bug): 이전 구현은 super.runCase (forgen-only LLM
+ *   세션) 와 ClaudeMemOnlyArm.runCase (mem-only LLM 세션) 를 *각각 별도로* 돌리고
+ *   forgen 응답만 채택했다. Driver 가 temperature=0.3 비결정 호출이라 두 forgen
+ *   세션이 동일 분포에서 다른 샘플을 뽑았고, full.W − forgenOnly.W 가 LLM noise
+ *   로 양/음 ±0.3 까지 흔들렸다. 즉 ψ 가 forgen+mem coexistence 신호 대신 LLM
+ *   분산을 측정.
+ *
+ * 본 구현은 *한 LLM 세션* 안에서 forgen UPS rule inject 와 claude-mem search
+ *   recall 을 둘 다 system message 로 주입한 뒤 한 번 chat → Stop guard 평가.
+ *   coexistence 의 실제 cross-talk 효과 (양쪽이 같이 들어왔을 때 응답이 어떻게
+ *   바뀌는가) 를 측정 가능.
+ */
+export class ForgenPlusMemArm implements Arm {
+  readonly id: Arm['id'] = 'forgen-plus-mem';
+  async beforeAll(_: ArmContext) {}
+  async afterAll(_: ArmContext) {}
+
+  async runCase(c: TestCase, ctx: ArmContext): Promise<ArmResponse> {
+    const sessionId = newSessionId();
+    const armCwd = seedForgenNotepad(c);
+    const history: ChatTurn[] = [{ role: 'system', content: baseSystem(c.personaId) }];
+    const blockEvents: BlockEvent[] = [];
+    const injectEvents: InjectEvent[] = [];
+
+    /** UPS (forgen rules) + mem search (claude-mem recall) both injected for one user msg. */
+    const injectBoth = async (userMsg: string) => {
+      // 1. forgen UPS hook — rule injection (notepad/solutions context-aware)
+      try {
+        const ups = await userPromptSubmitHook({
+          prompt: userMsg,
+          session_id: sessionId,
+          cwd: armCwd,
+        });
+        const upsCtx = ups.hookSpecificOutput?.additionalContext;
+        if (upsCtx && upsCtx.length > 0) {
+          injectEvents.push({
+            ruleId: 'forgen-rule-inject',
+            injectedText: upsCtx.slice(0, 500),
+            ts: new Date().toISOString(),
+          });
+          history.push({ role: 'system', content: `[forgen rules]\n${upsCtx}` });
+        }
+      } catch {
+        /* hook failure ≠ arm failure */
+      }
+
+      // 2. claude-mem search recall — past observation injection
+      try {
+        const recall = execSync(
+          `npx --no-install claude-mem search ${JSON.stringify(userMsg.slice(0, 80))} 2>/dev/null`,
+          { encoding: 'utf-8', timeout: 5000 },
+        ).trim();
+        if (recall && recall.length > 0) {
+          injectEvents.push({
+            ruleId: 'mem:claude-mem-recall',
+            injectedText: recall.slice(0, 500),
+            ts: new Date().toISOString(),
+          });
+          history.push({ role: 'system', content: `[claude-mem recall]\n${recall.slice(0, 500)}` });
+        }
+      } catch {
+        /* mem may have no observations or be uninstalled */
+      }
     };
+
+    /** Stop guard — if blocked, retry once with block reason. */
+    const stopMaybeBlock = async (response: string): Promise<string> => {
+      try {
+        const stop = await stopGuardHook({
+          transcript_path: '/dev/null',
+          stop_hook_active: false,
+          session_id: sessionId,
+          response,
+        });
+        if (stop.decision === 'block' && stop.reason) {
+          blockEvents.push({
+            ruleId: 'forgen-stop-block',
+            reason: stop.reason.slice(0, 500),
+            ts: new Date().toISOString(),
+          });
+          history.push({
+            role: 'system',
+            content: `[Previous response was blocked by forgen: ${stop.reason}]\nProduce a corrected response.`,
+          });
+          return await DRIVER.chat(history);
+        }
+      } catch {
+        /* hook failure → no block */
+      }
+      return response;
+    };
+
+    try {
+      for (const turn of c.correctionSequence.slice(0, ctx.turnDepth)) {
+        await injectBoth(turn.userMsg);
+        history.push({ role: 'user', content: turn.userMsg });
+        const raw = await DRIVER.chat(history);
+        const response = await stopMaybeBlock(raw);
+        history.push({ role: 'assistant', content: response });
+      }
+
+      await injectBoth(c.trigger.prompt);
+      history.push({ role: 'user', content: c.trigger.prompt });
+      const rawTrigger = await DRIVER.chat(history);
+      const finalResponse = await stopMaybeBlock(rawTrigger);
+
+      return {
+        caseId: c.id,
+        armId: 'forgen-plus-mem',
+        turnDepth: ctx.turnDepth,
+        finalResponse,
+        blockEvents,
+        injectEvents,
+      };
+    } finally {
+      try { fs.rmSync(armCwd, { recursive: true, force: true }); } catch { /* best-effort */ }
+    }
   }
 }
 
