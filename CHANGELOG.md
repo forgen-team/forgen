@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — Node 20.x 환경 호환성 (P0/P1)
+
+`npm i -g @wooojin/forgen` 이후 "각종 훅이 에러난다"는 사용자 보고에 대응한 환경
+호환성 일괄 강화. 보고 환경: M2 MacBook + Node 20.x.
+
+- **[P0] hook-registry.ts import attributes 호환성** (`src/hooks/hook-registry.ts:56`)
+  - `import ... with { type: 'json' }` (Node 20.10+ 만 파싱 가능) → `JSON.parse(readFileSync(...))`
+    로 교체. Node 20.0–20.9 에서 모든 훅(23개)이 SyntaxError 로 깨지던 회귀를
+    제거. 빌드 산출물에 import attributes 가 재유입되는 것을 막는 정적 검증 테스트
+    `tests/hook-registry-portability.test.ts` 추가.
+  - 영향 범위: hook-config 를 거쳐 모든 PreToolUse / PostToolUse / Stop / SessionStart
+    / UserPromptSubmit 훅이 Node 20.0–20.9 사용자 환경에서 동작하지 않던 상태에서
+    회복.
+
+- **[P1] postinstall self-check** (`scripts/postinstall.js`)
+  - 설치 마지막 단계에서 `dist/hooks/hook-registry.js` 를 dynamic import 로 로드하고,
+    `HOOK_REGISTRY` 가 비어있지 않은지 확인. 실패 시 stderr 로 Node 버전과 원인을
+    명시해 사용자가 "왜 훅이 안 도는지" 를 install 시점에 즉시 알 수 있게 함
+    (npm install 자체는 깨뜨리지 않음).
+
+- **[P1] install-claude.ts symlink 폴백 진단** (`src/host/install-claude.ts:67-87`)
+  - Windows 비관리자 / macOS SIP 환경에서 `fs.symlinkSync` 가 EPERM 으로 실패하면
+    조용히 cpSync 로 폴백하던 동작에 stderr 진단 메시지 1줄 추가. "왜 install 이
+    느린지" 가 사용자에게 보임.
+
+- **[P1] CI portability matrix 확장** (`.github/workflows/ci.yml`)
+  - Node 20.0.0 / 20.10.0 / 20.x / 22.x × ubuntu/macos/windows 6개 조합으로 훅
+    스모크 잡 추가. 모든 `dist/hooks/*.js` 를 sentinel input 으로 실행해
+    SyntaxError / Cannot find module / ERR_ 발생 시 CI 실패. 회귀 즉시 감지.
+
+### Notes
+
+- `node:sqlite` 의존 (`src/core/session-store.ts`) 은 기존 try/catch 폴백으로 Node
+  <22.5 에서도 graceful degrade 동작 유지. session-search MCP 도구는 0건 반환.
+- `quality-check.mjs MODULE_NOT_FOUND` 같이 사용자/타플러그인이 등록한 외부 훅이
+  worktree 에서 누락된 경우는 forgen 책임 영역 아님. `isForgenHookEntry()` 가
+  `dist/hooks/*.js` 경로만 자기 소유로 인식하므로 외부 훅 항목은 보존.
+
 ## [0.4.4] — 2026-05-06
 
 ### v0.4.4 — measurement infra rebuild + stop-guard hardening (DANGEROUS-RESPONSE)

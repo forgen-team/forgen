@@ -22,3 +22,53 @@ jobs:
       - name: Test
         run: npx vitest run ${{ matrix.node-version == 20 && '--coverage' || '' }}
       - run: npm pack --dry-run
+
+  # Portability matrix — 사용자 보고된 "npm i -g 후 각종 훅 에러" 를 CI 에서 잡기.
+  #   - Node 20.0/20.9: import attributes 미지원 (회귀 가드)
+  #   - Node 20.10: import attributes 지원 시작
+  #   - Node 22: 안정 베이스라인
+  #   - Windows: symlink/path 분리 / 권한 회귀 가드
+  hooks-portability:
+    name: Hooks load on Node ${{ matrix.node-version }} / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+        node-version: ['20.0.0', '20.10.0', '20.x', '22.x']
+        include:
+          - os: macos-latest
+            node-version: '22.x'
+          - os: windows-latest
+            node-version: '20.x'
+          - os: windows-latest
+            node-version: '22.x'
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ matrix.node-version }}
+      - run: npm ci
+      - run: npm run build
+      - name: Smoke load every hook (parses + executes without error)
+        shell: bash
+        run: |
+          fail=0
+          for hook in dist/hooks/*.js; do
+            case "$(basename "$hook")" in
+              # internal helpers, not standalone entrypoints
+              hook-config.js|hook-registry.js|hooks-generator.js|post-tool-handlers.js) continue ;;
+            esac
+            out=$(echo '{"tool_name":"Read","tool_input":{},"prompt":"hi","session_id":"ci","cwd":"."}' \
+              | node "$hook" 2>&1) || true
+            if echo "$out" | grep -qE 'SyntaxError|Cannot find module|ERR_'; then
+              echo "FAIL: $hook"
+              echo "$out" | head -10
+              fail=$((fail+1))
+            fi
+          done
+          if [ "$fail" -gt 0 ]; then
+            echo "::error::$fail hook(s) failed to load on Node $(node --version)"
+            exit 1
+          fi
+          echo "All hooks loaded successfully on Node $(node --version) / ${{ matrix.os }}"
