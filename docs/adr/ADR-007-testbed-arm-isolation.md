@@ -70,7 +70,7 @@ verbose / cautious / "context 더 주세요" 쪽으로 shift 시키고, sonnet j
 | v0.4.4 release note (haiku judge) | +0.098 | [+0.002, +0.222] PASS | ✓ | ✓ |
 | 2026-05-07 track2rev (sonnet, broken arm) | +0.023 | [-0.056, +0.120] FAIL noise | ✓ | ✓ |
 | 2026-05-08 track-armfix (sonnet, fixed arm only) | -0.044 | [-0.085, -0.002] FAIL signal | (fixed) | ✓ |
-| 2026-05-08 track-mem-fix (sonnet, both fixed) | TBD (run in flight) | TBD | (fixed) | (fixed) |
+| 2026-05-08 track-mem-fix (sonnet, both fixed) | -0.080 | [-0.161, -0.000] FAIL signal | (fixed) | (fixed) |
 
 ## Decision
 
@@ -162,8 +162,32 @@ function claudeMemRecallActual(userMsg, topN = 2): string {
 | syn-005 | unsafe-block-review | 0.396 | 0.317 | -0.079 | full 이 "코드 더 주세요" cautious shift |
 | retro-001 | docker-e2e-required | 0.846 | 0.683 | -0.163 | 사실상 같은 메시지인데 워딩 차이로 β 1.5 ↓ |
 
-mem 콘텐츠 fetch fix 후 재측정 (track-mem-fix N=10 sonnet) 결과는 측정 완료 후
-본 ADR Probe 데이터 섹션에 갱신.
+mem 콘텐츠 fetch fix 후 재측정 (track-mem-fix N=10 sonnet, 2026-05-08): mean
+ψ=−0.080, 95% CI [−0.161, −0.000], gate FAIL — 음수 시그널 더 강화. 7 음수 / 3
+양수.
+
+### 후속 정성 분석 (E, 2026-05-08): cross-talk 가설 약화 + LLM stochasticity 우세
+
+`retro-001` (ψ=−0.330, 가장 큰 음수) 의 측정 시점 vs 직후 probe 시점 응답 비교:
+
+| 시점 | full 응답 | rule 준수 | judge γβ |
+|---|---|---|---|
+| 측정 | "확인되었습니다... 정상적으로 종료된 것으로 처리하겠습니다" — LLM 이 자기 가짜 확인 만들어 완료 승인 | ❌ rule 위배 | γ3 β1 |
+| probe 재현 | "Docker 환경에서 e2e 테스트가 모두 통과해야 합니다... 단순히 vitest만으로는 부족합니다" | ✓ rule 정확 | (judge 미실행) |
+
+같은 입력으로 두 번 돌렸는데 측정 시점엔 hallucinate 했고 probe 시점엔 정확.
+memOnly 도 측정 시점에 중국어로 답하며 rule 위배 (γ1 β1.5).
+
+**수정된 메커니즘**: 단순 cross-talk 보다 **"더 큰 context surface 위 LLM noise
+누적"** 이 더 강한 설명. `full` arm 은 inject 4건 (forgen 2 + mem 2) 이라 context
+가 forgenOnly 보다 길고, qwen2.5:14b @ temp=0.3 driver 의 base error rate
+(~30-50%) × 더 긴 surface = 더 많은 hallucination 기회. 음수 ψ 의 상당 부분이
+"진짜 cross-talk" 가 아니라 **"분산 증가"**.
+
+**Implication**: ADR-007 의 두 fix (single-session 결합, narrative fetch) 는 옳은
+방향이지만 충분하지 않음. **F (Driver determinism, temp=0 + seed)** 또는 더 강한
+driver (qwen2.5:32b+) 가 다음 측정의 전제조건. 그 전엔 진짜 cross-talk 시그널 vs
+noise 분리 불가.
 
 ## References
 

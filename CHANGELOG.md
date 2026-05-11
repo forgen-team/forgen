@@ -37,7 +37,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cross-talk 가설 검증에 사용.
 
 - **신규 ADR**: `docs/adr/ADR-007-testbed-arm-isolation.md` — 두 결함의 발견
-  경위, 영향 받은 측정 목록, 재측정 계획, 회귀 가드 명시.
+  경위, 영향 받은 측정 목록, 재측정 계획, 회귀 가드 명시. 후속 정성 분석
+  (E, 2026-05-08) 으로 cross-talk 가설보다 LLM stochasticity (qwen2.5:14b @
+  temp=0.3 base error rate × 더 긴 context surface) 가 음수 ψ 의 더 강한 설명
+  임을 확인 — 다음 측정의 전제조건으로 Driver determinism (temp=0 + seed) 또는
+  더 강한 driver 권고.
+
+- **재측정 결과 (track-mem-fix N=10 sonnet, 2026-05-08)**: 양쪽 fix 적용 후
+  mean ψ = −0.080, 95% CI [−0.161, −0.000], gate FAIL (음수 시그널). 7 음수 /
+  3 양수. v0.4.4 release note 의 mean ψ=+0.098 PASS 는 broken testbed 의
+  artifact 였음이 더 강하게 확정됨.
 
 ### Fixed — Node 20.x 환경 호환성 (P0/P1)
 
