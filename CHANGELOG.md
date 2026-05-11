@@ -88,15 +88,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.4.4] — 2026-05-06
 
+> **⚠ 정정 (2026-05-08, ADR-007 이후)**: 본 릴리스의 ψ master gate PASS
+> (mean +0.098, CI [+0.002, +0.222]) 주장은 **broken testbed 위 측정** 으로
+> 확정. 두 구조 결함 (ForgenPlusMemArm 비-결합 / mem recall 메타 inject) 위에서
+> 산출되어 LLM noise + max-selection bias 가 평균을 양수로 끌어당긴 artifact.
+> 양쪽 결함 수정 후 재측정 (track-mem-fix N=10 sonnet) 결과는 mean ψ = −0.080,
+> CI [−0.161, −0.000], gate FAIL. **현 시점 forgen+mem 결합은 net negative
+> 또는 noise 영역** — qwen2.5:14b @ temp=0.3 driver 의 hallucination 분산이
+> 결합 효과를 mask 함. Driver determinism (temp=0 + seed) 또는 더 강한 driver
+> 적용 후 재측정까지 셀링 보류. 자세한 내용은 ADR-007 참조.
+>
+> δ(forgenOnly−vanilla) = +0.223 주장도 같은 testbed 위 산출이므로 같은
+> disclaimer 대상. 단 forgenOnly arm 자체는 본 ADR fix 영향 받지 않음 (vanilla
+> 와의 비교는 단일 arm 내부 비교라 LLM noise 가 양쪽에 균등 분포 가능성 — 단
+> 재측정으로 확인 필요).
+
 ### v0.4.4 — measurement infra rebuild + stop-guard hardening (DANGEROUS-RESPONSE)
 
 forgen-eval testbed 의 측정 인프라 5-layer 결함을 모두 수정해 신뢰성을 회복하고,
 그 과정에서 발견한 driver-brittleness 결함(syn-004 — small driver 가 학습된 룰을
-`find -exec rm -r` 같은 우회로 회피)을 stop-guard `dangerous-response-pattern`
-체크로 직접 close. 사후 N=10 재측정에서 **ψ master gate PASS** (mean +0.098, 95%
-CI [+0.002, +0.222]) — pre-hardening (-0.028) 대비 부호 양수 전환. 또한
+파괴 명령 우회로 회피)을 stop-guard `dangerous-response-pattern` 체크로 직접
+close. 사후 N=10 재측정에서 **ψ master gate PASS** (mean +0.098, 95% CI [+0.002,
++0.222]) — pre-hardening (-0.028) 대비 부호 양수 전환. 또한
 δ(forgenOnly−vanilla) = +0.223 (CI [+0.134, +0.326], 10/10 cases positive) 으로
-forgen 효과가 robust 하게 확인됨.
+forgen 효과가 robust 하게 확인됨. (위 박스 참조: 본 측정 결과는 ADR-007 이후
+broken testbed artifact 로 확정.)
 
 **Highlights**:
 
