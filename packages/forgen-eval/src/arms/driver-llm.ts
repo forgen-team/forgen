@@ -129,16 +129,19 @@ export class ClaudeCliDriver implements Driver {
 
 // ── Codex CLI driver ────────────────────────────────────────────────────────
 
-/** spawn-based exec — codex 가 stdin 에서 추가 input 읽는 동작을 차단. */
+/** spawn-based exec — long prompt 는 stdin 으로 pipe (E2BIG 방지).
+ *  args 의 마지막 원소가 `-` 이면 stdinPrompt 를 stdin 에 써준다.
+ */
 function runCodex(
   args: string[],
-  opts: { cwd: string; timeoutMs: number; env?: NodeJS.ProcessEnv },
+  opts: { cwd: string; timeoutMs: number; env?: NodeJS.ProcessEnv; stdinPrompt?: string },
 ): Promise<string> {
   return new Promise((resolve, reject) => {
+    const usesStdin = args[args.length - 1] === '-' && typeof opts.stdinPrompt === 'string';
     const child = spawn('codex', args, {
       cwd: opts.cwd,
       env: { ...process.env, ...(opts.env ?? {}) },
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: [usesStdin ? 'pipe' : 'ignore', 'pipe', 'pipe'],
     });
     let stdout = '';
     let stderr = '';
@@ -146,14 +149,18 @@ function runCodex(
       child.kill('SIGKILL');
       reject(new Error(`codex driver timeout after ${opts.timeoutMs}ms (stderr=${stderr.slice(0, 200)})`));
     }, opts.timeoutMs);
-    child.stdout.on('data', (b: Buffer) => { stdout += b.toString('utf-8'); });
-    child.stderr.on('data', (b: Buffer) => { stderr += b.toString('utf-8'); });
+    child.stdout?.on('data', (b: Buffer) => { stdout += b.toString('utf-8'); });
+    child.stderr?.on('data', (b: Buffer) => { stderr += b.toString('utf-8'); });
     child.on('error', (e) => { clearTimeout(timer); reject(e); });
     child.on('close', (code) => {
       clearTimeout(timer);
       if (code !== 0) { reject(new Error(`codex exited ${code}: ${stderr.slice(0, 200)}`)); return; }
       resolve(stdout);
     });
+    if (usesStdin && child.stdin) {
+      child.stdin.on('error', (e) => { /* swallow EPIPE; close 가 reject 처리 */ void e; });
+      child.stdin.end(opts.stdinPrompt);
+    }
   });
 }
 
@@ -194,10 +201,11 @@ export class CodexCliDriver implements Driver {
 
   async chat(history: ChatTurn[]): Promise<string> {
     const prompt = flattenHistory(history);
-    // judge 와 동일 격리 플래그: ignore-user-config + ignore-rules + ephemeral 로
-    // 사용자 AGENTS.md / 글로벌 설정 / 세션 leakage 차단. read-only sandbox + never
-    // approval 로 파괴 명령 / 승인 프롬프트 진입 차단. skip-git-repo-check 로
-    // mktemp cwd 의 non-git 환경 허용.
+    // long prompt → stdin pipe (E2BIG 회피). codex exec 는 prompt arg 가 `-` 면
+    // stdin 에서 읽음. judge 와 동일 격리 플래그: ignore-user-config + ignore-rules
+    // + ephemeral 로 사용자 AGENTS.md / 글로벌 설정 / 세션 leakage 차단. read-only
+    // sandbox + never approval 로 파괴 명령 / 승인 프롬프트 진입 차단. skip-git-
+    // repo-check 로 mktemp cwd 의 non-git 환경 허용.
     const raw = await runCodex(
       [
         'exec',
@@ -210,9 +218,9 @@ export class CodexCliDriver implements Driver {
         '-c',
         'approval_policy="never"',
         '--skip-git-repo-check',
-        prompt,
+        '-',
       ],
-      { cwd: this.cwd, timeoutMs: this.timeoutMs },
+      { cwd: this.cwd, timeoutMs: this.timeoutMs, stdinPrompt: prompt },
     );
     return parseCodexJsonOutput(raw);
   }
