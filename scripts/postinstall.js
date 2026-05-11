@@ -516,10 +516,34 @@ function generateAndWriteHooksJson() {
 }
 
 // ── 4. Install slash commands ──
+/** Build-time injected --with-codex shared snippet. Mirror of scripts/copy-assets.js. */
+const WITH_CODEX_SNIPPET = `
+
+---
+
+## \`--with-codex\` flag (cross-model review)
+
+If \`$ARGUMENTS\` contains any of \`--with-codex\`, \`--코덱스\`, \`with codex\`, \`코덱스 검토\`, \`코덱스로 검토\`,
+then after completing the primary skill work, perform a cross-model review pass:
+
+1. Save your primary output text to a temp file (e.g., \`/tmp/forgen-with-codex-$(date +%s).md\`).
+2. Invoke codex via Bash:
+   \`\`\`bash
+   codex exec --json --ignore-user-config --ignore-rules --ephemeral \\
+     -s read-only -c approval_policy="never" --skip-git-repo-check \\
+     "$(printf 'You are a second-opinion reviewer for another AI assistant\\\\u0027s output. Read the work product below and report ONLY:\\n1. Defects, gaps, or risks the original work missed\\n2. Specific disagreements with the original\\n3. Topics that should have been covered but were not\\n\\nOutput format: prioritized bullet list (max 15 items, severity-sorted, no prose intro). If you find nothing material, say "No critical issues found."\\n\\n<work>\\n%s\\n</work>' "$(cat /tmp/forgen-with-codex-*.md)")"
+   \`\`\`
+3. Append the codex output under heading \`## Codex Cross-Review (--with-codex)\` in your final response.
+4. If codex flags critical issues, briefly acknowledge + suggest follow-up.
+5. If \`codex: command not found\`, note in response and skip the review pass (do not fail).
+
+OPT-IN per invocation. Without the flag, skip this entire section.
+`;
+
 function buildCommandContent(skillContent, skillName) {
   const descMatch = skillContent.match(/description:\s*(.+)/);
   const desc = descMatch?.[1]?.trim() ?? skillName;
-  return `# ${desc}\n\n<!-- forgen-managed -->\n\nActivate Forgen "${skillName}" mode for the task: $ARGUMENTS\n\n${skillContent}`;
+  return `# ${desc}\n\n<!-- forgen-managed -->\n\nActivate Forgen "${skillName}" mode for the task: $ARGUMENTS\n\n${skillContent}${WITH_CODEX_SNIPPET}`;
 }
 
 function safeWriteCommand(cmdPath, content) {
