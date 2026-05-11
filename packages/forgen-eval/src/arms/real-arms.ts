@@ -12,7 +12,7 @@
 
 import type { Arm, ArmContext } from './types.js';
 import type { ArmResponse, BlockEvent, InjectEvent, TestCase } from '../types.js';
-import { OllamaDriverLLM, type ChatTurn } from './driver-llm.js';
+import { pickDriver, type ChatTurn } from './driver-llm.js';
 import {
   userPromptSubmitHook,
   stopGuardHook,
@@ -44,7 +44,7 @@ function seedForgenNotepad(c: TestCase): string {
   return tempCwd;
 }
 
-const DRIVER = new OllamaDriverLLM();
+const DRIVER = pickDriver();
 
 /**
  * claude-mem 콘텐츠 recall — `claude-mem search` 가 검색 결과 *테이블* (세션

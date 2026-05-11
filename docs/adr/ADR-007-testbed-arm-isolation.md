@@ -185,9 +185,11 @@ memOnly 도 측정 시점에 중국어로 답하며 rule 위배 (γ1 β1.5).
 "진짜 cross-talk" 가 아니라 **"분산 증가"**.
 
 **Implication**: ADR-007 의 두 fix (single-session 결합, narrative fetch) 는 옳은
-방향이지만 충분하지 않음. **F (Driver determinism, temp=0 + seed)** 또는 더 강한
-driver (qwen2.5:32b+) 가 다음 측정의 전제조건. 그 전엔 진짜 cross-talk 시그널 vs
-noise 분리 불가.
+방향이지만 충분하지 않음. driver 가 Ollama qwen2.5:14b 로 남아 있어 judge stack
+(claude-cli + codex-cli) 과 불일치 + qwen base error rate (~30-50%) 가 noise 의
+주 원인. **F-corrected (driver 를 claude-cli / codex-cli 로 통일)** 가 다음 측정의
+전제조건 — production 시나리오 (forgen 이 personalize 하는 LLM = Claude 또는
+Codex) 와도 부합. 본 fix 는 commit `<TBD>` 에서 적용.
 
 ## References
 
