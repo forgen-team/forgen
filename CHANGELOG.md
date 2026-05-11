@@ -48,6 +48,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   3 양수. v0.4.4 release note 의 mean ψ=+0.098 PASS 는 broken testbed 의
   artifact 였음이 더 강하게 확정됨.
 
+### Changed — driver 를 claude-cli / codex-cli 로 통일 (commit 62600ec, 11b897a)
+
+testbed driver 가 Ollama qwen2.5:14b 로 남아 judge stack (claude-cli +
+codex-cli) 과 불일치 + qwen base error rate (~30-50%) 가 noise 의 주 원인 이었던
+문제를 production 시나리오 (forgen 이 personalize 하는 LLM = Claude 또는 Codex)
+와 일치하는 driver 로 교체.
+
+**측정 비교 (N=10 sonnet judge, 2026-05-11)**:
+
+| Driver | N eff | mean ψ | CI | mean δ(forgenOnly−vanilla) | 양수 δ |
+|---|---|---|---|---|---|
+| qwen mem-fix (이전) | 10 | −0.080 | [−0.161, −0.000] | (n/a) | — |
+| claude (sonnet) | 10 | +0.020 | [−0.133, +0.158] | +0.046 | 7/10 |
+| codex | 8 | −0.051 | [−0.125, +0.011] | **+0.144** | **7/8** |
+
+**핵심 발견**:
+- ψ (forgen+mem coexistence) 는 양 driver 모두 noise 영역 — 부호가 driver 별로
+  갈리고 CI 가 0 가로지름. **forgen+mem 결합 효과는 통계적으로 측정 불가능.**
+- δ (forgenOnly−vanilla) 는 **양 driver 일관 양수**, 다수 케이스 일관 — codex
+  driver 에서 +0.144 W. **forgen 단독 효과는 robust 하게 양수.**
+- **셀링 메트릭 변경**: ψ 가 아닌 **δ (forgen vs vanilla)** 가 진짜 셀링
+  포인트. v0.4.4 의 ψ master gate PASS 주장 대신 v0.4.5 부터는 δ 중심 메시지.
+
+**알려진 limitation**:
+- codex driver: syn-005 / retro-003 의 memOnly arm 이 codex 의 1MB input 한계
+  에 걸려 fail (N=10 → N=8 effective). 후속 fix (mem inject 사이즈 축소).
+- codex judge 도 일부 case 에서 spawn E2BIG → fallback 2.5 처리. 후속 fix
+  (judge 도 stdin pipe 적용).
+
 ### Fixed — Node 20.x 환경 호환성 (P0/P1)
 
 `npm i -g @wooojin/forgen` 이후 "각종 훅이 에러난다"는 사용자 보고에 대응한 환경

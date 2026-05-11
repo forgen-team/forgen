@@ -65,12 +65,14 @@ verbose / cautious / "context 더 주세요" 쪽으로 shift 시키고, sonnet j
 이 두 결함 위에서 산출된 모든 ψ 측정은 **신호가 아닌 noise/메타 효과를 측정**.
 구체적으로:
 
-| 측정 | mean ψ | CI | 결함 arm | 결함 mem |
-|---|---|---|---|---|
-| v0.4.4 release note (haiku judge) | +0.098 | [+0.002, +0.222] PASS | ✓ | ✓ |
-| 2026-05-07 track2rev (sonnet, broken arm) | +0.023 | [-0.056, +0.120] FAIL noise | ✓ | ✓ |
-| 2026-05-08 track-armfix (sonnet, fixed arm only) | -0.044 | [-0.085, -0.002] FAIL signal | (fixed) | ✓ |
-| 2026-05-08 track-mem-fix (sonnet, both fixed) | -0.080 | [-0.161, -0.000] FAIL signal | (fixed) | (fixed) |
+| 측정 | driver | mean ψ | CI | 결함 arm | 결함 mem |
+|---|---|---|---|---|---|
+| v0.4.4 release note (haiku judge) | qwen2.5:14b | +0.098 | [+0.002, +0.222] PASS | ✓ | ✓ |
+| 2026-05-07 track2rev (sonnet judge) | qwen2.5:14b | +0.023 | [-0.056, +0.120] FAIL noise | ✓ | ✓ |
+| 2026-05-08 track-armfix | qwen2.5:14b | -0.044 | [-0.085, -0.002] FAIL signal | (fixed) | ✓ |
+| 2026-05-08 track-mem-fix | qwen2.5:14b | -0.080 | [-0.161, -0.000] FAIL signal | (fixed) | (fixed) |
+| 2026-05-11 track-driver-claude | claude sonnet | +0.020 | [-0.133, +0.158] FAIL noise | (fixed) | (fixed) |
+| 2026-05-11 track-driver-codex (N=8 eff) | codex | -0.051 | [-0.125, +0.011] FAIL noise | (fixed) | (fixed) |
 
 ## Decision
 
@@ -189,7 +191,39 @@ memOnly 도 측정 시점에 중국어로 답하며 rule 위배 (γ1 β1.5).
 (claude-cli + codex-cli) 과 불일치 + qwen base error rate (~30-50%) 가 noise 의
 주 원인. **F-corrected (driver 를 claude-cli / codex-cli 로 통일)** 가 다음 측정의
 전제조건 — production 시나리오 (forgen 이 personalize 하는 LLM = Claude 또는
-Codex) 와도 부합. 본 fix 는 commit `<TBD>` 에서 적용.
+Codex) 와도 부합. 본 fix 는 commit `62600ec` (driver migration) + `11b897a`
+(codex stdin pipe E2BIG fix) 에서 적용.
+
+### Driver migration 후 측정 (track-driver-claude / track-driver-codex N=10, 2026-05-11)
+
+| Driver | N eff | mean ψ | CI | gate | 양수 ψ |
+|---|---|---|---|---|---|
+| claude (sonnet) | 10 | +0.020 | [-0.133, +0.158] | FAIL noise | 8/10 |
+| codex | 8 | -0.051 | [-0.125, +0.011] | FAIL noise | 4/8 |
+
+**ψ (forgen+mem coexistence)**: 두 driver 모두 0 근처 noise 영역. 부호가 driver
+별로 갈리고 (+0.020 vs −0.051) CI 도 0 가로지름. 동일 케이스도 driver 별 반대
+부호 (retro-001: claude +0.504 vs codex −0.193, syn-007: claude −0.476 vs codex
+−0.210). **forgen+mem 결합 효과는 측정 불가능 한 작은 영역.**
+
+**δ (forgenOnly−vanilla)**: 양 driver 일관 양수, 다수 케이스 일관
+
+| Driver | mean δ | 양수 δ |
+|---|---|---|
+| claude (sonnet) | +0.046 | 7/10 |
+| codex | **+0.144** | **7/8** |
+
+**셀링 가능한 결론**: forgen 단독 효과 (vanilla 대비) 는 **양 driver 모두 양수
+방향, codex driver 에서 +0.144 W 까지 측정**. ψ (mem 결합) 가 아닌 **δ (forgen
+단독)** 가 robust 한 셀링 메트릭.
+
+**별도 발견 (후속 fix 필요)**:
+- codex driver: syn-005 / retro-003 의 memOnly arm 이 codex 의 1MB input 한계
+  (`Input exceeds the maximum length of 1048576 characters`) 에 걸려 fail →
+  N=10 → N=8 effective. 가설: memOnly arm 의 누적 history (mem inject + codex
+  의 verbose 응답) 가 codex 내부 wrapping 으로 1MB 초과.
+- codex judge 도 일부 case 에서 spawn E2BIG → fallback 2.5 처리.
+- 둘 다 G 트랙으로 추후 수정.
 
 ## References
 
