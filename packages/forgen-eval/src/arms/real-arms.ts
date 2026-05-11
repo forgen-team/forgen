@@ -115,6 +115,23 @@ function claudeMemRecallActual(userMsg: string, topN = 2): string {
   return fragments.join('\n\n');
 }
 
+/**
+ * 중간 turn 의 assistant 응답을 history 에 추가할 때 적용할 최대 길이 cap.
+ *
+ * 2026-05-11 fix: codex driver 의 일부 응답이 장문 (50K+ chars) 으로 나오면서
+ * 다음 chat 호출의 누적 history 가 codex 1MB input 한계를 초과해 syn-005 /
+ * retro-003 의 memOnly arm 이 fail. 16K chars (~4K tokens) 로 cap 하면 5-turn
+ * 누적 ≈ 80K << 1MB 안전 마진.
+ *
+ * 마지막 trigger 응답 (finalResponse) 은 cap 적용 안 함 — judge 채점 대상.
+ */
+const MAX_INTERMEDIATE_RESPONSE_CHARS = 16_000;
+
+function truncateForHistory(response: string): string {
+  if (response.length <= MAX_INTERMEDIATE_RESPONSE_CHARS) return response;
+  return `${response.slice(0, MAX_INTERMEDIATE_RESPONSE_CHARS)}\n[... truncated ${response.length - MAX_INTERMEDIATE_RESPONSE_CHARS} chars for history budget ...]`;
+}
+
 /** Build the driver LLM's system prompt. */
 function baseSystem(persona: string | undefined): string {
   return [
@@ -137,7 +154,7 @@ export class VanillaArm implements Arm {
     for (const turn of c.correctionSequence.slice(0, ctx.turnDepth)) {
       history.push({ role: 'user', content: turn.userMsg });
       const response = await DRIVER.chat(history);
-      history.push({ role: 'assistant', content: response });
+      history.push({ role: 'assistant', content: truncateForHistory(response) });
     }
     history.push({ role: 'user', content: c.trigger.prompt });
     const finalResponse = await DRIVER.chat(history);
@@ -216,7 +233,7 @@ export class ForgenOnlyArm implements Arm {
         // Hook failure — treat as no block
       }
 
-      history.push({ role: 'assistant', content: response });
+      history.push({ role: 'assistant', content: truncateForHistory(response) });
     }
 
     // Trigger phase — must run the same forgen hook pipeline to actually test
@@ -305,7 +322,7 @@ export class ClaudeMemOnlyArm implements Arm {
 
       history.push({ role: 'user', content: turn.userMsg });
       const response = await DRIVER.chat(history);
-      history.push({ role: 'assistant', content: response });
+      history.push({ role: 'assistant', content: truncateForHistory(response) });
     }
 
     history.push({ role: 'user', content: c.trigger.prompt });
@@ -416,7 +433,7 @@ export class ForgenPlusMemArm implements Arm {
         history.push({ role: 'user', content: turn.userMsg });
         const raw = await DRIVER.chat(history);
         const response = await stopMaybeBlock(raw);
-        history.push({ role: 'assistant', content: response });
+        history.push({ role: 'assistant', content: truncateForHistory(response) });
       }
 
       await injectBoth(c.trigger.prompt);
