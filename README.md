@@ -64,12 +64,14 @@ This is **Mech-B self-check prompt-inject**. It works because Claude Code's Stop
 > **v0.4.5 measurement evidence:** with all testbed structural fixes applied
 > ([ADR-007](docs/adr/ADR-007-testbed-arm-isolation.md)), forgen's effect over
 > a vanilla baseline is **measurable on real production drivers (Claude
-> sonnet, Codex)**: mean δ = +0.096 W (14/20 cases positive, κ γ 0.583) on
-> the Claude N=20 retry-sequential run — the highest-fidelity measurement to
-> date. Codex N=10 shows mean δ = +0.120 W (8/10 positive). v0.4.4's
-> ψ-master-gate PASS claim is rescinded as a broken-testbed artifact; the
-> honest selling metric is δ (forgen vs vanilla), and it is robust positive
-> across two model families. See [`docs/release/v0.4.5-draft.md`](docs/release/v0.4.5-draft.md).
+> sonnet, Codex)**. Pooled across both drivers (retry+sequential N=20 each,
+> N=40 total): **mean δ = +0.115 W, 33/40 (82.5%) cases positive**. Codex
+> alone shows **mean δ = +0.133 W, 19/20 (95%) positive** — the strongest
+> δ signal to date. Two model families (Anthropic Sonnet, OpenAI gpt-5-codex)
+> agree on direction and magnitude. v0.4.4's ψ-master-gate PASS claim is
+> rescinded as a broken-testbed artifact; the honest selling metric is δ
+> (forgen vs vanilla), and it is robust positive. See
+> [`docs/release/v0.4.5-draft.md`](docs/release/v0.4.5-draft.md).
 
 🎬 **See it happen** (27 seconds):
 

@@ -202,7 +202,8 @@ Codex) 와도 부합. 본 fix 는 commit `62600ec` (driver migration) + `11b897a
 | codex (cap+stdin only, fallback 56) | 10 | -0.010 | [-0.079, +0.061] | FAIL noise | 6/10 | +0.137 | 9/10 | 0.295 |
 | codex (all fixes) | 10 | +0.024 | [-0.029, +0.094] | FAIL noise | 5/10 | +0.120 | 8/10 | 0.323 |
 | claude (all fixes, rate-limit cut) | 9 | -0.013 | [-0.083, +0.039] | FAIL noise | 5/9 | +0.156 | 8/9 | 0.429 |
-| **claude (retry+sequential N=20)** | **20** | **+0.016** | **[-0.012, +0.047]** | **FAIL noise (CI 0 근처)** | **14/20** | **+0.096** | **14/20** | **0.583** |
+| claude (retry+sequential N=20) | 20 | +0.016 | [-0.012, +0.047] | FAIL noise | 14/20 | +0.096 | 14/20 | 0.583 |
+| **codex (retry+sequential N=20)** | **20** | **+0.013** | **[-0.029, +0.055]** | **FAIL noise** | **13/20** | **+0.133** | **19/20** | **0.048** |
 
 **최고 신뢰도 측정** (마지막 행, commit 7b333b2 retry fix 후): retry 0회 발동
 (sequential 만으로 rate-limit 회피 충분), N=20 effective 회복, κ γ 0.583 으로
@@ -232,7 +233,9 @@ monotonic 패턴**
 | claude (older fixes) | 10 | +0.046 | 7/10 |
 | codex (all fixes) | 10 | +0.120 | 8/10 |
 | claude (all fixes, rate-limit cut) | 9 | +0.156 | 8/9 |
-| **claude (retry+sequential N=20)** | **20** | **+0.096** | **14/20** |
+| claude (retry+sequential N=20) | 20 | +0.096 | 14/20 |
+| **codex (retry+sequential N=20)** | **20** | **+0.133** | **19/20 (95%)** |
+| **POOLED (claude + codex retry+seq)** | **40** | **+0.115** | **33/40 (82.5%)** |
 
 세 측정 모두 다른 시점, 다른 fix 상태, 다른 cases 인데 부호와 다수 케이스 양수
 일관. δ 는 더 큰 N + 더 정확한 measurement infra 일수록 더 강한 양수로 측정.
