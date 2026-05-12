@@ -77,66 +77,8 @@ export class OllamaDriverLLM implements Driver {
   }
 }
 
-// ── Shared: retry with exponential backoff ──────────────────────────────────
-
-/**
- * Retry transient driver/judge failures with exponential backoff.
- *
- * 2026-05-12 fix: claude CLI subscription rate-limit (~108 calls/window) 발동 시
- *   "Command failed: claude -p ..." 로 모든 후속 cases arm fail. N=20 시도 →
- *   N=9 effective 로 종료 (track-N20-claude-20260511-180658). retry + backoff 로
- *   transient 한 rate-limit / network 오류 자동 회복.
- *
- * isRetryable 기본 동작 — 다음 패턴은 retry:
- *   - "Command failed" (CLI exec 실패 — 대체로 rate-limit / transient)
- *   - "rate" + "limit" 동시 포함
- *   - 5xx HTTP 류 ("503", "429", "502")
- *   - "ECONNRESET", "ETIMEDOUT" (네트워크)
- *   - "timeout after" (driver timeout — 한 번 더 시도해볼 가치)
- *
- * 다음은 retry 안 함 (deterministic / fix 필요):
- *   - "E2BIG" (arg 길이 — 코드 fix 필요)
- *   - "ENOENT" (CLI 미설치)
- *   - "exited 1" 인데 위 patterns 매칭 안 되는 경우 (입력 문제)
- */
-const DEFAULT_RETRYABLE_PATTERNS = [
-  /Command failed/i,
-  /rate.{0,5}limit/i,
-  /\b(429|502|503|504)\b/,
-  /ECONNRESET|ETIMEDOUT|ENETUNREACH/,
-  /timeout after/i,
-  /Input exceeds the maximum length/i, // codex 1MB — 가끔 transient (response 길이 변동)
-];
-
-function defaultIsRetryable(err: unknown): boolean {
-  const msg = (err as Error)?.message ?? String(err);
-  if (/E2BIG|ENOENT|EACCES/.test(msg)) return false;
-  return DEFAULT_RETRYABLE_PATTERNS.some((p) => p.test(msg));
-}
-
-async function retryWithBackoff<T>(
-  fn: () => Promise<T>,
-  opts: { maxAttempts?: number; baseDelayMs?: number; isRetryable?: (e: unknown) => boolean; label?: string } = {},
-): Promise<T> {
-  const max = opts.maxAttempts ?? Number(process.env.DRIVER_RETRY_MAX_ATTEMPTS ?? 5);
-  const base = opts.baseDelayMs ?? Number(process.env.DRIVER_RETRY_BASE_MS ?? 2000);
-  const retryable = opts.isRetryable ?? defaultIsRetryable;
-  const label = opts.label ?? 'driver';
-  let lastErr: unknown;
-  for (let attempt = 0; attempt < max; attempt++) {
-    try {
-      return await fn();
-    } catch (e) {
-      lastErr = e;
-      if (!retryable(e) || attempt === max - 1) throw e;
-      const delay = base * Math.pow(2, attempt);
-      const reason = ((e as Error)?.message ?? String(e)).slice(0, 120);
-      process.stderr.write(`  [${label}] retry ${attempt + 1}/${max - 1} after ${delay}ms — ${reason}\n`);
-      await new Promise((r) => setTimeout(r, delay));
-    }
-  }
-  throw lastErr;
-}
+// retry + exponential backoff — driver/judge 공통 로직은 utils/retry.ts 에 추출
+import { retryWithBackoff } from '../utils/retry.js';
 
 // ── Shared: history → flat prompt ───────────────────────────────────────────
 

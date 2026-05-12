@@ -17,6 +17,7 @@ import * as path from 'node:path';
 import { buildJudgePrompt, parseJudgeOutput } from './judge-types.js';
 import type { JudgeClient, JudgePromptInput } from './judge-types.js';
 import type { JudgeScore } from '../types.js';
+import { retryWithBackoff } from '../utils/retry.js';
 
 const DEFAULT_TIMEOUT_MS = 120_000;
 
@@ -99,21 +100,25 @@ export class CodexCliClient implements JudgeClient {
   async judge(input: JudgePromptInput): Promise<JudgeScore> {
     const prompt = buildJudgePrompt(input);
     // long prompt → stdin pipe (E2BIG 회피). driver 와 동일 패턴.
-    const stdout = await runCodex(
-      [
-        'exec',
-        '--json',
-        '--ignore-user-config',
-        '--ignore-rules',
-        '--ephemeral',
-        '-s',
-        'read-only',
-        '-c',
-        'approval_policy="never"',
-        '--skip-git-repo-check',
-        '-',
-      ],
-      { cwd: this.cwd, timeoutMs: this.timeoutMs, stdinPrompt: prompt },
+    const stdout = await retryWithBackoff(
+      () =>
+        runCodex(
+          [
+            'exec',
+            '--json',
+            '--ignore-user-config',
+            '--ignore-rules',
+            '--ephemeral',
+            '-s',
+            'read-only',
+            '-c',
+            'approval_policy="never"',
+            '--skip-git-repo-check',
+            '-',
+          ],
+          { cwd: this.cwd, timeoutMs: this.timeoutMs, stdinPrompt: prompt },
+        ),
+      { label: 'codex-judge' },
     );
     const text = extractCodexText(stdout);
     const parsed = parseJudgeOutput(text);
