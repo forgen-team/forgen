@@ -196,12 +196,23 @@ Codex) 와도 부합. 본 fix 는 commit `62600ec` (driver migration) + `11b897a
 
 ### Driver migration 후 측정 (track-driver-claude / track-driver-codex N=10, 2026-05-11)
 
-| Driver | N eff | mean ψ | CI | gate | 양수 ψ | mean δ | 양수 δ |
-|---|---|---|---|---|---|---|---|
-| claude (older fixes) | 10 | +0.020 | [-0.133, +0.158] | FAIL noise | 8/10 | +0.046 | 7/10 |
-| codex (cap+stdin only, fallback 56) | 10 | -0.010 | [-0.079, +0.061] | FAIL noise | 6/10 | +0.137 | 9/10 |
-| codex (all fixes) | 10 | +0.024 | [-0.029, +0.094] | FAIL noise | 5/10 | +0.120 | 8/10 |
-| **claude (all fixes, 신규 cases 포함)** | **9** | **-0.013** | **[-0.083, +0.039]** | **FAIL noise** | **5/9** | **+0.156** | **8/9** |
+| Driver | N eff | mean ψ | CI | gate | 양수 ψ | mean δ | 양수 δ | κ γ |
+|---|---|---|---|---|---|---|---|---|
+| claude (older fixes) | 10 | +0.020 | [-0.133, +0.158] | FAIL noise | 8/10 | +0.046 | 7/10 | (n/a) |
+| codex (cap+stdin only, fallback 56) | 10 | -0.010 | [-0.079, +0.061] | FAIL noise | 6/10 | +0.137 | 9/10 | 0.295 |
+| codex (all fixes) | 10 | +0.024 | [-0.029, +0.094] | FAIL noise | 5/10 | +0.120 | 8/10 | 0.323 |
+| claude (all fixes, rate-limit cut) | 9 | -0.013 | [-0.083, +0.039] | FAIL noise | 5/9 | +0.156 | 8/9 | 0.429 |
+| **claude (retry+sequential N=20)** | **20** | **+0.016** | **[-0.012, +0.047]** | **FAIL noise (CI 0 근처)** | **14/20** | **+0.096** | **14/20** | **0.583** |
+
+**최고 신뢰도 측정** (마지막 행, commit 7b333b2 retry fix 후): retry 0회 발동
+(sequential 만으로 rate-limit 회피 충분), N=20 effective 회복, κ γ 0.583 으로
+judge integrity 최고. ψ CI 폭 ±0.030 — 이전 측정들 ±0.06~±0.15 대비 squeeze.
+mean ψ +0.016 가 안정이라면 N≈40 에서 gate PASS 가능 추정.
+
+claude (all fixes) 측정은 N=20 시도했으나 case 10 부터 claude CLI subscription
+rate-limit 으로 모든 cases skip → N=9 effective. 단 cases 1-9 의 fallback 2.5
+는 3 (이전 56 대비 95% 감소), κ γ 0.429 / β 0.308 으로 회복 — 다음 retry fix
+의 기반.
 
 claude (all fixes) 측정은 N=20 시도했으나 case 10 부터 claude CLI subscription
 rate-limit 으로 모든 cases skip → N=9 effective. 단 cases 1-9 의 fallback 2.5
@@ -216,11 +227,12 @@ rate-limit 으로 모든 cases skip → N=9 effective. 단 cases 1-9 의 fallbac
 **δ (forgenOnly−vanilla)**: 양 driver 일관 양수, **N 키울수록 더 강해지는
 monotonic 패턴**
 
-| 측정 | mean δ | 양수 δ |
-|---|---|---|
-| claude (older fixes) N=10 | +0.046 | 7/10 |
-| codex (all fixes) N=10 | +0.120 | 8/10 |
-| **claude (all fixes) N=9** | **+0.156** | **8/9** |
+| 측정 | N | mean δ | 양수 δ |
+|---|---|---|---|
+| claude (older fixes) | 10 | +0.046 | 7/10 |
+| codex (all fixes) | 10 | +0.120 | 8/10 |
+| claude (all fixes, rate-limit cut) | 9 | +0.156 | 8/9 |
+| **claude (retry+sequential N=20)** | **20** | **+0.096** | **14/20** |
 
 세 측정 모두 다른 시점, 다른 fix 상태, 다른 cases 인데 부호와 다수 케이스 양수
 일관. δ 는 더 큰 N + 더 정확한 measurement infra 일수록 더 강한 양수로 측정.
@@ -233,11 +245,9 @@ robust 한 셀링 메트릭. ψ 는 noise 영역 (0 근처, 부호 측정마다 
 - ~~codex driver 1MB input 한계~~ ✓ FIXED commit `1362d59` (history cap 16K)
 - ~~codex judge spawn E2BIG~~ ✓ FIXED commit `e42bff6` (judge stdin pipe) +
   `5c8dce8` (judge material cap 32K). fallback 2.5: 56 → 3 (95% 감소)
-- **claude CLI subscription rate-limit (NEW)**: N=20 sequential 또는 양 driver
-  병렬 시 ~108 calls 후 limit 도달 → 이후 cases "Command failed: claude -p ..."
-  로 모든 arm fail → 측정 제외. claude N=20 시도가 N=9 effective 로 종료.
-  후속: driver 에 retry + exponential backoff 추가 (track B), 단기 우회는
-  sequential + N≤10.
+- ~~claude CLI subscription rate-limit~~ ✓ FIXED commit `7b333b2` (driver retry +
+  exponential backoff). N=20 retry sequential 측정에서 retry 0회 발동 (sequential
+  만으로 rate-limit window 회피 충분), N=20 effective 회복.
 
 ## References
 
