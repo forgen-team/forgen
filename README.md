@@ -61,6 +61,16 @@ This is **Mech-B self-check prompt-inject**. It works because Claude Code's Stop
 
 > **v0.4.3 self-correction story:** the same guards detected their own 16-day false-positive (strict φ 65.66% — 84% from a single Korean-regex bug), and the [`forgen-eval`](packages/forgen-eval/) introspect testbed (alpha) flagged a `TEST-1` wiring gap on top of it. Both fixes shipped in v0.4.3 — forgen finding and fixing forgen. Details in [CHANGELOG](CHANGELOG.md).
 
+> **v0.4.5 measurement evidence:** with all testbed structural fixes applied
+> ([ADR-007](docs/adr/ADR-007-testbed-arm-isolation.md)), forgen's effect over
+> a vanilla baseline is **measurable on real production drivers (Claude
+> sonnet, Codex)**: mean δ = +0.096 W (14/20 cases positive, κ γ 0.583) on
+> the Claude N=20 retry-sequential run — the highest-fidelity measurement to
+> date. Codex N=10 shows mean δ = +0.120 W (8/10 positive). v0.4.4's
+> ψ-master-gate PASS claim is rescinded as a broken-testbed artifact; the
+> honest selling metric is δ (forgen vs vanilla), and it is robust positive
+> across two model families. See [`docs/release/v0.4.5-draft.md`](docs/release/v0.4.5-draft.md).
+
 🎬 **See it happen** (27 seconds):
 
 ```bash
