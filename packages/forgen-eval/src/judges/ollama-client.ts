@@ -7,19 +7,27 @@ import { buildJudgePrompt, parseJudgeOutput } from './judge-types.js';
 import type { JudgeClient, JudgePromptInput } from './judge-types.js';
 import type { JudgeScore } from '../types.js';
 
+type OllamaJudgeId = 'qwen-72b' | 'llama-70b' | 'qwen-14b' | 'llama-8b';
+
+const DEFAULT_MODEL: Record<OllamaJudgeId, string> = {
+  'qwen-72b': 'qwen2.5:72b-instruct-q4_K_M',
+  'llama-70b': 'llama3.3:70b-instruct-q4_K_M',
+  'qwen-14b': 'qwen2.5:14b',
+  'llama-8b': 'llama3.1:8b',
+};
+
 export class OllamaClient implements JudgeClient {
-  readonly id: 'qwen-72b' | 'llama-70b';
+  readonly id: OllamaJudgeId;
   private readonly host: string;
   private readonly model: string;
 
-  constructor(id: 'qwen-72b' | 'llama-70b', opts: { host?: string; model?: string } = {}) {
+  constructor(id: OllamaJudgeId, opts: { host?: string; model?: string } = {}) {
     this.id = id;
     this.host = opts.host ?? process.env.OLLAMA_HOST ?? 'http://localhost:11434';
-    // Default models — quantized variants accepted via OLLAMA_<ID>_MODEL env.
     this.model =
       opts.model ??
       process.env[`OLLAMA_${id.toUpperCase().replace('-', '_')}_MODEL`] ??
-      (id === 'qwen-72b' ? 'qwen2.5:72b-instruct-q4_K_M' : 'llama3.3:70b-instruct-q4_K_M');
+      DEFAULT_MODEL[id];
   }
 
   async judge(input: JudgePromptInput): Promise<JudgeScore> {

@@ -21,8 +21,10 @@ export type TurnDepth = 1 | 5 | 10 | 50;
  * - API_DEV: claude CLI (subscription) + codex CLI (subscription) — v0.4.4 subscription-mode.
  *   No API key, no local 70B. Different family judges (Anthropic Sonnet vs OpenAI gpt-5-codex)
  *   for κ independence. *Internal evidence only*, not v0.5.0 release-proof.
+ * - ENSEMBLE: API_DEV + Ollama llama3.1:8b — 3-judge panel for cross-family agreement.
+ *   κ generalized to pairwise mean Cohen's across all judge pairs.
  */
-export type Track = 'DEV' | 'PUBLIC' | 'API_DEV';
+export type Track = 'DEV' | 'PUBLIC' | 'API_DEV' | 'ENSEMBLE';
 
 export type Tier = 'smoke' | 'full';
 
@@ -72,7 +74,7 @@ export interface InjectEvent {
 export interface JudgeScore {
   caseId: string;
   blindedArmId: string; // anonymized
-  judgeId: 'sonnet' | 'qwen-72b' | 'llama-70b' | 'claude-cli' | 'codex-cli';
+  judgeId: 'sonnet' | 'qwen-72b' | 'llama-70b' | 'qwen-14b' | 'llama-8b' | 'claude-cli' | 'codex-cli';
   axis: 'gamma' | 'beta' | 'phi'; // δ/ε/ζ are derived from event traces, not judged directly
   score: 1 | 2 | 3 | 4;
   rationale: string;

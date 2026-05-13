@@ -8,3 +8,14 @@ reports/full/
 .DS_Store
 .env
 .env.local
+
+# Forgen (auto-generated, do not commit)
+.claude/agents/ch-*.md
+.claude/agents/pack-*.md
+.claude/rules/project-context.md
+.claude/rules/routing.md
+.claude/rules/forge-*.md
+.claude/rules/v1-rules.md
+.compound/project-map.json
+.claude/commands/forgen/
+.compound/notepad.md
