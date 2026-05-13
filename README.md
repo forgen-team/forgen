@@ -61,16 +61,17 @@ This is **Mech-B self-check prompt-inject**. It works because Claude Code's Stop
 
 > **v0.4.3 self-correction story:** the same guards detected their own 16-day false-positive (strict φ 65.66% — 84% from a single Korean-regex bug), and the [`forgen-eval`](packages/forgen-eval/) introspect testbed (alpha) flagged a `TEST-1` wiring gap on top of it. Both fixes shipped in v0.4.3 — forgen finding and fixing forgen. Details in [CHANGELOG](CHANGELOG.md).
 
-> **v0.4.5 measurement evidence:** with all testbed structural fixes applied
-> ([ADR-007](docs/adr/ADR-007-testbed-arm-isolation.md)), forgen's effect over
-> a vanilla baseline is **measurable on real production drivers (Claude
-> sonnet, Codex)**. Pooled across both drivers (retry+sequential N=20 each,
-> N=40 total): **mean δ = +0.115 W, 33/40 (82.5%) cases positive**. Codex
-> alone shows **mean δ = +0.133 W, 19/20 (95%) positive** — the strongest
-> δ signal to date. Two model families (Anthropic Sonnet, OpenAI gpt-5-codex)
-> agree on direction and magnitude. v0.4.4's ψ-master-gate PASS claim is
-> rescinded as a broken-testbed artifact; the honest selling metric is δ
-> (forgen vs vanilla), and it is robust positive. See
+> **v0.4.5 measurement evidence (statistically proven):** with all testbed
+> structural fixes applied ([ADR-007](docs/adr/ADR-007-testbed-arm-isolation.md)),
+> forgen's effect over a vanilla baseline is **statistically significant on real
+> production drivers (Claude sonnet, Codex)**. Pooled across both drivers
+> (retry+sequential N=33 each, N=66 total): **mean δ = +0.151 W, 95% CI [+0.118,
+> +0.184], 62/66 (93.9%) cases positive, sign test p = 1.04×10⁻¹⁴**. Codex alone:
+> mean δ = +0.176, 32/33 (97%) positive, p = 4×10⁻⁹. Claude alone: mean δ =
+> +0.125, 30/33 (91%) positive, p = 7×10⁻⁷. **Three independent measurements
+> across two model families all prove δ > 0**. v0.4.4's ψ-master-gate PASS claim
+> is rescinded as a broken-testbed artifact; ψ (forgen+mem coexistence) is
+> confirmed as ≈0 — **forgen alone is the recommended path**. See
 > [`docs/release/v0.4.5-draft.md`](docs/release/v0.4.5-draft.md).
 
 🎬 **See it happen** (27 seconds):

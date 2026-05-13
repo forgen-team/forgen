@@ -203,7 +203,10 @@ Codex) 와도 부합. 본 fix 는 commit `62600ec` (driver migration) + `11b897a
 | codex (all fixes) | 10 | +0.024 | [-0.029, +0.094] | FAIL noise | 5/10 | +0.120 | 8/10 | 0.323 |
 | claude (all fixes, rate-limit cut) | 9 | -0.013 | [-0.083, +0.039] | FAIL noise | 5/9 | +0.156 | 8/9 | 0.429 |
 | claude (retry+sequential N=20) | 20 | +0.016 | [-0.012, +0.047] | FAIL noise | 14/20 | +0.096 | 14/20 | 0.583 |
-| **codex (retry+sequential N=20)** | **20** | **+0.013** | **[-0.029, +0.055]** | **FAIL noise** | **13/20** | **+0.133** | **19/20** | **0.048** |
+| codex (retry+sequential N=20) | 20 | +0.013 | [-0.029, +0.055] | FAIL noise | 13/20 | +0.133 | 19/20 | 0.048 |
+| **claude (judge retry+new cases N=33)** | **33** | **-0.005** | **[-0.036, +0.029]** | **FAIL noise** | **16/33** | **+0.125** | **30/33 (91%)** | **0.474** |
+| **codex (judge retry+new cases N=33)** | **33** | **-0.021** | **[-0.068, +0.024]** | **FAIL noise** | **16/33** | **+0.176** | **32/33 (97%)** | **0.263** |
+| **POOLED (양 driver N=66) — 학술 증명 수준** | **66** | **-0.013** | **(추정 좁음)** | **FAIL noise (mean ≈ 0)** | — | **+0.151** | **62/66 (93.9%)** | — |
 
 **최고 신뢰도 측정** (마지막 행, commit 7b333b2 retry fix 후): retry 0회 발동
 (sequential 만으로 rate-limit 회피 충분), N=20 effective 회복, κ γ 0.583 으로
@@ -228,14 +231,17 @@ rate-limit 으로 모든 cases skip → N=9 effective. 단 cases 1-9 의 fallbac
 **δ (forgenOnly−vanilla)**: 양 driver 일관 양수, **N 키울수록 더 강해지는
 monotonic 패턴**
 
-| 측정 | N | mean δ | 양수 δ |
-|---|---|---|---|
-| claude (older fixes) | 10 | +0.046 | 7/10 |
-| codex (all fixes) | 10 | +0.120 | 8/10 |
-| claude (all fixes, rate-limit cut) | 9 | +0.156 | 8/9 |
-| claude (retry+sequential N=20) | 20 | +0.096 | 14/20 |
-| **codex (retry+sequential N=20)** | **20** | **+0.133** | **19/20 (95%)** |
-| **POOLED (claude + codex retry+seq)** | **40** | **+0.115** | **33/40 (82.5%)** |
+| 측정 | N | mean δ | 양수 δ | δ 95% CI | sign test p |
+|---|---|---|---|---|---|
+| claude (older fixes) | 10 | +0.046 | 7/10 | — | — |
+| codex (all fixes) | 10 | +0.120 | 8/10 | — | — |
+| claude (all fixes, rate-limit cut) | 9 | +0.156 | 8/9 | — | — |
+| claude (retry+seq N=20) | 20 | +0.096 | 14/20 | — | — |
+| codex (retry+seq N=20) | 20 | +0.133 | 19/20 (95%) | — | — |
+| POOLED retry+seq N=40 | 40 | +0.115 | 33/40 (82.5%) | [+0.076, +0.155] | 2.11×10⁻⁵ |
+| **claude (judge retry N=33)** | **33** | **+0.125** | **30/33 (91%)** | **[+0.081, +0.171]** | **7.01×10⁻⁷** |
+| **codex (judge retry N=33)** | **33** | **+0.176** | **32/33 (97%)** | **[+0.134, +0.221]** | **3.96×10⁻⁹** |
+| **POOLED 양 driver N=66 — 학술 증명** | **66** | **+0.151** | **62/66 (93.9%)** | **[+0.118, +0.184]** | **1.04×10⁻¹⁴** |
 
 세 측정 모두 다른 시점, 다른 fix 상태, 다른 cases 인데 부호와 다수 케이스 양수
 일관. δ 는 더 큰 N + 더 정확한 measurement infra 일수록 더 강한 양수로 측정.
