@@ -108,6 +108,14 @@ const commands: Command[] = [
     },
   },
   {
+    name: 'statusline',
+    description: 'Compact HUD for Claude Code statusLine (reads stdin JSON)',
+    handler: async (_args) => {
+      const { handleStatusline } = await import('./core/statusline-cli.js');
+      await handleStatusline();
+    },
+  },
+  {
     name: 'config',
     description: 'Configuration (hooks [--regenerate])',
     handler: async (args) => {
