@@ -57,11 +57,16 @@ async function main(): Promise<void> {
   })();
 
   try {
+    // 0.4.6 fix — delegate hook 이 자기가 codex runtime context 인지 알 수 있게
+    // FORGEN_RUNTIME=codex 명시 주입. 이전엔 buildEnv (forgen wrapper) 경로로만
+    // set 되어 codex 직접 호출 시 default 'claude' 로 fall-through → usage-telemetry
+    // 의 rt 필드가 잘못 박힘 (clean-container e2e 라운드 20 에서 발견).
     const result = spawnSync(process.execPath, [delegatePath, ...restArgs], {
       encoding: 'utf-8',
       input: JSON.stringify(input),
       cwd: process.cwd(),
       stdio: ['pipe', 'pipe', 'pipe'],
+      env: { ...process.env, FORGEN_RUNTIME: 'codex' },
     });
 
     if (result.error) {

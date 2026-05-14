@@ -102,6 +102,74 @@ function pruneDir(
 }
 
 /**
+ * 0.4.6 #14 — append-only jsonl 로그 회전.
+ *
+ * state-gc 의 SESSION_SCOPED_PREFIXES 는 session 별 파일을 prefix-base 로 잡지만,
+ * 단일 aggregate jsonl (hook-timing, prompt-history, usage-telemetry 등) 은 매번
+ * append 되어 무한 grow. 본 함수가 size cap (default 10MB) 초과 시 `<name>.1` 로
+ * rotate 하고 `<name>.2` 는 삭제 (한 단계만 보존).
+ *
+ * 회전 정책:
+ *  - cap 미만: no-op
+ *  - cap 초과: <name>.2 삭제 → <name>.1 → <name>.2, <name> → <name>.1, 새 빈 <name>
+ *  - 0.4.6 신설 jsonl 들 (prompt-history, usage-telemetry, rate-limit-misses) 포함
+ *
+ * fail-open: 모든 I/O 실패는 silent — 호출 측 차단 안 함.
+ */
+const ROTATABLE_LOGS = [
+  'hook-errors.jsonl',
+  'hook-timing.jsonl',
+  'implicit-feedback.jsonl',
+  'match-eval-log.jsonl',
+  'solution-quarantine.jsonl',
+  'prompt-history.jsonl',
+  'usage-telemetry.jsonl',
+  'rate-limit-misses.jsonl',
+];
+const DEFAULT_MAX_LOG_BYTES = 10 * 1024 * 1024; // 10MB
+
+export interface RotateReport {
+  scanned: number;
+  rotated: number;
+  bytesFreed: number;
+  sample: string[];
+}
+
+export function rotateAppendOnlyLogs(opts: {
+  stateDir?: string;
+  maxBytes?: number;
+} = {}): RotateReport {
+  const stateDir = opts.stateDir ?? STATE_DIR;
+  const maxBytes = opts.maxBytes ?? DEFAULT_MAX_LOG_BYTES;
+  const out: RotateReport = { scanned: 0, rotated: 0, bytesFreed: 0, sample: [] };
+  if (!fs.existsSync(stateDir)) return out;
+
+  for (const name of ROTATABLE_LOGS) {
+    const full = path.join(stateDir, name);
+    let stat: fs.Stats;
+    try { stat = fs.statSync(full); } catch { continue; }
+    out.scanned++;
+    if (stat.size <= maxBytes) continue;
+
+    try {
+      const r1 = `${full}.1`;
+      const r2 = `${full}.2`;
+      // .2 삭제
+      try { fs.unlinkSync(r2); out.bytesFreed += fs.existsSync(r2) ? 0 : (fs.statSync(r2).size ?? 0); } catch { /* no .2 */ }
+      // .1 → .2
+      try { if (fs.existsSync(r1)) fs.renameSync(r1, r2); } catch { /* skip */ }
+      // active → .1
+      fs.renameSync(full, r1);
+      // 새 빈 파일
+      fs.writeFileSync(full, '');
+      out.rotated++;
+      if (out.sample.length < 20) out.sample.push(name);
+    } catch { /* fail-open per file */ }
+  }
+  return out;
+}
+
+/**
  * Prune session-scoped files older than `retentionMs` from the state and
  * outcomes directories. Defaults to a dry-run so callers must opt-in to
  * deletion via `dryRun: false`.

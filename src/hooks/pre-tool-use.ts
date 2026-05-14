@@ -204,6 +204,32 @@ function getActiveReminders(): string[] {
   return reminders;
 }
 
+/**
+ * Tool-call supplement log (ADR-008 / docs/codex-integration.md).
+ *
+ * Codex `approval_policy=auto`/`workspace-write` 환경에서 PermissionRequest
+ * hook 이 dispatch 되지 않아 `permissions-<id>.jsonl` 가 생성되지 않는 갭을
+ * 보완. 모든 PreToolUse 호출에서 동일 파일에 append (source='pre-tool-use'
+ * 로 구분). permission-handler 의 entry 와 source 필드로 reader 측 dedup.
+ *
+ * fail-open: write 실패는 hook 차단하지 않음.
+ */
+function logToolCallSupplement(sessionId: string, toolName: string): void {
+  try {
+    const logPath = path.join(STATE_DIR, `permissions-${sanitizeId(sessionId)}.jsonl`);
+    fs.mkdirSync(STATE_DIR, { recursive: true });
+    const entry = JSON.stringify({
+      timestamp: new Date().toISOString(),
+      tool: toolName,
+      decision: 'pre-approved',
+      source: 'pre-tool-use',
+    });
+    fs.appendFileSync(logPath, `${entry}\n`);
+  } catch (e) {
+    log.debug('tool-call supplement log 실패', e);
+  }
+}
+
 /** 연속 파싱 실패 카운터 관리 */
 function getAndIncrementFailCount(): number {
   try {
@@ -363,6 +389,11 @@ async function main(): Promise<void> {
   const toolName = data.tool_name ?? data.toolName ?? '';
   const toolInput = data.tool_input ?? data.toolInput ?? {};
   const sessionId = data.session_id ?? 'default';
+
+  // ADR-008 / codex-integration.md — Codex `approval_policy=auto` 에서
+  // PermissionRequest 가 dispatch 안 되는 갭 보완. 모든 tool call 을
+  // permissions-<id>.jsonl 에 supplement 로 append (source='pre-tool-use').
+  if (toolName) logToolCallSupplement(sessionId, toolName);
 
   // ADR-001 Mech-A PreToolUse dispatcher — 사용자가 정의한 rule 이 빌트인 위험-명령 감지보다 먼저.
   // 이렇게 해야 rule.block_message (맥락 있는 안내) 가 제네릭 "Dangerous command blocked" 대신 노출됨.

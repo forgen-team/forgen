@@ -16,6 +16,14 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import { execSync } from 'node:child_process';
 import { loadActiveRules } from '../store/rule-store.js';
+import { getUsageStats } from './usage-telemetry.js';
+import { STATE_DIR } from './paths.js';
+
+// 0.4.6 perf #13 — statusline 출력을 5초 캐싱.
+// claude statusLine 은 짧은 간격으로 재호출되는데 매번 git/find/rule-store 를
+// 실행하면 ~100ms 누적. CACHE_TTL_MS 동안 동일 출력 재사용.
+const STATUSLINE_CACHE_PATH = path.join(STATE_DIR, 'statusline-cache.txt');
+const CACHE_TTL_MS = 5_000;
 
 // ANSI codes
 const DIM = '\x1b[2m';
@@ -119,6 +127,22 @@ function buildLine1(payload: StdinPayload, cwd: string): string {
   return parts.join(`  ${DIM}|${RESET}  `);
 }
 
+/** Build usage line: "📊 87/5h · 412/wk (claude)" — 0.4.6 신설 */
+function buildUsageLine(): string | null {
+  try {
+    const stats = getUsageStats();
+    if (stats.week.total === 0) return null;
+    const dominant = stats.week.codex > stats.week.claude ? 'codex' : 'claude';
+    return [
+      `${YELLOW}📊 ${stats.hour5.total}/5h${RESET}`,
+      `${YELLOW}${stats.week.total}/wk${RESET}`,
+      `${DIM}(${dominant})${RESET}`,
+    ].join(`  ${DIM}·${RESET}  `);
+  } catch {
+    return null;
+  }
+}
+
 function buildLine3(claudeDir: string, cwd: string): string {
   const settings = getSettingsJson(claudeDir);
   const claudeMdCount = countClaudeMd(cwd);
@@ -140,13 +164,40 @@ function buildLine3(claudeDir: string, cwd: string): string {
   ].join(`  ${DIM}|${RESET}  `);
 }
 
+/** 0.4.6 perf #13: cached output if fresh. */
+function readCacheIfFresh(): string | null {
+  try {
+    const stat = fs.statSync(STATUSLINE_CACHE_PATH);
+    if (Date.now() - stat.mtimeMs < CACHE_TTL_MS) {
+      return fs.readFileSync(STATUSLINE_CACHE_PATH, 'utf-8');
+    }
+  } catch { /* no cache or stale */ }
+  return null;
+}
+
+function writeCache(content: string): void {
+  try {
+    fs.mkdirSync(STATE_DIR, { recursive: true });
+    fs.writeFileSync(STATUSLINE_CACHE_PATH, content);
+  } catch { /* fail-open */ }
+}
+
 export async function handleStatusline(): Promise<void> {
+  // 캐시 hit 시 stdin payload 무시하고 바로 출력 (5초 윈도우 내 동일 출력 가정).
+  // 라인 단위 cache → console.log 라인별 (테스트 호환).
+  const cached = readCacheIfFresh();
+  if (cached !== null) {
+    for (const line of cached.split('\n').filter(Boolean)) console.log(line);
+    return;
+  }
+
   const payload = readStdinJson();
   const cwd = payload.workspace?.current_dir ?? process.cwd();
   const claudeDir = path.join(os.homedir(), '.claude');
 
   const line1 = buildLine1(payload, cwd);
   const line3 = buildLine3(claudeDir, cwd);
+  const usageLine = buildUsageLine();
 
   // Line 2 (context/usage): stdin JSON spec 미확인으로 생략 — TODO
   // Line 4 (tool counts): 추적 인프라 없음 — TODO
@@ -154,4 +205,8 @@ export async function handleStatusline(): Promise<void> {
 
   console.log(line1);
   console.log(line3);
+  if (usageLine) console.log(usageLine);
+
+  const cacheBody = usageLine ? `${line1}\n${line3}\n${usageLine}\n` : `${line1}\n${line3}\n`;
+  writeCache(cacheBody);
 }

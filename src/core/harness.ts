@@ -28,6 +28,52 @@ import { installAgents, installSlashCommands } from './installer.js';
 
 const log = createLogger('harness');
 
+/**
+ * 0.4.6 — Codex hooks fast staleness check + auto-reconcile.
+ *
+ * 매 codex 진입 시 hooks.json 의 forgen entry 가 현재 pkgRoot 와 일치하는지
+ * 검사. 불일치 또는 부재 시 planCodexInstall 을 silently 재실행.
+ *
+ * Staleness 판정: hooks.json 안의 첫 codex-adapter.js 경로가 현재 pkgRoot 의
+ * dist/host/codex-adapter.js 와 일치 여부.
+ *
+ * Performance: hot-path 회피를 위해 lazy import + 단순 string match. 정상
+ * 케이스에서 1ms 이내. 불일치 시 planCodexInstall (~50ms).
+ */
+async function ensureCodexHooksFresh(pkgRoot: string): Promise<void> {
+  const codexHome = process.env.CODEX_HOME ?? path.join(os.homedir(), '.codex');
+  const hooksPath = path.join(codexHome, 'hooks.json');
+  const expectedAdapterPath = path.join(pkgRoot, 'dist', 'host', 'codex-adapter.js');
+
+  let needsReinstall = false;
+  if (!fs.existsSync(hooksPath)) {
+    needsReinstall = true;
+    log.debug('codex hooks.json 부재 — install 필요');
+  } else {
+    try {
+      const raw = fs.readFileSync(hooksPath, 'utf-8');
+      // 가장 간단한 staleness signal: 현재 pkgRoot 의 adapter 경로가 hooks.json 에 나타나는가?
+      if (!raw.includes(expectedAdapterPath)) {
+        needsReinstall = true;
+        log.debug(`codex hooks.json stale (expected ${expectedAdapterPath} 미발견)`);
+      }
+    } catch (e) {
+      needsReinstall = true;
+      log.debug('codex hooks.json 읽기 실패 — reinstall', e);
+    }
+  }
+
+  if (!needsReinstall) return;
+
+  try {
+    const { planCodexInstall } = await import('../host/install-codex.js');
+    planCodexInstall({ pkgRoot, registerMcp: true });
+    log.debug('codex hooks 자동 reconcile 완료');
+  } catch (e) {
+    log.debug('codex hooks reconcile 실패', e);
+  }
+}
+
 // ── v1 HarnessContext (simplified) ──
 
 export interface V1HarnessContext {
@@ -390,8 +436,19 @@ export async function prepareHarness(
       injectClaudeRuleFiles(cwd, ruleFiles);
       // 7. 슬래시 명령 설치
       installSlashCommands(cwd, pkgRoot);
+    } else if (runtime === 'codex') {
+      // 0.4.6 — Codex hooks 자동 reconcile-on-launch.
+      // 매 fgx --codex / forgen --runtime codex 호출 시 hooks.json 의 forgen entry 가
+      // 현재 pkgRoot 와 일치하는지 fast check. 불일치 (다른 머신/버전 install,
+      // pkg path 변경, 신규 설치) → silent reinstall.
+      // 사용자가 `forgen install codex` 를 명시 호출 안 해도 매번 정합성 보장.
+      try {
+        await ensureCodexHooksFresh(pkgRoot);
+      } catch (e) {
+        log.debug('Codex hooks reconcile 실패 (fail-open)', e);
+      }
     } else {
-      log.debug(`prepareHarness: runtime=${runtime} — Claude artifact prep skipped (Phase 3 handles Codex prep)`);
+      log.debug(`prepareHarness: runtime=${runtime} — artifact prep skipped`);
     }
 
     // 8. tmux 바인딩 등록

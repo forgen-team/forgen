@@ -94,6 +94,20 @@ export function resolveLaunchContext(args: string[]): LaunchContext {
       continue;
     }
 
+    // 0.4.6 — shortcut flags `--codex` / `--claude` (= `--runtime codex|claude`).
+    // fgx --codex 같은 짧은 호출을 위해. claude/codex CLI 가 동일 이름 플래그를
+    // 자체적으로 정의하지 않는 한 forwarding 충돌 없음.
+    if (arg === '--codex') {
+      result.runtime = 'codex';
+      result.runtimeSource = 'flag';
+      continue;
+    }
+    if (arg === '--claude') {
+      result.runtime = 'claude';
+      result.runtimeSource = 'flag';
+      continue;
+    }
+
     result.args.push(arg);
   }
 
