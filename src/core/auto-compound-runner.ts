@@ -12,7 +12,10 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { execFileSync, type ExecFileSyncOptions } from 'node:child_process';
+import { execFileSync, execFile, type ExecFileSyncOptions, type ExecFileOptions } from 'node:child_process';
+import { promisify } from 'node:util';
+
+const execFileAsync = promisify(execFile);
 import { createRequire } from 'node:module';
 import { containsPromptInjection, filterSolutionContent } from '../hooks/prompt-injection-filter.js';
 import { redactSecrets } from '../hooks/secret-filter.js';
@@ -81,6 +84,62 @@ function execClaudeRetry(args: string[], opts: ExecFileSyncOptions): string {
     prompt,
     model,
     host: 'codex',
+    timeout: typeof opts.timeout === 'number' ? opts.timeout : 60000,
+    cwd: typeof opts.cwd === 'string' ? opts.cwd : undefined,
+  });
+  return r.message;
+}
+
+/**
+ * 0.4.6 perf #12 — async 변형. 3 LLM 호출 (solution / user-pattern / learning) 을
+ * Promise.allSettled 로 병렬 실행하여 wall-clock 을 sum → max 로 단축 (~3x).
+ *
+ * 0.4.6 에서는 adaptive cooldown 으로 wasted runs 차단을 우선 적용했고, 호출부
+ * full parallelization 은 0.4.7 로 분리 (refactor surface 큼 — solution call 의
+ * `--allowedTools` sandbox 와 file-write 순서 invariant 검증 필요).
+ *
+ * 본 함수는 0.4.7 작업의 foundation 으로 박제 — export 하여 unused warning 회피.
+ * 동작은 sync 버전과 동일: Claude/Codex 분기 + retry on transient.
+ */
+export async function execClaudeRetryAsync(args: string[], opts: ExecFileOptions): Promise<string> {
+  const mod = createRequire(import.meta.url)('../host/exec-host.js') as typeof import('../host/exec-host.js');
+  const profileMod = createRequire(import.meta.url)('../store/profile-store.js') as typeof import('../store/profile-store.js');
+  const resolved = profileMod.resolveDefaultHost();
+  const host: 'claude' | 'codex' = resolved === 'codex' ? 'codex' : 'claude';
+
+  if (host === 'claude') {
+    const TRANSIENT = /ETIMEDOUT|ECONNRESET|ECONNREFUSED|EPIPE/;
+    const MAX_ATTEMPTS = 2;
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      try {
+        const { stdout } = await execFileAsync('claude', args, opts);
+        return typeof stdout === 'string' ? stdout : stdout.toString();
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        const match = msg.match(TRANSIENT);
+        if (attempt < MAX_ATTEMPTS && match) {
+          process.stderr.write(
+            `[forgen-auto-compound] ${match[0]} on attempt ${attempt}/${MAX_ATTEMPTS}, retrying in 3s (auto-recovery)...\n`,
+          );
+          await new Promise<void>(resolve => setTimeout(resolve, 3000));
+          continue;
+        }
+        throw e;
+      }
+    }
+    throw new Error('unreachable');
+  }
+
+  // codex 분기 (동기 execHost 라 그냥 호출 — 이미 빠름)
+  const pIdx = args.indexOf('-p');
+  if (pIdx === -1 || !args[pIdx + 1]) {
+    throw new Error('execClaudeRetryAsync: codex host requires -p prompt argument');
+  }
+  const prompt = args[pIdx + 1];
+  const modelIdx = args.indexOf('--model');
+  const model = modelIdx !== -1 ? args[modelIdx + 1] : undefined;
+  const r = mod.execHost({
+    prompt, model, host: 'codex',
     timeout: typeof opts.timeout === 'number' ? opts.timeout : 60000,
     cwd: typeof opts.cwd === 'string' ? opts.cwd : undefined,
   });
@@ -176,6 +235,12 @@ function extractText(c: unknown): string {
   return '';
 }
 
+/**
+ * 0.4.6 — claude/codex JSONL 양 schema 호환.
+ *
+ * Claude: {type: 'user'|'assistant', content: ...}
+ * Codex: {type: 'response_item', payload: {type: 'message', role: 'user'|'assistant', content: [{type: 'input_text', text: ...}]}}
+ */
 function extractSummary(filePath: string, maxChars = 8000): string {
   const content = fs.readFileSync(filePath, 'utf-8');
   const lines = content.split('\n').filter(Boolean);
@@ -185,6 +250,7 @@ function extractSummary(filePath: string, maxChars = 8000): string {
   for (const line of lines) {
     try {
       const entry = JSON.parse(line);
+      // Claude schema
       if (entry.type === 'user' || entry.type === 'queue-operation') {
         const text = extractText(entry.content);
         if (text) { messages.push(`[User] ${text.slice(0, 500)}`); totalChars += text.length; }
@@ -192,11 +258,31 @@ function extractSummary(filePath: string, maxChars = 8000): string {
         const text = extractText(entry.content);
         if (text) { messages.push(`[Assistant] ${text.slice(0, 500)}`); totalChars += text.length; }
       }
+      // Codex schema
+      else if (entry.type === 'response_item' && entry.payload?.role === 'user') {
+        const text = extractCodexText(entry.payload.content);
+        if (text) { messages.push(`[User] ${text.slice(0, 500)}`); totalChars += text.length; }
+      } else if (entry.type === 'response_item' && entry.payload?.role === 'assistant') {
+        const text = extractCodexText(entry.payload.content);
+        if (text) { messages.push(`[Assistant] ${text.slice(0, 500)}`); totalChars += text.length; }
+      }
     } catch { /* skip */ }
     if (totalChars > maxChars) break;
   }
 
   return messages.join('\n\n');
+}
+
+/** Codex content array → flat string. content: [{type: 'input_text', text: ...}] */
+function extractCodexText(content: unknown): string {
+  if (!Array.isArray(content)) return '';
+  const parts: string[] = [];
+  for (const item of content) {
+    if (item && typeof item === 'object' && 'text' in item && typeof (item as { text: unknown }).text === 'string') {
+      parts.push((item as { text: string }).text);
+    }
+  }
+  return parts.join('\n').trim();
 }
 
 /**
@@ -241,6 +327,9 @@ function mergeOrCreateBehavior(dir: string, newContent: string, kind: string, to
   }
   return false;
 }
+
+// 0.4.6 perf #12 — adaptive cooldown 시그널 (declared early for hoisting).
+let userPatternFound = false;
 
 try {
   const rawSummary = extractSummary(transcriptPath);
@@ -380,6 +469,7 @@ ${sanitizedSummary.slice(0, 4000)}
       process.stderr.write(`[forgen-auto-compound] behavior: injection detected in LLM output, skipping write\n`);
     }
     if (userResult && !isInjection && !userResult.includes('관찰된 패턴 없음') && userResult.trim().length > 10) {
+      userPatternFound = true; // 0.4.6 perf #12 — adaptive cooldown 시그널
       fs.mkdirSync(BEHAVIOR_DIR, { recursive: true });
       const today = new Date().toISOString().split('T')[0];
       const trimmed = userResult.trim();
@@ -640,6 +730,7 @@ ${sanitizedSummary.slice(0, 4000)}
       completedAt: new Date().toISOString(),
       extractedSolutions: extractedSolutionsCount,
       promotedRules: promotedCount,
+      userPatternFound, // 0.4.6 perf #12 — adaptive cooldown 시그널
       noticeShown: false,
     }),
   );

@@ -20,7 +20,7 @@ import type { ArmContext } from '../arms/types.js';
 import { loadTestCases } from '../datasets/loader.js';
 import type { ArmResponse, Track } from '../types.js';
 import type { JudgeAxis, JudgeClient } from '../judges/index.js';
-import { ClaudeCliClient, CodexCliClient, SonnetClient } from '../judges/index.js';
+import { ClaudeCliClient, CodexCliClient, OllamaClient, SonnetClient } from '../judges/index.js';
 
 /** Load persona spec JSON for β-axis judging. Cached per personaId. */
 const personaCache = new Map<string, string>();
@@ -154,8 +154,12 @@ function formatCorrectionHistory(turns: { userMsg: string }[], maxTurns = 5): st
 
 function buildPanel(track: Track): JudgeClient[] {
   if (track === 'API_DEV') return [new ClaudeCliClient(), new CodexCliClient()];
+  if (track === 'ENSEMBLE')
+    return [new ClaudeCliClient(), new CodexCliClient(), new OllamaClient('llama-8b')];
   if (track === 'DEV') return [new SonnetClient()];
-  throw new Error(`Track ${track} not supported by this runner — use API_DEV (default) or DEV`);
+  throw new Error(
+    `Track ${track} not supported by this runner — use API_DEV (default), ENSEMBLE, or DEV`,
+  );
 }
 
 async function main() {
@@ -252,20 +256,35 @@ async function main() {
   console.log(`> 0 with 95% conf    = ${ci.lo > 0}`);
   console.log(`Master gate (ψ > 0)  = ${ci.lo > 0 ? 'PASS' : 'FAIL (CI crosses zero)'}`);
 
-  // κ between judges, per axis (only when ≥ 2 judges)
+  // κ between judges, per axis. For ≥3 judges → pairwise mean Cohen's across all pairs.
   const kappaPerAxis: Record<string, number> = {};
+  const kappaPairwise: Record<string, Record<string, number>> = {}; // axis → pair → κ
   if (judges.length >= 2) {
     const ids = judges.map((j) => j.id);
-    for (const axis of ['gamma', 'beta'] as JudgeAxis[]) {
-      const a = kappaInputs[`${ids[0]}|${axis}`] ?? [];
-      const b = kappaInputs[`${ids[1]}|${axis}`] ?? [];
-      // round to nearest int category for κ (judge fallbacks may produce 2.5)
-      const ar = a.map((x) => Math.round(x));
-      const br = b.map((x) => Math.round(x));
-      kappaPerAxis[axis] = cohenKappa(ar, br);
+    const pairs: [string, string][] = [];
+    for (let i = 0; i < ids.length; i++) {
+      for (let j = i + 1; j < ids.length; j++) pairs.push([ids[i], ids[j]]);
     }
-    console.log(`Cohen's κ ${ids[0]} vs ${ids[1]}:`);
-    for (const [axis, v] of Object.entries(kappaPerAxis)) console.log(`  ${axis}: ${v.toFixed(3)}`);
+    for (const axis of ['gamma', 'beta'] as JudgeAxis[]) {
+      const perPair: Record<string, number> = {};
+      const ks: number[] = [];
+      for (const [x, y] of pairs) {
+        const a = (kappaInputs[`${x}|${axis}`] ?? []).map((v) => Math.round(v));
+        const b = (kappaInputs[`${y}|${axis}`] ?? []).map((v) => Math.round(v));
+        const k = cohenKappa(a, b);
+        perPair[`${x}↔${y}`] = k;
+        ks.push(k);
+      }
+      kappaPerAxis[axis] = ks.length ? ks.reduce((s, v) => s + v, 0) / ks.length : 0;
+      kappaPairwise[axis] = perPair;
+    }
+    console.log(`Cohen's κ (pairwise mean across ${pairs.length} judge pair${pairs.length > 1 ? 's' : ''}):`);
+    for (const axis of ['gamma', 'beta'] as JudgeAxis[]) {
+      console.log(`  ${axis}: mean=${kappaPerAxis[axis].toFixed(3)}`);
+      for (const [pair, v] of Object.entries(kappaPairwise[axis])) {
+        console.log(`    ${pair}: ${v.toFixed(3)}`);
+      }
+    }
   }
 
   console.log('\nPer-case ψ (judge-based):');
@@ -278,6 +297,7 @@ async function main() {
     mean: ci.mean,
     ci: [ci.lo, ci.hi],
     kappaPerAxis,
+    kappaPairwise,
     cases: results,
     generatedAt: new Date().toISOString(),
   };

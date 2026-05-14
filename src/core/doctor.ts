@@ -441,6 +441,15 @@ export async function runDoctor(opts: DoctorOptions = {}): Promise<void> {
     const mb = (report.bytesFreed / 1024 / 1024).toFixed(2);
     console.log(`  → Pruned ${report.pruned}/${report.scanned} files (${mb} MB freed, >${report.retentionDays}d old)`);
 
+    // 0.4.6 #14 — append-only jsonl 회전 (10MB cap)
+    try {
+      const { rotateAppendOnlyLogs } = await import('./state-gc.js');
+      const rot = rotateAppendOnlyLogs();
+      if (rot.rotated > 0) {
+        console.log(`  → Rotated ${rot.rotated}/${rot.scanned} append-only log(s): ${rot.sample.join(', ')}`);
+      }
+    } catch { /* fail-open */ }
+
     // ADR-002 T4 — 90d 미주입 rule retire. pruneState 와 함께 "하루 한번 정돈" 의미 공유.
     try {
       const { runDailyT4Decay } = await import('./state-gc.js');

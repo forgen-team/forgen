@@ -1,7 +1,7 @@
 ---
 name: forge-loop
-description: This skill should be used when the user asks to "forge-loop, 포지루프, 끝까지, don't stop". 주어진 작업을 PRD(User Story)로 분해하고, 모든 수용 기준이 충족될 때까지 반복 실행합니다.
-argument-hint: "[task description]"
+description: This skill should be used when the user asks to "forge-loop, 포지루프, 끝까지, don't stop, goal, 목표, goal lock, scope lock". 작업을 PRD(User Story)로 분해 + 모든 수용 기준 충족까지 반복 실행. `--goal-only` 플래그로 PRD/수용기준 박제만 (실행 사이클 없이) 가능 — goal-locking pattern lightweight 진입점.
+argument-hint: "[task description] [--goal-only]"
 model: inherit
 allowed-tools:
   - Read
@@ -18,6 +18,12 @@ triggers:
   - "don't stop"
   - "완료될 때까지"
   - "루프로 실행"
+  - "goal"
+  - "목표"
+  - "goal lock"
+  - "scope lock"
+  - "completion criteria"
+  - "수용 기준"
 ---
 
 <Purpose>
@@ -89,6 +95,35 @@ EOF
 
 이 파일이 있어야 Claude가 중간에 멈추지 않도록 Stop 훅이 차단합니다.
 스토리 완료 시 `passes: true`로 업데이트. 전체 완료는 Stop 훅이 자동 처리.
+
+### goal-only 모드 — Phase 1 종료 분기
+
+`$ARGUMENTS` 에 `--goal-only` / `--goal` / `--lock-only` 중 하나가 포함된 경우,
+Phase 1 종료 직후 다음을 산출하고 종료 (Phase 2/3 건너뜀):
+
+1. 위 PRD JSON 의 stories 배열을 markdown Goal 박스로 변환:
+   ```
+   GOAL: <stories[0].title — 단일 story 면 한 문장 요약>
+   완료 기준 (Acceptance Criteria):
+     - [ ] <story[i].acceptanceCriteria[j] 각각 — 구체적 증거 타입 포함>
+   제약 (Out-of-Scope):
+     - <"수용 기준 품질 규칙" 표의 금지 패턴들>
+     - <사용자가 명시한 dry-run / touch 안 할 경로 등>
+   검증 방법:
+     - <각 AC 의 verification command (bash / curl / file check)>
+   컴파운드 패턴 (참고):
+     - <compound-search top 1-2 결과 — 본 작업 키워드로 검색>
+   ```
+
+2. 사용자에게 박스를 보여주고 안내:
+   ```
+   GOAL 박제 완료. 다음 옵션:
+   - 이 박스를 다른 컨텍스트/에이전트에 위임 → 복사 사용
+   - 본 세션에서 자동 실행 → `forge-loop resume` 로 Phase 2 이어 실행
+   상태 파일: ~/.forgen/state/forge-loop.json (resume 시 재활용)
+   ```
+
+3. 종료. **Anti-Polite-Stop 규칙은 goal-only 모드에 적용 안 함** — 박제가 목적이고 실행은 명시적 escalation 시에만.
 
 ## Phase 2: 스토리 실행 루프
 
@@ -210,6 +245,31 @@ compound에 저장하시겠습니까? [Y/n]
 <Arguments>
 - `[task description]`: 실행할 작업 설명. 생략 시 현재 대화 컨텍스트에서 추론.
 - `resume`: 이전에 중단된 루프를 재개합니다.
+- `--goal-only` (또는 `--goal`, `--lock-only`): **goal-locking lightweight 모드**.
+  Phase 1 (PRD + 수용 기준 + 상태 파일 저장) 까지만 실행하고 Phase 2/3 (자동
+  실행 루프 + 최종 검증) 은 건너뜁니다. 산출물은 *구조화된 Goal 박스* — 작업
+  범위 / 완료 기준 / 제약 / 검증 방법을 한 markdown 으로 박제. 사용자가 다른
+  컨텍스트나 에이전트에 그대로 붙여 위임 가능. 추후 `forge-loop resume` 로
+  자동 실행 사이클 escalate 가능 (상태 파일 재활용).
+
+  goal-only 모드의 산출물 포맷:
+  ```
+  GOAL: <한 문장 요약>
+  완료 기준 (Acceptance Criteria — 증거 타입 포함):
+    - [ ] AC1: <테스트 로그 / 파일 변경 / dry-run 출력>
+    - [ ] AC2: ...
+  제약 (Out-of-Scope / 안 할 것):
+    - <실 발송·배포·삭제 금지 / dry-run 한정>
+    - <touch 안 할 경로>
+  검증 방법:
+    - <bash 명령 / 파일 확인 / 외부 verification>
+  컴파운드 패턴 (참고):
+    - <compound-search 결과 top 1-2>
+  ```
+
+  goal-only 모드는 stop-guard 의 fact-vs-agreement / self-score-inflation
+  체크와 직접 연동 — Goal 박스 박제 후 응답이 "완료" 주장 시 AC 의 증거가
+  포함되어야 통과.
 </Arguments>
 
 $ARGUMENTS

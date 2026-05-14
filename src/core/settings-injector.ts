@@ -62,12 +62,18 @@ function readSettingsWithBackup(): Record<string, unknown> {
   return settings;
 }
 
-/** Apply forgen statusLine only if user hasn't set a custom one. */
+/** Apply forgen statusLine only if user hasn't set a custom one.
+ *  Migration: 'forgen me' → 'forgen statusline' (multi-line dump → compact HUD). */
 function applyStatusLine(settings: Record<string, unknown>): void {
   const existing = settings.statusLine as { type?: string; command?: string } | undefined;
+  // 기존에 'forgen me'로 주입된 경우 → 'forgen statusline'으로 자동 마이그레이션
+  if (existing?.command === 'forgen me') {
+    settings.statusLine = { type: 'command', command: 'forgen statusline' };
+    return;
+  }
   const isForgenOwned = !existing || !existing.command || existing.command.startsWith('forgen');
   if (isForgenOwned) {
-    settings.statusLine = { type: 'command', command: 'forgen me' };
+    settings.statusLine = { type: 'command', command: 'forgen statusline' };
   }
 }
 

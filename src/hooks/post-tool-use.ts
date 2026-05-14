@@ -23,6 +23,7 @@ import { STATE_DIR } from '../core/paths.js';
 import { recordHookTiming } from './shared/hook-timing.js';
 import { type DriftState, createDriftState, evaluateDrift } from '../core/drift-score.js';
 import { appendImplicitFeedback } from '../store/implicit-feedback-store.js';
+import { recordToolCall } from '../core/usage-telemetry.js';
 
 // ── Types ──
 
@@ -175,6 +176,9 @@ async function main(): Promise<void> {
     console.log(approve());
     return;
   }
+
+  // ADR-008 / 0.4.6 — usage telemetry. fail-open, hook 차단 안 함.
+  recordToolCall((process.env.FORGEN_RUNTIME as 'claude' | 'codex' | undefined) ?? 'claude');
 
   const toolName = data.tool_name ?? data.toolName ?? '';
   const toolInput = data.tool_input ?? data.toolInput ?? {};

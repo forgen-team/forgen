@@ -17,6 +17,10 @@ export function buildJudgePanel(track: Track): JudgeClient[] {
     // v0.4.4 subscription-mode — claude CLI + codex CLI (different families = κ-independent)
     return [new ClaudeCliClient(), new CodexCliClient()];
   }
+  if (track === 'ENSEMBLE') {
+    // v0.4.4+ 3-judge ensemble — API_DEV plus local Ollama (3 independent families)
+    return [new ClaudeCliClient(), new CodexCliClient(), new OllamaClient('llama-8b')];
+  }
   // PUBLIC — local-only, no API cost
   return [new OllamaClient('qwen-72b'), new OllamaClient('llama-70b')];
 }

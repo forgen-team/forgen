@@ -22,9 +22,112 @@ import { approve, approveWithContext, approveWithWarning, failOpenWithTracking }
 import { HANDOFFS_DIR, STATE_DIR } from '../core/paths.js';
 import { recordHookTiming } from './shared/hook-timing.js';
 import { sanitizeId } from './shared/sanitize-id.js';
+import { redactSecrets } from './secret-filter.js';
 
 const log = createLogger('context-guard');
 const CONTEXT_STATE_PATH = path.join(STATE_DIR, 'context-guard.json');
+const PROMPT_HISTORY_PATH = path.join(STATE_DIR, 'prompt-history.jsonl');
+const PROMPT_HISTORY_TRUNCATE = 1024; // ADR-008: 1KB cap per entry
+const RATE_LIMIT_MISSES_PATH = path.join(STATE_DIR, 'rate-limit-misses.jsonl');
+
+// ADR-008: detection regex 분리. token-limit 은 context window, rate-limit 은 API quota.
+export const TOKEN_LIMIT_REGEX = /context.*limit|token.*limit|conversation.*too.*long/i;
+export const RATE_LIMIT_REGEX = /rate.?limit|5.?hour.*limit|weekly.*limit|usage.*limit|quota.*exceeded/i;
+
+/**
+ * Best-effort reset 시각 파서 (ADR-008 §2).
+ *
+ * 5 패턴 시도, 모두 실패 시 null. 실제 메시지 포맷은 Claude/Codex CLI 의
+ * 공식 contract 가 아니므로 hotfix 가능한 best-effort.
+ *
+ * @param msg stderr/error message text
+ * @param now epoch ms (테스트 결정성 위해 주입 가능)
+ * @returns ISO timestamp 또는 null
+ */
+export function parseRateLimitResetAt(msg: string, now: number = Date.now()): string | null {
+  // Pattern 4: explicit ISO timestamp — "available again at <ISO>"
+  const isoMatch = msg.match(/(?:available|reset|retry)\s+(?:again\s+)?(?:at|on)\s+(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z?)/i);
+  if (isoMatch) {
+    const ts = Date.parse(isoMatch[1]);
+    if (Number.isFinite(ts)) return new Date(ts).toISOString();
+  }
+
+  // Pattern 2: "Resets in 4h 12m" / "in 4h" / "in 12m"
+  const hMin = msg.match(/(?:reset|retry|try\s+again)s?\s+in\s+(?:(\d+)\s*h)?\s*(?:(\d+)\s*m(?:in)?)?/i);
+  if (hMin && (hMin[1] || hMin[2])) {
+    const hours = parseInt(hMin[1] ?? '0', 10);
+    const mins = parseInt(hMin[2] ?? '0', 10);
+    const offset = (hours * 3600 + mins * 60) * 1000;
+    if (offset > 0) return new Date(now + offset).toISOString();
+  }
+
+  // Pattern 3: "Resets in 18000 seconds"
+  const secMatch = msg.match(/(?:reset|retry|try\s+again)s?\s+in\s+(\d+)\s*sec(?:ond)?s?/i);
+  if (secMatch) {
+    const sec = parseInt(secMatch[1], 10);
+    if (sec > 0) return new Date(now + sec * 1000).toISOString();
+  }
+
+  // Pattern 1: "Resets at HH:MM(:SS)? TZ" — TZ 미지원 (UTC 가정)
+  const hhmm = msg.match(/(?:reset|retry|available)s?\s+at\s+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(UTC|GMT|PST|PDT|EST|EDT|KST|JST)?/i);
+  if (hhmm) {
+    const h = parseInt(hhmm[1], 10);
+    const m = parseInt(hhmm[2], 10);
+    const s = parseInt(hhmm[3] ?? '0', 10);
+    if (h < 24 && m < 60 && s < 60) {
+      const d = new Date(now);
+      d.setUTCHours(h, m, s, 0);
+      // 이미 지난 시각이면 다음 날
+      if (d.getTime() <= now) d.setUTCDate(d.getUTCDate() + 1);
+      return d.toISOString();
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Detector 실패 (RATE_LIMIT_REGEX 매칭 실패) raw 메시지를 누적.
+ * ADR-008 §5: 5건 누적 시 사용자 경고 — patch release 로 hotfix 신호.
+ */
+function logRateLimitMiss(errorMsg: string): void {
+  try {
+    fs.mkdirSync(STATE_DIR, { recursive: true });
+    fs.appendFileSync(RATE_LIMIT_MISSES_PATH, `${JSON.stringify({
+      timestamp: new Date().toISOString(),
+      message: errorMsg.slice(0, 500),
+    })}\n`);
+  } catch (e) { log.debug('rate-limit-miss log 실패', e); }
+}
+
+/**
+ * Append-only prompt history writer (docs/codex-integration.md §"prompt-history.jsonl").
+ *
+ * compound-extractor.ts:547 의 read 코드가 0.4.5 까지 dead code 였음. 0.4.6
+ * 부터 UserPromptSubmit hook 에서 truncated prompt 를 append 하여 활성화.
+ *
+ * fail-open: 실패는 hook 차단하지 않음.
+ */
+function appendPromptHistory(sessionId: string, prompt: string): void {
+  try {
+    fs.mkdirSync(STATE_DIR, { recursive: true });
+    // ADR-008 critical: secret/PII redaction via secret-filter regex 재사용.
+    // password/api-key 가 평문 prompt 에 들어가면 그대로 disk 에 박제되는 위험 차단.
+    const safePrompt = redactSecrets(prompt).redacted;
+    const truncated = safePrompt.length > PROMPT_HISTORY_TRUNCATE
+      ? safePrompt.slice(0, PROMPT_HISTORY_TRUNCATE)
+      : safePrompt;
+    const entry = JSON.stringify({
+      timestamp: new Date().toISOString(),
+      sessionId,
+      promptLength: prompt.length,
+      prompt: truncated,
+    });
+    fs.appendFileSync(PROMPT_HISTORY_PATH, `${entry}\n`);
+  } catch (e) {
+    log.debug('prompt-history append 실패', e);
+  }
+}
 
 interface ContextState {
   promptCount: number;
@@ -135,22 +238,52 @@ export async function main(): Promise<void> {
       return;
     }
 
-    // 에러가 포함된 경우: context limit 감지
+    // 에러가 포함된 경우: context-limit / rate-limit 감지 (ADR-008)
     if (input.error) {
       const errorMsg = input.error;
-      if (/context.*limit|token.*limit|conversation.*too.*long/i.test(errorMsg)) {
+      // FORGEN_RUNTIME 은 buildEnv (config-injector.ts:479) 에서 spawn 시 주입.
+      // hook 은 claude/codex CLI 를 통해 invoke 되어 부모 env 상속.
+      const runtime = (process.env.FORGEN_RUNTIME as 'claude' | 'codex' | undefined) ?? 'claude';
+
+      if (TOKEN_LIMIT_REGEX.test(errorMsg)) {
         saveHandoff(sessionId, 'context-limit', errorMsg);
         try {
           const resumePath = path.join(STATE_DIR, 'pending-resume.json');
           fs.writeFileSync(resumePath, JSON.stringify({
             reason: 'token-limit',
             sessionId,
+            runtime,
             savedAt: new Date().toISOString(),
             cwd: process.env.FORGEN_CWD ?? process.env.COMPOUND_CWD ?? process.cwd(),
           }, null, 2));
         } catch { /* fail-open */ }
         console.log(approveWithWarning(`[Forgen] Context limit reached. Current state has been saved to ~/.forgen/handoffs/.\nThe previous work will be automatically recovered in the next session.`));
         return;
+      }
+
+      if (RATE_LIMIT_REGEX.test(errorMsg)) {
+        const resetAt = parseRateLimitResetAt(errorMsg);
+        saveHandoff(sessionId, 'rate-limit', errorMsg);
+        try {
+          const resumePath = path.join(STATE_DIR, 'pending-resume.json');
+          fs.writeFileSync(resumePath, JSON.stringify({
+            reason: 'rate-limit',
+            sessionId,
+            runtime,
+            resetAt,
+            savedAt: new Date().toISOString(),
+            cwd: process.env.FORGEN_CWD ?? process.env.COMPOUND_CWD ?? process.cwd(),
+          }, null, 2));
+        } catch { /* fail-open */ }
+        const eta = resetAt ? `at ${resetAt}` : 'with backoff schedule';
+        console.log(approveWithWarning(`[Forgen] Rate limit reached. Auto-resume scheduled ${eta}. State saved to ~/.forgen/handoffs/.`));
+        return;
+      }
+
+      // ADR-008 §5: detection 실패 raw 누적 → patch hotfix 신호
+      // (어느 limit regex 도 매칭 안 됨 = unknown error 또는 detector miss)
+      if (/limit|quota|throttle/i.test(errorMsg)) {
+        logRateLimitMiss(errorMsg);
       }
     }
 
@@ -209,6 +342,9 @@ export async function main(): Promise<void> {
     const state = loadContextState(sessionId);
     state.promptCount++;
     state.totalChars += input.prompt.length;
+
+    // ADR-008 / docs/codex-integration.md — prompt-history writer 활성화
+    appendPromptHistory(sessionId, input.prompt);
 
     // auto-compact: 추적 문자 120K 이상이면 compact 지시 주입
     const autoCompactThreshold =
@@ -289,7 +425,29 @@ const FORGE_LOOP_STATE_PATH = path.join(STATE_DIR, 'forge-loop.json');
  * dedup 파일은 session-recovery hook 과 공유되어 double-run 방지.
  * fire-and-forget (detached) — hook timeout 과 무관.
  */
-const AUTO_COMPOUND_COOLDOWN_MS = 5 * 60 * 1000; // 5 min
+const AUTO_COMPOUND_COOLDOWN_MS = 5 * 60 * 1000; // 5 min (default)
+const AUTO_COMPOUND_BARREN_COOLDOWN_MS = 30 * 60 * 1000; // 30 min if last run extracted nothing
+
+/**
+ * 0.4.6 perf #12 — adaptive cooldown.
+ *
+ * 마지막 auto-compound run 이 0건 추출했으면 (barren), 다음 cooldown 을 5min →
+ * 30min 으로 확장. 같은 session 의 짧은 prompt 추가에서 동일 transcript 로 매번
+ * 3 LLM 호출하는 wasted run 차단. completed marker 의 extractedSolutions /
+ * promotedRules / userPatternFound 합산이 0 이면 barren 판정.
+ *
+ * 일반 case (추출 있음) 은 5분 cooldown 유지 — adaptive 가 sparsity 시그널을
+ * 강화할 뿐 정상 동작 차단 안 함.
+ */
+function effectiveCooldownMs(parsed: {
+  extractedSolutions?: number;
+  promotedRules?: number;
+  userPatternFound?: boolean;
+}): number {
+  const total = (parsed.extractedSolutions ?? 0) + (parsed.promotedRules ?? 0)
+    + (parsed.userPatternFound ? 1 : 0);
+  return total === 0 ? AUTO_COMPOUND_BARREN_COOLDOWN_MS : AUTO_COMPOUND_COOLDOWN_MS;
+}
 
 async function maybeSpawnAutoCompound(
   sessionId: string,
@@ -301,10 +459,17 @@ async function maybeSpawnAutoCompound(
   const markerPath = path.join(STATE_DIR, 'last-auto-compound.json');
   try {
     const raw = fs.readFileSync(markerPath, 'utf-8');
-    const parsed = JSON.parse(raw) as { sessionId?: string; completedAt?: string };
+    const parsed = JSON.parse(raw) as {
+      sessionId?: string;
+      completedAt?: string;
+      extractedSolutions?: number;
+      promotedRules?: number;
+      userPatternFound?: boolean;
+    };
     if (parsed.sessionId === sessionId) {
       const last = parsed.completedAt ? Date.parse(parsed.completedAt) : 0;
-      if (Number.isFinite(last) && Date.now() - last < AUTO_COMPOUND_COOLDOWN_MS) return;
+      const cooldown = effectiveCooldownMs(parsed);
+      if (Number.isFinite(last) && Date.now() - last < cooldown) return;
     }
   } catch { /* first time or corrupt — proceed */ }
 

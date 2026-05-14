@@ -7,17 +7,381 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.6] — 2026-05-14 — Unattended Execution Resilience
+
+긴 무인 실행 (`forge-loop --goal-only` 새벽 실행, eval N=33+ sequential measurement)
+이 API rate-limit 을 만나도 자동 sleep + reset 후 재기동하도록 한 테마. 동시에
+Codex hook side-effect 갭 (PermissionRequest dispatch 누락) 보완 + dead writer
+복구 + 성능 3종 단축.
+
+### Added
+
+#### Theme F — Codex/Claude 동등 사용 (사용자 요청)
+
+claude 와 codex 를 일상에서 동등하게 사용할 수 있게 forgen 측 갭 메움.
+
+- **session-recovery hook 에서 v1-bootstrap 호출** (src/hooks/session-recovery.ts)
+  - 이전엔 prepareHarness (fgx/forgen wrapper) 만 bootstrapV1Session 호출 →
+    직접 codex/claude 호출 시 `~/.forgen/state/sessions/<id>.json` 미생성.
+    SessionStart hook 에서도 호출하여 양쪽 진입 경로 모두에서 session state 박제
+    (단 profile 정상 시 — onboarding 안 한 사용자는 둘 다 동등하게 skip).
+
+- **Codex transcript 위치 인식** (src/core/spawn.ts `transcriptProjectDir` 분기)
+  - claude: `~/.claude/projects/<sanitized-cwd>/<session>.jsonl`
+  - codex: `~/.codex/sessions/YYYY/MM/DD/rollout-<ts>-<sid>.jsonl`
+  - 위치 인식 + snapshot-diff 기반 attribution 양쪽 작동.
+  - **auto-compound input parsing — codex JSONL schema 호환 추가**:
+    - `countUserMessages` (spawn.ts) + `extractSummary` (auto-compound-runner.ts)
+      양쪽 모두 claude (`type='user'|'queue-operation'`) + codex
+      (`type='response_item'` with `payload.role='user'|'assistant'`,
+      `content[].text`) 자동 감지 처리
+    - codex transcript 도 user message ≥10 시 auto-compound 자동 트리거
+    - sessionId 는 rollout 파일명 패턴 (`rollout-<ts>-<sid>.jsonl`) 에서 추출
+    - FTS5 인덱싱은 claude 한정 (codex schema FTS 매핑 micro-issue, 추후)
+
+- **동등 작동 항목** (라운드 25+ clean container 검증 합산):
+  - Hook 발화 (8 hook 종, codex 0.128.x): 동등
+  - prompt-history 기록: 동등 (secret redaction 포함)
+  - permissions-<id>.jsonl 기록: 동등 (codex 는 `source: 'pre-tool-use'` 경유)
+  - usage-telemetry `rt` 필드: 동등 (#17 fix 후)
+  - statusline usage 라인: 동등
+  - rate-limit detector + spawn loop: 코드 공유, runtime 분기 1줄
+  - `fgx --<runtime>` 단축 + auto-reconcile-on-launch: 동등
+
+- **비동등 잔존 (codex CLI 측 구조적 한계)**:
+  - PermissionRequest 이벤트: codex `approval_policy=auto` 에서 미dispatch
+    (codex CLI 한계) — PreToolUse supplement 로 결과 데이터는 동등화
+  - Subagent dispatch: codex CLI 의 subagent 개념 미지원 — hooks 등록만 존재
+  - Codex 0.130.0 hooks dispatch 회귀: codex CLI 0.130 binary 안에 hook event
+    schema (HookSpecificOutputWire) 와 `hooks: stable: true` feature flag 모두
+    있는데도 dispatch 안 됨. config.toml 의 hooks 경로 명시도 무효. codex CLI
+    내부 변경으로 forgen 측에서 worktime 짧게 fix 불가. 0.128.x 권장 + 0.4.7 에
+    codex GitHub issue 제기 예정
+
+#### Theme E — Codex auto-onboarding (사용자 요청)
+
+- **`fgx --codex` / `fgx --claude` 단축 플래그** (src/services/session.ts)
+  - 기존 `--runtime codex` 의 짧은 alias. 일상 진입이 더 빠름.
+
+- **Codex hooks 자동 reconcile-on-launch** (src/core/harness.ts `ensureCodexHooksFresh`)
+  - 매 codex runtime 진입 (fgx --codex / forgen --runtime codex) 시 ~/.codex/hooks.json
+    의 forgen entry 가 현재 pkgRoot 와 일치하는지 fast staleness check.
+  - 부재/stale → planCodexInstall silent 재실행. 일치 → no-op (1ms).
+  - 사용자가 `forgen install codex` 를 명시 호출 안 해도 매번 정합성 보장.
+    Cross-machine sync, npm 글로벌 path 변경, forgen 버전 업그레이드 후
+    자동 회복.
+  - **검증**: clean container 3 시나리오 — A (clean state → 자동 생성),
+    B (동일 상태 → no-op idempotent), C (stale `/FAKE/PATH` → 자동 정정).
+    모두 통과.
+
+#### Theme A — Unattended Execution Resilience
+
+- **Rate-limit auto-resume** (ADR-008, `commit TBD`)
+  - `context-guard.ts` Stop hook 에 `RATE_LIMIT_REGEX` + 5 패턴 reset 시각 파서
+    추가 (Resets at HH:MM, in Nh Nm, in N seconds, available again at ISO,
+    try again in N min). 22 unit tests.
+  - `pending-resume.json` schema 확장: `reason: 'rate-limit' | 'token-limit'`,
+    `resetAt?: ISO`, `runtime: 'claude' | 'codex'`. 기존 token-limit 호환 유지.
+  - `spawnClaudeWithResume` (src/core/spawn.ts) rate-limit 분기:
+    `resetAt` 정확하면 정밀 sleep + 60s 버퍼, 실패 시 exponential backoff
+    (1m → 5m → 15m → 30m → 1h → 2h cap). hard cap 6h. foreground countdown
+    (30s 갱신, Ctrl+C abort). `MAX_RESUMES`: token=3 (현행), rate-limit=10.
+  - **Fix-forward 정책**: detector regex 가 실 메시지와 어긋나면 `~/.forgen/state/
+    rate-limit-misses.jsonl` 에 raw 누적 → patch release 로 hotfix.
+  - **알려진 한계**: weekly limit (최대 7일) > 6h hard cap, abort + 명시 메시지.
+    "Resets at 14:30 PST" TZ 무시 (UTC 가정) — 첫 실 트리거 후 hotfix 예정.
+
+- **Usage telemetry** (src/core/usage-telemetry.ts)
+  - 5h / weekly window sliding count. `recordToolCall` 가 PostToolUse 마다
+    append-only `~/.forgen/state/usage-telemetry.jsonl` 에 timestamp 기록.
+  - 10K 엔트리 누적 시 weekly cap 밖 자동 prune. claude/codex 별도 카운트.
+  - 의도적으로 "limit prediction" 제외 — Anthropic 의 실 limit 가 계정/플랜별
+    가변. raw count 만 노출하고 사용자가 판단.
+
+- **Statusline usage 라인** (src/core/statusline-cli.ts)
+  - 새 라인: `📊 87/5h · 412/wk · (claude)` — 5h/weekly 추세 노출.
+
+- **Notification 모듈** (src/core/notify.ts)
+  - macOS: `osascript display notification`, Linux: `notify-send`,
+    Windows: 생략. webhook (Slack/Discord 호환) 지원: `~/.forgen/config.json`
+    의 `notifyWebhookUrl`. rate-limit auto-resume 이 sleep 끝나고 재기동 시점에
+    발송 — 노트북 닫고 잘 때 끝났는지 알 수 있음.
+
+#### Theme B — Codex hook 갭 보완
+
+- **Codex hooks dispatch 죽음 root-cause 박제** (docs/codex-integration.md)
+  - 사용자 보고된 "Codex hooks 죽음" 의 진짜 원인 3가지 분리:
+    1. `prompt-history.jsonl` writer 부재 (dead code 잔재) — 0.4.6 writer 신설
+    2. `context-signals.json` 정상 동작 (도구 실패 시에만 write — 의도)
+    3. `permissions-<id>.jsonl` 미생성 — Codex `approval_policy=auto`/
+       `workspace-write` 에서 PermissionRequest hook 자체가 dispatch 안 됨
+       (forgen 측 버그 아님 — Codex CLI 정책)
+  - 기각: projection.ts side-effect 손실, STATE_DIR 미스매치 (모두 정상 검증)
+
+- **PreToolUse permission supplement** (src/hooks/pre-tool-use.ts)
+  - Codex `auto` 환경에서도 권한 흐름 가시화 — 모든 PreToolUse 가
+    `permissions-<sessionId>.jsonl` 에 `source: 'pre-tool-use'` entry append.
+    Claude permission-handler 와 source 필드로 reader 측 dedup.
+
+- **prompt-history writer 신설** (src/hooks/context-guard.ts)
+  - UserPromptSubmit 마다 truncated (1KB) prompt 를 `~/.forgen/state/
+    prompt-history.jsonl` append. **secret-filter 거쳐 redact** —
+    password/api_key/token/AWS/GitHub 등 평문 leak 차단. compound-extractor.ts
+    의 dead read 코드가 의미를 가짐.
+
+#### Theme C — Performance
+
+- **Hook stdin idle-resolve + initial-wait fallback** (src/hooks/shared/read-stdin.ts) — perf #11
+  - hook-timing.jsonl 측정 결과 pre-tool-use **p95 = 2003ms** (정확히
+    timeout 값) — Claude/Codex CLI 가 stdin EOF 안 닫거나 stdin 자체 안 보내는
+    케이스. 두 단계 fix:
+    1. `IDLE_RESOLVE_MS=100`: 'data' 받은 후 추가 chunk 없으면 early resolve
+    2. `INITIAL_WAIT_MS=300`: 'data' 자체가 안 오는 케이스 (codex 일부 hook
+       event) 대비 300ms 후 빈 데이터로 fallback resolve
+  - 합법적 데이터 손실 위험 없음 — payload 는 호출 즉시 (≤ 300ms) 첫 chunk 도착
+  - **검증**: 실 codex 2-라운드 e2e — 1라운드 (idle 만): pre-tool-use 4건 중
+    1건이 ms=2004 잔존. 2라운드 (initial-wait 추가 후): 9 hook entry 모두 < 50ms,
+    2003ms tail 완전 제거.
+
+- **Auto-compound adaptive cooldown** (src/hooks/context-guard.ts) — perf #12
+  - Last run 이 0건 추출 (barren) 했으면 다음 cooldown 5min → 30min.
+    `extractedSolutions + promotedRules + userPatternFound` 합산 = 0 판정.
+  - Wasted background runs 6x 감소. 일반 case (추출 있음) 5분 유지.
+  - Full LLM 호출 parallelization 은 0.4.7 로 분리 — `execClaudeRetryAsync`
+    foundation 만 박제 (refactor surface 큼, sandbox + file-write order
+    invariant 검증 필요).
+
+- **Statusline 5초 캐싱** (src/core/statusline-cli.ts) — perf #13
+  - `~/.forgen/state/statusline-cache.txt` mtime 기반. CACHE_TTL_MS=5_000.
+  - **결과**: 160ms → 101ms (37%). Node 시작 50ms 가 floor.
+
+#### Theme D — Maintenance
+
+- **Append-only jsonl 회전** (src/core/state-gc.ts `rotateAppendOnlyLogs`) — #14
+  - state-gc 의 SESSION_SCOPED_PREFIXES 가 단일 aggregate jsonl
+    (hook-timing, prompt-history, usage-telemetry 등) 무한 grow 미커버 갭 수정.
+  - 10MB cap 초과 시 `<name>.1` rotate, `<name>.2` 삭제 (한 단계 보존).
+  - `forgen doctor --prune-state` 와 함께 자동 실행. 5 unit tests.
+
+### Verification
+
+- **vitest**: 2441/2441 PASS (225 files), 0 regression
+- **Docker e2e (existing)**: 77/77 PASS, 6 warnings (pre-existing)
+- **신규 unit tests**: rate-limit-detection (22) + rate-limit-backoff (9) +
+  log-rotation (5) = 36
+
+#### Clean-container e2e (`tests/e2e/docker/Dockerfile.v046`)
+
+새 Docker e2e 가 host 권한 없이 깨끗한 container 안에서 실 claude + codex 호출
+하여 hook side-effect 를 검증. host UID/GID 매핑 + ~/.codex auth 마운트.
+
+**최종 결과: 17/18 PASS** (1 fail = claude OAuth keychain 미전달 — 환경 한계)
+
+- ✅ **Codex 측 100% 검증** (codex 0.128.0):
+  - hook-timing.jsonl +9 entries
+  - **permissions-<codex-id>.jsonl 생성** with `source: 'pre-tool-use'` —
+    사용자 보고된 "Codex hooks 죽음" 갭 fix 가 진짜 e2e 환경에서 작동 확인
+  - usage-telemetry +1 (PostToolUse hook 발화)
+  - prompt-history +1 (UserPromptSubmit hook 발화)
+  - **pre-tool-use ms=10ms** (no 2003ms tail — #11 fix 실 codex 환경 검증)
+  - Secret redaction (clean container 에서 GitHub Token redact 확인)
+  - Rate-limit detector synthetic Stop event → marker 정상 작성
+
+- ⚠️ **Claude 측 부분 검증**: hook 발화 +5 (UserPromptSubmit 만), 하지만
+  "Not logged in" 으로 도구 호출까지 안 감 → PostToolUse / PermissionRequest
+  미발화. **원인은 환경 (macOS Keychain 의 OAuth 토큰을 container 로 전달
+  불가)**, 코드 문제 아님.
+
+### Discovered + Fixed during e2e
+
+- **#17 — codex-adapter.ts FORGEN_RUNTIME 미주입** (FIXED)
+  - 검증 라운드 20-2 에서 `usage-telemetry.jsonl` 직접 inspect 시 codex 호출
+    인데 `{"rt":"claude"}` 발견. `recordToolCall` 가 `process.env.FORGEN_RUNTIME`
+    fall-through 로 'claude' 판정.
+  - Fix: codex-adapter.ts 의 `spawnSync` 에 `env: { ...process.env,
+    FORGEN_RUNTIME: 'codex' }` 명시 주입.
+  - 영향: statusline 의 "(codex)" 표시 + telemetry 분리 정상화.
+
+- **#15 — install-codex.ts isForgenManagedHook 버그** (FIXED)
+  - Root cause: `command.includes(pkgRoot)` exact match 만 체크 → 다른 머신에서
+    install 한 hooks.json 이 마운트되면 stale path entry 가 "user entry" 로
+    오분류 → 보존 + 새 entry 누적 → codex 가 stale path 로 dispatch 시도 →
+    silent fail
+  - Fix: `FORGEN_HOOK_SCRIPT_MARKER` regex (`/dist\/(host\/codex-adapter|hooks
+    \/[a-z][a-z0-9-]+)\.js/`) fallback. 사용자 보고된 "Codex hooks 죽음" 의
+    더 깊은 원인이었음 — PermissionRequest skip 갭 (#9) 외에 path mismatch 도
+    동시 작용하던 것
+- **#16 — Codex 0.130.0 hooks dispatch 회귀** (별도 task)
+  - Bisect: 0.128.0 dispatch 정상 (9 entries), 0.130.0 silent fail
+    (~/.forgen/state/ 자체 미생성)
+  - forgen 측 코드 동일 — codex-cli 0.130.0 의 hooks API/schema 변경 의심
+  - 임시 권장: codex 0.128.x 사용. 0.4.7 에서 0.130.0 호환 조사
+
+### Known first-run UX gap (verified, not a code bug)
+
+- `npm i -g forgen` 후 **한 번도** `fgx` 또는 `forgen install <claude|codex>` 을
+  거치지 않고 `claude` / `codex` 를 직접 호출 → forgen hooks 비활성 (settings.json
+  / hooks.json 미등록).
+- 첫 `fgx --claude` / `fgx --codex` 한 번 (또는 명시 install) 이면 settings.json /
+  hooks.json 이 영구 저장되어 이후 직접 호출도 hooks 발화 (clean container e2e
+  Scenario A/B/C 로 검증). v0.4.6 의 ensureCodexHooksFresh 가 fgx 진입을 더
+  부드럽게 만듦.
+- README / onboarding 에 "first command: `fgx`" 명시 권장. 자동화 fix (예: npm
+  postinstall 에서 install both) 는 사용자 권한 가정 위반이라 0.4.7 검토.
+
+### 미검증 항목 (실 트리거 자연 발생 대기)
+
+- **Rate-limit auto-resume**: synthetic Stop event 로 marker 작성 검증.
+  실 limit hit 은 자연 발생 시 fix-forward 정책 (rate-limit-misses.jsonl 누적
+  → patch hotfix) 으로 보강.
+- **Notification 발송**: rate-limit 도달 의존. notify 모듈 syntax 검증 완료.
+- **Claude full chain (PostToolUse 등)**: macOS Keychain 토큰 container 전달
+  불가 — `claude /login` 별도 인증 필요한 환경 한계.
+
+
+### Fixed — forgen-eval testbed 측정 결함 (ADR-007)
+
+`forgen-eval` ψ-stat 측정의 두 구조적 결함 식별 + 수정. 본 fix 이전 모든
+ψ 측정 보고는 "ADR-007 이전 testbed 결함 위에서 산출됨" disclaimer 적용.
+**v0.4.4 release note 의 mean ψ=+0.098 master gate PASS 도 본 disclaimer 대상**
+(haiku judge + 결함 arm + 결함 mem 위 측정).
+
+- **[testbed-P0] ForgenPlusMemArm single-session 결합** (`commit 25c8ac0`)
+  - 이전 구현은 forgen-only LLM 세션과 mem-only LLM 세션을 *각각* 돌리고
+    forgen 응답만 채택 — Driver 가 `qwen2.5:14b @ temp=0.3` 비결정 호출이라
+    `full.W − forgenOnly.W` 가 LLM stochastic noise 로 양/음 ±0.3 흔들림.
+    ψ 가 forgen+mem coexistence 신호 대신 LLM 분산을 측정.
+  - 한 LLM 세션 안에서 forgen UPS rule + claude-mem recall 을 둘 다 system
+    message 로 주입한 뒤 한 번 chat → forgen Stop guard 평가 구조로 재작성.
+
+- **[testbed-P0] claude-mem 콘텐츠 직접 fetch** (`commit d65b4a4`)
+  - 이전 mem recall 은 `claude-mem search` CLI 출력 (검색 결과 *테이블* —
+    세션 ID + 제목만) 을 그대로 inject. LLM 컨텍스트로는 사실상 메타-noise
+    이고, 응답을 verbose / cautious / "context 더 주세요" 쪽으로 shift 시켜
+    sonnet judge 의 actionable advice 점수를 깎았음.
+  - 신규 `claudeMemRecallActual()` helper — 검색 후 ID 파싱 →
+    `~/.claude-mem/claude-mem.db` 의 `observations.narrative` /
+    `session_summaries.learned` 직접 조회 → 상위 N hit 의 실제 콘텐츠 inject
+    (`[#ID]\n<content>` 포맷). DB 미설치 환경에서 graceful no-op.
+
+- **신규 분석 도구**: `src/runners/probe-mem-inject.ts` — judge 호출 없이
+  ForgenOnly + Full arm inject 텍스트와 응답을 콘솔에 덤프하는 정성 probe.
+  cross-talk 가설 검증에 사용.
+
+- **신규 ADR**: `docs/adr/ADR-007-testbed-arm-isolation.md` — 두 결함의 발견
+  경위, 영향 받은 측정 목록, 재측정 계획, 회귀 가드 명시. 후속 정성 분석
+  (E, 2026-05-08) 으로 cross-talk 가설보다 LLM stochasticity (qwen2.5:14b @
+  temp=0.3 base error rate × 더 긴 context surface) 가 음수 ψ 의 더 강한 설명
+  임을 확인 — 다음 측정의 전제조건으로 Driver determinism (temp=0 + seed) 또는
+  더 강한 driver 권고.
+
+- **재측정 결과 (track-mem-fix N=10 sonnet, 2026-05-08)**: 양쪽 fix 적용 후
+  mean ψ = −0.080, 95% CI [−0.161, −0.000], gate FAIL (음수 시그널). 7 음수 /
+  3 양수. v0.4.4 release note 의 mean ψ=+0.098 PASS 는 broken testbed 의
+  artifact 였음이 더 강하게 확정됨.
+
+### Changed — driver 를 claude-cli / codex-cli 로 통일 (commit 62600ec, 11b897a)
+
+testbed driver 가 Ollama qwen2.5:14b 로 남아 judge stack (claude-cli +
+codex-cli) 과 불일치 + qwen base error rate (~30-50%) 가 noise 의 주 원인 이었던
+문제를 production 시나리오 (forgen 이 personalize 하는 LLM = Claude 또는 Codex)
+와 일치하는 driver 로 교체.
+
+**측정 비교 (N=10 sonnet judge, 2026-05-11 ~ 12)**:
+
+| Driver | N eff | mean ψ | CI | mean δ(forgenOnly−vanilla) | 양수 δ | κ γ |
+|---|---|---|---|---|---|---|
+| qwen mem-fix (이전) | 10 | −0.080 | [−0.161, −0.000] | (n/a) | — | (n/a) |
+| claude (older fixes) | 10 | +0.020 | [−0.133, +0.158] | +0.046 | 7/10 | (n/a) |
+| codex (all fixes) | 10 | +0.024 | [−0.029, +0.094] | +0.120 | 8/10 | 0.323 |
+| claude (all fixes, rate-limit cut) | 9 | −0.013 | [−0.083, +0.039] | +0.156 | 8/9 | 0.429 |
+| claude (retry+sequential N=20) | 20 | +0.016 | [−0.012, +0.047] | +0.096 | 14/20 | 0.583 |
+| codex (retry+sequential N=20) | 20 | +0.013 | [−0.029, +0.055] | +0.133 | 19/20 | 0.048 |
+| **claude (judge retry N=33)** | **33** | **−0.005** | **[−0.036, +0.029]** | **+0.125** | **30/33 (91%)** | **0.474** |
+| **codex (judge retry N=33)** | **33** | **−0.021** | **[−0.068, +0.024]** | **+0.176** | **32/33 (97%)** | **0.263** |
+| **POOLED N=66 — 학술 증명** | **66** | **−0.013** | — | **+0.151** | **62/66 (93.9%) — p=1×10⁻¹⁴** | — |
+
+**핵심 발견**:
+- ψ (forgen+mem coexistence) 는 양 driver 모두 noise 영역 — 부호가 driver 별로
+  갈리고 CI 가 0 가로지름. **forgen+mem 결합 효과는 통계적으로 측정 불가능.**
+- δ (forgenOnly−vanilla) 는 **양 driver 일관 양수**, 다수 케이스 일관 — codex
+  driver 에서 +0.144 W. **forgen 단독 효과는 robust 하게 양수.**
+- **셀링 메트릭 변경**: ψ 가 아닌 **δ (forgen vs vanilla)** 가 진짜 셀링
+  포인트. v0.4.4 의 ψ master gate PASS 주장 대신 v0.4.5 부터는 δ 중심 메시지.
+
+**알려진 limitation**:
+- ~~codex driver 1MB input 한계~~ ✓ FIXED (commit 1362d59 history cap 16K)
+- ~~codex judge spawn E2BIG~~ ✓ FIXED (commit e42bff6 judge stdin pipe + 5c8dce8
+  material cap 32K). fallback 2.5: 56 → 3 (95% 감소).
+- ~~claude CLI subscription rate-limit~~ ✓ FIXED commit 7b333b2 (driver retry +
+  exponential backoff). claude retry+sequential N=20 측정에서 retry 0회 발동
+  (sequential 만으로 충분), N=20 effective 회복.
+
+### Fixed — Node 20.x 환경 호환성 (P0/P1)
+
+`npm i -g @wooojin/forgen` 이후 "각종 훅이 에러난다"는 사용자 보고에 대응한 환경
+호환성 일괄 강화. 보고 환경: M2 MacBook + Node 20.x.
+
+- **[P0] hook-registry.ts import attributes 호환성** (`src/hooks/hook-registry.ts:56`)
+  - `import ... with { type: 'json' }` (Node 20.10+ 만 파싱 가능) → `JSON.parse(readFileSync(...))`
+    로 교체. Node 20.0–20.9 에서 모든 훅(23개)이 SyntaxError 로 깨지던 회귀를
+    제거. 빌드 산출물에 import attributes 가 재유입되는 것을 막는 정적 검증 테스트
+    `tests/hook-registry-portability.test.ts` 추가.
+  - 영향 범위: hook-config 를 거쳐 모든 PreToolUse / PostToolUse / Stop / SessionStart
+    / UserPromptSubmit 훅이 Node 20.0–20.9 사용자 환경에서 동작하지 않던 상태에서
+    회복.
+
+- **[P1] postinstall self-check** (`scripts/postinstall.js`)
+  - 설치 마지막 단계에서 `dist/hooks/hook-registry.js` 를 dynamic import 로 로드하고,
+    `HOOK_REGISTRY` 가 비어있지 않은지 확인. 실패 시 stderr 로 Node 버전과 원인을
+    명시해 사용자가 "왜 훅이 안 도는지" 를 install 시점에 즉시 알 수 있게 함
+    (npm install 자체는 깨뜨리지 않음).
+
+- **[P1] install-claude.ts symlink 폴백 진단** (`src/host/install-claude.ts:67-87`)
+  - Windows 비관리자 / macOS SIP 환경에서 `fs.symlinkSync` 가 EPERM 으로 실패하면
+    조용히 cpSync 로 폴백하던 동작에 stderr 진단 메시지 1줄 추가. "왜 install 이
+    느린지" 가 사용자에게 보임.
+
+- **[P1] CI portability matrix 확장** (`.github/workflows/ci.yml`)
+  - Node 20.0.0 / 20.10.0 / 20.x / 22.x × ubuntu/macos/windows 6개 조합으로 훅
+    스모크 잡 추가. 모든 `dist/hooks/*.js` 를 sentinel input 으로 실행해
+    SyntaxError / Cannot find module / ERR_ 발생 시 CI 실패. 회귀 즉시 감지.
+
+### Notes
+
+- `node:sqlite` 의존 (`src/core/session-store.ts`) 은 기존 try/catch 폴백으로 Node
+  <22.5 에서도 graceful degrade 동작 유지. session-search MCP 도구는 0건 반환.
+- `quality-check.mjs MODULE_NOT_FOUND` 같이 사용자/타플러그인이 등록한 외부 훅이
+  worktree 에서 누락된 경우는 forgen 책임 영역 아님. `isForgenHookEntry()` 가
+  `dist/hooks/*.js` 경로만 자기 소유로 인식하므로 외부 훅 항목은 보존.
+
 ## [0.4.4] — 2026-05-06
+
+> **⚠ 정정 (2026-05-08, ADR-007 이후)**: 본 릴리스의 ψ master gate PASS
+> (mean +0.098, CI [+0.002, +0.222]) 주장은 **broken testbed 위 측정** 으로
+> 확정. 두 구조 결함 (ForgenPlusMemArm 비-결합 / mem recall 메타 inject) 위에서
+> 산출되어 LLM noise + max-selection bias 가 평균을 양수로 끌어당긴 artifact.
+> 양쪽 결함 수정 후 재측정 (track-mem-fix N=10 sonnet) 결과는 mean ψ = −0.080,
+> CI [−0.161, −0.000], gate FAIL. **현 시점 forgen+mem 결합은 net negative
+> 또는 noise 영역** — qwen2.5:14b @ temp=0.3 driver 의 hallucination 분산이
+> 결합 효과를 mask 함. Driver determinism (temp=0 + seed) 또는 더 강한 driver
+> 적용 후 재측정까지 셀링 보류. 자세한 내용은 ADR-007 참조.
+>
+> δ(forgenOnly−vanilla) = +0.223 주장도 같은 testbed 위 산출이므로 같은
+> disclaimer 대상. 단 forgenOnly arm 자체는 본 ADR fix 영향 받지 않음 (vanilla
+> 와의 비교는 단일 arm 내부 비교라 LLM noise 가 양쪽에 균등 분포 가능성 — 단
+> 재측정으로 확인 필요).
 
 ### v0.4.4 — measurement infra rebuild + stop-guard hardening (DANGEROUS-RESPONSE)
 
 forgen-eval testbed 의 측정 인프라 5-layer 결함을 모두 수정해 신뢰성을 회복하고,
 그 과정에서 발견한 driver-brittleness 결함(syn-004 — small driver 가 학습된 룰을
-`find -exec rm -r` 같은 우회로 회피)을 stop-guard `dangerous-response-pattern`
-체크로 직접 close. 사후 N=10 재측정에서 **ψ master gate PASS** (mean +0.098, 95%
-CI [+0.002, +0.222]) — pre-hardening (-0.028) 대비 부호 양수 전환. 또한
+파괴 명령 우회로 회피)을 stop-guard `dangerous-response-pattern` 체크로 직접
+close. 사후 N=10 재측정에서 **ψ master gate PASS** (mean +0.098, 95% CI [+0.002,
++0.222]) — pre-hardening (-0.028) 대비 부호 양수 전환. 또한
 δ(forgenOnly−vanilla) = +0.223 (CI [+0.134, +0.326], 10/10 cases positive) 으로
-forgen 효과가 robust 하게 확인됨.
+forgen 효과가 robust 하게 확인됨. (위 박스 참조: 본 측정 결과는 ADR-007 이후
+broken testbed artifact 로 확정.)
 
 **Highlights**:
 

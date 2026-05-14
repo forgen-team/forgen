@@ -82,7 +82,7 @@ describe('prepareHarness() integration', () => {
     const settings = JSON.parse(fs.readFileSync(TEST_SETTINGS_PATH, 'utf-8'));
     expect(settings.statusLine).toEqual({
       type: 'command',
-      command: 'forgen me',
+      command: 'forgen statusline',
     });
   });
 

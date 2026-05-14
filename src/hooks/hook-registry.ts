@@ -11,8 +11,9 @@
  *   - workflow: 워크플로우 스킬 훅 (다른 플러그인 감지 시 자동 비활성)
  */
 
-import { createRequire } from 'node:module';
-const require = createRequire(import.meta.url);
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
 
 export type HookTier = 'compound-core' | 'safety' | 'workflow';
 
@@ -52,9 +53,22 @@ export interface HookEntry {
  *   - pre-tool-use는 db-guard/rate-limiter보다 앞에 위치
  *     (Code Reflection + permission hints 주입 타이밍)
  *   - 같은 이벤트 내 훅은 배열 순서대로 실행됨
+ *
+ * Why readFileSync (not `import ... with { type: 'json' }`):
+ *   Import attributes는 Node 20.10+에서만 파싱됨. 20.0-20.9 사용자가 npm i -g
+ *   이후 모든 훅이 SyntaxError로 깨지는 것을 방지하기 위해 fs.readFileSync 사용.
  */
-import registryData from '../../assets/shared/hook-registry.json' with { type: 'json' };
-export const HOOK_REGISTRY: HookEntry[] = registryData as HookEntry[];
+const REGISTRY_PATH = join(
+  dirname(fileURLToPath(import.meta.url)),
+  '..',
+  '..',
+  'assets',
+  'shared',
+  'hook-registry.json',
+);
+export const HOOK_REGISTRY: HookEntry[] = JSON.parse(
+  readFileSync(REGISTRY_PATH, 'utf-8'),
+) as HookEntry[];
 
 /** 티어별 훅 목록 조회 */
 export function getHooksByTier(tier: HookTier): HookEntry[] {

@@ -59,12 +59,21 @@ function resolveCodexHome(opts: CodexInstallOptions): string {
   return opts.codexHome ?? process.env.CODEX_HOME ?? path.join(os.homedir(), '.codex');
 }
 
+// 0.4.6 fix — pkgRoot match 외에 script-marker fallback 추가.
+// Stale install path (예: 다른 머신에서 install 한 hooks.json 마운트, 또는
+// node_modules path 변경) 의 forgen entry 를 "user entry" 로 오분류 → 중복 누적
+// 하던 버그. forgen hook 의 시그니처는 dist/host/codex-adapter.js 또는
+// dist/hooks/<name>.js — 사용자 custom hook 과 충돌 가능성 거의 없음.
+const FORGEN_HOOK_SCRIPT_MARKER = /\bdist\/(host\/codex-adapter|hooks\/[a-z][a-z0-9-]+)\.js\b/;
+
 function isForgenManagedHook(entry: unknown, pkgRoot: string): boolean {
   if (!entry || typeof entry !== 'object') return false;
   const e = entry as { hooks?: Array<{ command?: string }> };
   if (!Array.isArray(e.hooks)) return false;
   return e.hooks.some(
-    (h) => typeof h.command === 'string' && h.command.includes(pkgRoot),
+    (h) => typeof h.command === 'string' && (
+      h.command.includes(pkgRoot) || FORGEN_HOOK_SCRIPT_MARKER.test(h.command)
+    ),
   );
 }
 

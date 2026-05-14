@@ -15,11 +15,12 @@ import * as path from 'node:path';
 import { buildJudgePrompt, parseJudgeOutput } from './judge-types.js';
 import type { JudgeClient, JudgePromptInput } from './judge-types.js';
 import type { JudgeScore } from '../types.js';
+import { retryWithBackoff } from '../utils/retry.js';
 
 const execFileAsync = promisify(execFile);
 
-const DEFAULT_MODEL = 'haiku';
-const DEFAULT_TIMEOUT_MS = 60_000;
+const DEFAULT_MODEL = process.env.CLAUDE_CLI_MODEL ?? 'haiku';
+const DEFAULT_TIMEOUT_MS = Number(process.env.CLAUDE_CLI_TIMEOUT_MS ?? 60_000);
 
 /** System prompt that fully replaces the default (which would load user CLAUDE.md and rules).
  *  `--system-prompt` 사용 시 CLAUDE.md auto-discovery는 비활성화되어 judge 격리가 성립.
@@ -41,16 +42,22 @@ export class ClaudeCliClient implements JudgeClient {
 
   async judge(input: JudgePromptInput): Promise<JudgeScore> {
     const prompt = buildJudgePrompt(input);
-    const { stdout } = await execFileAsync(
-      'claude',
-      ['-p', prompt, '--model', this.model, '--system-prompt', JUDGE_SYSTEM_PROMPT],
-      {
-        encoding: 'utf-8',
-        timeout: this.timeoutMs,
-        cwd: this.cwd,
-        env: { ...process.env },
-        maxBuffer: 4 * 1024 * 1024,
+    const stdout = await retryWithBackoff(
+      async () => {
+        const res = await execFileAsync(
+          'claude',
+          ['-p', prompt, '--model', this.model, '--system-prompt', JUDGE_SYSTEM_PROMPT],
+          {
+            encoding: 'utf-8',
+            timeout: this.timeoutMs,
+            cwd: this.cwd,
+            env: { ...process.env },
+            maxBuffer: 4 * 1024 * 1024,
+          },
+        );
+        return res.stdout;
       },
+      { label: 'claude-judge' },
     );
     const parsed = parseJudgeOutput(stdout);
     return {

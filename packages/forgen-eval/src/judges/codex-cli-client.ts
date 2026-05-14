@@ -17,19 +17,23 @@ import * as path from 'node:path';
 import { buildJudgePrompt, parseJudgeOutput } from './judge-types.js';
 import type { JudgeClient, JudgePromptInput } from './judge-types.js';
 import type { JudgeScore } from '../types.js';
+import { retryWithBackoff } from '../utils/retry.js';
 
 const DEFAULT_TIMEOUT_MS = 120_000;
 
-/** spawn-based exec that closes stdin so codex doesn't block on "Reading additional input from stdin..." */
+/** spawn-based exec — long prompt 는 stdin 으로 pipe (E2BIG 회피, driver 와 동일 패턴).
+ *  args 의 마지막 원소가 `-` 이면 stdinPrompt 를 stdin 에 써준다.
+ */
 function runCodex(
   args: string[],
-  opts: { cwd: string; timeoutMs: number; env?: NodeJS.ProcessEnv },
+  opts: { cwd: string; timeoutMs: number; env?: NodeJS.ProcessEnv; stdinPrompt?: string },
 ): Promise<string> {
   return new Promise((resolve, reject) => {
+    const usesStdin = args[args.length - 1] === '-' && typeof opts.stdinPrompt === 'string';
     const child = spawn('codex', args, {
       cwd: opts.cwd,
       env: { ...process.env, ...(opts.env ?? {}) },
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: [usesStdin ? 'pipe' : 'ignore', 'pipe', 'pipe'],
     });
     let stdout = '';
     let stderr = '';
@@ -37,10 +41,10 @@ function runCodex(
       child.kill('SIGKILL');
       reject(new Error(`codex timeout after ${opts.timeoutMs}ms (stderr=${stderr.slice(0, 200)})`));
     }, opts.timeoutMs);
-    child.stdout.on('data', (b: Buffer) => {
+    child.stdout?.on('data', (b: Buffer) => {
       stdout += b.toString('utf-8');
     });
-    child.stderr.on('data', (b: Buffer) => {
+    child.stderr?.on('data', (b: Buffer) => {
       stderr += b.toString('utf-8');
     });
     child.on('error', (e) => {
@@ -55,6 +59,10 @@ function runCodex(
       }
       resolve(stdout);
     });
+    if (usesStdin && child.stdin) {
+      child.stdin.on('error', (e) => { /* swallow EPIPE; close 가 reject 처리 */ void e; });
+      child.stdin.end(opts.stdinPrompt);
+    }
   });
 }
 
@@ -91,21 +99,26 @@ export class CodexCliClient implements JudgeClient {
 
   async judge(input: JudgePromptInput): Promise<JudgeScore> {
     const prompt = buildJudgePrompt(input);
-    const stdout = await runCodex(
-      [
-        'exec',
-        '--json',
-        '--ignore-user-config',
-        '--ignore-rules',
-        '--ephemeral',
-        '-s',
-        'read-only',
-        '-c',
-        'approval_policy="never"',
-        '--skip-git-repo-check',
-        prompt,
-      ],
-      { cwd: this.cwd, timeoutMs: this.timeoutMs },
+    // long prompt → stdin pipe (E2BIG 회피). driver 와 동일 패턴.
+    const stdout = await retryWithBackoff(
+      () =>
+        runCodex(
+          [
+            'exec',
+            '--json',
+            '--ignore-user-config',
+            '--ignore-rules',
+            '--ephemeral',
+            '-s',
+            'read-only',
+            '-c',
+            'approval_policy="never"',
+            '--skip-git-repo-check',
+            '-',
+          ],
+          { cwd: this.cwd, timeoutMs: this.timeoutMs, stdinPrompt: prompt },
+        ),
+      { label: 'codex-judge' },
     );
     const text = extractCodexText(stdout);
     const parsed = parseJudgeOutput(text);

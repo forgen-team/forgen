@@ -168,6 +168,15 @@ async function main(): Promise<void> {
     return;
   }
 
+  // 0.4.6 — codex/claude 진입점 양쪽에서 v1-bootstrap 보장.
+  // 이전엔 prepareHarness (fgx/forgen wrapper) 만 호출 → 직접 claude/codex 호출 시
+  // ~/.forgen/state/sessions/<id>.json 미생성. SessionStart hook 에서도 호출하여
+  // 양쪽 진입 경로 모두에서 session state 박제.
+  try {
+    const { bootstrapV1Session } = await import('../core/v1-bootstrap.js');
+    bootstrapV1Session();
+  } catch (e) { log.debug('v1-bootstrap SessionStart 호출 실패 (fail-open)', e); }
+
   if (!fs.existsSync(STATE_DIR)) {
     console.log(approve());
     return;

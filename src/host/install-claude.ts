@@ -65,12 +65,22 @@ function writePluginCache(opts: { pkgRoot: string; cacheDir: string; pluginsDir:
   fs.mkdirSync(cacheParent, { recursive: true });
 
   // 1차: symlink 시도 (개발 환경)
+  // Why warn on fallback: Windows 비관리자 / macOS SIP 환경에서 symlink 가 EPERM
+  //   으로 거부되면 조용히 cpSync 폴백을 탔는데, 사용자는 "왜 install 이 느리지"
+  //   를 알 길이 없었다. 폴백 진입을 stderr 로 알려서 진단성 확보.
   let linked = false;
+  let symlinkErr: unknown = null;
   try {
     fs.symlinkSync(pkgRoot, cacheDir, 'dir');
     linked = true;
-  } catch {
-    // symlink 실패 → cp fallback
+  } catch (e) {
+    symlinkErr = e;
+  }
+  if (!linked && symlinkErr) {
+    const code = (symlinkErr as NodeJS.ErrnoException).code ?? 'UNKNOWN';
+    process.stderr.write(
+      `[forgen] symlink ${pkgRoot} → ${cacheDir} failed (${code}); falling back to cpSync.\n`,
+    );
   }
 
   if (!linked) {
@@ -115,6 +125,30 @@ function writePluginCache(opts: { pkgRoot: string; cacheDir: string; pluginsDir:
 
 // ── 2. Slash commands ──────────────────────────────────────────────────
 
+/** Build-time injected --with-codex shared snippet. Mirror of scripts/copy-assets.js. */
+const WITH_CODEX_SNIPPET = `
+
+---
+
+## \`--with-codex\` flag (cross-model review)
+
+If \`$ARGUMENTS\` contains any of \`--with-codex\`, \`--코덱스\`, \`with codex\`, \`코덱스 검토\`, \`코덱스로 검토\`,
+then after completing the primary skill work, perform a cross-model review pass:
+
+1. Save your primary output text to a temp file (e.g., \`/tmp/forgen-with-codex-$(date +%s).md\`).
+2. Invoke codex via Bash:
+   \`\`\`bash
+   codex exec --json --ignore-user-config --ignore-rules --ephemeral \\
+     -s read-only -c approval_policy="never" --skip-git-repo-check \\
+     "$(printf 'You are a second-opinion reviewer for another AI assistant\\\\u0027s output. Read the work product below and report ONLY:\\n1. Defects, gaps, or risks the original work missed\\n2. Specific disagreements with the original\\n3. Topics that should have been covered but were not\\n\\nOutput format: prioritized bullet list (max 15 items, severity-sorted, no prose intro). If you find nothing material, say "No critical issues found."\\n\\n<work>\\n%s\\n</work>' "$(cat /tmp/forgen-with-codex-*.md)")"
+   \`\`\`
+3. Append the codex output under heading \`## Codex Cross-Review (--with-codex)\` in your final response.
+4. If codex flags critical issues, briefly acknowledge + suggest follow-up.
+5. If \`codex: command not found\`, note in response and skip the review pass (do not fail).
+
+OPT-IN per invocation. Without the flag, skip this entire section.
+`;
+
 function writeSlashCommands(opts: { pkgRoot: string; targetDir: string; dryRun: boolean }): number {
   const { pkgRoot, targetDir, dryRun } = opts;
   const sourceDir = path.join(pkgRoot, 'assets', 'claude', 'commands');
@@ -129,7 +163,7 @@ function writeSlashCommands(opts: { pkgRoot: string; targetDir: string; dryRun: 
     const descMatch = skillContent.match(/description:\s*(.+)/);
     const desc = descMatch?.[1]?.trim() ?? file.replace(/\.md$/, '');
     const skillName = file.replace(/\.md$/, '');
-    const out = `# ${desc}\n\n${FORGEN_MANAGED_MARKER}\n\nActivate Forgen "${skillName}" mode for the task: $ARGUMENTS\n\n${skillContent}`;
+    const out = `# ${desc}\n\n${FORGEN_MANAGED_MARKER}\n\nActivate Forgen "${skillName}" mode for the task: $ARGUMENTS\n\n${skillContent}${WITH_CODEX_SNIPPET}`;
     const target = path.join(targetDir, file);
     if (fs.existsSync(target)) {
       const existing = fs.readFileSync(target, 'utf-8');
