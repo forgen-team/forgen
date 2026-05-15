@@ -43,6 +43,9 @@ function notifyDarwin(title: string, body: string): void {
   try {
     const script = `display notification "${escapeForOsascript(body)}" with title "${escapeForOsascript(title)}"`;
     const child = spawn('osascript', ['-e', script], { detached: true, stdio: 'ignore' });
+    // ENOENT 등 spawn 실패는 동기 throw 가 아니라 'error' event 로 emit 됨.
+    // 핸들러 없으면 unhandled 로 process crash → headless CI 회귀 가드.
+    child.on('error', (e) => log.debug('osascript notification 실패 (event)', e));
     child.unref();
   } catch (e) { log.debug('osascript notification 실패', e); }
 }
@@ -51,6 +54,10 @@ function notifyDarwin(title: string, body: string): void {
 function notifyLinux(title: string, body: string): void {
   try {
     const child = spawn('notify-send', [title, body], { detached: true, stdio: 'ignore' });
+    // headless 환경 (CI, Docker) 에서 notify-send 부재 시 ENOENT 가 'error' event 로 emit.
+    // 핸들러 없으면 unhandled 로 caller 프로세스 죽음 — rate-limit-spawn-integration
+    // CI 실패의 사전 존재 원인.
+    child.on('error', (e) => log.debug('notify-send 실패 (event)', e));
     child.unref();
   } catch (e) { log.debug('notify-send 실패', e); }
 }

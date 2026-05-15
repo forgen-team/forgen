@@ -79,10 +79,9 @@ fi
 }
 
 describe('spawnClaudeWithResume — rate-limit integration', () => {
-  // Headless CI (GitHub Actions) 환경에서는 spawnClaudeWithResume 내부의
-  // desktop notifier (notify-send 등) 호출이 ENOENT 로 실패하여 driver 가 죽음.
-  // 로컬 dev 환경 (macOS/Linux desktop) 에서는 정상 통과하므로, CI=true 시에만 skip.
-  it.skipIf(!!process.env.CI)(
+  // v0.4.8: notify.ts spawn 'error' event 핸들러 추가로 headless CI 에서도
+  // unhandled 로 죽지 않음 (tests/notify-fail-safe.test.ts 회귀 가드 참조).
+  it(
     'detects rate-limit, sleeps until resetAt, resumes on 2nd call',
     async () => {
       const counterPath = path.join(tmpHome, 'mock-call-counter');
