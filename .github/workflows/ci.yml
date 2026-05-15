@@ -7,10 +7,17 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    name: Test (Node ${{ matrix.node-version }} / ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
         node-version: [20, 22]
+        include:
+          # arm64 커버리지 — GitHub-hosted ubuntu-24.04-arm runner (public repo 무료)
+          - os: ubuntu-24.04-arm
+            node-version: 22
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
@@ -19,8 +26,11 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm run build
+      - name: Regenerate hooks/hooks.json (release-mode, deterministic)
+        run: node scripts/prepack-hooks.cjs
       - name: Test
-        run: npx vitest run ${{ matrix.node-version == 20 && '--coverage' || '' }}
+        shell: bash
+        run: npx vitest run ${{ (matrix.node-version == 20 && matrix.os == 'ubuntu-latest') && '--coverage' || '' }}
       - run: npm pack --dry-run
 
   # Portability matrix — 사용자 보고된 "npm i -g 후 각종 훅 에러" 를 CI 에서 잡기.

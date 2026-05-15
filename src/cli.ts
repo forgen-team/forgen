@@ -202,7 +202,7 @@ const commands: Command[] = [
         console.log('Usage:\n  forgen parity codex [--dry-run]\n\nNotes:\n  - source 체크아웃에서만 작동합니다 (tests/ 디렉토리 필요).\n  - npm install 로 설치된 패키지에서는 run-parity.sh 가 없습니다.');
         return;
       }
-      const here = path.dirname(new URL(import.meta.url).pathname);
+      const here = path.dirname(fileURLToPath(import.meta.url));
       const scriptPath = path.resolve(here, '..', 'tests', 'e2e', 'codex', 'run-parity.sh');
       if (!fs.existsSync(scriptPath)) {
         console.error('[forgen] run-parity.sh 는 source 체크아웃에서만 작동. 직접 git clone 후 실행하세요.');
