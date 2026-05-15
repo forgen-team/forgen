@@ -176,7 +176,7 @@ export function bootstrapV1Session(): V1BootstrapResult {
   try {
     // 세션 시작 로그
     const rawLogPath = path.join(V1_RAW_LOGS_DIR, `${sessionId}.jsonl`);
-    fs.appendFileSync(rawLogPath, JSON.stringify({
+    fs.appendFileSync(rawLogPath, `${JSON.stringify({
       event: 'session-started',
       session_id: sessionId,
       timestamp: new Date().toISOString(),
@@ -185,7 +185,7 @@ export function bootstrapV1Session(): V1BootstrapResult {
       judgment_pack: profile.base_packs.judgment_pack,
       communication_pack: profile.base_packs.communication_pack,
       effective_trust: session.effective_trust_policy,
-    }) + '\n');
+    })}\n`);
 
     // TTL sweep: 7일 이상 된 raw log 파일 삭제
     const TTL_MS = 7 * 24 * 60 * 60 * 1000;

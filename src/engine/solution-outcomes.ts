@@ -66,7 +66,7 @@ function writePending(sessionId: string, state: PendingState): void {
 
 function appendOutcome(event: OutcomeEvent): void {
   fs.mkdirSync(OUTCOMES_DIR, { recursive: true });
-  fs.appendFileSync(outcomesPath(event.session_id), JSON.stringify(event) + '\n');
+  fs.appendFileSync(outcomesPath(event.session_id), `${JSON.stringify(event)}\n`);
 }
 
 /**

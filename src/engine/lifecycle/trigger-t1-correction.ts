@@ -52,7 +52,7 @@ function matchesRule(evidence: Evidence, rule: Rule): boolean {
     .toLowerCase();
   return keyTokens.some((t) => {
     const tokLower = t.toLowerCase();
-    return summaryLower.includes(tokLower) || (targetToken && targetToken.includes(tokLower));
+    return summaryLower.includes(tokLower) || (targetToken?.includes(tokLower));
   });
 }
 

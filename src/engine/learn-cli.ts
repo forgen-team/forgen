@@ -132,7 +132,7 @@ function runFitness(args: string[]): void {
   console.log(`    ${'name'.padEnd(48)} ${'state'.padEnd(14)} ${'inj'.padStart(4)}  ${'acc/cor/err'.padStart(11)}  ${'fit'.padStart(6)}`);
   console.log(`    ${'-'.repeat(48)} ${'-'.repeat(14)} ${'-'.repeat(4)}  ${'-'.repeat(11)}  ${'-'.repeat(6)}`);
   for (const r of records) {
-    const name = r.solution.length > 47 ? r.solution.slice(0, 45) + '..' : r.solution;
+    const name = r.solution.length > 47 ? `${r.solution.slice(0, 45)}..` : r.solution;
     const acr = `${r.accepted}/${r.corrected}/${r.errored}`;
     console.log(`    ${name.padEnd(48)} ${r.state.padEnd(14)} ${String(r.injected).padStart(4)}  ${acr.padStart(11)}  ${r.fitness.toFixed(2).padStart(6)}`);
   }
@@ -220,7 +220,7 @@ function runEvolvePromote(candidateNameOrList: string): void {
   }
   const result = promoteCandidate(candidateNameOrList);
   if (result.ok) {
-    console.log(`\n  ✓ Promoted: ${path.basename(result.dest!)}`);
+    console.log(`\n  ✓ Promoted: ${result.dest ? path.basename(result.dest) : '(unknown)'}`);
     console.log(`    from: ${result.source}`);
     console.log(`    to:   ${result.dest}`);
     console.log(`    Cold-start bonus active until 5 injections accumulate (auto-promotes to verified).\n`);

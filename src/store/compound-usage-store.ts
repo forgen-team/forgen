@@ -35,7 +35,7 @@ export function recordUsage(name: string, via: UsageEntry['via'] = 'mcp'): void 
   try {
     fs.mkdirSync(STATE_DIR, { recursive: true });
     const entry: UsageEntry = { at: new Date().toISOString(), name, via };
-    fs.appendFileSync(COMPOUND_USAGE_LOG, JSON.stringify(entry) + '\n');
+    fs.appendFileSync(COMPOUND_USAGE_LOG, `${JSON.stringify(entry)}\n`);
   } catch {
     // fail-open: 신호 수집 실패가 사용자 경험을 방해하면 안 됨
   }

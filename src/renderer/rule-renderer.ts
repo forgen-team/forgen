@@ -212,32 +212,32 @@ export function renderRules(
   for (const name of SECTION_ORDER) sections.set(name, []);
 
   for (const rule of hardRules) {
-    sections.get('Must Not')!.push(ruleToText(rule));
+    sections.get('Must Not')?.push(ruleToText(rule));
   }
 
   for (const rule of otherRules) {
     const section = CATEGORY_TO_SECTION[rule.category] ?? 'Working Defaults';
-    sections.get(section)!.push(ruleToText(rule));
+    sections.get(section)?.push(ruleToText(rule));
   }
 
   // 5. trust policy + pack 기본 규칙 주입
   if (ctx.include_pack_summary) {
-    sections.get('Working Defaults')!.unshift(`Trust: ${trustPolicySummary(state.effective_trust_policy)}`);
+    sections.get('Working Defaults')?.unshift(`Trust: ${trustPolicySummary(state.effective_trust_policy)}`);
 
     // judgment pack 기본 규칙
     for (const rule of judgmentPackRules(state.judgment_pack)) {
-      sections.get('Working Defaults')!.push(rule);
+      sections.get('Working Defaults')?.push(rule);
     }
     // communication pack 기본 규칙
     for (const rule of communicationPackRules(state.communication_pack)) {
-      sections.get('How To Report')!.push(rule);
+      sections.get('How To Report')?.push(rule);
     }
 
     // 4축 facet 극단값 → 추가 규칙 (12-bucket pack 위에 연속 값 차별화).
     // 각 facet 0.5 default 이고 자동 갱신 ±0.1 단위이므로, 0.85/0.15 임계값은
     // 여러 세션에 걸친 강한 신호 누적 후에만 발화한다.
     for (const fr of facetDrivenRules(profile)) {
-      sections.get(fr.section)!.push(fr.rule);
+      sections.get(fr.section)?.push(fr.rule);
     }
   }
 
@@ -248,7 +248,7 @@ export function renderRules(
   let totalRules = 0;
 
   for (const name of SECTION_ORDER) {
-    const items = sections.get(name)!;
+    const items = sections.get(name) ?? [];
     if (items.length === 0) continue;
 
     const header = `## ${name}`;

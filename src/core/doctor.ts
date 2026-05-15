@@ -274,7 +274,7 @@ export async function runDoctor(opts: DoctorOptions = {}): Promise<void> {
     console.log('  No timing data collected yet.');
   } else {
     console.log('  Hook                  Count   p50ms   p95ms   max ms');
-    console.log('  ' + '-'.repeat(56));
+    console.log(`  ${'-'.repeat(56)}`);
     for (const s of timingStats) {
       const hook = s.hook.padEnd(22);
       const count = String(s.count).padStart(5);
@@ -519,7 +519,7 @@ export async function runDoctor(opts: DoctorOptions = {}): Promise<void> {
     const bySection = new Map<string, FailedCheck[]>();
     for (const f of failedChecks) {
       if (!bySection.has(f.section)) bySection.set(f.section, []);
-      bySection.get(f.section)!.push(f);
+      bySection.get(f.section)?.push(f);
     }
     for (const [sec, items] of bySection) {
       console.log(`    [${sec}]`);

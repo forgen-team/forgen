@@ -53,7 +53,7 @@ export function recordQuarantine(filePath: string, errors: string[]): void {
       at: new Date().toISOString(),
       errors,
     };
-    fs.appendFileSync(SOLUTION_QUARANTINE_PATH, JSON.stringify(entry) + '\n');
+    fs.appendFileSync(SOLUTION_QUARANTINE_PATH, `${JSON.stringify(entry)}\n`);
   } catch (e) {
     log.debug(`quarantine write failed: ${e instanceof Error ? e.message : String(e)}`);
   }

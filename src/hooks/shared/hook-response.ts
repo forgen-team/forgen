@@ -150,7 +150,7 @@ export function failOpenWithTracking(hookName: string, err?: unknown): string {
       }
     }
     const entry = JSON.stringify(payload);
-    fs.appendFileSync(logPath, entry + '\n');
+    fs.appendFileSync(logPath, `${entry}\n`);
   } catch { /* fail-open: tracking itself must not throw */ }
   return JSON.stringify({ continue: true });
 }

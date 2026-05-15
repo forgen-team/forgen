@@ -102,7 +102,7 @@ export function rollbackSince(epochMs: number): RollbackResult {
       if (Number.isFinite(createdMs) && createdMs < epochMs) continue;
       try {
         fs.mkdirSync(archiveDir, { recursive: true });
-        const destName = path.basename(dir) + '__' + file;
+        const destName = `${path.basename(dir)}__${file}`;
         fs.renameSync(filePath, path.join(archiveDir, destName));
         archived.push(filePath);
       } catch (e) {

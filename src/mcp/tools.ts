@@ -298,7 +298,7 @@ export function registerTools(server: McpServer): void {
             text: `Found ${results.length} matching message(s) across ${grouped.size} session(s):\n\n${sessionBlocks.join('\n\n')}`,
           }],
         };
-      } catch (e) {
+      } catch (_e) {
         return {
           content: [{
             type: 'text' as const,

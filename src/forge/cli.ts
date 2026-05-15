@@ -44,7 +44,7 @@ function handleShowProfile(): void {
     console.log('\n  No v1 profile found. Run `forgen forge` or `forgen onboarding`.\n');
     return;
   }
-  console.log('\n' + renderProfile(profile) + '\n');
+  console.log(`\n${renderProfile(profile)}\n`);
 }
 
 function handleExport(): void {

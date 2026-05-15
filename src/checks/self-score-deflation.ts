@@ -74,11 +74,12 @@ export interface SelfScoreCheckResult {
 function extractDeltas(text: string): Array<{ from: number; to: number }> {
   const re = /(\d+(?:\.\d+)?)\s*(?:→|->|–>|~>)\s*(\d+(?:\.\d+)?)/g;
   const out: Array<{ from: number; to: number }> = [];
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(text)) !== null) {
+  let m = re.exec(text);
+  while (m !== null) {
     const from = Number(m[1]);
     const to = Number(m[2]);
     if (Number.isFinite(from) && Number.isFinite(to)) out.push({ from, to });
+    m = re.exec(text);
   }
   return out;
 }
@@ -89,9 +90,10 @@ function findScoreSignals(text: string, max = 3): string[] {
     if (out.length >= max) break;
     // 각 호출마다 lastIndex 초기화를 위해 새 RegExp 생성
     const re = new RegExp(p.source, p.flags);
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(text)) !== null && out.length < max) {
+    let m = re.exec(text);
+    while (m !== null && out.length < max) {
       out.push(m[0]);
+      m = re.exec(text);
     }
   }
   return out;
