@@ -29,6 +29,8 @@ vi.mock('../../src/core/paths.js', () => ({
   FORGEN_HOME: tmpDir,
   ME_DIR: require('node:path').join(tmpDir, 'me'),
   STATE_DIR: require('node:path').join(tmpDir, 'state'),
+  // v0.4.8 (A3): V1_DIRS 에 SESSIONS_DIR 추가됨에 따라 mock 도 반영.
+  SESSIONS_DIR: require('node:path').join(tmpDir, 'sessions'),
 }));
 
 import { handleForge } from '../../src/forge/cli.js';

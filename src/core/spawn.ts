@@ -167,11 +167,18 @@ async function runAutoCompound(cwd: string, transcriptPath: string, sessionId: s
 
 /**
  * Transcript를 SQLite FTS5에 인덱싱 (추후 session-search MCP 도구용).
+ *
+ * v0.4.8 (A1): runtime 별 schema 차이로 분기. Claude 는 `entry.type === 'user'|
+ * 'assistant'`, Codex 는 `entry.type === 'response_item' && entry.payload.role`.
  */
-async function indexTranscriptToFTS(cwd: string, transcriptPath: string, sessionId: string): Promise<void> {
+async function indexTranscriptToFTS(cwd: string, transcriptPath: string, sessionId: string, runtime: RuntimeHost = 'claude'): Promise<void> {
   try {
-    const { indexSession } = await import('./session-store.js');
-    await indexSession(cwd, transcriptPath, sessionId);
+    const store = await import('./session-store.js');
+    if (runtime === 'codex') {
+      await store.indexCodexSession(cwd, transcriptPath, sessionId);
+    } else {
+      await store.indexSession(cwd, transcriptPath, sessionId);
+    }
   } catch (e) {
     log.debug('FTS5 인덱싱 실패 (session-store 미구현 시 정상)', e);
   }
@@ -242,10 +249,8 @@ export async function spawnClaude(
             sessionId = path.basename(transcript, '.jsonl');
           }
 
-          // 1. FTS5 인덱싱 (claude only — codex schema FTS 호환은 미검증, 별도 작업)
-          if (runtime === 'claude') {
-            await indexTranscriptToFTS(context.cwd, transcript, sessionId);
-          }
+          // 1. FTS5 인덱싱 — v0.4.8 (A1) 부터 Claude/Codex 모두 지원.
+          await indexTranscriptToFTS(context.cwd, transcript, sessionId, runtime);
 
           // 2. 자동 compound (10+ user 메시지인 경우만) — 양 runtime 호환
           const userMsgCount = await countUserMessages(transcript);

@@ -86,6 +86,28 @@ export function profileExists(): boolean {
   return fs.existsSync(FORGE_PROFILE);
 }
 
+/**
+ * profile.json 이 존재하지만 parse 실패 / v1 shape 위반인 경우, 사용자가
+ * 다음 onboarding 으로 매끄럽게 복구되도록 corrupt 파일을 timestamp 백업
+ * 으로 옆에 치워둔다. 백업 경로를 반환.
+ *
+ * v0.4.8 — bootstrapV1Session 의 loadProfile()=null early-return 보강.
+ * 이전엔 needsOnboarding=true 만 반환했고 corrupt 파일이 그대로 남아
+ * 다음 실행 때도 동일 분기로 빠지면서 사용자가 정체 원인을 모른 채
+ * onboarding 안내만 반복 받는 패턴이었음.
+ */
+export function backupCorruptProfile(): string | null {
+  if (!fs.existsSync(FORGE_PROFILE)) return null;
+  const ts = new Date().toISOString().replace(/[:.]/g, '-');
+  const backupPath = `${FORGE_PROFILE}.corrupt-${ts}`;
+  try {
+    fs.renameSync(FORGE_PROFILE, backupPath);
+    return backupPath;
+  } catch {
+    return null;
+  }
+}
+
 export function isV1Profile(data: unknown): data is Profile {
   if (!data || typeof data !== 'object') return false;
   const p = data as Record<string, unknown>;

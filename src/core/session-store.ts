@@ -94,8 +94,80 @@ function openDb(): SqliteDb | null {
   }
 }
 
+/** Codex content array → flat string. content: [{type: 'input_text', text: ...}, ...] */
+function extractCodexText(content: unknown): string {
+  if (!Array.isArray(content)) return '';
+  const parts: string[] = [];
+  for (const item of content) {
+    if (item && typeof item === 'object' && 'text' in item && typeof (item as { text: unknown }).text === 'string') {
+      parts.push((item as { text: string }).text);
+    }
+  }
+  return parts.join('\n').trim();
+}
+
 /**
- * Transcript JSONL을 SQLite에 인덱싱.
+ * v0.4.8 (A1): Codex transcript JSONL 을 SQLite 에 인덱싱.
+ *
+ * Codex schema (Claude 와 다름):
+ *   {type: 'response_item', payload: {type: 'message', role: 'user'|'assistant',
+ *    content: [{type: 'input_text'|'output_text', text: '...'}]}}
+ *
+ * 결정 (v0.4.8 A1): Claude/Codex 통합 abstraction 대신 분기 함수 두 개로
+ * 처리. 미래에 host 가 추가될 때 통합 추상화로 리팩터.
+ */
+export async function indexCodexSession(cwd: string, transcriptPath: string, sessionId: string): Promise<void> {
+  const db = openDb();
+  if (!db) return;
+
+  try {
+    const existing = db.prepare('SELECT id FROM sessions WHERE id = ?').get(sessionId);
+    if (existing) return;
+
+    const content = fs.readFileSync(transcriptPath, 'utf-8');
+    const lines = content.split('\n').filter(Boolean);
+
+    db.prepare(
+      'INSERT INTO sessions (id, cwd, started_at, message_count) VALUES (?, ?, ?, 0)'
+    ).run(sessionId, cwd, new Date().toISOString());
+
+    let messageCount = 0;
+    const insertMsg = db.prepare(
+      'INSERT INTO messages (session_id, role, content, timestamp) VALUES (?, ?, ?, ?)'
+    );
+
+    for (const line of lines) {
+      try {
+        const entry = JSON.parse(line);
+        if (entry.type !== 'response_item' || !entry.payload) continue;
+        const role = entry.payload.role;
+        if (role !== 'user' && role !== 'assistant') continue;
+        const text = extractCodexText(entry.payload.content);
+        if (!text) continue;
+
+        const truncated = text.slice(0, 10000);
+        const ts = typeof entry.timestamp === 'string' ? entry.timestamp : '';
+        const result = insertMsg.run(sessionId, role, truncated, ts);
+        if (fts5Available) {
+          try {
+            db.prepare('INSERT INTO messages_fts(rowid, content) VALUES (?, ?)').run(result.lastInsertRowid, truncated);
+          } catch { /* FTS sync failure */ }
+        }
+        messageCount++;
+      } catch { /* skip malformed lines */ }
+    }
+
+    db.prepare('UPDATE sessions SET message_count = ? WHERE id = ?').run(messageCount, sessionId);
+    log.debug(`Codex 세션 인덱싱 완료: ${sessionId} (${messageCount} messages)`);
+  } catch (e) {
+    log.debug('Codex 세션 인덱싱 실패', e);
+  } finally {
+    try { db.close(); } catch { /* ignore */ }
+  }
+}
+
+/**
+ * Transcript JSONL을 SQLite에 인덱싱. (Claude schema)
  */
 export async function indexSession(cwd: string, transcriptPath: string, sessionId: string): Promise<void> {
   const db = openDb();

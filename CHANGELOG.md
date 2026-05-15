@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.8] — 2026-05-15 — Codex 동등화 마무리 + 잔재 청소
+
+테마: v0.4.6 (Unattended Resilience) 이후 남아 있던 **Codex 동등화 마무리**
+(A 묶음) 와 v0.4.7 매트릭스 첫 활성화에서 노출된 **사전 존재 결함 청소**
+(E 묶음) 을 한 번에 정리.
+
+### Added
+- **A1**: Codex transcript FTS5 인덱싱 — `session-store.ts:indexCodexSession()`
+  신설. 이전엔 spawn.ts 가 `runtime === 'claude'` 가드로 Codex 세션을 SQLite
+  / FTS5 인덱싱에서 제외해 `session-search` MCP 도구가 Codex 대화를 회수
+  못 했음. Claude/Codex schema 별 함수 분기.
+- **A2**: corrupt profile 자동 복구 — `profileExists()=true && loadProfile()=null`
+  케이스 (parse 실패 / v1 shape 위반) 에서 `profile.json.corrupt-<ts>` 로
+  자동 backup → `needsOnboarding=true` 흐름. 데이터 손실 없음. `harness.ts`
+  가 backup 경로를 user-visible warning 으로 표시.
+- **A3**: `SESSIONS_DIR` (legacy session log) 와 `V1_SESSIONS_DIR` (v1 effective
+  state) 정합화 — `V1_DIRS` 에 `SESSIONS_DIR` 추가 (bootstrap early-return
+  경로에서도 보장), `forgen doctor` 가 두 dir 모두 노출, `paths.ts` 책임
+  주석 확장.
+- **E3**: `forgen doctor --repair` — plugin cache / installPath 검사 실패 시
+  `npm run build` + `node scripts/postinstall.js` 를 forgen pkgRoot 안에서
+  자동 실행. fail-open (실패해도 doctor 진단 흐름은 계속).
+
+### Fixed
+- **E1**: `notify.ts` spawn 'error' event 핸들러 — headless CI / Docker /
+  notifier 미설치 환경에서 `osascript`/`notify-send` ENOENT 가 unhandled
+  로 caller process 를 죽이던 사전 존재 버그. v0.4.7 CI 매트릭스 첫
+  활성화에서 노출. 추가로 `rate-limit-spawn-integration` 의 v0.4.7 CI
+  skip 가드를 제거 (production fail-safe 보장).
+- **E2**: biome lint warnings 24 건 → 0 — `biome --unsafe` 자동 fix 17
+  건 + 수동 fix 7 건 (`useTemplate`, `noAssignInExpressions`,
+  `noExplicitAny`, `noNonNullAssertion` 등 33 files touched).
+
+### Verified
+- vitest 2454 / 2454 PASS (이전 2442 + 새 회귀 가드 12: notify 2, profile-
+  corrupt 3, doctor-repair 5, codex-fts 2).
+- 로컬 build / lint 0 warning.
+- CI 매트릭스 (Linux x64 + arm64, macOS, Windows hooks-portability) 모두
+  PASS — 별도 PR 머지 (#31 부분) 후 본 PR 에서 다시 확인.
+
 ## [0.4.7] — 2026-05-15 — fgx --codex 권한 플래그 수정
 
 ### Fixed

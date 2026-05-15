@@ -16,10 +16,10 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as crypto from 'node:crypto';
-import { FORGEN_HOME, ME_DIR, ME_RULES, ME_BEHAVIOR, V1_RECOMMENDATIONS_DIR, V1_SESSIONS_DIR, STATE_DIR, V1_RAW_LOGS_DIR, ME_SOLUTIONS } from './paths.js';
+import { FORGEN_HOME, ME_DIR, ME_RULES, ME_BEHAVIOR, V1_RECOMMENDATIONS_DIR, V1_SESSIONS_DIR, STATE_DIR, V1_RAW_LOGS_DIR, ME_SOLUTIONS, SESSIONS_DIR } from './paths.js';
 import { checkLegacyProfile, runLegacyCutover } from './legacy-detector.js';
 import { detectRuntimeCapability } from './runtime-detector.js';
-import { loadProfile, profileExists } from '../store/profile-store.js';
+import { backupCorruptProfile, loadProfile, profileExists } from '../store/profile-store.js';
 import { loadActiveRules, cleanupStaleSessionRules, markRulesInjected } from '../store/rule-store.js';
 import { composeSession } from '../preset/preset-manager.js';
 import { renderRules, DEFAULT_CONTEXT } from '../renderer/rule-renderer.js';
@@ -31,7 +31,14 @@ import type { SessionEffectiveState, Profile } from '../store/types.js';
 
 // ── Directory Initialization ──
 
-const V1_DIRS = [FORGEN_HOME, ME_DIR, ME_RULES, ME_BEHAVIOR, V1_RECOMMENDATIONS_DIR, STATE_DIR, V1_SESSIONS_DIR, V1_RAW_LOGS_DIR, ME_SOLUTIONS];
+// v0.4.8 (A3): SESSIONS_DIR (~/.forgen/sessions/) 도 v1 bootstrap 보장 대상.
+// 이전엔 V1_DIRS 에 누락되어 있어, prepareHarness step 11 (startSessionLog)
+// 에 도달 못 하는 코드 경로 (예: forgen install 직접 실행) 에선 디렉토리가
+// 끝까지 생성되지 않았음. legacy session log 와 v1 effective state 는
+// 서로 다른 저장소 책임이라 두 dir 모두 명시 보장.
+//   - SESSIONS_DIR     = ~/.forgen/sessions/        ← legacy session log (transcript-like)
+//   - V1_SESSIONS_DIR  = ~/.forgen/state/sessions/  ← v1 effective state per session
+const V1_DIRS = [FORGEN_HOME, ME_DIR, ME_RULES, ME_BEHAVIOR, V1_RECOMMENDATIONS_DIR, STATE_DIR, V1_SESSIONS_DIR, V1_RAW_LOGS_DIR, ME_SOLUTIONS, SESSIONS_DIR];
 
 export function ensureV1Directories(): void {
   for (const dir of V1_DIRS) {
@@ -44,6 +51,13 @@ export function ensureV1Directories(): void {
 export interface V1BootstrapResult {
   needsOnboarding: boolean;
   legacyBackupPath: string | null;
+  /**
+   * profile.json 이 존재했지만 parse/shape 오류로 사용 불가하여 v0.4.8
+   * 의 auto-repair 가 timestamp 백업으로 치워둔 경로. legacyBackupPath
+   * 와 의미가 다름 (legacy = model_version 구 버전 cutover, corrupt =
+   * 깨진 파일 격리).
+   */
+  corruptProfileBackupPath: string | null;
   session: SessionEffectiveState | null;
   renderedRules: string | null;
   profile: Profile | null;
@@ -68,6 +82,7 @@ export function bootstrapV1Session(): V1BootstrapResult {
     return {
       needsOnboarding: true,
       legacyBackupPath,
+      corruptProfileBackupPath: null,
       session: null,
       renderedRules: null,
       profile: null,
@@ -77,7 +92,20 @@ export function bootstrapV1Session(): V1BootstrapResult {
 
   const profile = loadProfile();
   if (!profile) {
-    return { needsOnboarding: true, legacyBackupPath, session: null, renderedRules: null, profile: null, mismatch: null };
+    // v0.4.8 — corrupt/invalid profile auto-repair.
+    // profileExists()=true && loadProfile()=null 은 parse 실패 또는 v1
+    // shape 위반. 그대로 두면 다음 실행에서도 같은 분기로 빠지므로
+    // backup 후 새 onboarding 흐름을 강제.
+    const corruptProfileBackupPath = backupCorruptProfile();
+    return {
+      needsOnboarding: true,
+      legacyBackupPath,
+      corruptProfileBackupPath,
+      session: null,
+      renderedRules: null,
+      profile: null,
+      mismatch: null,
+    };
   }
 
   // 3. Runtime capability 감지
@@ -206,6 +234,7 @@ export function bootstrapV1Session(): V1BootstrapResult {
   return {
     needsOnboarding: false,
     legacyBackupPath,
+    corruptProfileBackupPath: null,
     session,
     renderedRules,
     profile,

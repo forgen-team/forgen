@@ -244,10 +244,13 @@ const commands: Command[] = [
   },
   {
     name: 'doctor',
-    description: 'Diagnostics (--prune-state to GC stale session files)',
+    description: 'Diagnostics (--prune-state to GC stale session files, --repair to auto-fix plugin cache)',
     handler: async (args) => {
       const { runDoctor } = await import('./core/doctor.js');
-      await runDoctor({ pruneState: args.includes('--prune-state') });
+      await runDoctor({
+        pruneState: args.includes('--prune-state'),
+        repair: args.includes('--repair'),
+      });
     },
   },
   // install --plugin 제거됨 — postinstall이 유일한 설치 경로
