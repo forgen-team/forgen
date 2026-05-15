@@ -381,6 +381,13 @@ export async function prepareHarness(
       log.debug(`v1: 레거시 프로필 백업 완료 → ${v1Result.legacyBackupPath}`);
     }
 
+    if (v1Result.corruptProfileBackupPath) {
+      // v0.4.8 — corrupt profile auto-repair 결과는 debug 가 아닌 user-visible warning.
+      // 사용자가 onboarding 으로 보내지는 이유를 알 수 있도록.
+      console.warn(`  ⚠  forgen: profile.json 이 깨져 있어 옆에 백업해두고 onboarding 으로 보냅니다.`);
+      console.warn(`  ⚠  backup: ${v1Result.corruptProfileBackupPath}`);
+    }
+
     if (v1Result.session) {
       const { session } = v1Result;
       log.debug(`v1 세션 시작: ${session.quality_pack}/${session.autonomy_pack}, trust=${session.effective_trust_policy}`);
