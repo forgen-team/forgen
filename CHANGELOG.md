@@ -17,10 +17,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `HostRuntime.dangerousSkipFlag` 추상화를 도입해 `src/fgx.ts` 가 런타임별로
   올바른 플래그를 선택하도록 변경 (claude 동작은 회귀 없음).
 - 경고 배너와 `[forgen] Mode:` 라벨도 선택된 플래그/런타임에 맞춰 동적으로 출력.
+- **Windows 빌드 깨짐 (v0.4.4부터 누적)** 수정: `scripts/copy-assets.js`,
+  `src/cli.ts`, `src/host/install-orchestrator.ts` 가 `new URL(...).pathname` 으로
+  파일 경로를 만들었는데 Windows 에서 `/D:/...` 형태가 그대로 노출되어
+  `mkdirSync` 가 `D:\D:\...` 로 해석 → ENOENT. `fileURLToPath()` 로 일괄 교체.
+- **Linux CI test 잡 회귀** 수정: `npm run build` 만으로는 `hooks/hooks.json` 이
+  생성되지 않아 (prepack 시점에만 생성) `claude-code-compat.test.ts` 등이
+  실패. `.github/workflows/ci.yml` 의 test 잡에 `node scripts/prepack-hooks.cjs`
+  단계를 추가하여 CI 환경에서도 hooks.json 이 준비된 상태로 vitest 가 돌도록.
+
+### CI / Platform Coverage
+- `ci.yml` test 잡을 OS × Node 매트릭스로 확장:
+  ubuntu-latest × {20, 22}, macos-latest × {20, 22}, ubuntu-24.04-arm × 22.
+  이전엔 vitest 풀 매트릭스가 ubuntu-latest 만 돌았음.
+- **Windows**: hooks-portability 잡 (Node 20.x, 22.x × windows-latest) 에서
+  빌드 + postinstall + 21/21 hook 로드를 검증. 풀 vitest 는 다수 통합
+  테스트가 `/tmp` / POSIX path / bash spawn 가정에 묶여 있어 cross-platform
+  재작성이 별도 트랙. 현재 Windows 사용자의 실사용 경로 (`npm i -g` +
+  Claude/Codex hook 발동) 는 보장됨.
+- `actions/checkout` 에 `fetch-depth: 0` 추가 — `tests/git-stats.test.ts`
+  가 실 git log 30일 윈도우를 분석.
+- CI 환경 의존 테스트 (`rate-limit-spawn-integration`, `claude-integration`
+  의 6-live / 3-live) 에 `it.skipIf(!!process.env.CI)` 가드.
 
 ### Verified
 - vitest 2442/2442 PASS, Docker e2e 77/77 PASS.
-- `node dist/fgx.js --codex` 실행으로 Codex CLI 가 플래그 수용 후 기동하는 것까지 직접 확인.
+- `node dist/fgx.js --codex` / `--claude` 직접 기동 확인 — Codex CLI 가 플래그 수용.
+- `npm run build` + `prepack-hooks` 후 `hooks/hooks.json` 21/21 active 재생성 확인.
 
 ## [0.4.6] — 2026-05-14 — Unattended Execution Resilience
 

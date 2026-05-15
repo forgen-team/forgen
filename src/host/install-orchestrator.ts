@@ -13,6 +13,7 @@
 
 import * as path from 'node:path';
 import * as readline from 'node:readline';
+import { fileURLToPath } from 'node:url';
 import { detectAvailableHosts, type HostAvailability } from '../core/host-detect.js';
 import { planClaudeInstall, type ClaudeInstallResult } from './install-claude.js';
 import { planCodexInstall, type CodexInstallResult } from './install-codex.js';
@@ -142,6 +143,6 @@ export function renderResult(result: OrchestratorResult, dryRun: boolean): strin
 
 /** pkgRoot resolve from binary location (dist/cli.js → pkgRoot). */
 export function resolvePkgRootFromBinary(metaUrl: string): string {
-  const here = path.dirname(new URL(metaUrl).pathname);
+  const here = path.dirname(fileURLToPath(metaUrl));
   return path.resolve(here, '..');
 }

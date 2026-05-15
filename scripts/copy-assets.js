@@ -13,8 +13,10 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const PKG_ROOT = join(__dirname, '..');
 
 // 1. dangerous-patterns.json 복사
-const src = new URL('../src/hooks/dangerous-patterns.json', import.meta.url).pathname;
-const dst = new URL('../dist/hooks/dangerous-patterns.json', import.meta.url).pathname;
+// Windows 호환: URL.pathname 은 `/D:/...` 형태라 mkdirSync 가 `D:\D:\...` 로 해석.
+// fileURLToPath 가 OS-native 경로를 돌려주므로 그쪽을 사용.
+const src = fileURLToPath(new URL('../src/hooks/dangerous-patterns.json', import.meta.url));
+const dst = fileURLToPath(new URL('../dist/hooks/dangerous-patterns.json', import.meta.url));
 mkdirSync(dirname(dst), { recursive: true });
 cpSync(src, dst);
 console.log('[build] Copied dangerous-patterns.json');

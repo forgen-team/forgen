@@ -7,20 +7,35 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    name: Test (Node ${{ matrix.node-version }} / ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
+        # Windows 는 hooks-portability 잡에서 빌드/postinstall/hook-loading 으로 별도 검증.
+        # 풀 vitest 는 다수 통합 테스트가 /tmp, POSIX path, bash spawn 가정에 묶여 있어
+        # cross-platform 재작성이 별도 트랙. 본 잡에서는 ubuntu/macos + arm64 만 커버.
+        os: [ubuntu-latest, macos-latest]
         node-version: [20, 22]
+        include:
+          # arm64 커버리지 — GitHub-hosted ubuntu-24.04-arm runner (public repo 무료)
+          - os: ubuntu-24.04-arm
+            node-version: 22
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0  # tests/git-stats.test.ts 가 실 git log 30 일 윈도우를 분석
       - uses: actions/setup-node@v6
         with:
           node-version: ${{ matrix.node-version }}
       - run: npm ci
       - run: npm run lint
       - run: npm run build
+      - name: Regenerate hooks/hooks.json (release-mode, deterministic)
+        run: node scripts/prepack-hooks.cjs
       - name: Test
-        run: npx vitest run ${{ matrix.node-version == 20 && '--coverage' || '' }}
+        shell: bash
+        run: npx vitest run ${{ (matrix.node-version == 20 && matrix.os == 'ubuntu-latest') && '--coverage' || '' }}
       - run: npm pack --dry-run
 
   # Portability matrix — 사용자 보고된 "npm i -g 후 각종 훅 에러" 를 CI 에서 잡기.

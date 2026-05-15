@@ -27,6 +27,7 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const { pathToFileURL } = require('node:url');
 
 // P1-C1 fix (2026-04-20): plugin.json version을 package.json의 version으로 동기화.
 // 과거에는 package.json v0.3.1 vs plugin.json v5.1.2로 최초 커밋부터 분리된 버전
@@ -64,7 +65,8 @@ async function main() {
     process.exit(1);
   }
 
-  const { writeHooksJson } = await import(distHooksGenerator);
+  // Windows ESM 호환: 절대경로 import 는 file:// URL 이어야 함 ('d:' protocol 거부).
+  const { writeHooksJson } = await import(pathToFileURL(distHooksGenerator).href);
   const hooksDir = path.resolve(__dirname, '..', 'hooks');
   // W4 (v0.4.2): releaseMode=true 가 plugin 감지 + hook-config 비활성화 모두
   // 무시. 환경변수 swap 없이 명시적 API 로 결정론 보장.
