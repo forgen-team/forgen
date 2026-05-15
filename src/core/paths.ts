@@ -85,7 +85,15 @@ export const CANDIDATES_DIR = path.join(FORGEN_HOME, 'lab', 'candidates');
 /** ~/.forgen/lab/archived/ — rollback destination for evolved solutions. */
 export const ARCHIVED_DIR = path.join(FORGEN_HOME, 'lab', 'archived');
 
-/** ~/.forgen/sessions/ — 세션 로그 */
+/**
+ * ~/.forgen/sessions/ — legacy session log directory (transcript-like).
+ *
+ * session-logger.ts 가 prepareHarness step 11 에서 한 줄짜리
+ * `{date}_{uuid}.json` 메타 파일을 기록. v1 의 SessionEffectiveState
+ * 와는 다른 책임이라 별 디렉토리 (V1_SESSIONS_DIR) 와 공존:
+ *   - SESSIONS_DIR (여기): 세션 발생 사실 + 시작/종료 시각 + cwd
+ *   - V1_SESSIONS_DIR     : profile + pack 합성 결과 (effective state)
+ */
 export const SESSIONS_DIR = path.join(FORGEN_HOME, 'sessions');
 
 /** ~/.forgen/config.json — 글로벌 설정 */
@@ -103,7 +111,13 @@ export const FORGE_PROFILE = path.join(ME_DIR, 'forge-profile.json');
 /** ~/.forgen/me/recommendations/ — Pack Recommendation */
 export const V1_RECOMMENDATIONS_DIR = path.join(ME_DIR, 'recommendations');
 
-/** ~/.forgen/state/sessions/ — Session Effective State */
+/**
+ * ~/.forgen/state/sessions/ — v1 Session Effective State.
+ *
+ * session-state-store.ts 가 매 세션마다 profile + active rules + pack
+ * 합성 결과를 `{sessionId}.json` 으로 기록. SESSIONS_DIR (legacy session
+ * log) 와는 다른 책임 (정합화는 v0.4.8 A3 참조).
+ */
 export const V1_SESSIONS_DIR = path.join(STATE_DIR, 'sessions');
 
 /** ~/.forgen/state/raw-logs/ — Raw Log */

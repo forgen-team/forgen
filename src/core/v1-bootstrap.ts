@@ -16,7 +16,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as crypto from 'node:crypto';
-import { FORGEN_HOME, ME_DIR, ME_RULES, ME_BEHAVIOR, V1_RECOMMENDATIONS_DIR, V1_SESSIONS_DIR, STATE_DIR, V1_RAW_LOGS_DIR, ME_SOLUTIONS } from './paths.js';
+import { FORGEN_HOME, ME_DIR, ME_RULES, ME_BEHAVIOR, V1_RECOMMENDATIONS_DIR, V1_SESSIONS_DIR, STATE_DIR, V1_RAW_LOGS_DIR, ME_SOLUTIONS, SESSIONS_DIR } from './paths.js';
 import { checkLegacyProfile, runLegacyCutover } from './legacy-detector.js';
 import { detectRuntimeCapability } from './runtime-detector.js';
 import { backupCorruptProfile, loadProfile, profileExists } from '../store/profile-store.js';
@@ -31,7 +31,14 @@ import type { SessionEffectiveState, Profile } from '../store/types.js';
 
 // ── Directory Initialization ──
 
-const V1_DIRS = [FORGEN_HOME, ME_DIR, ME_RULES, ME_BEHAVIOR, V1_RECOMMENDATIONS_DIR, STATE_DIR, V1_SESSIONS_DIR, V1_RAW_LOGS_DIR, ME_SOLUTIONS];
+// v0.4.8 (A3): SESSIONS_DIR (~/.forgen/sessions/) 도 v1 bootstrap 보장 대상.
+// 이전엔 V1_DIRS 에 누락되어 있어, prepareHarness step 11 (startSessionLog)
+// 에 도달 못 하는 코드 경로 (예: forgen install 직접 실행) 에선 디렉토리가
+// 끝까지 생성되지 않았음. legacy session log 와 v1 effective state 는
+// 서로 다른 저장소 책임이라 두 dir 모두 명시 보장.
+//   - SESSIONS_DIR     = ~/.forgen/sessions/        ← legacy session log (transcript-like)
+//   - V1_SESSIONS_DIR  = ~/.forgen/state/sessions/  ← v1 effective state per session
+const V1_DIRS = [FORGEN_HOME, ME_DIR, ME_RULES, ME_BEHAVIOR, V1_RECOMMENDATIONS_DIR, STATE_DIR, V1_SESSIONS_DIR, V1_RAW_LOGS_DIR, ME_SOLUTIONS, SESSIONS_DIR];
 
 export function ensureV1Directories(): void {
   for (const dir of V1_DIRS) {

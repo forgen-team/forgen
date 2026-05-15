@@ -2,7 +2,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { FORGEN_HOME, LAB_DIR, ME_BEHAVIOR, ME_DIR, ME_SOLUTIONS, ME_RULES, ME_SKILLS, PACKS_DIR, SESSIONS_DIR, STATE_DIR } from './paths.js';
+import { FORGEN_HOME, LAB_DIR, ME_BEHAVIOR, ME_DIR, ME_SOLUTIONS, ME_RULES, ME_SKILLS, PACKS_DIR, SESSIONS_DIR, STATE_DIR, V1_SESSIONS_DIR } from './paths.js';
 import { getTimingStats } from '../hooks/shared/hook-timing.js';
 import { countSessionScopedFiles, pruneState } from './state-gc.js';
 import { summarizeAllByHost } from '../store/host-mismatch.js';
@@ -168,7 +168,8 @@ export async function runDoctor(opts: DoctorOptions = {}): Promise<void> {
   check('~/.forgen/me/behavior/', exists(ME_BEHAVIOR));
   check('~/.forgen/me/rules/', exists(ME_RULES));
   check('~/.forgen/packs/', exists(PACKS_DIR));
-  check('~/.forgen/sessions/', exists(SESSIONS_DIR));
+  check('~/.forgen/sessions/ (session logs)', exists(SESSIONS_DIR));
+  check('~/.forgen/state/sessions/ (v1 effective state)', exists(V1_SESSIONS_DIR));
 
   // R9-IA5: warn if a user dropped rule files at ~/.forgen/rules/ by mistake.
   // That path is NOT loaded — personal rules live at ~/.forgen/me/rules/.
@@ -229,11 +230,16 @@ export async function runDoctor(opts: DoctorOptions = {}): Promise<void> {
   console.log();
 
   console.log('  [Log Locations]');
-  console.log(`  Session logs: ${SESSIONS_DIR}`);
-
+  console.log(`  Session logs:       ${SESSIONS_DIR}`);
   if (exists(SESSIONS_DIR)) {
     const sessionCount = fs.readdirSync(SESSIONS_DIR).filter((f) => f.endsWith('.json')).length;
-    console.log(`  Saved sessions: ${sessionCount}`);
+    console.log(`  Saved sessions:     ${sessionCount}`);
+  }
+  // v0.4.8 (A3): v1 effective state directory 도 가시화 — 두 dir 책임 다름.
+  console.log(`  V1 effective state: ${V1_SESSIONS_DIR}`);
+  if (exists(V1_SESSIONS_DIR)) {
+    const stateCount = fs.readdirSync(V1_SESSIONS_DIR).filter((f) => f.endsWith('.json')).length;
+    console.log(`  V1 state count:     ${stateCount}`);
   }
 
   console.log(`  Claude Code sessions: ${CLAUDE_PROJECTS_DIR}`);
