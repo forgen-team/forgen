@@ -12,7 +12,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        # Windows 는 hooks-portability 잡에서 빌드/postinstall/hook-loading 으로 별도 검증.
+        # 풀 vitest 는 다수 통합 테스트가 /tmp, POSIX path, bash spawn 가정에 묶여 있어
+        # cross-platform 재작성이 별도 트랙. 본 잡에서는 ubuntu/macos + arm64 만 커버.
+        os: [ubuntu-latest, macos-latest]
         node-version: [20, 22]
         include:
           # arm64 커버리지 — GitHub-hosted ubuntu-24.04-arm runner (public repo 무료)

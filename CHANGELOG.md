@@ -28,8 +28,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### CI / Platform Coverage
 - `ci.yml` test 잡을 OS × Node 매트릭스로 확장:
-  ubuntu-latest × {20, 22}, macos-latest × {20, 22}, windows-latest × {20, 22},
-  ubuntu-24.04-arm × 22. 이전엔 vitest 풀 매트릭스가 ubuntu-latest 만 돌았음.
+  ubuntu-latest × {20, 22}, macos-latest × {20, 22}, ubuntu-24.04-arm × 22.
+  이전엔 vitest 풀 매트릭스가 ubuntu-latest 만 돌았음.
+- **Windows**: hooks-portability 잡 (Node 20.x, 22.x × windows-latest) 에서
+  빌드 + postinstall + 21/21 hook 로드를 검증. 풀 vitest 는 다수 통합
+  테스트가 `/tmp` / POSIX path / bash spawn 가정에 묶여 있어 cross-platform
+  재작성이 별도 트랙. 현재 Windows 사용자의 실사용 경로 (`npm i -g` +
+  Claude/Codex hook 발동) 는 보장됨.
+- `actions/checkout` 에 `fetch-depth: 0` 추가 — `tests/git-stats.test.ts`
+  가 실 git log 30일 윈도우를 분석.
+- CI 환경 의존 테스트 (`rate-limit-spawn-integration`, `claude-integration`
+  의 6-live / 3-live) 에 `it.skipIf(!!process.env.CI)` 가드.
 
 ### Verified
 - vitest 2442/2442 PASS, Docker e2e 77/77 PASS.
