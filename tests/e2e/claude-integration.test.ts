@@ -313,7 +313,8 @@ echo '{"continue":true}'
     }
   }, TIMEOUT);
 
-  it('시나리오 6-live: forge 규칙이 Claude 응답에 영향', async () => {
+  // CI 환경에는 claude CLI + ANTHROPIC_API_KEY 가 없어 실패함. 로컬 dev 에서만 검증.
+  it.skipIf(!!process.env.CI)('시나리오 6-live: forge 규칙이 Claude 응답에 영향', async () => {
     // 임시 프로젝트에 규칙 설정
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'forgen-e2e-'));
     const rulesDir = path.join(tmpDir, '.claude', 'rules');
@@ -331,7 +332,8 @@ echo '{"continue":true}'
     }
   }, TIMEOUT);
 
-  it('시나리오 3-live: additionalContext가 모델에 실제로 도달', async () => {
+  // CI 환경에는 claude CLI + ANTHROPIC_API_KEY 가 없어 실패함. 로컬 dev 에서만 검증.
+  it.skipIf(!!process.env.CI)('시나리오 3-live: additionalContext가 모델에 실제로 도달', async () => {
     // 이 테스트는 UserPromptSubmit hook이 additionalContext를 반환할 때
     // Claude가 그 내용을 볼 수 있는지 검증
     // 검증 방법: 특정 비밀코드를 additionalContext로 주입하는 임시 hook 설정

@@ -20,6 +20,8 @@ jobs:
             node-version: 22
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0  # tests/git-stats.test.ts 가 실 git log 30 일 윈도우를 분석
       - uses: actions/setup-node@v6
         with:
           node-version: ${{ matrix.node-version }}
