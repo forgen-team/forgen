@@ -35,6 +35,12 @@ export interface HostRuntime {
    *   - 'pre-baked-file': pkgRoot/hooks/hooks.json 읽고 ${CLAUDE_PLUGIN_ROOT} 치환 (Claude — 빌드 산출물 재사용)
    */
   readonly hookInjectionStrategy: 'generate' | 'pre-baked-file';
+  /**
+   * 권한 전수 우회용 CLI 플래그 (fgx 등 dangerously-skip 모드에서 사용).
+   * Claude: --dangerously-skip-permissions
+   * Codex:  --dangerously-bypass-approvals-and-sandbox
+   */
+  readonly dangerousSkipFlag: string;
 }
 
 function quoteArg(raw: string): string {
@@ -51,6 +57,7 @@ const claudeRuntime: HostRuntime = {
     return args ? `node ${quoteArg(fullScript)} ${args}` : `node ${quoteArg(fullScript)}`;
   },
   hookInjectionStrategy: 'pre-baked-file',
+  dangerousSkipFlag: '--dangerously-skip-permissions',
 };
 
 const codexRuntime: HostRuntime = {
@@ -65,6 +72,7 @@ const codexRuntime: HostRuntime = {
     return args ? `${base} ${args}` : base;
   },
   hookInjectionStrategy: 'generate',
+  dangerousSkipFlag: '--dangerously-bypass-approvals-and-sandbox',
 };
 
 const RUNTIMES: Record<RuntimeHost, HostRuntime> = {

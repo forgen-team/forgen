@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.7] — 2026-05-15 — fgx --codex 권한 플래그 수정
+
+### Fixed
+- `fgx --codex` 실행 시 `error: unexpected argument '--dangerously-skip-permissions' found`로
+  기동이 즉시 실패하던 버그를 수정. Codex CLI 는 동일 목적의 플래그가
+  `--dangerously-bypass-approvals-and-sandbox` 라 Claude 전용 플래그를 그대로
+  주입하면 거부됨.
+- `HostRuntime.dangerousSkipFlag` 추상화를 도입해 `src/fgx.ts` 가 런타임별로
+  올바른 플래그를 선택하도록 변경 (claude 동작은 회귀 없음).
+- 경고 배너와 `[forgen] Mode:` 라벨도 선택된 플래그/런타임에 맞춰 동적으로 출력.
+
+### Verified
+- vitest 2442/2442 PASS, Docker e2e 77/77 PASS.
+- `node dist/fgx.js --codex` 실행으로 Codex CLI 가 플래그 수용 후 기동하는 것까지 직접 확인.
+
 ## [0.4.6] — 2026-05-14 — Unattended Execution Resilience
 
 긴 무인 실행 (`forge-loop --goal-only` 새벽 실행, eval N=33+ sequential measurement)
