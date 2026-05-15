@@ -89,7 +89,7 @@ export function appendImplicitFeedback(entry: ImplicitFeedbackInput): boolean {
 
   try {
     fs.mkdirSync(STATE_DIR, { recursive: true });
-    fs.appendFileSync(IMPLICIT_FEEDBACK_LOG, JSON.stringify(normalized) + '\n');
+    fs.appendFileSync(IMPLICIT_FEEDBACK_LOG, `${JSON.stringify(normalized)}\n`);
     return true;
   } catch {
     // fail-open: implicit feedback recording must not throw.
@@ -165,7 +165,7 @@ export function migrateImplicitFeedbackLog(): { migrated: number; dropped: numbe
 
   // atomic replace via temp file
   const tmp = `${IMPLICIT_FEEDBACK_LOG}.migrate.${process.pid}`;
-  fs.writeFileSync(tmp, out.length > 0 ? out.join('\n') + '\n' : '');
+  fs.writeFileSync(tmp, out.length > 0 ? `${out.join('\n')}\n` : '');
   fs.renameSync(tmp, IMPLICIT_FEEDBACK_LOG);
 
   return { migrated, dropped };

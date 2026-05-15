@@ -52,10 +52,10 @@ export function redactSecrets(text: string): { redacted: string; hits: SecretPat
   let out = text;
   for (const sp of SECRET_PATTERNS) {
     // regex 복제 (global flag 없이 repeated test 되는 경우 lastIndex 안전)
-    const re = new RegExp(sp.pattern.source, (sp.pattern.flags.includes('g') ? sp.pattern.flags : sp.pattern.flags + 'g'));
+    const re = new RegExp(sp.pattern.source, (sp.pattern.flags.includes('g') ? sp.pattern.flags : `${sp.pattern.flags}g`));
     if (re.test(out)) {
       hits.push(sp);
-      const re2 = new RegExp(sp.pattern.source, (sp.pattern.flags.includes('g') ? sp.pattern.flags : sp.pattern.flags + 'g'));
+      const re2 = new RegExp(sp.pattern.source, (sp.pattern.flags.includes('g') ? sp.pattern.flags : `${sp.pattern.flags}g`));
       out = out.replace(re2, `[REDACTED:${sp.name}]`);
     }
   }

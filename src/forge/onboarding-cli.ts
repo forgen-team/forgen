@@ -10,7 +10,7 @@ import type { ChoiceId } from './onboarding.js';
 import { createProfile, saveProfile } from '../store/profile-store.js';
 import { saveRecommendation, updateRecommendationStatus } from '../store/recommendation-store.js';
 import { ensureV1Directories } from '../core/v1-bootstrap.js';
-import { ONBOARDING, qualityName, autonomyName, judgmentName, communicationName, trustName, setLocale, getLocale, type Locale } from '../i18n/index.js';
+import { ONBOARDING, qualityName, autonomyName, judgmentName, communicationName, trustName, setLocale, type Locale } from '../i18n/index.js';
 import { saveGlobalConfig, loadGlobalConfig } from '../core/global-config.js';
 
 function askChoice(rl: readline.Interface, question: string, validChoices: string[], errorMsg: string): Promise<string> {

@@ -238,7 +238,7 @@ async function main(): Promise<void> {
   }
 
   const match = detectKeyword(input.prompt);
-  const sessionId = input.session_id ?? 'unknown';
+  const _sessionId = input.session_id ?? 'unknown';
 
   // v1: regex 기반 prompt 학습 제거. Evidence 기반으로 전환됨.
 

@@ -393,14 +393,14 @@ export function acknowledgeSessionBlocks(sessionId: string): number {
       try {
         fs.mkdirSync(path.dirname(ACK_LOG), { recursive: true });
         rotateIfBig(ACK_LOG);
-        fs.appendFileSync(ACK_LOG, JSON.stringify({
+        fs.appendFileSync(ACK_LOG, `${JSON.stringify({
           at: now,
           session_id: state.sessionId,
           rule_id: state.ruleId,
           block_count: state.count,
           first_block_at: state.firstBlockAt,
           last_block_at: state.lastBlockAt,
-        }) + '\n');
+        })}\n`);
         acked += 1;
       } catch { /* append failure: still try cleanup */ }
       try { fs.unlinkSync(full); } catch { /* ignore */ }
@@ -422,7 +422,7 @@ export function logDriftEvent(event: {
   try {
     fs.mkdirSync(path.dirname(DRIFT_LOG), { recursive: true });
     rotateIfBig(DRIFT_LOG);
-    fs.appendFileSync(DRIFT_LOG, JSON.stringify({ at: new Date().toISOString(), ...event }) + '\n');
+    fs.appendFileSync(DRIFT_LOG, `${JSON.stringify({ at: new Date().toISOString(), ...event })}\n`);
   } catch {
     // best-effort
   }

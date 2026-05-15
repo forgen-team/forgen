@@ -346,7 +346,7 @@ export function appendLifecycleEvents(events: LifecycleEvent[], now: number = Da
         fs.renameSync(logPath, `${logPath}.${Date.now()}`);
       }
     } catch { /* missing → no rotate */ }
-    const body = events.map((e) => JSON.stringify(e)).join('\n') + '\n';
+    const body = `${events.map((e) => JSON.stringify(e)).join('\n')}\n`;
     fs.appendFileSync(logPath, body);
   } catch (e) {
     if (process.env.FORGEN_DEBUG_SIGNALS === '1') {

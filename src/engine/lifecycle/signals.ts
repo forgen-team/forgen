@@ -62,7 +62,7 @@ export function recordViolation(entry: Omit<ViolationEntry, 'at'>): void {
     fs.mkdirSync(ENFORCEMENT_DIR, { recursive: true });
     rotateIfBig(VIOLATIONS_PATH);
     const full: ViolationEntry = { at: new Date().toISOString(), ...entry };
-    fs.appendFileSync(VIOLATIONS_PATH, JSON.stringify(full) + '\n');
+    fs.appendFileSync(VIOLATIONS_PATH, `${JSON.stringify(full)}\n`);
   } catch (e) {
     // best-effort, 실패 시 debug 로그 (silent swallow 방지)
     if (process.env.FORGEN_DEBUG_SIGNALS === '1') {
@@ -76,7 +76,7 @@ export function recordBypass(entry: Omit<BypassEntry, 'at'>): void {
     fs.mkdirSync(ENFORCEMENT_DIR, { recursive: true });
     rotateIfBig(BYPASS_PATH);
     const full: BypassEntry = { at: new Date().toISOString(), ...entry };
-    fs.appendFileSync(BYPASS_PATH, JSON.stringify(full) + '\n');
+    fs.appendFileSync(BYPASS_PATH, `${JSON.stringify(full)}\n`);
   } catch (e) {
     if (process.env.FORGEN_DEBUG_SIGNALS === '1') {
       console.error(`[forgen:signals] recordBypass failed: ${(e as Error).message}`);

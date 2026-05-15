@@ -63,7 +63,7 @@ export function migrateEvidenceHost(
       continue;
     }
 
-    const host = data['host'];
+    const host = data.host;
     if (host === 'claude' || host === 'codex') {
       skipped++;
       continue;

@@ -611,7 +611,7 @@ function findCommonPrefix(strings: string[]): string {
 }
 
 /** Save an extracted solution as experiment */
-function saveExtractedSolution(sol: ExtractedSolution, sessionId: string): string | null {
+function saveExtractedSolution(sol: ExtractedSolution, _sessionId: string): string | null {
   const today = new Date().toISOString().split('T')[0];
   const slugName = sol.name.toLowerCase()
     .replace(/[^a-z0-9가-힣\s-]/g, '')

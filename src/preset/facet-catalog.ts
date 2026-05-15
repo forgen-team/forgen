@@ -50,8 +50,8 @@ export const COMMUNICATION_CENTROIDS: Record<CommunicationPack, CommunicationFac
 
 // ── Defaults (backward compat) ──
 
-export const DEFAULT_JUDGMENT_FACETS: JudgmentFacets = JUDGMENT_CENTROIDS['균형형'];
-export const DEFAULT_COMMUNICATION_FACETS: CommunicationFacets = COMMUNICATION_CENTROIDS['균형형'];
+export const DEFAULT_JUDGMENT_FACETS: JudgmentFacets = JUDGMENT_CENTROIDS.균형형;
+export const DEFAULT_COMMUNICATION_FACETS: CommunicationFacets = COMMUNICATION_CENTROIDS.균형형;
 
 // ── Utilities ──
 

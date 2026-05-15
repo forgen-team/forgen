@@ -53,14 +53,14 @@ function cyan(s: string): string { return `${CYAN}${s}${RESET}`; }
 // ── Box-drawing table helpers ──
 
 function tableRow(cols: string[], widths: number[]): string {
-  return '  │ ' + cols.map((c, i) => c.padEnd(widths[i])).join(' │ ') + ' │';
+  return `  │ ${cols.map((c, i) => c.padEnd(widths[i])).join(' │ ')} │`;
 }
 
 function tableSep(widths: number[], top = false, bottom = false): string {
   const left = top ? '┌' : bottom ? '└' : '├';
   const mid = top ? '┬' : bottom ? '┴' : '┼';
   const right = top ? '┐' : bottom ? '┘' : '┤';
-  return '  ' + left + widths.map(w => '─'.repeat(w + 2)).join(mid) + right;
+  return `  ${left}${widths.map(w => '─'.repeat(w + 2)).join(mid)}${right}`;
 }
 
 // ── Data Collection Types ──

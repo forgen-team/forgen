@@ -135,13 +135,17 @@ function findConflictClusters(rows: SolutionRow[], fitnessByName: Map<string, Fi
   const underperformers = rows.filter((r) => fitnessByName.get(r.name)?.state === 'underperform');
   const clusters: ConflictCluster[] = [];
   for (const ch of champions) {
+    const chFitness = fitnessByName.get(ch.name)?.fitness;
+    if (chFitness === undefined) continue;
     for (const up of underperformers) {
+      const upFitness = fitnessByName.get(up.name)?.fitness;
+      if (upFitness === undefined) continue;
       const shared = ch.tags.filter((t) => up.tags.includes(t));
       if (shared.length < 2) continue;
       clusters.push({
         shared_tags: shared,
-        champion: { name: ch.name, fitness: fitnessByName.get(ch.name)!.fitness },
-        underperform: { name: up.name, fitness: fitnessByName.get(up.name)!.fitness },
+        champion: { name: ch.name, fitness: chFitness },
+        underperform: { name: up.name, fitness: upFitness },
       });
     }
   }

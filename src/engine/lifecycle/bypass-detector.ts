@@ -57,9 +57,10 @@ function extractParenthesizedExamples(p: string): string[] {
   const out: string[] = [];
   // Match (...) groups; multiple groups in policy are uncommon but supported
   const re = /\(([^)]+)\)/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(p))) {
+  let m = re.exec(p);
+  while (m !== null) {
     const inside = m[1];
+    m = re.exec(p);
     // Skip if it looks like a path (contains "/" before any obvious separator commitment)
     if (/[a-zA-Z]+\/[a-zA-Z]/.test(inside)) continue;
     // Skip if it's an exclusion / scope-restriction note (Korean markers)

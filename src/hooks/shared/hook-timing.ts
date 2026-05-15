@@ -22,7 +22,7 @@ export function recordHookTiming(hookName: string, durationMs: number, event: st
   try {
     fs.mkdirSync(STATE_DIR, { recursive: true });
     const entry = JSON.stringify({ hook: hookName, ms: durationMs, event, at: Date.now() });
-    fs.appendFileSync(TIMING_LOG, entry + '\n');
+    fs.appendFileSync(TIMING_LOG, `${entry}\n`);
 
     // Rotate if too large — size-gated (statSync only, skip read/write 대부분의 호출)
     try {
@@ -31,7 +31,7 @@ export function recordHookTiming(hookName: string, durationMs: number, event: st
       const content = fs.readFileSync(TIMING_LOG, 'utf-8');
       const lines = content.trim().split('\n');
       if (lines.length > MAX_LINES) {
-        fs.writeFileSync(TIMING_LOG, lines.slice(-MAX_LINES).join('\n') + '\n');
+        fs.writeFileSync(TIMING_LOG, `${lines.slice(-MAX_LINES).join('\n')}\n`);
       }
     } catch { /* skip rotation on error */ }
   } catch { /* fail-open */ }
@@ -56,7 +56,7 @@ export function getTimingStats(): TimingStats[] {
     const byHook = new Map<string, number[]>();
     for (const e of entries) {
       if (!byHook.has(e.hook)) byHook.set(e.hook, []);
-      byHook.get(e.hook)!.push(e.ms);
+      byHook.get(e.hook)?.push(e.ms);
     }
 
     const stats: TimingStats[] = [];

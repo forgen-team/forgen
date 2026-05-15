@@ -186,7 +186,7 @@ function ensureCompoundMemory(cwd: string): void {
     if (fs.existsSync(memoryMdPath)) {
       const content = fs.readFileSync(memoryMdPath, 'utf-8');
       if (content.includes('compound-index.md')) return;
-      fs.writeFileSync(memoryMdPath, content.trimEnd() + '\n' + compoundPointer + '\n');
+      fs.writeFileSync(memoryMdPath, `${content.trimEnd()}\n${compoundPointer}\n`);
     }
 
     const indexPath = path.join(memoryDir, 'compound-index.md');
@@ -283,7 +283,7 @@ function migrateToForgen(): void {
       log.debug(`migrateToForgen: ${legacyHome} 파일 복사 중 오류`, e);
     }
 
-    const backupPath = legacyHome + '.bak';
+    const backupPath = `${legacyHome}.bak`;
     try {
       if (!fs.existsSync(backupPath)) {
         fs.renameSync(legacyHome, backupPath);

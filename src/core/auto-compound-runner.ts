@@ -231,7 +231,13 @@ function validateSolutionFiles(dirBefore: Set<string>): number {
 
 function extractText(c: unknown): string {
   if (typeof c === 'string') return c;
-  if (Array.isArray(c)) return c.filter((x: any) => x?.type === 'text').map((x: any) => x.text ?? '').join('\n');
+  if (Array.isArray(c)) {
+    return c
+      .filter((x): x is { type: 'text'; text?: unknown } =>
+        typeof x === 'object' && x !== null && (x as { type?: unknown }).type === 'text')
+      .map((x) => (typeof x.text === 'string' ? x.text : ''))
+      .join('\n');
+  }
   return '';
 }
 

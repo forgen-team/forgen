@@ -441,7 +441,7 @@ async function main(): Promise<void> {
           .filter(l => l.length > 0);
         contentSnippet = lines.slice(0, 3).join('\n');
         if (contentSnippet.length > SUMMARY_MAX_CHARS) {
-          contentSnippet = contentSnippet.slice(0, SUMMARY_MAX_CHARS - 3) + '...';
+          contentSnippet = `${contentSnippet.slice(0, SUMMARY_MAX_CHARS - 3)}...`;
         }
       }
     } catch { /* fail-open: 파일 읽기 실패 시 이름+태그만 사용 */ }

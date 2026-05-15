@@ -24,7 +24,7 @@ export async function handleInspect(args: string[]): Promise<void> {
       console.log('\n  No v1 profile found. Run onboarding first.\n');
       return;
     }
-    console.log('\n' + inspect.renderProfile(profile) + '\n');
+    console.log(`\n${inspect.renderProfile(profile)}\n`);
 
     // ── Learning Loop Status ──
     const activeRules = loadActiveRules();
@@ -87,14 +87,14 @@ export async function handleInspect(args: string[]): Promise<void> {
 
   if (sub === 'rules') {
     const rules = loadAllRules();
-    console.log('\n' + inspect.renderRules(rules) + '\n');
+    console.log(`\n${inspect.renderRules(rules)}\n`);
     return;
   }
 
   // R9-IA2: user-facing name is "corrections"; "evidence" kept as back-compat alias.
   if (sub === 'corrections' || sub === 'evidence') {
     const evidence = loadRecentEvidence(20);
-    console.log('\n' + inspect.renderEvidence(evidence) + '\n');
+    console.log(`\n${inspect.renderEvidence(evidence)}\n`);
     return;
   }
 
@@ -104,7 +104,7 @@ export async function handleInspect(args: string[]): Promise<void> {
       console.log('\n  No session state found.\n');
       return;
     }
-    console.log('\n' + inspect.renderSession(sessions[0]) + '\n');
+    console.log(`\n${inspect.renderSession(sessions[0])}\n`);
     return;
   }
 
