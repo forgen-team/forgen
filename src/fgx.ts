@@ -15,9 +15,10 @@ const args = process.argv.slice(2);
 // 이미 포함되어 있으면 중복 추가하지 않음
 const launchContext = resolveLaunchContext(args);
 const runtime = launchContext.runtime;
+const skipFlag = getHostRuntime(runtime).dangerousSkipFlag;
 const launchArgs = [...launchContext.args];
-if (!launchArgs.includes('--dangerously-skip-permissions')) {
-  launchArgs.unshift('--dangerously-skip-permissions');
+if (!launchArgs.includes(skipFlag)) {
+  launchArgs.unshift(skipFlag);
 }
 
 async function main() {
@@ -28,8 +29,8 @@ async function main() {
   // alias `fgx` unknowingly run with zero guardrails. Users who rely on
   // the profile trust policy should NOT use `fgx`. Surface the mismatch
   // loudly (harness.ts also prints the Trust 상승 warning downstream).
-  console.warn('\n  ⚠  fgx: ALL permission checks are disabled (--dangerously-skip-permissions)');
-  console.warn('  ⚠  Claude Code will execute tools without asking for confirmation.');
+  console.warn(`\n  ⚠  fgx: ALL permission checks are disabled (${skipFlag})`);
+  console.warn(`  ⚠  ${getHostRuntime(runtime).displayName} will execute tools without asking for confirmation.`);
   console.warn('  ⚠  Use only in trusted environments. If your profile trust policy is');
   console.warn('  ⚠  "가드레일 우선" or "승인 완화", consider `forgen` (no flag) instead.\n');
 
@@ -52,7 +53,7 @@ async function main() {
   if (v1.session) {
     console.log(`[forgen] Trust: ${v1.session.effective_trust_policy}`);
   }
-  console.log('[forgen] Mode: dangerously-skip-permissions');
+  console.log(`[forgen] Mode: ${skipFlag.replace(/^--/, '')}`);
   const runtimeLabel = getHostRuntime(runtime).displayName;
   console.log(`[forgen] Starting ${runtimeLabel}...\n`);
 
