@@ -2,6 +2,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { FORGEN_HOME, LAB_DIR, ME_BEHAVIOR, ME_DIR, ME_SOLUTIONS, ME_RULES, ME_SKILLS, PACKS_DIR, SESSIONS_DIR, STATE_DIR, V1_SESSIONS_DIR } from './paths.js';
 import { getTimingStats } from '../hooks/shared/hook-timing.js';
 import { countSessionScopedFiles, pruneState } from './state-gc.js';
@@ -109,6 +110,39 @@ export interface DoctorOptions {
   /** When true, delete stale session-scoped state files instead of just
    *  reporting bloat. Triggered by `forgen doctor --prune-state`. */
   pruneState?: boolean;
+  /**
+   * When true, auto-fix recoverable failures (e.g. missing plugin cache /
+   * stale installPath) by running `npm run build` + `node scripts/postinstall.js`
+   * inside the forgen install directory. Triggered by `forgen doctor --repair`.
+   *
+   * v0.4.8 (E3) — 이전엔 안내문 ("Fix: npm run build && node scripts/postinstall.js")
+   * 만 출력했고 사용자가 직접 실행해야 했음. fail-open: repair 실패해도
+   * doctor 흐름은 정상 종료.
+   */
+  repair?: boolean;
+}
+
+/**
+ * v0.4.8 (E3): plugin cache / installPath 진단이 실패했을 때 자동 복구.
+ * forgen 패키지 디렉토리에서 `npm run build` + postinstall 을 차례로 실행.
+ * 실패해도 doctor 자체는 계속 진행 (fail-open).
+ */
+function attemptPluginRepair(): boolean {
+  try {
+    // forgen 패키지 루트 = 현재 파일에서 dist/core/doctor.js 위치 → pkgRoot.
+    // dev (src/) 와 prod (dist/) 양쪽 모두 path.resolve(...,'..','..') 로 도달.
+    const here = path.dirname(fileURLToPath(import.meta.url));
+    const pkgRoot = path.resolve(here, '..', '..');
+    console.log(`\n  [Repair] forgen 패키지 자가복구 시도 — ${pkgRoot}`);
+    execFileSync('npm', ['run', 'build'], { cwd: pkgRoot, stdio: 'inherit' });
+    execFileSync('node', ['scripts/postinstall.js'], { cwd: pkgRoot, stdio: 'inherit' });
+    console.log('  [Repair] 완료. 진단 재실행 권장: forgen doctor');
+    return true;
+  } catch (e) {
+    console.warn(`  [Repair] 실패: ${e instanceof Error ? e.message : String(e)}`);
+    console.warn('  [Repair] 수동 복구: cd <forgen pkgRoot> && npm run build && node scripts/postinstall.js');
+    return false;
+  }
 }
 
 export async function runDoctor(opts: DoctorOptions = {}): Promise<void> {
@@ -142,7 +176,9 @@ export async function runDoctor(opts: DoctorOptions = {}): Promise<void> {
     forgenPluginCacheOk = versions.length > 0;
   }
   check('forgen plugin cache', forgenPluginCacheOk,
-    'Hook execution requires plugin cache. Fix: npm run build && node scripts/postinstall.js');
+    opts.repair
+      ? 'Hook execution requires plugin cache. Attempting auto-repair (--repair)…'
+      : 'Hook execution requires plugin cache. Fix: npm run build && node scripts/postinstall.js (or rerun with --repair)');
 
   // installed_plugins.json 정합성 확인
   const installedPluginsPath = path.join(os.homedir(), '.claude', 'plugins', 'installed_plugins.json');
@@ -158,7 +194,16 @@ export async function runDoctor(opts: DoctorOptions = {}): Promise<void> {
     } catch { /* ignore */ }
   }
   check('forgen plugin registered & installPath exists', pluginRegistered,
-    'Plugin registered but installPath missing on disk. Fix: npm run build && node scripts/postinstall.js');
+    opts.repair
+      ? 'Plugin registered but installPath missing on disk. Attempting auto-repair (--repair)…'
+      : 'Plugin registered but installPath missing on disk. Fix: npm run build && node scripts/postinstall.js (or rerun with --repair)');
+
+  // v0.4.8 (E3): plugin cache 또는 installPath 가 깨졌고 --repair 가 켜져
+  // 있으면 build + postinstall 자동 실행. doctor 진단 자체는 계속 진행하여
+  // 사용자가 다른 health 항목도 한 번에 확인 가능.
+  if (opts.repair && (!forgenPluginCacheOk || !pluginRegistered)) {
+    attemptPluginRepair();
+  }
   console.log();
 
   section('Directories');
