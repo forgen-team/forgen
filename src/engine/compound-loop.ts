@@ -382,6 +382,13 @@ export async function handleCompound(args: string[]): Promise<void> {
     return;
   }
 
+  // --- retire command (P3: dead 솔루션 archive) ---
+  if (args.includes('retire') || args.includes('--retire')) {
+    const { handleCompoundRetire } = await import('./compound-retire.js');
+    await handleCompoundRetire(args);
+    return;
+  }
+
   // --- explicit interactive command ---
   if (args.includes('interactive') || args.includes('--interactive')) {
     await interactiveCompound(cwd, scope);

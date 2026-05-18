@@ -18,6 +18,7 @@ import { execSync } from 'node:child_process';
 import { loadActiveRules } from '../store/rule-store.js';
 import { getUsageStats } from './usage-telemetry.js';
 import { STATE_DIR } from './paths.js';
+import { classifySolutions } from './lifecycle-classifier.js';
 
 // 0.4.6 perf #13 — statusline 출력을 5초 캐싱.
 // claude statusLine 은 짧은 간격으로 재호출되는데 매번 git/find/rule-store 를
@@ -127,6 +128,27 @@ function buildLine1(payload: StdinPayload, cwd: string): string {
   return parts.join(`  ${DIM}|${RESET}  `);
 }
 
+/** Build lifecycle line: "🔥X 🟡X 🥶X 💀X 🌱X" — P3 신설. 0건이면 null */
+function buildLifecycleLine(): string | null {
+  try {
+    const classified = classifySolutions();
+    if (classified.length === 0) return null;
+    const counts = { hot: 0, warm: 0, cold: 0, dead: 0, new: 0 };
+    for (const c of classified) counts[c.lifecycle]++;
+    const total = counts.hot + counts.warm + counts.cold + counts.dead + counts.new;
+    if (total === 0) return null;
+    return [
+      `${YELLOW}🔥${counts.hot}${RESET}`,
+      `${YELLOW}🟡${counts.warm}${RESET}`,
+      `${DIM}🥶${counts.cold}${RESET}`,
+      `${DIM}💀${counts.dead}${RESET}`,
+      `${DIM}🌱${counts.new}${RESET}`,
+    ].join(`  `);
+  } catch {
+    return null;
+  }
+}
+
 /** Build usage line: "📊 87/5h · 412/wk (claude)" — 0.4.6 신설 */
 function buildUsageLine(): string | null {
   try {
@@ -198,6 +220,7 @@ export async function handleStatusline(): Promise<void> {
   const line1 = buildLine1(payload, cwd);
   const line3 = buildLine3(claudeDir, cwd);
   const usageLine = buildUsageLine();
+  const lifecycleLine = buildLifecycleLine();
 
   // Line 2 (context/usage): stdin JSON spec 미확인으로 생략 — TODO
   // Line 4 (tool counts): 추적 인프라 없음 — TODO
@@ -206,7 +229,11 @@ export async function handleStatusline(): Promise<void> {
   console.log(line1);
   console.log(line3);
   if (usageLine) console.log(usageLine);
+  if (lifecycleLine) console.log(lifecycleLine);
 
-  const cacheBody = usageLine ? `${line1}\n${line3}\n${usageLine}\n` : `${line1}\n${line3}\n`;
+  const cacheLines = [line1, line3];
+  if (usageLine) cacheLines.push(usageLine);
+  if (lifecycleLine) cacheLines.push(lifecycleLine);
+  const cacheBody = cacheLines.join('\n') + '\n';
   writeCache(cacheBody);
 }

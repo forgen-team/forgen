@@ -2,15 +2,18 @@ import { spawn, execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
+import * as crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { buildEnv } from './config-injector.js';
 import type { V1HarnessContext } from './harness.js';
 import { loadGlobalConfig } from './global-config.js';
 import { createLogger } from './logger.js';
-import { STATE_DIR } from './paths.js';
+import { STATE_DIR, ME_SOLUTIONS } from './paths.js';
 import type { RuntimeHost } from './types.js';
 import { getHostRuntime } from '../host/host-runtime.js';
 import { sendNotification } from './notify.js';
+import { querySurfacedWithin, emitSolutionEvent } from './observability-store.js';
+import { parseSolutionV3 } from '../engine/solution-format.js';
 
 const log = createLogger('spawn');
 
@@ -144,6 +147,72 @@ async function countUserMessages(transcriptPath: string): Promise<number> {
   return count;
 }
 
+
+/**
+ * Observability P2: commit-diff acted_on signal.
+ * 세션 시작 이후 생성된 commit 들의 diff 를 scan 하여 surfaced 솔루션과 키워드 매칭.
+ * 프라이버시: commit sha 는 SHA1 해시 12char prefix 만 저장, diff/path 내용 미저장.
+ */
+async function scanCommitDiffForActedOn(sessionId: string, cwd: string, sessionStartTime: number): Promise<void> {
+  try {
+    const surfaces = querySurfacedWithin(sessionId, 30); // 30분 window
+    if (surfaces.length === 0) return;
+
+    const since = new Date(sessionStartTime).toISOString();
+    let logOutput: string;
+    try {
+      logOutput = execFileSync('git', ['log', '--since', since, '--pretty=format:%H'], {
+        cwd, encoding: 'utf-8', timeout: 5000, stdio: ['pipe', 'pipe', 'pipe'],
+      });
+    } catch {
+      return; // git not available or not a repo
+    }
+    const shas = logOutput.trim().split('\n').filter(Boolean);
+    if (shas.length === 0) return;
+
+    const seen = new Set<string>(); // (sha12+solutionId) dedup
+    for (const sha of shas) {
+      let diff: string;
+      try {
+        diff = execFileSync('git', ['show', '--unified=0', sha], {
+          cwd, encoding: 'utf-8', timeout: 5000, stdio: ['pipe', 'pipe', 'pipe'],
+        });
+      } catch { continue; }
+      const diffLower = diff.toLowerCase();
+      const shaHash = crypto.createHash('sha1').update(sha).digest('hex').slice(0, 12);
+
+      for (const surf of surfaces) {
+        const dedupKey = `${shaHash}:${surf.solutionId}`;
+        if (seen.has(dedupKey)) continue;
+
+        const filePath = path.join(ME_SOLUTIONS, `${surf.solutionId}.md`);
+        if (!fs.existsSync(filePath)) continue;
+        let raw: string;
+        try { raw = fs.readFileSync(filePath, 'utf-8'); } catch { continue; }
+        const sol = parseSolutionV3(raw);
+        if (!sol) continue;
+        const tags = sol.frontmatter.tags ?? [];
+        const identifiers = sol.frontmatter.identifiers ?? [];
+        if (tags.length === 0 && identifiers.length === 0) continue;
+        const hit = tags.some(t => diffLower.includes(t.toLowerCase()))
+                 || identifiers.some(id => diffLower.includes(id.toLowerCase()));
+        if (!hit) continue;
+
+        seen.add(dedupKey);
+        emitSolutionEvent({
+          sessionId,
+          solutionId: surf.solutionId,
+          eventType: 'acted_on',
+          signalSource: 'commit-diff',
+          signalScore: 0.30,
+          meta: { commit_sha_hash: shaHash, surface_ts: surf.ts },
+        });
+      }
+    }
+  } catch (e) {
+    log.debug('scanCommitDiffForActedOn 실패', e);
+  }
+}
 
 /**
  * 세션 종료 후 자동 compound 추출 + USER.md 업데이트.
@@ -348,7 +417,10 @@ export async function spawnClaude(
             }
           }
 
-          // 3. 자동 compound (10+ user 메시지인 경우만) — 양 runtime 호환
+          // 3. Observability P2: commit-diff acted_on scan
+          await scanCommitDiffForActedOn(sessionId, context.cwd, sessionStartTime);
+
+          // 4. 자동 compound (10+ user 메시지인 경우만) — 양 runtime 호환
           const userMsgCount = await countUserMessages(transcript);
           if (userMsgCount >= 10) {
             await runAutoCompound(context.cwd, transcript, sessionId);
