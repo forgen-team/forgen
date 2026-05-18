@@ -1,14 +1,15 @@
 /**
  * Claude InstallPlan — feat/codex-support Phase 1 (P1-2)
  *
- * `npm install` postinstall.js 의 *Claude 측* 4 작업을 module 로 분리.
+ * `npm install` postinstall.js 의 *Claude 측* 5 작업을 module 로 분리.
  * `forgen install claude` CLI 가 호출 + (P1-6 에서) postinstall.js 도 위임.
  *
- * 4 작업:
+ * 5 작업:
  *   1. Plugin cache: ~/.claude/plugins/cache/forgen-local/forgen/<ver>/ 작성 + installed_plugins.json 등록
  *   2. Slash commands: ~/.claude/commands/forgen/*.md 생성 (forgen-managed marker)
  *   3. Settings hooks injection: ~/.claude/settings.json 의 hooks 머지 (forgen entry idempotent)
  *   4. MCP register: ~/.claude.json 에 mcpServers.forgen-compound 추가
+ *   5. Dev-guide skills: ~/.claude/skills/forgen-<stack>-<skill>/ 설치 (forgen-managed only)
  *
  * 사용자 비-forgen 자산 보존 + 재실행 idempotent.
  */
@@ -38,6 +39,9 @@ export interface ClaudeInstallResult {
   hooksInjected: number;
   mcpRegistered: boolean;
   mcpAlreadyPresent: boolean;
+  skillsPath: string;
+  skillsInstalled: number;
+  skillsRemoved: number;
 }
 
 const PLUGIN_KEY = 'forgen@forgen-local';
@@ -266,6 +270,86 @@ function registerMcpInClaudeJson(opts: { pkgRoot: string; claudeJsonPath: string
   return { registered: !alreadyPresent, alreadyPresent };
 }
 
+// ── 5. Dev-guide skills ────────────────────────────────────────────────
+
+const FORGEN_SKILL_PREFIX = 'forgen-';
+
+interface SkillsInstallOutcome {
+  skillsPath: string;
+  skillsInstalled: number;
+  skillsRemoved: number;
+}
+
+function installDevGuideSkills(opts: { pkgRoot: string; skillsDir: string; dryRun: boolean }): SkillsInstallOutcome {
+  const { pkgRoot, skillsDir, dryRun } = opts;
+  const devGuideRoot = path.join(pkgRoot, 'assets', 'dev-guide');
+
+  // Collect all SKILL.md entries: assets/dev-guide/{tier}/skills/{stack}/{skill}/SKILL.md
+  const entries: Array<{ name: string; src: string }> = [];
+  if (fs.existsSync(devGuideRoot)) {
+    for (const tier of fs.readdirSync(devGuideRoot)) {
+      const skillsBase = path.join(devGuideRoot, tier, 'skills');
+      if (!fs.existsSync(skillsBase)) continue;
+      for (const stack of fs.readdirSync(skillsBase)) {
+        const stackDir = path.join(skillsBase, stack);
+        if (!fs.statSync(stackDir).isDirectory()) continue;
+        for (const skill of fs.readdirSync(stackDir)) {
+          const skillMd = path.join(stackDir, skill, 'SKILL.md');
+          if (fs.existsSync(skillMd)) {
+            entries.push({ name: `${FORGEN_SKILL_PREFIX}${stack}-${skill}`, src: skillMd });
+          }
+        }
+      }
+    }
+  }
+
+  if (dryRun) {
+    return { skillsPath: skillsDir, skillsInstalled: entries.length, skillsRemoved: 0 };
+  }
+
+  fs.mkdirSync(skillsDir, { recursive: true });
+
+  // Remove stale forgen-* skill dirs (idempotent re-install, do not touch user's own skills)
+  let removed = 0;
+  for (const entry of fs.readdirSync(skillsDir)) {
+    if (!entry.startsWith(FORGEN_SKILL_PREFIX)) continue;
+    const fullPath = path.join(skillsDir, entry);
+    if (fs.statSync(fullPath).isDirectory()) {
+      fs.rmSync(fullPath, { recursive: true, force: true });
+      removed += 1;
+    }
+  }
+
+  // Install each skill via symlink → cpSync fallback (mirrors plugin cache pattern)
+  let installed = 0;
+  for (const { name, src } of entries) {
+    const targetDir = path.join(skillsDir, name);
+    fs.mkdirSync(targetDir, { recursive: true });
+    const targetFile = path.join(targetDir, 'SKILL.md');
+
+    let linked = false;
+    let symlinkErr: unknown = null;
+    try {
+      fs.symlinkSync(src, targetFile, 'file');
+      linked = true;
+    } catch (e) {
+      symlinkErr = e;
+    }
+    if (!linked && symlinkErr) {
+      const code = (symlinkErr as NodeJS.ErrnoException).code ?? 'UNKNOWN';
+      process.stderr.write(
+        `[forgen] symlink ${src} → ${targetFile} failed (${code}); falling back to copyFile.\n`,
+      );
+    }
+    if (!linked) {
+      fs.copyFileSync(src, targetFile);
+    }
+    installed += 1;
+  }
+
+  return { skillsPath: skillsDir, skillsInstalled: installed, skillsRemoved: removed };
+}
+
 // ── public ─────────────────────────────────────────────────────────────
 
 export function planClaudeInstall(opts: ClaudeInstallOptions): ClaudeInstallResult {
@@ -283,6 +367,7 @@ export function planClaudeInstall(opts: ClaudeInstallOptions): ClaudeInstallResu
   const slashCommandsDir = path.join(claudeDir, 'commands', 'forgen');
   const settingsPath = path.join(claudeDir, 'settings.json');
   const claudeJsonPath = path.join(homeDir, '.claude.json');
+  const skillsDir = path.join(claudeDir, 'skills');
 
   const pluginCacheWritten = writePluginCache({ pkgRoot: opts.pkgRoot, cacheDir, pluginsDir, version, dryRun });
   const slashCommandsCount = writeSlashCommands({ pkgRoot: opts.pkgRoot, targetDir: slashCommandsDir, dryRun });
@@ -290,6 +375,7 @@ export function planClaudeInstall(opts: ClaudeInstallOptions): ClaudeInstallResu
   const mcp = registerMcp
     ? registerMcpInClaudeJson({ pkgRoot: opts.pkgRoot, claudeJsonPath, dryRun })
     : { registered: false, alreadyPresent: false };
+  const skills = installDevGuideSkills({ pkgRoot: opts.pkgRoot, skillsDir, dryRun });
 
   return {
     homeDir,
@@ -301,5 +387,8 @@ export function planClaudeInstall(opts: ClaudeInstallOptions): ClaudeInstallResu
     hooksInjected,
     mcpRegistered: mcp.registered,
     mcpAlreadyPresent: mcp.alreadyPresent,
+    skillsPath: skills.skillsPath,
+    skillsInstalled: skills.skillsInstalled,
+    skillsRemoved: skills.skillsRemoved,
   };
 }

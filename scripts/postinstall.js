@@ -746,6 +746,67 @@ function cleanLegacyMcpFromSettings(settings) {
   }
 }
 
+/**
+ * dev-guide 스킬 14개 자동 설치 — assets/dev-guide/{fe,be}/skills/{stack}/{skill}/SKILL.md
+ *   → ~/.claude/skills/forgen-<stack>-<skill>/SKILL.md
+ *
+ * forgen- prefix 로 사용자 own skills 와 격리. idempotent 재실행 시 forgen-* 만 정리 후 재설치.
+ */
+function installDevGuideSkills(home) {
+  const devGuideRoot = join(PKG_ROOT, 'assets', 'dev-guide');
+  if (!existsSync(devGuideRoot)) {
+    console.log('[forgen] dev-guide assets not found — skipping skill install');
+    return 0;
+  }
+
+  const userSkillsDir = join(home, '.claude', 'skills');
+  mkdirSync(userSkillsDir, { recursive: true });
+
+  // 1. 기존 forgen-* 디렉토리 정리 (사용자 own 보존)
+  let removed = 0;
+  for (const entry of readdirSync(userSkillsDir)) {
+    if (entry.startsWith('forgen-')) {
+      try { rmSync(join(userSkillsDir, entry), { recursive: true, force: true }); removed++; } catch { /* best-effort */ }
+    }
+  }
+
+  // 2. assets/dev-guide/{side}/skills/{stack}/{skill}/SKILL.md 수집
+  let installed = 0;
+  for (const side of ['fe', 'be']) {
+    const sideSkillsDir = join(devGuideRoot, side, 'skills');
+    if (!existsSync(sideSkillsDir)) continue;
+    for (const stack of readdirSync(sideSkillsDir)) {
+      const stackDir = join(sideSkillsDir, stack);
+      if (!statSync(stackDir).isDirectory()) continue;
+      for (const skill of readdirSync(stackDir)) {
+        const skillSrc = join(stackDir, skill);
+        const skillFile = join(skillSrc, 'SKILL.md');
+        if (!existsSync(skillFile)) continue;
+
+        // 대상: ~/.claude/skills/forgen-<stack>-<skill>/SKILL.md
+        const dstDir = join(userSkillsDir, `forgen-${stack}-${skill}`);
+        mkdirSync(dstDir, { recursive: true });
+        const dst = join(dstDir, 'SKILL.md');
+
+        // symlink → fallback cpSync
+        try {
+          if (existsSync(dst)) rmSync(dst);
+          symlinkSync(skillFile, dst, 'file');
+        } catch {
+          cpSync(skillFile, dst);
+        }
+        installed++;
+      }
+    }
+  }
+
+  // 3. sudo 케이스 ownership 회복
+  fixOwnership(userSkillsDir);
+
+  console.log(`[forgen] dev-guide skills: ${installed} installed${removed > 0 ? ` (${removed} stale removed)` : ''}`);
+  return installed;
+}
+
 // ── Main ──
 
 /**
@@ -925,6 +986,14 @@ async function main() {
     starterInstalled = installStarterPack();
   } catch (err) {
     console.error(`[forgen] starter pack failed: ${err?.message ?? err}`);
+  }
+
+  // ── 8b. dev-guide 스킬 자동 설치 ──
+  try {
+    installDevGuideSkills(HOME);
+  } catch (e) {
+    // postinstall 의 "fail-open" 원칙 — npm install 깨뜨리지 않음
+    console.log(`[forgen] dev-guide skills 설치 스킵 (${e?.message ?? e})`);
   }
 
   // sudo 실행 시 파일 소유권을 실제 유저로 변경

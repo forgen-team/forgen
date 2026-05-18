@@ -129,6 +129,7 @@ export function renderResult(result: OrchestratorResult, dryRun: boolean): strin
     lines.push(`    slash commands: ${result.claude.slashCommandsCount} → ${result.claude.slashCommandsPath}`);
     lines.push(`    settings.json hooks: ${result.claude.hooksInjected}`);
     lines.push(`    MCP: ${result.claude.mcpAlreadyPresent ? 'already present' : (result.claude.mcpRegistered ? 'registered' : 'skipped')}`);
+    lines.push(`    skills: ${result.claude.skillsInstalled ?? 0} installed → ${result.claude.skillsPath ?? ''}`);
   }
   if (result.codex) {
     lines.push('');
