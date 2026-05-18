@@ -184,6 +184,79 @@ async function indexTranscriptToFTS(cwd: string, transcriptPath: string, session
   }
 }
 
+/**
+ * Plan B-1: 세션 transcript 사후 스캔으로 rate-limit 감지.
+ *
+ * stdio='inherit' 라 Claude 출력을 직접 캡처할 수 없으므로,
+ * 세션 종료 후 transcript JSONL 의 마지막 N 라인을 읽어
+ * RATE_LIMIT_REGEX 매칭 여부를 확인한다.
+ *
+ * - transcript 없음 / 빈 파일 / parse 실패 → matched: false (fail-open)
+ * - 이미 pending-resume.json 존재 시 hook 이 먼저 잡은 것이므로 덮어쓰지 않음
+ *
+ * @param transcriptPath JSONL 파일 경로
+ * @param tailLines 검사할 마지막 라인 수 (기본 5)
+ */
+export async function scanTranscriptForRateLimit(
+  transcriptPath: string,
+  tailLines = 5,
+): Promise<{ matched: boolean; resetAt: string | null }> {
+  const notFound = { matched: false, resetAt: null };
+  if (!transcriptPath) return notFound;
+  try {
+    if (!fs.existsSync(transcriptPath)) return notFound;
+    const { RATE_LIMIT_REGEX, parseRateLimitResetAt } = await import('../hooks/context-guard.js');
+
+    // tail: 파일 끝에서 tailLines 개 라인만 읽음 (대용량 transcript 효율)
+    const { createInterface } = await import('node:readline');
+    const stream = fs.createReadStream(transcriptPath, { encoding: 'utf-8' });
+    const rl = createInterface({ input: stream, crlfDelay: Infinity });
+    const lines: string[] = [];
+    for await (const line of rl) {
+      if (line) lines.push(line);
+      if (lines.length > tailLines) lines.shift();
+    }
+    rl.close();
+    stream.close();
+
+    if (lines.length === 0) return notFound;
+
+    // 각 라인의 content/text/message 필드를 합쳐 regex 적용
+    const combined = lines
+      .map((line) => {
+        try {
+          const obj = JSON.parse(line) as {
+            content?: unknown;
+            text?: unknown;
+            message?: unknown;
+          };
+          const parts: string[] = [];
+          if (typeof obj.content === 'string') parts.push(obj.content);
+          if (typeof obj.text === 'string') parts.push(obj.text);
+          if (typeof obj.message === 'string') parts.push(obj.message);
+          // content 가 배열인 경우 (Claude JSONL block format)
+          if (Array.isArray(obj.content)) {
+            for (const block of obj.content) {
+              if (block && typeof (block as { text?: unknown }).text === 'string') {
+                parts.push((block as { text: string }).text);
+              }
+            }
+          }
+          return parts.join(' ');
+        } catch {
+          return '';
+        }
+      })
+      .join(' ');
+
+    if (!RATE_LIMIT_REGEX.test(combined)) return notFound;
+    const resetAt = parseRateLimitResetAt(combined);
+    return { matched: true, resetAt };
+  } catch {
+    return notFound;
+  }
+}
+
 /** Claude Code를 하네스 환경으로 실행. exit code를 반환. */
 export async function spawnClaude(
   args: string[],
@@ -252,7 +325,30 @@ export async function spawnClaude(
           // 1. FTS5 인덱싱 — v0.4.8 (A1) 부터 Claude/Codex 모두 지원.
           await indexTranscriptToFTS(context.cwd, transcript, sessionId, runtime);
 
-          // 2. 자동 compound (10+ user 메시지인 경우만) — 양 runtime 호환
+          // 2. Plan B-1: transcript 사후 스캔으로 rate-limit 감지 (hook 미감지 보완)
+          const resumePath = path.join(STATE_DIR, 'pending-resume.json');
+          if (!fs.existsSync(resumePath)) {
+            try {
+              const scanResult = await scanTranscriptForRateLimit(transcript);
+              if (scanResult.matched) {
+                const marker = {
+                  reason: 'rate-limit',
+                  sessionId,
+                  runtime,
+                  resetAt: scanResult.resetAt,
+                  savedAt: new Date().toISOString(),
+                  cwd: context.cwd,
+                  source: 'spawn-transcript-scan',
+                };
+                fs.writeFileSync(resumePath, JSON.stringify(marker, null, 2));
+                log.debug(`transcript scan: rate-limit 감지 → pending-resume.json 작성`);
+              }
+            } catch (e) {
+              log.debug('transcript rate-limit scan 실패 (fail-open)', e);
+            }
+          }
+
+          // 3. 자동 compound (10+ user 메시지인 경우만) — 양 runtime 호환
           const userMsgCount = await countUserMessages(transcript);
           if (userMsgCount >= 10) {
             await runAutoCompound(context.cwd, transcript, sessionId);

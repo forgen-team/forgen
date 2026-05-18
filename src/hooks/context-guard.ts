@@ -32,7 +32,7 @@ const RATE_LIMIT_MISSES_PATH = path.join(STATE_DIR, 'rate-limit-misses.jsonl');
 
 // ADR-008: detection regex 분리. token-limit 은 context window, rate-limit 은 API quota.
 export const TOKEN_LIMIT_REGEX = /context.*limit|token.*limit|conversation.*too.*long/i;
-export const RATE_LIMIT_REGEX = /rate.?limit|5.?hour.*limit|weekly.*limit|usage.*limit|quota.*exceeded/i;
+export const RATE_LIMIT_REGEX = /rate.?limit|5.?hour.*limit|weekly.*limit|usage.*limit|quota.*exceeded|out of (?:extra |free )?usage|usage cap|monthly limit reached?/i;
 
 /**
  * Best-effort reset 시각 파서 (ADR-008 §2).
@@ -66,6 +66,29 @@ export function parseRateLimitResetAt(msg: string, now: number = Date.now()): st
   if (secMatch) {
     const sec = parseInt(secMatch[1], 10);
     if (sec > 0) return new Date(now + sec * 1000).toISOString();
+  }
+
+  // Pattern 5: "resets <H>:<MM><am|pm>" (12h, optional "at", optional TZ label in parens)
+  // Pattern 1보다 앞에 위치: "resets at 4:20 pm" 에서 Pattern 1이 am/pm 없이 잡으면
+  // 24h 로 오변환되므로 am/pm 있는 경우를 먼저 처리.
+  // 예: "resets 4:20pm", "resets 4:20pm (Asia/Seoul)", "resets at 4:20 pm"
+  const ampm = msg.match(/resets?\s+(?:at\s+)?(\d{1,2}):(\d{2})\s*(am|pm)/i);
+  if (ampm) {
+    let h = parseInt(ampm[1], 10);
+    const m = parseInt(ampm[2], 10);
+    const meridiem = ampm[3].toLowerCase();
+    if (h >= 1 && h <= 12 && m >= 0 && m <= 59) {
+      // 12h → 24h 변환: 12am=0, 12pm=12, 1-11am=1-11, 1-11pm=13-23
+      if (meridiem === 'am') {
+        h = h === 12 ? 0 : h;
+      } else {
+        h = h === 12 ? 12 : h + 12;
+      }
+      const d = new Date(now);
+      d.setUTCHours(h, m, 0, 0);
+      if (d.getTime() <= now) d.setUTCDate(d.getUTCDate() + 1);
+      return d.toISOString();
+    }
   }
 
   // Pattern 1: "Resets at HH:MM(:SS)? TZ" — TZ 미지원 (UTC 가정)
