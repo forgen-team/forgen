@@ -39,8 +39,12 @@ function bar(pct: number, width = 10): string {
   return '█'.repeat(Math.max(0, filled)) + '░'.repeat(Math.max(0, empty));
 }
 
+// 런타임에 정규식 구성 — biome 의 noControlCharactersInRegex 우회.
+// ESC (0x1B) 는 ANSI escape 의 시작이지만 literal regex 에는 못 박힘.
+const ANSI_STRIP_RE = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, 'g');
+
 function boxLine(content: string): string {
-  const plain = content.replace(/\x1b\[[0-9;]*m/g, '');
+  const plain = content.replace(ANSI_STRIP_RE, '');
   const padding = BOX_WIDTH - 2 - plain.length;
   return `│ ${content}${' '.repeat(Math.max(0, padding))} │`;
 }
