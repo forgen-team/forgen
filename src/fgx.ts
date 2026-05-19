@@ -2,7 +2,10 @@
 
 /**
  * fgx — forgen --dangerously-skip-permissions 의 단축 명령
- * 모든 인자를 그대로 전달하되, --dangerously-skip-permissions 를 자동 주입
+ *
+ * 기본 동작: 모든 인자를 Claude(또는 Codex) 로 그대로 전달 + 권한 우회 플래그 자동 주입.
+ * v0.4.10: forgen 서브커맨드(status/init/install/maintenance/compound 등)는
+ *          Claude 로 안 넘기고 cli.js 로 라우팅 (사용자 혼동 갭 해소).
  */
 
 import { resolveLaunchContext } from './services/session.js';
@@ -12,16 +15,42 @@ import { getHostRuntime } from './host/host-runtime.js';
 
 const args = process.argv.slice(2);
 
-// 이미 포함되어 있으면 중복 추가하지 않음
-const launchContext = resolveLaunchContext(args);
-const runtime = launchContext.runtime;
-const skipFlag = getHostRuntime(runtime).dangerousSkipFlag;
-const launchArgs = [...launchContext.args];
-if (!launchArgs.includes(skipFlag)) {
-  launchArgs.unshift(skipFlag);
+// v0.4.10: forgen 서브커맨드 인벤토리. src/cli.ts 의 commands[] 와 sync 유지.
+// 첫 비-플래그 인자가 이 집합에 들어가면 forgen cli 로 라우팅.
+const FORGEN_SUBCOMMANDS = new Set([
+  'forge', 'compound', 'skill', 'dashboard', 'learn', 'me', 'statusline',
+  'config', 'mcp', 'init', 'install', 'status', 'maintenance', 'parity',
+  'notepad', 'inspect', 'onboarding', 'doctor', 'uninstall', 'rule',
+  'classify-enforce', 'rule-meta-scan', 'lifecycle-scan',
+  'stats', 'last-block', 'recall', 'migrate', 'suppress-rule', 'activate-rule',
+  // 메타 명령도 cli.ts 가 처리 (fgx claude spawn 으로는 의미 없음)
+  'help', '--help', '-h', '--version', '-V',
+]);
+
+function findFirstSubcommand(rawArgs: string[]): string | null {
+  for (const a of rawArgs) {
+    if (FORGEN_SUBCOMMANDS.has(a)) return a;
+    // 첫 비-플래그 인자를 보면 더 이상 후보 X (e.g. ['my-prompt', 'status'] → null)
+    if (!a.startsWith('-')) return null;
+  }
+  return null;
 }
 
-async function main() {
+async function routeToCli(): Promise<void> {
+  // cli.js 가 process.argv.slice(2) 를 직접 사용. fgx 가 받은 args 그대로 전달됨.
+  // top-level main() 이 모듈 로드 시 실행 + process.exit 처리.
+  await import('./cli.js');
+}
+
+async function runClaudeLauncher(): Promise<void> {
+  const launchContext = resolveLaunchContext(args);
+  const runtime = launchContext.runtime;
+  const skipFlag = getHostRuntime(runtime).dangerousSkipFlag;
+  const launchArgs = [...launchContext.args];
+  if (!launchArgs.includes(skipFlag)) {
+    launchArgs.unshift(skipFlag);
+  }
+
   // Security warning — fgx bypasses all Claude Code permission checks.
   //
   // Audit fix #3 (2026-04-21): The warning banner is shown regardless of
@@ -34,7 +63,6 @@ async function main() {
   console.warn('  ⚠  Use only in trusted environments. If your profile trust policy is');
   console.warn('  ⚠  "가드레일 우선" or "승인 완화", consider `forgen` (no flag) instead.\n');
 
-  // fgx는 서브커맨드 없이 바로 Claude Code 실행 전용
   const firstRun = isFirstRun();
   if (firstRun) {
     console.log('\n  Forgen — Setting up for the first time.\n');
@@ -58,6 +86,15 @@ async function main() {
   console.log(`[forgen] Starting ${runtimeLabel}...\n`);
 
   await spawnClaude(launchArgs, context, runtime);
+}
+
+async function main() {
+  const sub = findFirstSubcommand(args);
+  if (sub !== null) {
+    await routeToCli();
+    return;
+  }
+  await runClaudeLauncher();
 }
 
 main().catch((err) => {
