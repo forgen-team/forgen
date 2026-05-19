@@ -807,6 +807,64 @@ function installDevGuideSkills(home) {
   return installed;
 }
 
+/**
+ * v0.4.9: dev-guide 14 skills → ~/.codex/skills/forgen-<stack>-<skill>/SKILL.md
+ * forgen 자체 commands(forgen-compound 등) 와 prefix 겹치지 않도록
+ * DEV_GUIDE_SKILL_PATTERN(/^forgen-(react|vue|node|go)-/) 으로 stale 정리.
+ */
+const DEV_GUIDE_SKILL_PATTERN = /^forgen-(react|vue|node|go)-/;
+
+function installDevGuideSkillsToCodex(home) {
+  const devGuideRoot = join(PKG_ROOT, 'assets', 'dev-guide');
+  if (!existsSync(devGuideRoot)) {
+    console.log('[forgen] dev-guide assets not found — codex skill install skipped');
+    return 0;
+  }
+
+  const codexSkillsDir = join(home, '.codex', 'skills');
+  mkdirSync(codexSkillsDir, { recursive: true });
+
+  // 1. stale forgen-<stack>-<skill> 정리 (forgen 자체 commands 보존)
+  let removed = 0;
+  for (const entry of readdirSync(codexSkillsDir)) {
+    if (DEV_GUIDE_SKILL_PATTERN.test(entry)) {
+      try { rmSync(join(codexSkillsDir, entry), { recursive: true, force: true }); removed++; } catch { /* best-effort */ }
+    }
+  }
+
+  // 2. assets/dev-guide/{tier}/skills/{stack}/{skill}/SKILL.md 수집
+  let installed = 0;
+  for (const tier of readdirSync(devGuideRoot)) {
+    const sideSkillsDir = join(devGuideRoot, tier, 'skills');
+    if (!existsSync(sideSkillsDir)) continue;
+    for (const stack of readdirSync(sideSkillsDir)) {
+      const stackDir = join(sideSkillsDir, stack);
+      if (!statSync(stackDir).isDirectory()) continue;
+      for (const skill of readdirSync(stackDir)) {
+        const skillFile = join(stackDir, skill, 'SKILL.md');
+        if (!existsSync(skillFile)) continue;
+
+        const dstDir = join(codexSkillsDir, `forgen-${stack}-${skill}`);
+        mkdirSync(dstDir, { recursive: true });
+        const dst = join(dstDir, 'SKILL.md');
+
+        // symlink → fallback cpSync
+        try {
+          if (existsSync(dst)) rmSync(dst);
+          symlinkSync(skillFile, dst, 'file');
+        } catch {
+          cpSync(skillFile, dst);
+        }
+        installed++;
+      }
+    }
+  }
+
+  fixOwnership(codexSkillsDir);
+  console.log(`[forgen] codex dev-guide skills: ${installed} installed${removed > 0 ? ` (${removed} stale removed)` : ''}`);
+  return installed;
+}
+
 // ── Main ──
 
 /**
@@ -988,12 +1046,19 @@ async function main() {
     console.error(`[forgen] starter pack failed: ${err?.message ?? err}`);
   }
 
-  // ── 8b. dev-guide 스킬 자동 설치 ──
+  // ── 8b. dev-guide 스킬 자동 설치 (claude) ──
   try {
     installDevGuideSkills(HOME);
   } catch (e) {
     // postinstall 의 "fail-open" 원칙 — npm install 깨뜨리지 않음
     console.log(`[forgen] dev-guide skills 설치 스킵 (${e?.message ?? e})`);
+  }
+
+  // ── 8c. dev-guide 스킬 자동 설치 (codex) ──
+  try {
+    installDevGuideSkillsToCodex(HOME);
+  } catch (e) {
+    console.log(`[forgen] codex dev-guide skills 설치 스킵 (${e?.message ?? e})`);
   }
 
   // sudo 실행 시 파일 소유권을 실제 유저로 변경
