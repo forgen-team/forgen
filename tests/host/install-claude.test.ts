@@ -1,7 +1,7 @@
 /**
  * planClaudeInstall — feat/codex-support P1-2 단위 테스트
  *
- * 격리 homeDir 에 4 자산 (plugin cache, slash commands, settings hooks, MCP) 작성 검증.
+ * 격리 homeDir 에 5 자산 (plugin cache, slash commands, settings hooks, MCP, dev-guide skills) 작성 검증.
  * 사용자 비-forgen 자산 보존 + 재실행 idempotent.
  */
 
@@ -113,5 +113,64 @@ describe('planClaudeInstall', () => {
 
   it('잘못된 pkgRoot 는 명확한 에러', () => {
     expect(() => planClaudeInstall({ pkgRoot: '/no/such/dir', homeDir: tmpHome })).toThrow(/invalid pkgRoot/);
+  });
+
+  // ── 5. Dev-guide skills ──────────────────────────────────────────────
+
+  it('dev-guide skills 14개 설치 검증', () => {
+    const r = planClaudeInstall({ pkgRoot: PKG_ROOT, homeDir: tmpHome });
+    expect(r.skillsInstalled).toBe(14);
+    expect(fs.existsSync(r.skillsPath)).toBe(true);
+    // 각 forgen-* 디렉토리에 SKILL.md 존재 확인
+    const skillDirs = fs.readdirSync(r.skillsPath).filter((d) => d.startsWith('forgen-'));
+    expect(skillDirs).toHaveLength(14);
+    for (const dir of skillDirs) {
+      expect(fs.existsSync(path.join(r.skillsPath, dir, 'SKILL.md'))).toBe(true);
+    }
+  });
+
+  it('dev-guide skills — forgen- 네이밍 패턴 확인', () => {
+    const r = planClaudeInstall({ pkgRoot: PKG_ROOT, homeDir: tmpHome });
+    const skillDirs = fs.readdirSync(r.skillsPath).filter((d) => d.startsWith('forgen-'));
+    // 대표 이름 검증
+    expect(skillDirs).toContain('forgen-react-fe-build');
+    expect(skillDirs).toContain('forgen-go-be-security');
+    expect(skillDirs).toContain('forgen-vue-fe-review');
+    expect(skillDirs).toContain('forgen-node-be-perf');
+  });
+
+  it('dev-guide skills — 재실행 idempotent (중복 없음, skillsRemoved 반영)', () => {
+    const r1 = planClaudeInstall({ pkgRoot: PKG_ROOT, homeDir: tmpHome });
+    expect(r1.skillsInstalled).toBe(14);
+    expect(r1.skillsRemoved).toBe(0); // 첫 실행 시 제거 대상 없음
+
+    const r2 = planClaudeInstall({ pkgRoot: PKG_ROOT, homeDir: tmpHome });
+    expect(r2.skillsInstalled).toBe(14);
+    expect(r2.skillsRemoved).toBe(14); // 이전 14개 정리 후 재설치
+
+    // 최종 상태: 14개만 존재
+    const skillDirs = fs.readdirSync(r2.skillsPath).filter((d) => d.startsWith('forgen-'));
+    expect(skillDirs).toHaveLength(14);
+  });
+
+  it('dev-guide skills — dryRun=true: 파일 미작성, count 반환', () => {
+    const r = planClaudeInstall({ pkgRoot: PKG_ROOT, homeDir: tmpHome, dryRun: true });
+    expect(r.skillsInstalled).toBe(14);
+    expect(r.skillsRemoved).toBe(0);
+    // dryRun 시 skillsPath 디렉토리 생성 안 됨
+    expect(fs.existsSync(r.skillsPath)).toBe(false);
+  });
+
+  it('dev-guide skills — 사용자 own skill 보존', () => {
+    // 사용자가 직접 만든 스킬
+    const ownSkillDir = path.join(tmpHome, '.claude', 'skills', 'my-own');
+    fs.mkdirSync(ownSkillDir, { recursive: true });
+    fs.writeFileSync(path.join(ownSkillDir, 'SKILL.md'), '# My Own Skill\n');
+
+    planClaudeInstall({ pkgRoot: PKG_ROOT, homeDir: tmpHome });
+
+    // 사용자 스킬은 건드리지 않음
+    expect(fs.existsSync(path.join(ownSkillDir, 'SKILL.md'))).toBe(true);
+    expect(fs.readFileSync(path.join(ownSkillDir, 'SKILL.md'), 'utf-8')).toBe('# My Own Skill\n');
   });
 });

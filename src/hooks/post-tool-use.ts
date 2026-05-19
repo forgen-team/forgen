@@ -24,6 +24,9 @@ import { recordHookTiming } from './shared/hook-timing.js';
 import { type DriftState, createDriftState, evaluateDrift } from '../core/drift-score.js';
 import { appendImplicitFeedback } from '../store/implicit-feedback-store.js';
 import { recordToolCall } from '../core/usage-telemetry.js';
+import { emitSolutionEvent, querySurfacedWithin } from '../core/observability-store.js';
+import { parseSolutionV3 } from '../engine/solution-format.js';
+import { ME_SOLUTIONS } from '../core/paths.js';
 
 // ── Types ──
 
@@ -391,6 +394,39 @@ async function main(): Promise<void> {
     const successHint = getCompoundSuccessHint(toolName, toolResponse, sessionId);
     if (successHint) messages.push(successHint);
   } catch (e) { log.debug('success hint generation 실패', e); }
+
+  // 8. Observability P2: tool-pattern acted_on signal
+  try {
+    const recentSurfaces = querySurfacedWithin(sessionId, 5);
+    if (recentSurfaces.length > 0 && toolName) {
+      const toolNameLower = toolName.toLowerCase();
+      const seen = new Set<string>();
+      for (const surf of recentSurfaces) {
+        if (seen.has(surf.solutionId)) continue;
+        seen.add(surf.solutionId);
+        const filePath = path.join(ME_SOLUTIONS, `${surf.solutionId}.md`);
+        if (!fs.existsSync(filePath)) continue;
+        let raw: string;
+        try { raw = fs.readFileSync(filePath, 'utf-8'); } catch { continue; }
+        const sol = parseSolutionV3(raw);
+        if (!sol) continue;
+        const tags = sol.frontmatter.tags ?? [];
+        const identifiers = sol.frontmatter.identifiers ?? [];
+        if (tags.length === 0 && identifiers.length === 0) continue;
+        const hit = tags.some(t => toolNameLower.includes(t.toLowerCase()))
+                 || identifiers.some(id => toolNameLower.includes(id.toLowerCase()));
+        if (!hit) continue;
+        emitSolutionEvent({
+          sessionId,
+          solutionId: surf.solutionId,
+          eventType: 'acted_on',
+          signalSource: 'tool-pattern',
+          signalScore: 0.30,
+          meta: { tool: toolName, surface_ts: surf.ts },
+        });
+      }
+    }
+  } catch (e) { log.debug('tool-pattern acted_on emit 실패', e); }
 
   saveModifiedFiles(modState);
 

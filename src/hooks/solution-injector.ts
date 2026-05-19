@@ -32,6 +32,9 @@ import { STATE_DIR } from '../core/paths.js';
 import { recordHookTiming } from './shared/hook-timing.js';
 import { appendPending, flushAccept } from '../engine/solution-outcomes.js';
 import { appendImplicitFeedback } from '../store/implicit-feedback-store.js';
+import { emitSolutionEvent, querySurfacedWithin } from '../core/observability-store.js';
+import { parseSolutionV3 } from '../engine/solution-format.js';
+import { ME_SOLUTIONS } from '../core/paths.js';
 
 interface HookInput {
   prompt: string;
@@ -284,6 +287,45 @@ function backfillCacheTagsOnDisk(
   }
 }
 
+/**
+ * 직전 5분 내 surfaced 된 솔루션이 현재 프롬프트와 키워드 매칭 시 acted_on emit.
+ * tags/identifiers 가 없는 솔루션은 skip. fail-open.
+ */
+async function detectActOnFromPriorSurface(sessionId: string, promptLower: string): Promise<void> {
+  try {
+    const recentSurfaces = querySurfacedWithin(sessionId, 5);
+    if (recentSurfaces.length === 0) return;
+    const seen = new Set<string>();
+    for (const surf of recentSurfaces) {
+      if (seen.has(surf.solutionId)) continue;
+      seen.add(surf.solutionId);
+      // 솔루션 파일 로드 (ME_SOLUTIONS 기준)
+      const filePath = path.join(ME_SOLUTIONS, `${surf.solutionId}.md`);
+      if (!fs.existsSync(filePath)) continue;
+      let raw: string;
+      try { raw = fs.readFileSync(filePath, 'utf-8'); } catch { continue; }
+      const sol = parseSolutionV3(raw);
+      if (!sol) continue;
+      const tags = sol.frontmatter.tags ?? [];
+      const identifiers = sol.frontmatter.identifiers ?? [];
+      if (tags.length === 0 && identifiers.length === 0) continue;
+      const hit = tags.some(t => promptLower.includes(t.toLowerCase()))
+               || identifiers.some(id => promptLower.includes(id.toLowerCase()));
+      if (!hit) continue;
+      emitSolutionEvent({
+        sessionId,
+        solutionId: surf.solutionId,
+        eventType: 'acted_on',
+        signalSource: 'prompt-keyword',
+        signalScore: 0.20,
+        meta: { surface_ts: surf.ts },
+      });
+    }
+  } catch (e) {
+    log.debug('detectActOnFromPriorSurface 실패', e);
+  }
+}
+
 async function main(): Promise<void> {
   const _hookStart = Date.now();
   try {
@@ -298,6 +340,9 @@ async function main(): Promise<void> {
   }
 
   const sessionId = input.session_id ?? 'default';
+
+  // Observability P2: 직전 surfaced 솔루션과 현재 프롬프트 키워드 매칭 → acted_on emit
+  await detectActOnFromPriorSurface(sessionId, input.prompt.toLowerCase());
 
   // v1: 교정 감지 → correction-record 호출 유도 hint
   const correctionPatterns = /하지\s*마|그렇게\s*말고|앞으로는|이렇게\s*해|stop\s+doing|don'?t\s+do|always\s+do|never\s+do|아니\s*그게\s*아니라/i;
@@ -332,6 +377,22 @@ async function main(): Promise<void> {
   // 다시 매칭되면 그 정보로 cache의 missing tags를 채울 수 있다.
   // matches는 새 주입 후보 (이미 injected는 제외).
   const allMatched = matchSolutions(input.prompt, scope, cwd);
+  // Observability P1: matched emit — top-5 후보 각각 기록
+  try {
+    for (const candidate of allMatched.slice(0, 5)) {
+      emitSolutionEvent({
+        sessionId,
+        solutionId: candidate.name,
+        eventType: 'matched',
+        signalSource: 'matcher',
+        signalScore: candidate.relevance,
+        meta: {
+          matchedTags: candidate.matchedTags,
+          matchedIdentifiers: candidate.matchedIdentifiers,
+        },
+      });
+    }
+  } catch (e) { log.debug('matched emit 실패', e); }
   const matches = allMatched.filter(m => !injected.has(m.name));
 
   // T3: emit a ranking-decision record for offline analysis. Fail-open —
@@ -586,6 +647,23 @@ async function main(): Promise<void> {
       });
     }
   } catch (e) { log.debug('recommendation_surfaced emit 실패', e); }
+
+  // Observability P1: surfaced emit — approveWithContext 직전 effectiveToInject 각각 기록
+  try {
+    for (const sol of effectiveToInject) {
+      emitSolutionEvent({
+        sessionId,
+        solutionId: sol.name,
+        eventType: 'surfaced',
+        signalSource: 'hook-prepend',
+        signalScore: sol.relevance,
+        meta: {
+          surfaceChars: fullInjection.length,
+          injectionMode: 'context-prepend',
+        },
+      });
+    }
+  } catch (e) { log.debug('surfaced emit 실패', e); }
 
   // H1: 사용자 UI 에 recall hit 1줄 노출. additionalContext 는 모델 전용이라
   // v0.4.0 에서 8,000+ 주입이 발생했는데도 사용자는 0건을 봤다. systemMessage

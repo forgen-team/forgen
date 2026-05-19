@@ -183,6 +183,61 @@ describe('planCodexInstall', () => {
     expect(beginCount).toBe(2); // begin + end markers, single block (not 4 = double block)
   });
 
+  it('v0.4.9: dev-guide skills 14개 ~/.codex/skills/forgen-<stack>-<skill> 에 설치', () => {
+    const r = planCodexInstall({ pkgRoot: PKG_ROOT, codexHome });
+    expect(r.devGuideSkillsInstalled).toBe(14);
+    expect(r.devGuideSkillsRemoved).toBe(0); // 첫 실행 — 기존 stale 없음
+    expect(fs.existsSync(r.devGuideSkillsPath)).toBe(true);
+
+    const dirs = fs.readdirSync(r.devGuideSkillsPath).filter((d) => /^forgen-(react|vue|node|go)-/.test(d));
+    expect(dirs.length).toBe(14);
+
+    // SKILL.md 각 항목이 파일로 접근 가능
+    for (const d of dirs) {
+      const p = path.join(r.devGuideSkillsPath, d, 'SKILL.md');
+      expect(fs.existsSync(p), `${d}/SKILL.md 존재`).toBe(true);
+    }
+  });
+
+  it('v0.4.9: dev-guide skills 재실행 idempotent — stale 정리 후 재설치', () => {
+    planCodexInstall({ pkgRoot: PKG_ROOT, codexHome });
+    const r2 = planCodexInstall({ pkgRoot: PKG_ROOT, codexHome });
+    expect(r2.devGuideSkillsInstalled).toBe(14);
+    expect(r2.devGuideSkillsRemoved).toBe(14); // 이전 14개 정리 후 재설치
+  });
+
+  it('v0.4.9: dryRun — dev-guide count 반환, 파일 미생성', () => {
+    const r = planCodexInstall({ pkgRoot: PKG_ROOT, codexHome, dryRun: true });
+    expect(r.devGuideSkillsInstalled).toBe(14);
+    expect(r.devGuideSkillsRemoved).toBe(0);
+    // dryRun 이므로 codexSkillsDir 자체가 미생성
+    expect(fs.existsSync(r.devGuideSkillsPath)).toBe(false);
+  });
+
+  it('v0.4.9: forgen 자체 commands (forgen-compound 등) 는 dev-guide cleanup 에서 보존', () => {
+    // forgen-compound 디렉토리 수동 생성 (forgen 10 commands 시뮬레이션)
+    const skillsDir = path.join(codexHome, 'skills');
+    fs.mkdirSync(path.join(skillsDir, 'forgen-compound'), { recursive: true });
+    fs.writeFileSync(path.join(skillsDir, 'forgen-compound', 'SKILL.md'), 'compound skill');
+
+    planCodexInstall({ pkgRoot: PKG_ROOT, codexHome });
+
+    // forgen-compound (react/vue/node/go 패턴 아님) 는 보존되어야 함
+    expect(fs.existsSync(path.join(skillsDir, 'forgen-compound', 'SKILL.md'))).toBe(true);
+  });
+
+  it('v0.4.9: 사용자 own codex skills (forgen 패턴 아닌 것) 보존', () => {
+    const skillsDir = path.join(codexHome, 'skills');
+    fs.mkdirSync(path.join(skillsDir, 'my-custom-skill'), { recursive: true });
+    fs.writeFileSync(path.join(skillsDir, 'my-custom-skill', 'SKILL.md'), 'user skill');
+
+    planCodexInstall({ pkgRoot: PKG_ROOT, codexHome });
+
+    expect(fs.existsSync(path.join(skillsDir, 'my-custom-skill', 'SKILL.md'))).toBe(true);
+    const content = fs.readFileSync(path.join(skillsDir, 'my-custom-skill', 'SKILL.md'), 'utf-8');
+    expect(content).toBe('user skill');
+  });
+
   it('CODEX_HOME env var 로 위치 재배치', () => {
     const original = process.env.CODEX_HOME;
     const altHome = tmpDir('codex-alt-');

@@ -11,6 +11,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { createLogger } from './logger.js';
 import { FORGEN_HOME } from './paths.js';
+import { ensureObservabilitySchema } from './observability-store.js';
 
 const require = createRequire(import.meta.url);
 
@@ -55,6 +56,7 @@ function openDb(): SqliteDb | null {
     // Node.js 22+ experimental node:sqlite
     const { DatabaseSync } = require('node:sqlite');
     const db = new DatabaseSync(DB_PATH);
+    db.exec(`PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA busy_timeout=1000;`);
     db.exec(`
       CREATE TABLE IF NOT EXISTS sessions (
         id TEXT PRIMARY KEY,
@@ -86,6 +88,9 @@ function openDb(): SqliteDb | null {
       log.debug('FTS5 미지원 — LIKE 폴백 사용', e);
       fts5Available = false;
     }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ensureObservabilitySchema(db as any);
 
     return db;
   } catch (e) {

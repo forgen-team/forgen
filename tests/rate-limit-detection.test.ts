@@ -22,8 +22,16 @@ describe('RATE_LIMIT_REGEX', () => {
     ['Usage limit exceeded for this account.', true],
     ['Quota exceeded.', true],
     ['rate-limit on tokens', true],
+    // Claude Code CLI 형식 (갭 1 픽스)
+    ["You're out of extra usage · resets 4:20pm", true],
+    ['out of usage', true],
+    ['out of free usage for today', true],
+    ['Usage cap reached for today', true],
+    ['monthly limit reached', true],
+    // false-positive 가드
     ['random network error', false],
     ['conversation too long', false], // token-limit, not rate-limit
+    ['out of bounds', false],
   ])('%s → %s', (msg, expected) => {
     expect(RATE_LIMIT_REGEX.test(msg)).toBe(expected);
   });
@@ -90,5 +98,38 @@ describe('parseRateLimitResetAt', () => {
   it('파싱 실패 시 null', () => {
     expect(parseRateLimitResetAt('Random error message', NOW_FIXED)).toBeNull();
     expect(parseRateLimitResetAt('rate limit reached', NOW_FIXED)).toBeNull(); // 매칭은 되나 시각 정보 없음
+  });
+
+  // Pattern 5: 12h am/pm 형식 (갭 2 픽스) — NOW_FIXED = 2026-05-15 04:00:00 UTC
+  it('Pattern 5: resets 4:20pm → 16:20 UTC (미래)', () => {
+    // 04:00 UTC 기준으로 16:20 UTC 는 미래
+    const r = parseRateLimitResetAt('resets 4:20pm', NOW_FIXED);
+    expect(r).toBe('2026-05-15T16:20:00.000Z');
+  });
+
+  it('Pattern 5: resets 12:00am → 00:00 UTC 다음 날 (12am=자정, 이미 지남)', () => {
+    // 04:00 UTC 기준으로 당일 00:00 UTC 는 이미 지남 → 다음 날
+    const r = parseRateLimitResetAt('resets 12:00am', NOW_FIXED);
+    expect(r).toBe('2026-05-16T00:00:00.000Z');
+  });
+
+  it('Pattern 5: resets 12:30pm → 12:30 UTC (미래)', () => {
+    const r = parseRateLimitResetAt('resets 12:30pm', NOW_FIXED);
+    expect(r).toBe('2026-05-15T12:30:00.000Z');
+  });
+
+  it('Pattern 5: resets 4:20pm (Asia/Seoul) → 16:20 UTC (TZ 라벨 무시)', () => {
+    const r = parseRateLimitResetAt('resets 4:20pm (Asia/Seoul)', NOW_FIXED);
+    expect(r).toBe('2026-05-15T16:20:00.000Z');
+  });
+
+  it('Pattern 5: resets at 4:20 pm → 16:20 UTC', () => {
+    const r = parseRateLimitResetAt('resets at 4:20 pm', NOW_FIXED);
+    expect(r).toBe('2026-05-15T16:20:00.000Z');
+  });
+
+  it("Pattern 5: full message — You're out of extra usage · resets 4:20pm", () => {
+    const r = parseRateLimitResetAt("You're out of extra usage · resets 4:20pm", NOW_FIXED);
+    expect(r).toBe('2026-05-15T16:20:00.000Z');
   });
 });

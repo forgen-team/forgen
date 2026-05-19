@@ -194,6 +194,45 @@ const commands: Command[] = [
     },
   },
   {
+    name: 'status',
+    description: 'Observability dashboard (--watch, --json, --interval N)',
+    handler: async (args) => {
+      const { runDashboard } = await import('./core/dashboard-cli.js');
+      const watch = args.includes('--watch');
+      const json = args.includes('--json');
+      const intervalIdx = args.indexOf('--interval');
+      const intervalSec = intervalIdx !== -1 ? Number(args[intervalIdx + 1]) || 5 : 5;
+      await runDashboard({ watch, json, intervalSec });
+    },
+  },
+  {
+    name: 'maintenance',
+    description: 'Maintenance utilities (--backfill [--phase A|B|all] [--force] [--dry-run])',
+    handler: async (args) => {
+      if (args.includes('--backfill')) {
+        const phaseArg = args[args.indexOf('--phase') + 1] as 'A' | 'B' | 'all' | undefined;
+        const phase: 'A' | 'B' | 'all' = (phaseArg === 'A' || phaseArg === 'B' || phaseArg === 'all') ? phaseArg : 'A';
+        const force = args.includes('--force');
+        const dryRun = args.includes('--dry-run');
+        const { runBackfill } = await import('./core/observability-backfill.js');
+        try {
+          const result = await runBackfill({ phase, force, dryRun });
+          const dryTag = dryRun ? ' [dry-run]' : '';
+          console.log(`\n  [forgen] Backfill complete${dryTag}:`);
+          console.log(`    Phase A — matched: ${result.phaseA.matched}, surfaced: ${result.phaseA.surfaced}, acted_on: ${result.phaseA.acted_on}`);
+          if (phase !== 'A') console.log(`    Phase B — acted_on: ${result.phaseB.acted_on}`);
+          console.log(`    Total: ${result.total} events, ${result.durationMs}ms\n`);
+        } catch (e) {
+          console.error(`  [forgen] Backfill 실패: ${e instanceof Error ? e.message : String(e)}`);
+          console.error('  --force 플래그로 강행하거나 --dry-run 으로 미리 확인하세요.');
+          process.exit(1);
+        }
+      } else {
+        console.log('Usage:\n  forgen maintenance --backfill [--phase A|B|all] [--force] [--dry-run]');
+      }
+    },
+  },
+  {
     name: 'parity',
     description: 'Run host parity checks. Usage: forgen parity codex [--dry-run]',
     handler: async (args) => {

@@ -30,7 +30,8 @@ Thumbs.db
 .mcp.json
 
 # Generated at install/build (do not commit)
-skills/
+# v0.4.9 fix: assets/dev-guide/{fe,be}/skills/ 는 committed dev-guide 번들이라 제외.
+/skills/
 hooks/hooks.json
 
 # Tenet (auto-generated, do not commit)

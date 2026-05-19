@@ -23,6 +23,7 @@ import { execHost } from '../host/exec-host.js';
 import { serializeSolutionV3, DEFAULT_EVIDENCE, extractTags } from './solution-format.js';
 import type { SolutionV3, SolutionType } from './solution-format.js';
 import { createLogger } from '../core/logger.js';
+import { emitSolutionEvent } from '../core/observability-store.js';
 
 const log = createLogger('compound-extractor');
 import { CLAUDE_DIR, ME_SOLUTIONS, STATE_DIR } from '../core/paths.js';
@@ -925,6 +926,39 @@ export async function runExtraction(cwd: string, sessionId: string): Promise<{
   return result;
 }
 
+/**
+ * Observability P2: 새 솔루션 본문/supersedes 에서 기존 솔루션 참조 감지 → acted_on emit.
+ * fail-open.
+ */
+function emitCompoundExtractActedOn(sessionId: string, newSolutionName: string, newContent: string, newSupersedes: string | null): void {
+  try {
+    if (!fs.existsSync(ME_SOLUTIONS)) return;
+    const bodyLower = newContent.toLowerCase();
+    const supersedes = newSupersedes ?? '';
+    const files = fs.readdirSync(ME_SOLUTIONS).filter(f => f.endsWith('.md'));
+    for (const file of files) {
+      const existingName = path.basename(file, '.md');
+      if (existingName === newSolutionName) continue;
+      const referenced = (supersedes && existingName === supersedes)
+                      || bodyLower.includes(existingName.toLowerCase());
+      if (!referenced) continue;
+      emitSolutionEvent({
+        sessionId,
+        solutionId: existingName,
+        eventType: 'acted_on',
+        signalSource: 'compound-extract',
+        signalScore: 0.20,
+        meta: {
+          new_solution: newSolutionName,
+          via: (supersedes && existingName === supersedes) ? 'supersedes' : 'body-mention',
+        },
+      });
+    }
+  } catch (e) {
+    log.debug('emitCompoundExtractActedOn 실패', e);
+  }
+}
+
 /** Process LLM extraction results (called after LLM returns) */
 export function processExtractionResults(
   rawJson: string,
@@ -962,6 +996,8 @@ export function processExtractionResults(
     const savedName = saveExtractedSolution(sol, sessionId);
     if (savedName) {
       saved.push(savedName);
+      // Observability P2: compound-extract acted_on signal
+      emitCompoundExtractActedOn(sessionId, savedName, sol.content, null);
     } else {
       skipped.push(`${sol.name}: 파일 이미 존재`);
     }

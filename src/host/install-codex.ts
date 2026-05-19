@@ -47,6 +47,10 @@ export interface CodexInstallResult {
   /** P3-3: AGENTS.md (cwd) 에 forgen rule block 인젝션 여부 */
   agentsMdPath: string;
   agentsMdInjected: boolean;
+  /** v0.4.9: dev-guide skills (~/.codex/skills) 설치 결과 */
+  devGuideSkillsPath: string;
+  devGuideSkillsInstalled: number;
+  devGuideSkillsRemoved: number;
 }
 
 const MCP_MARKER_BEGIN = '# >>> forgen-managed-mcp';
@@ -207,6 +211,13 @@ export function planCodexInstall(opts: CodexInstallOptions): CodexInstallResult 
   const agentsMdPath = opts.agentsMdPath ?? resolveAgentsMdPath(opts.pkgRoot);
   const agentsResult = upsertForgenRulesInAgentsMd({ agentsMdPath, pkgRoot: opts.pkgRoot, dryRun: opts.dryRun ?? false });
 
+  // 8) v0.4.9: dev-guide skills → ~/.codex/skills/forgen-<stack>-<skill>/SKILL.md
+  const devGuideResult = installDevGuideSkillsToCodex({
+    pkgRoot: opts.pkgRoot,
+    codexHome,
+    dryRun: opts.dryRun ?? false,
+  });
+
   return {
     codexHome,
     hooksPath,
@@ -220,7 +231,81 @@ export function planCodexInstall(opts: CodexInstallOptions): CodexInstallResult 
     skillsPath,
     agentsMdPath,
     agentsMdInjected: agentsResult.injected,
+    devGuideSkillsPath: devGuideResult.devGuideSkillsPath,
+    devGuideSkillsInstalled: devGuideResult.devGuideSkillsInstalled,
+    devGuideSkillsRemoved: devGuideResult.devGuideSkillsRemoved,
   };
+}
+
+// ── v0.4.9: dev-guide skills → ~/.codex/skills ────────────────────────
+
+// dev-guide prefix pattern: forgen-<stack>-<skill> (e.g. forgen-react-fe-build)
+// 반드시 stack 이 react|vue|node|go 인 것만 매칭 — forgen 자체 commands 보존
+const DEV_GUIDE_SKILL_PATTERN = /^forgen-(react|vue|node|go)-/;
+
+interface DevGuideSkillsOutcome {
+  devGuideSkillsPath: string;
+  devGuideSkillsInstalled: number;
+  devGuideSkillsRemoved: number;
+}
+
+function installDevGuideSkillsToCodex(opts: { pkgRoot: string; codexHome: string; dryRun: boolean }): DevGuideSkillsOutcome {
+  const devGuideRoot = path.join(opts.pkgRoot, 'assets', 'dev-guide');
+  const codexSkillsDir = path.join(opts.codexHome, 'skills');
+
+  if (!fs.existsSync(devGuideRoot)) {
+    return { devGuideSkillsPath: codexSkillsDir, devGuideSkillsInstalled: 0, devGuideSkillsRemoved: 0 };
+  }
+
+  // Collect entries: assets/dev-guide/{tier}/skills/{stack}/{skill}/SKILL.md
+  const entries: Array<{ name: string; src: string }> = [];
+  for (const tier of fs.readdirSync(devGuideRoot)) {
+    const skillsBase = path.join(devGuideRoot, tier, 'skills');
+    if (!fs.existsSync(skillsBase)) continue;
+    for (const stack of fs.readdirSync(skillsBase)) {
+      const stackDir = path.join(skillsBase, stack);
+      if (!fs.statSync(stackDir).isDirectory()) continue;
+      for (const skill of fs.readdirSync(stackDir)) {
+        const skillMd = path.join(stackDir, skill, 'SKILL.md');
+        if (fs.existsSync(skillMd)) {
+          entries.push({ name: `forgen-${stack}-${skill}`, src: skillMd });
+        }
+      }
+    }
+  }
+
+  if (opts.dryRun) {
+    return { devGuideSkillsPath: codexSkillsDir, devGuideSkillsInstalled: entries.length, devGuideSkillsRemoved: 0 };
+  }
+
+  fs.mkdirSync(codexSkillsDir, { recursive: true });
+
+  // Stale cleanup: dev-guide pattern 만 정리 (forgen 자체 commands 보존)
+  let removed = 0;
+  for (const entry of fs.readdirSync(codexSkillsDir)) {
+    if (DEV_GUIDE_SKILL_PATTERN.test(entry)) {
+      try { fs.rmSync(path.join(codexSkillsDir, entry), { recursive: true, force: true }); removed++; } catch { /* best-effort */ }
+    }
+  }
+
+  // Install via symlink → copyFileSync fallback
+  let installed = 0;
+  for (const { name, src } of entries) {
+    const dstDir = path.join(codexSkillsDir, name);
+    fs.mkdirSync(dstDir, { recursive: true });
+    const dst = path.join(dstDir, 'SKILL.md');
+    let linked = false;
+    try {
+      fs.symlinkSync(src, dst, 'file');
+      linked = true;
+    } catch { /* fallback */ }
+    if (!linked) {
+      fs.copyFileSync(src, dst);
+    }
+    installed++;
+  }
+
+  return { devGuideSkillsPath: codexSkillsDir, devGuideSkillsInstalled: installed, devGuideSkillsRemoved: removed };
 }
 
 // ── P3-3: Codex skills install ────────────────────────────────────────
