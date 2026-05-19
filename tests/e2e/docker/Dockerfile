@@ -1,7 +1,7 @@
 FROM node:22-slim
 
 # git 설치 (postinstall에서 git 사용)
-RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends git jq sqlite3 && rm -rf /var/lib/apt/lists/*
 
 # Claude Code CLI 설치
 RUN npm i -g @anthropic-ai/claude-code@latest 2>/dev/null || echo "Claude CLI install skipped (may need auth)"
