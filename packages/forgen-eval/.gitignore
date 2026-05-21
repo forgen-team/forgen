@@ -4,6 +4,8 @@ coverage/
 reports/introspect/
 reports/smoke/
 reports/full/
+reports/psi-stat/
+reports/longitudinal/
 *.log
 .DS_Store
 .env

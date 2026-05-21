@@ -101,3 +101,73 @@ export function formatFixRatio(s: FixRatioStats): string {
   const flag = s.exceedsThreshold ? `  ⚠ over ${thresholdPct}%` : '';
   return `fix:feat ratio    ${pct}%   (${s.fixCount}/${s.fixCount + s.featCount} in last ${s.windowSize})${flag}`;
 }
+
+export interface RegressHotspot {
+  path: string;
+  fixHits: number;
+  lastFixSha: string;
+  lastFixDate: string;
+}
+
+export interface RegressMap {
+  windowDays: number;
+  fixCommits: number;
+  hotspots: RegressHotspot[];
+  available: boolean;
+}
+
+/**
+ * 지난 N일 동안 fix 커밋이 닿은 파일 hot-list.
+ *
+ * doctor 가 fix:feat 비율로 "회귀 패턴 의심" 시그널은 주지만, 진앙은 안 보여준다.
+ * regress-map 은 fix 커밋의 changed-files 를 카운트해 top-N hotspot 을 추출 →
+ * "이거 고치면 저거 깨진다" 의 *저거* 후보를 한 화면에 노출.
+ *
+ * 제외 scope (fix:feat 와 동일): fix(test|tests|docs|doc) — 노이즈.
+ */
+export function computeRegressMap(
+  cwd: string = process.cwd(),
+  windowDays: number = 30,
+  topN: number = 10,
+): RegressMap {
+  try {
+    const since = `--since=${windowDays}.days.ago`;
+    const out = execFileSync(
+      'git',
+      ['log', '--no-merges', since, '--name-only', '--pretty=format:%x1fCOMMIT%x1f%h%x1f%cs%x1f%s'],
+      { cwd, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 32 * 1024 * 1024 },
+    );
+    return parseRegressLog(out, windowDays, topN);
+  } catch {
+    return { windowDays, fixCommits: 0, hotspots: [], available: false };
+  }
+}
+
+export function parseRegressLog(raw: string, windowDays: number, topN: number): RegressMap {
+  const blocks = raw.split('\x1fCOMMIT\x1f').slice(1);
+  const counter = new Map<string, RegressHotspot>();
+  let fixCommits = 0;
+  for (const block of blocks) {
+    const [sha, date, rest = ''] = block.split('\x1f');
+    const nl = rest.indexOf('\n');
+    const subject = nl === -1 ? rest : rest.slice(0, nl);
+    const files = nl === -1 ? [] : rest.slice(nl + 1).split('\n').map((s) => s.trim()).filter(Boolean);
+    const m = subject.match(/^(fix|feat)(?:\(([^)]+)\))?:/);
+    if (!m || m[1] !== 'fix') continue;
+    const scope = (m[2] ?? '').toLowerCase().trim();
+    if (SCOPE_EXCLUSIONS.has(scope)) continue;
+    fixCommits++;
+    for (const f of files) {
+      const existing = counter.get(f);
+      if (existing) {
+        existing.fixHits++;
+      } else {
+        counter.set(f, { path: f, fixHits: 1, lastFixSha: sha, lastFixDate: date });
+      }
+    }
+  }
+  const hotspots = Array.from(counter.values())
+    .sort((a, b) => b.fixHits - a.fixHits || a.path.localeCompare(b.path))
+    .slice(0, topN);
+  return { windowDays, fixCommits, hotspots, available: true };
+}

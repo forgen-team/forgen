@@ -12,6 +12,7 @@
     "test": "vitest run",
     "smoke": "node dist/runners/smoke.js",
     "full": "node dist/runners/full.js",
+    "psi:long": "node dist/runners/demo-longitudinal.js",
     "lint": "biome lint src/"
   },
   "engines": {

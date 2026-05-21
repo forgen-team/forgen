@@ -9,7 +9,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { loadProfile } from '../store/profile-store.js';
 import { loadAllRules, loadActiveRules } from '../store/rule-store.js';
-import { loadRecentEvidence } from '../store/evidence-store.js';
+import { loadRecentEvidence, loadAllEvidence } from '../store/evidence-store.js';
 import { loadRecentSessions } from '../store/session-state-store.js';
 import * as inspect from '../renderer/inspect-renderer.js';
 import { ME_BEHAVIOR, ME_SOLUTIONS, STATE_DIR } from './paths.js';
@@ -81,6 +81,11 @@ export async function handleInspect(args: string[]): Promise<void> {
       }
       console.log('');
     }
+
+    // ── Receipts: correction → rule → inject ── (v0.4.10)
+    // "내가 forgen 으로 무엇을 얻었나" 한 화면. correction 이 만들어낸 rule 의 lifecycle 을
+    // 묶어 표시 — 주입(inject_count), 마지막 주입 시각, host 분포.
+    await renderReceipts();
 
     return;
   }
@@ -172,4 +177,63 @@ export async function handleInspect(args: string[]): Promise<void> {
     forgen inspect violations [--last N] — 최근 block 기록
     forgen inspect bypass     [--last N] — 사용자 우회 기록
     forgen inspect drift      [--last N] — stuck-loop force-approve 기록`);
+}
+
+/**
+ * v0.4.10 Receipts: correction → rule → inject 트리플.
+ *
+ * 사용자 가치 명제("the more you use, the better it knows") 의 receipt.
+ * 1) Top-injected rules (실제로 Claude 에 주입된 룰 N회)
+ * 2) Recent rule births (correction → 새 룰 생성된 이력)
+ * 3) Host 균형 (claude vs codex)
+ */
+async function renderReceipts(): Promise<void> {
+  const rules = loadAllRules();
+  const evidence = loadAllEvidence();
+
+  const injected = rules
+    .filter((r) => r.lifecycle && (r.lifecycle.inject_count ?? 0) > 0)
+    .sort((a, b) => (b.lifecycle?.inject_count ?? 0) - (a.lifecycle?.inject_count ?? 0))
+    .slice(0, 5);
+
+  console.log('── Receipts (correction → rule → inject) ──');
+  if (injected.length === 0) {
+    console.log('  No injected rules yet. Trigger a session to start the loop.');
+  } else {
+    console.log('  Top injected rules:');
+    for (const r of injected) {
+      const count = r.lifecycle?.inject_count ?? 0;
+      const last = (r.lifecycle?.last_inject_at ?? '').slice(0, 10) || 'never';
+      const trigger = (r.trigger ?? '').slice(0, 48);
+      console.log(`    ${String(count).padStart(3)}×  [${r.category}] ${trigger} (last ${last})`);
+    }
+  }
+
+  // Recent rule births: 마지막 7일 내 created_at 인 룰 (T = correction → rule)
+  const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  const recentRules = rules
+    .filter((r) => new Date(r.created_at).getTime() >= sevenDaysAgo)
+    .sort((a, b) => b.created_at.localeCompare(a.created_at))
+    .slice(0, 3);
+  if (recentRules.length > 0) {
+    console.log('  New rules (last 7 days):');
+    for (const r of recentRules) {
+      const dateStr = r.created_at.slice(0, 10);
+      console.log(`    + [${r.category}/${r.strength}] ${(r.trigger ?? '').slice(0, 48)}  (${dateStr})`);
+    }
+  }
+
+  // Host 균형 — multi-host 가치 명제의 receipt
+  const hostCount: Record<string, number> = { claude: 0, codex: 0 };
+  for (const e of evidence) {
+    const h = (e.host ?? 'claude') as string;
+    hostCount[h] = (hostCount[h] ?? 0) + 1;
+  }
+  const total = hostCount.claude + hostCount.codex;
+  if (total > 0) {
+    const cpct = Math.round((hostCount.claude / total) * 100);
+    const xpct = 100 - cpct;
+    console.log(`  Host balance: claude ${cpct}% · codex ${xpct}% (n=${total})`);
+  }
+  console.log('');
 }

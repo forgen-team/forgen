@@ -30,14 +30,18 @@ let originalForgenHost: string | undefined;
 let originalCodexHome: string | undefined;
 let isolatedHome: string;
 
+let originalForgenRuntime: string | undefined;
+
 beforeEach(() => {
   originalForgenHome = process.env.FORGEN_HOME;
   originalForgenHost = process.env.FORGEN_HOST;
   originalCodexHome = process.env.CODEX_HOME;
+  originalForgenRuntime = process.env.FORGEN_RUNTIME;
   isolatedHome = fs.mkdtempSync(path.join(os.tmpdir(), 'forgen-evidence-host-'));
   process.env.FORGEN_HOME = isolatedHome;
   delete process.env.FORGEN_HOST;
   delete process.env.CODEX_HOME;
+  delete process.env.FORGEN_RUNTIME;
 });
 
 afterEach(() => {
@@ -47,6 +51,8 @@ afterEach(() => {
   else process.env.FORGEN_HOST = originalForgenHost;
   if (originalCodexHome === undefined) delete process.env.CODEX_HOME;
   else process.env.CODEX_HOME = originalCodexHome;
+  if (originalForgenRuntime === undefined) delete process.env.FORGEN_RUNTIME;
+  else process.env.FORGEN_RUNTIME = originalForgenRuntime;
   fs.rmSync(isolatedHome, { recursive: true, force: true });
 });
 
@@ -77,6 +83,36 @@ describe('createEvidence host detection', () => {
       confidence: 0.5,
     });
     expect(e.host).toBe('codex');
+  });
+
+  it('v0.4.10 fix — FORGEN_RUNTIME=codex 가 세 번째 우선순위', async () => {
+    // Codex harness 세션의 auto-compound-runner 가 FORGEN_HOST 없이 동작하면
+    // 그동안 'claude' 로 잘못 태깅 → 98/2 격차. config-injector.ts:479 가
+    // 주입하는 FORGEN_RUNTIME 을 detectHost 가 읽어야 정상.
+    process.env.FORGEN_RUNTIME = 'codex';
+    const { ev: store } = await reloadStore();
+    const e = store.createEvidence({
+      type: 'behavior_observation',
+      session_id: 's1',
+      source_component: 'auto-compound-runner',
+      summary: LONG_SUMMARY,
+      confidence: 0.5,
+    });
+    expect(e.host).toBe('codex');
+  });
+
+  it('FORGEN_HOST 가 FORGEN_RUNTIME 보다 우선', async () => {
+    process.env.FORGEN_HOST = 'claude';
+    process.env.FORGEN_RUNTIME = 'codex';
+    const { ev: store } = await reloadStore();
+    const e = store.createEvidence({
+      type: 'behavior_observation',
+      session_id: 's1',
+      source_component: 't',
+      summary: LONG_SUMMARY,
+      confidence: 0.5,
+    });
+    expect(e.host).toBe('claude');
   });
 
   it('CODEX_HOME 이 보이면 codex 추론', async () => {

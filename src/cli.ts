@@ -370,6 +370,14 @@ const commands: Command[] = [
     },
   },
   {
+    name: 'regress-map',
+    description: 'Top fix-touched files in the last N days (--days 30 --top 10 --json).',
+    handler: async (args) => {
+      const { handleRegressMap } = await import('./core/regress-map-cli.js');
+      await handleRegressMap(args);
+    },
+  },
+  {
     name: 'suppress-rule',
     description: '[alias: rule suppress] Disable a rule by id/prefix. Hard rules refused.',
     handler: async (args) => {

@@ -17,13 +17,14 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PKG_ROOT = path.resolve(__dirname, '..');
 const FGX_BIN = path.join(PKG_ROOT, 'dist', 'fgx.js');
 
-// fgx.ts:21-27 의 인벤토리와 일치해야 함 — sync 가 무너지면 즉시 fail.
+// fgx.ts:21-28 의 인벤토리와 일치해야 함 — sync 가 무너지면 즉시 fail.
 const EXPECTED_SUBCOMMANDS = new Set([
   'forge', 'compound', 'skill', 'dashboard', 'learn', 'me', 'statusline',
   'config', 'mcp', 'init', 'install', 'status', 'maintenance', 'parity',
   'notepad', 'inspect', 'onboarding', 'doctor', 'uninstall', 'rule',
   'classify-enforce', 'rule-meta-scan', 'lifecycle-scan',
   'stats', 'last-block', 'recall', 'migrate', 'suppress-rule', 'activate-rule',
+  'regress-map',
   'help', '--help', '-h', '--version', '-V',
 ]);
 

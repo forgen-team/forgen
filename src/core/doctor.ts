@@ -523,12 +523,18 @@ export async function runDoctor(opts: DoctorOptions = {}): Promise<void> {
   }
   // P4 셀프 가드: fix:feat 비율 30% 초과 시 회귀 패턴 의심 경고.
   try {
-    const { computeFixFeatRatio, formatFixRatio } = await import('./git-stats.js');
+    const { computeFixFeatRatio, formatFixRatio, computeRegressMap } = await import('./git-stats.js');
     const ratio = computeFixFeatRatio();
     if (ratio.available) {
       console.log(`  ${formatFixRatio(ratio)}`);
       if (ratio.exceedsThreshold) {
         console.log('  ⚠ fix:feat 비율이 임계값을 초과했습니다. "이거 고치면 저거 버그난다" 패턴 의심 — 검증 레이어 invariant 점검 권장.');
+        const map = computeRegressMap(process.cwd(), 30, 3);
+        if (map.available && map.hotspots.length > 0) {
+          const top = map.hotspots.map((h) => `${h.path} (${h.fixHits})`).join(', ');
+          console.log(`  → 진앙 후보 top 3: ${top}`);
+          console.log('  → 전체 보기: forgen regress-map');
+        }
       }
     }
   } catch { /* fail-open */ }
@@ -559,6 +565,34 @@ export async function runDoctor(opts: DoctorOptions = {}): Promise<void> {
 
   // [Codex Parity] — parity-result.json 신선도 검사 (v0.4.2 패턴 확장)
   renderCodexParity();
+  console.log();
+
+  // [ψ-long] — within-conversation compound 효과 측정 (v0.4.10)
+  // 측정 시간이 길어 ship-gate 는 advisory. 신선도(<= 14d) + psiLong > 0 만 확인.
+  console.log('  [ψ-long compound]');
+  try {
+    const psiLongPath = path.join(STATE_DIR, 'psi-long-result.json');
+    if (!fs.existsSync(psiLongPath)) {
+      console.log('  ○ no measurement yet — `pnpm --filter @wooojin/forgen-eval psi:long` 권장');
+    } else {
+      const raw = fs.readFileSync(psiLongPath, 'utf-8');
+      const data = JSON.parse(raw) as { passed?: boolean; psiLong?: number; at?: string; N?: number };
+      const ageMs = data.at ? Date.now() - new Date(data.at).getTime() : Number.POSITIVE_INFINITY;
+      const ageDays = Math.floor(ageMs / (24 * 60 * 60 * 1000));
+      const psiLong = data.psiLong ?? 0;
+      const passed = !!data.passed;
+      const freshTag = ageDays <= 14 ? 'fresh' : `${ageDays}d stale`;
+      const gateLabel = passed ? '✓ PASS' : '✗ FAIL';
+      console.log(`  ${gateLabel}  ψ_long=${psiLong.toFixed(3)}  N=${data.N ?? '?'}  (${freshTag})`);
+      if (!passed) {
+        console.log('  ⚠ within-session compound 효과 미관측 — correction injection / rule trigger 경로 점검');
+      } else if (ageDays > 14) {
+        console.log('  △ 측정 14일 초과 — 재측정 권장 (`pnpm --filter @wooojin/forgen-eval psi:long`)');
+      }
+    }
+  } catch (e) {
+    console.log(`  Unable to read psi-long state: ${e instanceof Error ? e.message : 'unknown'}`);
+  }
   console.log();
 
   // [Summary] — 최종 상태 요약과 복구 액션을 한눈에 보이게

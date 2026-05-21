@@ -24,15 +24,21 @@ function evidencePath(evidenceId: string): string {
 /**
  * 현재 세션이 어느 host 에서 실행되는지 추론 (Multi-Host §4.2).
  * 1) explicit `params.host`
- * 2) env var `FORGEN_HOST` (e2e 격리용)
- * 3) `runtime` env hint
+ * 2) env var `FORGEN_HOST` (e2e 격리용 / MCP server 가 --host=codex 받으면 set)
+ * 3) `FORGEN_RUNTIME` env (config-injector.ts:479 가 harness spawn 시 주입)
  * 4) Codex CLI 흔적 (`CODEX_HOME` 또는 `CODEX_SANDBOX_NETWORK_DISABLED`)
  * 5) default 'claude' (1원칙)
+ *
+ * v0.4.10 fix: 3번 fallback 이 주석에만 있고 코드에 없어서 Codex harness 세션의
+ * auto-compound-runner 가 생성하는 behavior_observation evidence 가 전부 'claude'
+ * 로 잘못 태깅 → doctor 가 98/2 격차 경고. FORGEN_RUNTIME 을 직접 읽도록 추가.
  */
 function detectHost(explicit?: 'claude' | 'codex'): 'claude' | 'codex' {
   if (explicit) return explicit;
   const fromEnv = process.env.FORGEN_HOST;
   if (fromEnv === 'claude' || fromEnv === 'codex') return fromEnv;
+  const fromRuntime = process.env.FORGEN_RUNTIME;
+  if (fromRuntime === 'claude' || fromRuntime === 'codex') return fromRuntime;
   if (process.env.CODEX_HOME || process.env.CODEX_SANDBOX_NETWORK_DISABLED) return 'codex';
   return 'claude';
 }
