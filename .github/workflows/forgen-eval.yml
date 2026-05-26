@@ -52,6 +52,16 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  sanity-eval:
+    name: Baseline regression check (no API keys)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Run baseline regression check
+        run: node packages/forgen-eval/scripts/check-baseline.cjs
+      - name: Run phi gate
+        run: node packages/forgen-eval/scripts/phi-gate.cjs
+
   # Smoke testbed (requires Ollama + Qwen 72B + Llama 70B → self-hosted GPU runner only)
   # Uncomment + configure when self-hosted runner is available.
   # smoke:
