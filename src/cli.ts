@@ -283,12 +283,13 @@ const commands: Command[] = [
   },
   {
     name: 'doctor',
-    description: 'Diagnostics (--prune-state to GC stale session files, --repair to auto-fix plugin cache)',
+    description: 'Diagnostics (--quick for fast check, --prune-state to GC, --repair to auto-fix)',
     handler: async (args) => {
       const { runDoctor } = await import('./core/doctor.js');
       await runDoctor({
         pruneState: args.includes('--prune-state'),
         repair: args.includes('--repair'),
+        quick: args.includes('--quick'),
       });
     },
   },
@@ -612,7 +613,7 @@ function printHelp() {
     forgen mcp                      MCP server management
     forgen skill promote|list       Skill management
     forgen notepad show|add|clear   Session notepad
-    forgen doctor [--prune-state]   System diagnostics (+ daily T4 decay on prune)
+    forgen doctor [--quick|--prune-state|--repair]   System diagnostics
     forgen uninstall                Remove forgen
 
   Harness mode (default):

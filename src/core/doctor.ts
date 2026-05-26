@@ -120,6 +120,9 @@ export interface DoctorOptions {
    * doctor 흐름은 정상 종료.
    */
   repair?: boolean;
+  /** When true, run only essential checks (Tools + Plugins + Directories +
+   *  Initialization Status) for fast onboarding verification. ~10 lines output. */
+  quick?: boolean;
 }
 
 /**
@@ -234,6 +237,30 @@ export async function runDoctor(opts: DoctorOptions = {}): Promise<void> {
     }
   }
   console.log();
+
+  section('Initialization Status');
+  const profilePath = path.join(ME_DIR, 'forge-profile.json');
+  const profileOk = exists(profilePath);
+  check('Profile exists (forge-profile.json)', profileOk,
+    'No profile — run `forgen` to complete onboarding');
+  const hooksWired = forgenPluginCacheOk || pluginRegistered;
+  if (hooksWired && !profileOk) {
+    check('Hooks wired + profile ready', false,
+      'Hooks are active but personalization is disabled — run `forgen` to onboard');
+  } else if (hooksWired && profileOk) {
+    check('Hooks wired + profile ready', true);
+  }
+  console.log();
+
+  if (opts.quick) {
+    console.log();
+    if (failedChecks.length === 0) {
+      console.log('  All essential checks passed.\n');
+    } else {
+      console.log(`  ${failedChecks.length} issue(s) found. Run \`forgen doctor\` for full diagnostics.\n`);
+    }
+    return;
+  }
 
   section('Environment');
   check('Inside tmux session', !!process.env.TMUX,

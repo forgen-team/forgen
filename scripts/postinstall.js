@@ -1111,14 +1111,17 @@ async function main() {
   // First-run banner (신규 사용자 안내) — feat/codex-support P1-6
   if (!isExistingForgenUser) {
     console.log('');
-    console.log('  ╭─ forgen — multi-host support ─────────────────────────────╮');
-    console.log('  │ binaries installed: forgen, fgx, forgen-mcp              │');
+    console.log('  ╭─ forgen — setup checklist ────────────────────────────────╮');
     console.log('  │                                                            │');
-    console.log('  │ Next: register forgen on a host (Claude or Codex):        │');
-    console.log('  │   $ forgen install            (interactive 3-choice)      │');
-    console.log('  │   $ forgen install claude     (Claude only)               │');
-    console.log('  │   $ forgen install codex      (Codex only)                │');
-    console.log('  │   $ forgen install both       (둘 다)                      │');
+    console.log('  │  1. Register on a host:                                   │');
+    console.log('  │     $ forgen install claude   (or codex / both)           │');
+    console.log('  │                                                            │');
+    console.log('  │  2. Complete onboarding (4 questions):                    │');
+    console.log('  │     $ forgen                                               │');
+    console.log('  │                                                            │');
+    console.log('  │  3. Verify setup:                                          │');
+    console.log('  │     $ forgen doctor --quick                                │');
+    console.log('  │                                                            │');
     console.log('  ╰────────────────────────────────────────────────────────────╯');
     console.log('');
   } else {

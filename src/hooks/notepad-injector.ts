@@ -23,6 +23,7 @@ import { truncateContent } from './shared/injection-caps.js';
 import { calculateBudget } from './shared/context-budget.js';
 import { approve, approveWithContext, failOpenWithTracking } from './shared/hook-response.js';
 import { escapeAllXmlTags } from './prompt-injection-filter.js';
+import { checkForgenInitialized, hasPreflightWarned, markPreflightWarned } from './shared/preflight-check.js';
 
 interface HookInput {
   prompt: string;
@@ -41,6 +42,13 @@ async function main(): Promise<void> {
   if (!input?.prompt) {
     console.log(approve());
     return;
+  }
+
+  const sessionId = input.session_id ?? 'unknown';
+  const preflight = checkForgenInitialized();
+  if (!preflight.initialized && !hasPreflightWarned(sessionId)) {
+    markPreflightWarned(sessionId);
+    process.stderr.write(`${preflight.message}\n`);
   }
 
   const effectiveCwd = input.cwd ?? process.env.FORGEN_CWD ?? process.env.COMPOUND_CWD ?? process.cwd();
