@@ -36,7 +36,7 @@ describe('solution-injector precision gate (source invariant)', () => {
 
   it('matcher의 permissive filter (1개 이상)는 유지 (bootstrap eval 호환)', () => {
     const matcher = fs.readFileSync(
-      path.join(__dirname, '..', 'src', 'engine', 'solution-matcher.ts'),
+      path.join(__dirname, '..', 'src', 'engine', 'ranking-pipeline.ts'),
       'utf-8',
     );
     expect(matcher).toMatch(/matchedTags\.length \+ c\.matchedIdentifiers\.length >= 1/);
