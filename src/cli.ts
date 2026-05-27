@@ -347,6 +347,14 @@ const commands: Command[] = [
     },
   },
   {
+    name: 'watch',
+    description: 'Real-time hook event stream (hook firings, blocks, solution matches)',
+    handler: async () => {
+      const { handleWatch } = await import('./core/watch-cli.js');
+      await handleWatch();
+    },
+  },
+  {
     name: 'last-block',
     description: 'Show the most recent Mech-A/B block event with rule detail (R6-UX2).',
     handler: async (_args) => {

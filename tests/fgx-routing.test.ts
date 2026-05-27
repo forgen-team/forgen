@@ -24,7 +24,7 @@ const EXPECTED_SUBCOMMANDS = new Set([
   'notepad', 'inspect', 'onboarding', 'doctor', 'uninstall', 'rule',
   'classify-enforce', 'rule-meta-scan', 'lifecycle-scan',
   'stats', 'last-block', 'recall', 'migrate', 'suppress-rule', 'activate-rule',
-  'regress-map',
+  'regress-map', 'watch',
   'help', '--help', '-h', '--version', '-V',
 ]);
 
