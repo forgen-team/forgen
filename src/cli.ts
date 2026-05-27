@@ -355,6 +355,30 @@ const commands: Command[] = [
     },
   },
   {
+    name: 'health',
+    description: 'Single-line health score (0-100) combining utilization, effectiveness, growth.',
+    handler: async () => {
+      const { handleHealth } = await import('./core/health-cli.js');
+      await handleHealth();
+    },
+  },
+  {
+    name: 'explain',
+    description: 'Explain the most recent block — what rule, why, and how to resolve.',
+    handler: async (args) => {
+      const { handleExplain } = await import('./core/explain-cli.js');
+      await handleExplain(args);
+    },
+  },
+  {
+    name: 'changelog',
+    description: 'Auto-summarize changes since last release tag (conventional commits).',
+    handler: async () => {
+      const { handleChangelog } = await import('./core/changelog-cli.js');
+      await handleChangelog();
+    },
+  },
+  {
     name: 'last-block',
     description: 'Show the most recent Mech-A/B block event with rule detail (R6-UX2).',
     handler: async (_args) => {
