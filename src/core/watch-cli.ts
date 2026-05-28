@@ -54,10 +54,18 @@ function formatViolation(e: Record<string, unknown>): string | null {
 
 function formatMatchEval(e: Record<string, unknown>): string | null {
   const source = String(e.source ?? '');
-  const ranked = e.rankedTopN as Array<{ name: string }> | undefined;
+  const ranked = e.rankedTopN as unknown[] | undefined;
   const ts = formatTimestamp(String(e.ts ?? ''));
-  if (!ranked || ranked.length === 0) return null;
-  const names = ranked.slice(0, 3).map(r => r.name).join(', ');
+  if (!ranked || !Array.isArray(ranked) || ranked.length === 0) return null;
+  // rankedTopN entries can be strings (names) or objects {name: ...}
+  const names = ranked.slice(0, 3).map(r => {
+    if (typeof r === 'string') return r;
+    if (typeof r === 'object' && r !== null && 'name' in r) {
+      return String((r as Record<string, unknown>).name);
+    }
+    return '?';
+  }).filter(Boolean).join(', ');
+  if (!names) return null;
   return `${C.dim}${ts}${C.reset} ${C.green}match${C.reset} ${C.dim}(${source})${C.reset} ${names}`;
 }
 

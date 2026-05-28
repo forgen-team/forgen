@@ -631,6 +631,10 @@ function printHelp() {
     forgen rule <list|suppress|activate|scan|health-scan|classify>
                                     Rule management (see: forgen rule help)
     forgen stats                    One-screen trust-layer dashboard (+ philosophy)
+    forgen health                   Single-line health score (0-100) with grade
+    forgen watch                    Real-time hook event stream (tail logs live)
+    forgen explain [N]              Explain the last N block(s) — rule, reason, resolution
+    forgen changelog                Auto-summarize commits since last release tag
     forgen last-block               Show the most recent block event
     forgen recall [--limit N] [--show]
                                     최근 compound 주입 이력 (solution body preview)

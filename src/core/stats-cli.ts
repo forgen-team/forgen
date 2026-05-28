@@ -253,6 +253,7 @@ function computeSolutionHealth(): StatsSnapshot['solutionHealth'] {
   const byStatus: Record<string, number> = {};
   let total = 0;
   let confidenceSum = 0;
+  const localNames = new Set<string>();
 
   try {
     if (!fs.existsSync(SOLUTIONS_DIR)) return { total: 0, byStatus: {}, avgConfidence: 0, utilization7d: 0 };
@@ -265,6 +266,7 @@ function computeSolutionHealth(): StatsSnapshot['solutionHealth'] {
         const st = statusMatch?.[1] ?? 'unknown';
         byStatus[st] = (byStatus[st] ?? 0) + 1;
         confidenceSum += parseFloat(confMatch?.[1] ?? '0');
+        localNames.add(f.replace(/\.md$/, ''));
         total++;
       } catch { /* skip */ }
     }
@@ -272,15 +274,22 @@ function computeSolutionHealth(): StatsSnapshot['solutionHealth'] {
 
   const cutoff7d = Date.now() - 7 * MS_PER_DAY;
   const matchLog = readJsonl(path.join(STATE_DIR, 'match-eval-log.jsonl'));
-  const matchedNames = new Set<string>();
+  const matchedLocalNames = new Set<string>();
   for (const e of matchLog) {
     const ts = typeof e.ts === 'string' ? Date.parse(e.ts) : NaN;
     if (!Number.isFinite(ts) || ts < cutoff7d) continue;
     const ranked = e.rankedTopN;
     if (Array.isArray(ranked)) {
       for (const r of ranked) {
-        if (typeof r === 'object' && r !== null && typeof (r as Record<string, unknown>).name === 'string') {
-          matchedNames.add((r as Record<string, string>).name);
+        let name: string | null = null;
+        if (typeof r === 'string') name = r;
+        else if (typeof r === 'object' && r !== null && typeof (r as Record<string, unknown>).name === 'string') {
+          name = (r as Record<string, string>).name;
+        }
+        // Only count matches against LOCAL solutions to avoid skew from
+        // starter-pack/team-pack matches that aren't in this user's me/solutions/.
+        if (name && localNames.has(name)) {
+          matchedLocalNames.add(name);
         }
       }
     }
@@ -290,7 +299,7 @@ function computeSolutionHealth(): StatsSnapshot['solutionHealth'] {
     total,
     byStatus,
     avgConfidence: total > 0 ? confidenceSum / total : 0,
-    utilization7d: total > 0 ? matchedNames.size / total : 0,
+    utilization7d: total > 0 ? matchedLocalNames.size / total : 0,
   };
 }
 
