@@ -26,6 +26,7 @@ import { readStdinJSON } from './shared/read-stdin.js';
 import { approve, approveWithWarning, blockStop, failOpenWithTracking } from './shared/hook-response.js';
 import { takeLastExtractionNotice } from '../core/extraction-notice.js';
 import { runMetaGuards } from '../checks/_shared/meta-guard-dispatch.js';
+import { sanitizeForGuard } from '../checks/_shared/text-sanitizer.js';
 import { STATE_DIR } from '../core/paths.js';
 import { sanitizeId } from './shared/sanitize-id.js';
 import { detectRecallReferences, type InjectedSolutionEntry } from '../core/recall-reference-detector.js';
@@ -203,12 +204,17 @@ function readLastAssistantMessage(input?: StopHookInput | null): string | null {
 function messageTriggersRule(message: string, rule: SpikeRule): boolean {
   const t = rule.trigger;
   if (!t.response_keywords_regex) return false;
+  // ADR-009 §7 후속: 룰-스토어 트리거도 built-in 메타가드와 동일하게 sanitize 된
+  // 텍스트로 매칭한다. 트리거 어휘를 코드펜스/백틱/인용으로 *언급만* 한 referential
+  // 케이스(메타 대화)에서 룰이 self-match 하던 거짓양성을 줄인다. 자연 산문 속 실제
+  // 주장은 sanitize 후에도 남으므로 진짜 탐지(TP)는 보존된다.
+  const m = sanitizeForGuard(message);
   const includeRes = compileSafeRegex(t.response_keywords_regex, 'i');
   if (!includeRes.regex) return false;
-  if (!safeRegexTest(includeRes.regex, message)) return false;
+  if (!safeRegexTest(includeRes.regex, m)) return false;
   if (t.context_exclude_regex) {
     const excludeRes = compileSafeRegex(t.context_exclude_regex, 'i');
-    if (excludeRes.regex && safeRegexTest(excludeRes.regex, message)) return false;
+    if (excludeRes.regex && safeRegexTest(excludeRes.regex, m)) return false;
   }
   return true;
 }
