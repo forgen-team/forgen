@@ -63,5 +63,21 @@ export function sanitizeForGuard(raw: string): string {
   const shortQuoteRe = new RegExp(`"[^"\\n]{0,${SHORT_QUOTE_MAX}}"`, 'g');
   s = s.replace(shortQuoteRe, '');
 
+  // 5) ADR-009 §7 후속: 곡선따옴표(curly)·한글 인용부호로 감싼 짧은 referential
+  //    토큰도 제거. 메타 대화에서 트리거 어휘를 「'mock'」, "verified" 처럼
+  //    인용만 해도 가드가 self-match 하던 거짓양성(이 세션 다수 관찰)을 줄인다.
+  //    SHORT_QUOTE_MAX 이하만 — 긴 인용(사용자 발언/사실)은 보존.
+  const QUOTE_PAIRS: Array<[string, string]> = [
+    ['‘', '’'], // ' '  single curly
+    ['“', '”'], // " "  double curly
+    ['「', '」'], // 「 」 fullwidth
+    ['｢', '｣'], // ｢ ｣ halfwidth
+    ['『', '』'], // 『 』
+  ];
+  for (const [open, close] of QUOTE_PAIRS) {
+    const re = new RegExp(`${open}[^${close}\\n]{0,${SHORT_QUOTE_MAX}}${close}`, 'g');
+    s = s.replace(re, '');
+  }
+
   return s;
 }

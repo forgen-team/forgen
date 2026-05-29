@@ -100,26 +100,36 @@ export interface StatsSnapshot {
   drift7d: number;
   retired7d: number;
   lastExtraction: string;
-  /**
-   * H3 / v0.4.1 — assist 축 가시화. enforcement(block/violation) 는 이미 표시되지만
-   * assist(recall hit, surface, extraction) 는 v0.4.0 에서 8,000+ 번 작동했음에도
-   * 사용자에게 0건 노출되었다. 오늘 기준 숫자로 "지금 학습되고 있다" 를 surface.
-   */
   assistToday: {
-    recallHits: number;      // match-eval-log 의 오늘 entries (매칭 시도 수)
-    surfaced: number;        // implicit-feedback 의 recommendation_surfaced 오늘
-    referenced: number;      // implicit-feedback 의 recall_referenced 오늘 (H4 완결)
-    extractedToday: number;  // ~/.forgen/me/solutions 중 오늘 mtime
+    recallHits: number;
+    surfaced: number;
+    referenced: number;
+    extractedToday: number;
   };
-  /**
-   * v0.4.1 철학 고도화 지표 — forge-profile.json 이 실제로 학습됐는지 한눈에.
-   * 값이 있으면 가시화, 없으면 undefined.
-   */
   philosophy?: {
-    basePacks: string[];                // ["보수형","확인우선형",...]
+    basePacks: string[];
     trustPolicy: string;
-    axisScores: Record<string, number>; // {quality_safety:0.65,...}
+    axisScores: Record<string, number>;
     lastReclassification: string | null;
+  };
+  /** v0.5.0: solution health — status 분포, 활용률 */
+  solutionHealth: {
+    total: number;
+    byStatus: Record<string, number>;
+    avgConfidence: number;
+    /** 지난 7일간 match-eval-log에서 한 번이라도 매칭된 솔루션 비율 */
+    utilization7d: number;
+  };
+  /** v0.5.0: 7일간 가장 많이 발동된 규칙 top-3 */
+  topRules7d: Array<{ name: string; count: number }>;
+  /** v0.5.0: 이번주 vs 지난주 변화량 */
+  weeklyTrend: {
+    blocksThisWeek: number;
+    blocksLastWeek: number;
+    recallsThisWeek: number;
+    recallsLastWeek: number;
+    extractionsThisWeek: number;
+    extractionsLastWeek: number;
   };
 }
 
@@ -233,7 +243,122 @@ export function computeStats(): StatsSnapshot {
     lastExtraction: readLastExtraction(),
     assistToday: computeAssistToday(),
     philosophy: computePhilosophy(),
+    solutionHealth: computeSolutionHealth(),
+    topRules7d: computeTopRules7d(realBlocks),
+    weeklyTrend: computeWeeklyTrend(realBlocks),
   };
+}
+
+function computeSolutionHealth(): StatsSnapshot['solutionHealth'] {
+  const byStatus: Record<string, number> = {};
+  let total = 0;
+  let confidenceSum = 0;
+  const localNames = new Set<string>();
+
+  try {
+    if (!fs.existsSync(SOLUTIONS_DIR)) return { total: 0, byStatus: {}, avgConfidence: 0, utilization7d: 0 };
+    const files = fs.readdirSync(SOLUTIONS_DIR).filter(f => f.endsWith('.md'));
+    for (const f of files) {
+      try {
+        const content = fs.readFileSync(path.join(SOLUTIONS_DIR, f), 'utf-8');
+        const statusMatch = content.match(/status:\s*"?([a-z]+)"?/);
+        const confMatch = content.match(/confidence:\s*([0-9.]+)/);
+        const st = statusMatch?.[1] ?? 'unknown';
+        byStatus[st] = (byStatus[st] ?? 0) + 1;
+        confidenceSum += parseFloat(confMatch?.[1] ?? '0');
+        localNames.add(f.replace(/\.md$/, ''));
+        total++;
+      } catch { /* skip */ }
+    }
+  } catch { /* fail-open */ }
+
+  const cutoff7d = Date.now() - 7 * MS_PER_DAY;
+  const matchLog = readJsonl(path.join(STATE_DIR, 'match-eval-log.jsonl'));
+  const matchedLocalNames = new Set<string>();
+  for (const e of matchLog) {
+    const ts = typeof e.ts === 'string' ? Date.parse(e.ts) : NaN;
+    if (!Number.isFinite(ts) || ts < cutoff7d) continue;
+    const ranked = e.rankedTopN;
+    if (Array.isArray(ranked)) {
+      for (const r of ranked) {
+        let name: string | null = null;
+        if (typeof r === 'string') name = r;
+        else if (typeof r === 'object' && r !== null && typeof (r as Record<string, unknown>).name === 'string') {
+          name = (r as Record<string, string>).name;
+        }
+        // Only count matches against LOCAL solutions to avoid skew from
+        // starter-pack/team-pack matches that aren't in this user's me/solutions/.
+        if (name && localNames.has(name)) {
+          matchedLocalNames.add(name);
+        }
+      }
+    }
+  }
+
+  return {
+    total,
+    byStatus,
+    avgConfidence: total > 0 ? confidenceSum / total : 0,
+    utilization7d: total > 0 ? matchedLocalNames.size / total : 0,
+  };
+}
+
+function computeTopRules7d(violations: Array<Record<string, unknown>>): StatsSnapshot['topRules7d'] {
+  const cutoff = Date.now() - 7 * MS_PER_DAY;
+  const counts = new Map<string, number>();
+
+  for (const v of violations) {
+    const ts = typeof v.at === 'string' ? Date.parse(v.at) : NaN;
+    if (!Number.isFinite(ts) || ts < cutoff) continue;
+    const rule = typeof v.rule === 'string' ? v.rule
+      : typeof v.guard === 'string' ? v.guard
+      : typeof v.source === 'string' ? v.source
+      : 'unknown';
+    counts.set(rule, (counts.get(rule) ?? 0) + 1);
+  }
+
+  return [...counts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 3)
+    .map(([name, count]) => ({ name, count }));
+}
+
+function computeWeeklyTrend(violations: Array<Record<string, unknown>>): StatsSnapshot['weeklyTrend'] {
+  const now = Date.now();
+  const thisWeekStart = now - 7 * MS_PER_DAY;
+  const lastWeekStart = now - 14 * MS_PER_DAY;
+
+  const blocksThisWeek = countWithin(violations, 7);
+  let blocksLastWeek = 0;
+  for (const v of violations) {
+    const ts = typeof v.at === 'string' ? Date.parse(v.at) : NaN;
+    if (Number.isFinite(ts) && ts >= lastWeekStart && ts < thisWeekStart) blocksLastWeek++;
+  }
+
+  const matchLog = readJsonl(path.join(STATE_DIR, 'match-eval-log.jsonl'));
+  let recallsThisWeek = 0;
+  let recallsLastWeek = 0;
+  for (const e of matchLog) {
+    const ts = typeof e.ts === 'string' ? Date.parse(e.ts) : NaN;
+    if (!Number.isFinite(ts)) continue;
+    if (ts >= thisWeekStart) recallsThisWeek++;
+    else if (ts >= lastWeekStart) recallsLastWeek++;
+  }
+
+  let extractionsThisWeek = 0;
+  let extractionsLastWeek = 0;
+  try {
+    if (fs.existsSync(SOLUTIONS_DIR)) {
+      for (const f of fs.readdirSync(SOLUTIONS_DIR)) {
+        if (!f.endsWith('.md')) continue;
+        const mtime = fs.statSync(path.join(SOLUTIONS_DIR, f)).mtimeMs;
+        if (mtime >= thisWeekStart) extractionsThisWeek++;
+        else if (mtime >= lastWeekStart) extractionsLastWeek++;
+      }
+    }
+  } catch { /* fail-open */ }
+
+  return { blocksThisWeek, blocksLastWeek, recallsThisWeek, recallsLastWeek, extractionsThisWeek, extractionsLastWeek };
 }
 
 function padNum(n: number, width = 4): string {
@@ -292,6 +417,39 @@ export function renderStats(s: StatsSnapshot): string {
       lines.push('');
     }
   } catch { /* fail-open: git 없거나 비-repo 환경 */ }
+
+  // v0.5.0: Solution health
+  if (s.solutionHealth.total > 0) {
+    const sh = s.solutionHealth;
+    const statusParts = Object.entries(sh.byStatus).map(([k, v]) => `${k}:${v}`).join(' ');
+    lines.push('  Solutions');
+    lines.push(`    Total               ${padNum(sh.total)}    ${statusParts}`);
+    lines.push(`    Avg confidence      ${sh.avgConfidence.toFixed(2)}`);
+    lines.push(`    Utilization (7d)    ${Math.round(sh.utilization7d * 100)}%   — matched at least once`);
+    lines.push('');
+  }
+
+  // v0.5.0: Top rules (7d)
+  if (s.topRules7d.length > 0) {
+    lines.push('  Top rules (7d)');
+    for (const r of s.topRules7d) {
+      lines.push(`    ${padNum(r.count)}x  ${r.name}`);
+    }
+    lines.push('');
+  }
+
+  // v0.5.0: Weekly trend
+  const wt = s.weeklyTrend;
+  const trendArrow = (curr: number, prev: number) => {
+    if (curr > prev) return `+${curr - prev}`;
+    if (curr < prev) return `${curr - prev}`;
+    return '=';
+  };
+  lines.push('  Weekly trend (this vs last)');
+  lines.push(`    Blocks       ${padNum(wt.blocksThisWeek)} → ${padNum(wt.blocksLastWeek, 2)} prev   (${trendArrow(wt.blocksThisWeek, wt.blocksLastWeek)})`);
+  lines.push(`    Recalls      ${padNum(wt.recallsThisWeek)} → ${padNum(wt.recallsLastWeek, 2)} prev   (${trendArrow(wt.recallsThisWeek, wt.recallsLastWeek)})`);
+  lines.push(`    Extractions  ${padNum(wt.extractionsThisWeek)} → ${padNum(wt.extractionsLastWeek, 2)} prev   (${trendArrow(wt.extractionsThisWeek, wt.extractionsLastWeek)})`);
+  lines.push('');
 
   lines.push(`  Last extraction: ${s.lastExtraction}`);
   lines.push('');

@@ -283,12 +283,13 @@ const commands: Command[] = [
   },
   {
     name: 'doctor',
-    description: 'Diagnostics (--prune-state to GC stale session files, --repair to auto-fix plugin cache)',
+    description: 'Diagnostics (--quick for fast check, --prune-state to GC, --repair to auto-fix)',
     handler: async (args) => {
       const { runDoctor } = await import('./core/doctor.js');
       await runDoctor({
         pruneState: args.includes('--prune-state'),
         repair: args.includes('--repair'),
+        quick: args.includes('--quick'),
       });
     },
   },
@@ -343,6 +344,54 @@ const commands: Command[] = [
     handler: async (args) => {
       const { handleStats } = await import('./core/stats-cli.js');
       await handleStats(args);
+    },
+  },
+  {
+    name: 'watch',
+    description: 'Real-time hook event stream (hook firings, blocks, solution matches)',
+    handler: async () => {
+      const { handleWatch } = await import('./core/watch-cli.js');
+      await handleWatch();
+    },
+  },
+  {
+    name: 'health',
+    description: 'Single-line health score (0-100) combining utilization, effectiveness, growth.',
+    handler: async () => {
+      const { handleHealth } = await import('./core/health-cli.js');
+      await handleHealth();
+    },
+  },
+  {
+    name: 'probe-workflow',
+    description: 'ADR-009 §1: measure whether dynamic-workflow subagents fire forgen hooks (arm|report|status).',
+    handler: async (args) => {
+      const { handleProbeWorkflow } = await import('./core/probe-workflow-cli.js');
+      await handleProbeWorkflow(args);
+    },
+  },
+  {
+    name: 'workflows',
+    description: 'Install/list forgen dynamic-workflow templates (install [--project] | list).',
+    handler: async (args) => {
+      const { handleWorkflows } = await import('./core/workflows-cli.js');
+      await handleWorkflows(args);
+    },
+  },
+  {
+    name: 'explain',
+    description: 'Explain the most recent block — what rule, why, and how to resolve.',
+    handler: async (args) => {
+      const { handleExplain } = await import('./core/explain-cli.js');
+      await handleExplain(args);
+    },
+  },
+  {
+    name: 'changelog',
+    description: 'Auto-summarize changes since last release tag (conventional commits).',
+    handler: async () => {
+      const { handleChangelog } = await import('./core/changelog-cli.js');
+      await handleChangelog();
     },
   },
   {
@@ -598,6 +647,12 @@ function printHelp() {
     forgen rule <list|suppress|activate|scan|health-scan|classify>
                                     Rule management (see: forgen rule help)
     forgen stats                    One-screen trust-layer dashboard (+ philosophy)
+    forgen health                   Single-line health score (0-100) with grade
+    forgen probe-workflow arm|report  Measure if dynamic-workflow subagents fire hooks (ADR-009 §1)
+    forgen workflows install|list   Install forgen dynamic-workflow templates to .claude/workflows/
+    forgen watch                    Real-time hook event stream (tail logs live)
+    forgen explain [N]              Explain the last N block(s) — rule, reason, resolution
+    forgen changelog                Auto-summarize commits since last release tag
     forgen last-block               Show the most recent block event
     forgen recall [--limit N] [--show]
                                     최근 compound 주입 이력 (solution body preview)
@@ -612,7 +667,7 @@ function printHelp() {
     forgen mcp                      MCP server management
     forgen skill promote|list       Skill management
     forgen notepad show|add|clear   Session notepad
-    forgen doctor [--prune-state]   System diagnostics (+ daily T4 decay on prune)
+    forgen doctor [--quick|--prune-state|--repair]   System diagnostics
     forgen uninstall                Remove forgen
 
   Harness mode (default):

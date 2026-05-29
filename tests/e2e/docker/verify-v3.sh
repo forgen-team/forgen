@@ -38,7 +38,7 @@ COMMAND_COUNT=$(ls $FORGEN_PKG/assets/claude/commands/*.md 2>/dev/null | wc -l |
 
 # 에이전트 소스 파일 수 (12 core + Phase 4 solution-evolver = 13)
 AGENT_COUNT=$(ls $FORGEN_PKG/assets/claude/agents/*.md 2>/dev/null | wc -l | tr -d ' ')
-[ "$AGENT_COUNT" = "13" ] && pass "assets/claude/agents/ has exactly 13 agents ($AGENT_COUNT)" || fail "assets/claude/agents/ has $AGENT_COUNT (expected 13)"
+[ "$AGENT_COUNT" = "14" ] && pass "assets/claude/agents/ has exactly 14 agents ($AGENT_COUNT)" || fail "assets/claude/agents/ has $AGENT_COUNT (expected 14)"
 
 # 삭제되었어야 하는 파일들 확인
 for deleted in performance-reviewer.md security-reviewer.md refactoring-expert.md code-simplifier.md scientist.md qa-tester.md writer.md; do

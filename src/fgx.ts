@@ -23,7 +23,7 @@ const FORGEN_SUBCOMMANDS = new Set([
   'notepad', 'inspect', 'onboarding', 'doctor', 'uninstall', 'rule',
   'classify-enforce', 'rule-meta-scan', 'lifecycle-scan',
   'stats', 'last-block', 'recall', 'migrate', 'suppress-rule', 'activate-rule',
-  'regress-map',
+  'regress-map', 'watch', 'health', 'probe-workflow', 'workflows', 'explain', 'changelog',
   // 메타 명령도 cli.ts 가 처리 (fgx claude spawn 으로는 의미 없음)
   'help', '--help', '-h', '--version', '-V',
 ]);

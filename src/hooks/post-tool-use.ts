@@ -38,6 +38,9 @@ interface PostToolInput {
   tool_response?: string;
   toolOutput?: string;
   session_id?: string;
+  /** subagent context 에서 Claude Code 가 제공 (ADR-009 §2d per-agent tool 추적). */
+  agent_id?: string;
+  agentId?: string;
   cwd?: string;
   model_id?: string;
 }
@@ -191,7 +194,15 @@ async function main(): Promise<void> {
   const toolResponse: string = typeof rawResponse === 'string' ? rawResponse : JSON.stringify(rawResponse);
   const sessionId = data.session_id ?? 'default';
 
-  const modState = loadModifiedFiles(sessionId);
+  // ADR-009 §2d: subagent context (agent_id 존재) 의 tool 추적은 per-agent 파일로
+  // 분리한다 → (a) 메인 세션 recentTools 가 subagent tool 노이즈에 오염되지 않고,
+  // (b) 각 subagent 가 자기 TEST-2 윈도우를 가지며, (c) 워크플로우 동시 subagent 가
+  // 서로의 recentTools 를 덮어쓰는 레이스를 제거. agent_id 가 없으면(메인 세션)
+  // sessionId 그대로 → 기존 동작 불변. violation/bypass 기록은 실 sessionId 유지.
+  const agentId = data.agent_id ?? data.agentId;
+  const trackingKey = agentId ? `${sessionId}.agent-${agentId}` : sessionId;
+
+  const modState = loadModifiedFiles(trackingKey);
   modState.toolCallCount = (modState.toolCallCount ?? 0) + 1;
 
   // TEST-2: recent tool name window — stop-guard 의 self-score inflation 가드가

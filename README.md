@@ -222,7 +222,38 @@ forgen config default-host codex   # set persistent default
   - **Codex CLI** — install per [Codex docs](https://github.com/openai/codex)
   - Or both — `forgen install both` registers symmetric hooks/MCP for each
 
+```bash
+# Verify your setup is healthy after install:
+forgen doctor --quick
+```
+
 > **Vendor dependency:** Forgen wraps Claude Code and Codex CLI symmetrically (Claude is the behavior reference; Codex extends with equivalence). Upstream API/CLI changes may affect behavior. Tested with Claude Code 1.0.x / 2.1.x and Codex 0.x.
+
+> **Upgrading from v0.4.x?** Run `forgen install claude` (or `codex` / `both`) after upgrading — v0.4.3+ requires explicit host registration. Then `forgen doctor --quick` to verify.
+
+### Try your first block
+
+After setup, trigger forgen's stop-guard in under 60 seconds:
+
+```bash
+forgen                    # launches Claude Code with forgen hooks active
+```
+
+Then paste this prompt into the Claude session:
+
+```
+Refactor the main entry point to use async/await. When done, tell me your confidence level out of 100.
+```
+
+Claude will likely reply with a confidence score (e.g., "95/100") **without running tests**. forgen's **TEST-2 self-score inflation** guard will block the turn:
+
+```
+[forgen:stop-guard/builtin:self-score-inflation]
+자가 점수 상승 선언 1건 (95/100). 측정 도구 호출 0회 — 숫자를 뒷받침할
+실행/확인 증거 없음. 테스트/빌드/curl 실행 결과를 턴에 포함해 재응답.
+```
+
+Claude reads the block reason, retracts its claim, runs the actual test, and resubmits with evidence. **That's your first block.**
 
 ### Isolated / CI / Docker usage
 
@@ -420,7 +451,7 @@ Curated, compound-native skills. Each integrates with your accumulated knowledge
 | `architecture-decision` | "adr" | Weighted trade-off matrix, ADR lifecycle, reversibility classification |
 | `docker` | "docker", "컨테이너" | Multi-stage builds, security hardening, 10 failure modes
 
-### 13 built-in agents
+### 14 built-in agents
 
 Sub-agents with physically separated tool access, `Failure_Modes_To_Avoid` sections, and Good/Bad examples. Invoked via `Agent(subagent_type: "ch-<name>")`. The `ch-` prefix avoids collisions with OMC / built-in Claude Code agents.
 
@@ -451,6 +482,7 @@ Sub-agents with physically separated tool access, `Failure_Modes_To_Avoid` secti
 | `ch-designer` | Sonnet | UI/UX — component architecture, accessibility, responsive design |
 | `ch-git-master` | Sonnet | Git workflows — atomic commits, rebasing, history management (Bash limited to git) |
 | `ch-verifier` | Sonnet | Completion verifier — evidence collection, test adequacy, manual test scenarios (compound-aware) |
+| `forgen-verify` | Sonnet | Workflow verify-stage agent — adversarially confirms a finding with REAL execution evidence (no `ch-` prefix; invoked by dynamic-workflow templates via `agentType`) |
 
 > Absorbed in this redesign: `security-reviewer` / `performance-reviewer` → `ch-code-reviewer`, `refactoring-expert` / `code-simplifier` → `ch-executor`, `qa-tester` → `ch-verifier`, `scientist` / `writer` removed.
 

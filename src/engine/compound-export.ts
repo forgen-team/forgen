@@ -183,16 +183,138 @@ export function importKnowledge(archivePath: string): ImportResult {
   }
 }
 
+/**
+ * Selective export — filter to specific categories.
+ * `--only solutions,rules` exports only those two directories.
+ */
+export function exportKnowledgeSelective(categories: string[], outputPath?: string): ExportResult {
+  const date = new Date().toISOString().split('T')[0];
+  const resolved = outputPath ?? path.join(process.cwd(), `forgen-knowledge-${date}.tar.gz`);
+
+  const validCategories = categories.filter(c =>
+    (KNOWLEDGE_DIRS as readonly string[]).includes(c),
+  );
+
+  if (validCategories.length === 0) {
+    throw new Error(`No valid categories. Choose from: ${KNOWLEDGE_DIRS.join(', ')}`);
+  }
+
+  const counts: Record<string, number> = {};
+  const existingDirs: string[] = [];
+  for (const name of validCategories) {
+    const dir = path.join(ME_DIR, name);
+    const count = countFiles(dir);
+    counts[name] = count;
+    if (fs.existsSync(dir)) {
+      existingDirs.push(name);
+    }
+  }
+
+  const totalFiles = Object.values(counts).reduce((a, b) => a + b, 0);
+
+  if (existingDirs.length === 0) {
+    throw new Error('No knowledge directories found to export.');
+  }
+
+  const outDir = path.dirname(resolved);
+  fs.mkdirSync(outDir, { recursive: true });
+
+  execFileSync('tar', ['czf', resolved, ...existingDirs], {
+    cwd: ME_DIR,
+    timeout: 30000,
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+
+  return { outputPath: resolved, counts, totalFiles };
+}
+
+/**
+ * Import with merge mode — updates existing files instead of skipping them.
+ * Newer files in the archive overwrite older local files.
+ */
+export function importKnowledgeMerge(archivePath: string): ImportResult & { merged: number } {
+  if (!fs.existsSync(archivePath)) {
+    throw new Error(`Archive not found: ${archivePath}`);
+  }
+
+  const listOutput = execFileSync('tar', ['tzf', archivePath], {
+    timeout: 30000,
+    encoding: 'utf-8',
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+
+  const archiveFiles = listOutput
+    .split('\n')
+    .map(f => f.trim())
+    .filter(f => f && !f.endsWith('/'));
+
+  const tmpDir = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'forgen-merge-'));
+
+  try {
+    execFileSync('tar', ['xzf', archivePath, '-C', tmpDir], {
+      timeout: 30000,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+
+    const result = { imported: 0, skipped: 0, merged: 0, details: [] as ImportResult['details'] };
+
+    const meDirCanon = path.resolve(ME_DIR) + path.sep;
+    const tmpDirCanon = path.resolve(tmpDir) + path.sep;
+
+    for (const relFile of archiveFiles) {
+      const srcPath = path.resolve(path.join(tmpDir, relFile));
+      const destPath = path.resolve(path.join(ME_DIR, relFile));
+
+      if (!isPathInside(meDirCanon, destPath) || !isPathInside(tmpDirCanon, srcPath)) {
+        result.skipped++;
+        result.details.push({ file: relFile, action: 'skipped' });
+        continue;
+      }
+
+      if (fs.existsSync(destPath)) {
+        const srcMtime = fs.statSync(srcPath).mtimeMs;
+        const destMtime = fs.statSync(destPath).mtimeMs;
+        if (srcMtime > destMtime) {
+          fs.mkdirSync(path.dirname(destPath), { recursive: true });
+          fs.copyFileSync(srcPath, destPath);
+          result.merged++;
+          result.details.push({ file: relFile, action: 'imported' });
+        } else {
+          result.skipped++;
+          result.details.push({ file: relFile, action: 'skipped' });
+        }
+      } else {
+        fs.mkdirSync(path.dirname(destPath), { recursive: true });
+        fs.copyFileSync(srcPath, destPath);
+        result.imported++;
+        result.details.push({ file: relFile, action: 'imported' });
+      }
+    }
+
+    return result;
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+}
+
 /** CLI handler: forgen compound export */
 export async function handleExport(args: string[]): Promise<void> {
   const outputIdx = args.indexOf('--output');
   const outputPath = outputIdx !== -1 ? args[outputIdx + 1] : undefined;
 
+  const onlyIdx = args.indexOf('--only');
+  const onlyCategories = onlyIdx !== -1 ? (args[onlyIdx + 1] ?? '').split(',').filter(Boolean) : [];
+
   try {
-    const result = exportKnowledge(outputPath);
+    const result = onlyCategories.length > 0
+      ? exportKnowledgeSelective(onlyCategories, outputPath)
+      : exportKnowledge(outputPath);
 
     console.log('\n  Compound Knowledge Export\n');
     console.log(`  Output: ${result.outputPath}`);
+    if (onlyCategories.length > 0) {
+      console.log(`  Filter: ${onlyCategories.join(', ')}`);
+    }
     console.log();
     for (const [category, count] of Object.entries(result.counts)) {
       console.log(`    ${category}: ${count} files`);
@@ -206,27 +328,47 @@ export async function handleExport(args: string[]): Promise<void> {
 
 /** CLI handler: forgen compound import */
 export async function handleImport(args: string[]): Promise<void> {
-  const archivePath = args[0];
+  const filteredArgs = args.filter(a => !a.startsWith('--'));
+  const archivePath = filteredArgs[0];
+  const mergeMode = args.includes('--merge');
 
-  if (!archivePath || archivePath.startsWith('--')) {
-    console.log('  Usage: forgen compound import <path-to-archive>\n');
+  if (!archivePath) {
+    console.log('  Usage: forgen compound import <path-to-archive> [--merge]\n');
+    console.log('  --merge  Update existing files if archive version is newer');
     return;
   }
 
   try {
     const resolved = path.resolve(archivePath);
-    const result = importKnowledge(resolved);
 
-    console.log('\n  Compound Knowledge Import\n');
-    console.log(`  Archive: ${resolved}`);
-    console.log(`  Imported: ${result.imported} new files`);
-    console.log(`  Skipped: ${result.skipped} existing files`);
+    if (mergeMode) {
+      const result = importKnowledgeMerge(resolved);
+      console.log('\n  Compound Knowledge Import (merge mode)\n');
+      console.log(`  Archive: ${resolved}`);
+      console.log(`  New:     ${result.imported} files`);
+      console.log(`  Merged:  ${result.merged} files (newer version overwrote local)`);
+      console.log(`  Skipped: ${result.skipped} files (local is same or newer)`);
 
-    if (result.details.length > 0 && result.details.length <= 20) {
-      console.log();
-      for (const d of result.details) {
-        const icon = d.action === 'imported' ? '+' : '-';
-        console.log(`    ${icon} ${d.file}`);
+      if (result.details.length > 0 && result.details.length <= 20) {
+        console.log();
+        for (const d of result.details) {
+          const icon = d.action === 'imported' ? '+' : '-';
+          console.log(`    ${icon} ${d.file}`);
+        }
+      }
+    } else {
+      const result = importKnowledge(resolved);
+      console.log('\n  Compound Knowledge Import\n');
+      console.log(`  Archive: ${resolved}`);
+      console.log(`  Imported: ${result.imported} new files`);
+      console.log(`  Skipped: ${result.skipped} existing files`);
+
+      if (result.details.length > 0 && result.details.length <= 20) {
+        console.log();
+        for (const d of result.details) {
+          const icon = d.action === 'imported' ? '+' : '-';
+          console.log(`    ${icon} ${d.file}`);
+        }
       }
     }
     console.log();

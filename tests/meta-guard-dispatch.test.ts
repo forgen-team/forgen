@@ -1,0 +1,63 @@
+import { describe, it, expect } from 'vitest';
+import { runMetaGuards } from '../src/checks/_shared/meta-guard-dispatch.js';
+
+/**
+ * ADR-009 §2a: stop-guard 인라인 디스패처를 추출한 runMetaGuards 의 동작 박제.
+ * 평가 순서·첫 block 단락·dangerous raw 입력·correction-only(TEST-1) 를 검증.
+ */
+describe('runMetaGuards (ADR-009 §2a)', () => {
+  it('benign message with no signals → no results', () => {
+    const r = runMetaGuards({ lastMessage: '파일 구조를 확인했습니다. 다음 단계를 제안합니다.', recentTools: ['Bash', 'Read'] });
+    expect(r).toEqual([]);
+  });
+
+  it('dangerous rm -rf → first result is the dangerous guard (block) and short-circuits', () => {
+    const r = runMetaGuards({ lastMessage: 'You can run `rm -rf node_modules` to clean.', recentTools: [] });
+    expect(r.length).toBe(1);
+    expect(r[0].shortId).toBe('dangerous-response-pattern');
+    expect(r[0].kind).toBe('block');
+  });
+
+  it('dangerous guard uses RAW message (fires even inside code fence)', () => {
+    const fenced = '```sh\nrm -rf /tmp/x\n```';
+    const r = runMetaGuards({ lastMessage: fenced, recentTools: [] });
+    expect(r.some(x => x.shortId === 'dangerous-response-pattern')).toBe(true);
+  });
+
+  it('self-score claim with zero measurement tools → TEST-2 block', () => {
+    const r = runMetaGuards({ lastMessage: '이번 작업 신뢰도 90% 로 평가됩니다.', recentTools: [] });
+    expect(r.length).toBeGreaterThanOrEqual(1);
+    expect(r[0].shortId).toBe('self-score-inflation');
+    expect(r[0].kind).toBe('block');
+  });
+
+  it('same self-score text WITH measurement tools → no TEST-2 block', () => {
+    const withTools = runMetaGuards({ lastMessage: '이번 작업 신뢰도 90% 로 평가됩니다.', recentTools: ['Bash', 'Bash', 'Read'] });
+    expect(withTools.some(x => x.shortId === 'self-score-inflation')).toBe(false);
+  });
+
+  it('conclusion flood with no verification → TEST-3 block', () => {
+    const r = runMetaGuards({ lastMessage: '통과했습니다. 완료됐습니다. pass. done. confirmed.', recentTools: [] });
+    expect(r.some(x => x.shortId === 'conclusion-ratio' && x.kind === 'block')).toBe(true);
+  });
+
+  it('stops at first block — later guards not evaluated (dangerous wins over others)', () => {
+    // dangerous + score + conclusion 모두 트리거할 만한 텍스트라도 첫 block(dangerous)만 반환.
+    const r = runMetaGuards({
+      lastMessage: 'run `rm -rf x`. 신뢰도 90%. 통과. 완료. pass. done. confirmed.',
+      recentTools: [],
+    });
+    expect(r.length).toBe(1);
+    expect(r[0].shortId).toBe('dangerous-response-pattern');
+  });
+
+  it('every result carries shortId/ruleSlug/kind/reason', () => {
+    const r = runMetaGuards({ lastMessage: 'You can run `rm -rf node_modules`.', recentTools: [] });
+    for (const x of r) {
+      expect(typeof x.shortId).toBe('string');
+      expect(typeof x.ruleSlug).toBe('string');
+      expect(['block', 'correction']).toContain(x.kind);
+      expect(typeof x.reason).toBe('string');
+    }
+  });
+});

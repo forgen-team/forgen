@@ -7,6 +7,8 @@ import { FORGEN_HOME, LAB_DIR, ME_BEHAVIOR, ME_DIR, ME_SOLUTIONS, ME_RULES, ME_S
 import { getTimingStats } from '../hooks/shared/hook-timing.js';
 import { countSessionScopedFiles, pruneState } from './state-gc.js';
 import { summarizeAllByHost } from '../store/host-mismatch.js';
+import { readForgeLoopState } from '../hooks/shared/forge-loop-state.js';
+import { effortAdvisory } from './effort-advisory.js';
 
 /** ~/.claude/projects/ — Claude Code 세션 저장 경로 */
 const CLAUDE_PROJECTS_DIR = path.join(os.homedir(), '.claude', 'projects');
@@ -120,6 +122,9 @@ export interface DoctorOptions {
    * doctor 흐름은 정상 종료.
    */
   repair?: boolean;
+  /** When true, run only essential checks (Tools + Plugins + Directories +
+   *  Initialization Status) for fast onboarding verification. ~10 lines output. */
+  quick?: boolean;
 }
 
 /**
@@ -234,6 +239,30 @@ export async function runDoctor(opts: DoctorOptions = {}): Promise<void> {
     }
   }
   console.log();
+
+  section('Initialization Status');
+  const profilePath = path.join(ME_DIR, 'forge-profile.json');
+  const profileOk = exists(profilePath);
+  check('Profile exists (forge-profile.json)', profileOk,
+    'No profile — run `forgen` to complete onboarding');
+  const hooksWired = forgenPluginCacheOk || pluginRegistered;
+  if (hooksWired && !profileOk) {
+    check('Hooks wired + profile ready', false,
+      'Hooks are active but personalization is disabled — run `forgen` to onboard');
+  } else if (hooksWired && profileOk) {
+    check('Hooks wired + profile ready', true);
+  }
+  console.log();
+
+  if (opts.quick) {
+    console.log();
+    if (failedChecks.length === 0) {
+      console.log('  All essential checks passed.\n');
+    } else {
+      console.log(`  ${failedChecks.length} issue(s) found. Run \`forgen doctor\` for full diagnostics.\n`);
+    }
+    return;
+  }
 
   section('Environment');
   check('Inside tmux session', !!process.env.TMUX,
@@ -592,6 +621,20 @@ export async function runDoctor(opts: DoctorOptions = {}): Promise<void> {
     }
   } catch (e) {
     console.log(`  Unable to read psi-long state: ${e instanceof Error ? e.message : 'unknown'}`);
+  }
+  console.log();
+
+  // [Effort (Opus 4.8)] — ADR-009 §5. nudge-only: forgen 은 effort 를 직접 설정할 수
+  // 없으므로 long-running 컨텍스트(forge-loop)에서 xhigh/ultracode 를 권고만 한다.
+  console.log('  [Effort (Opus 4.8)]');
+  try {
+    const loopActive = !!readForgeLoopState()?.active;
+    const adv = effortAdvisory({ longRunningActive: loopActive });
+    const icon = adv.recommend === 'xhigh' ? '→' : '✓';
+    console.log(`  ${icon} recommend: ${adv.recommend}`);
+    console.log(`    ${adv.reason}`);
+  } catch {
+    console.log('  Unable to compute effort advisory.');
   }
   console.log();
 
