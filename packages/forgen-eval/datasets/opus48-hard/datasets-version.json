@@ -1,0 +1,7 @@
+{
+  "repo": "https://github.com/forgen-team/forgen-eval-data",
+  "commit": "PLACEHOLDER_BOOTSTRAP",
+  "fetchedAt": "2026-04-29T00:00:00Z",
+  "schemaVersion": "0.1.0",
+  "notes": "Bootstrap commit — personas are seed scaffolding awaiting external review. forgen-eval runner should pin a real commit hash after first review pass."
+}

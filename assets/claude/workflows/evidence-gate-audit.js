@@ -5,6 +5,10 @@
  * 각 발견을 forgen-verify 에이전트로 **실제 실행 증거** 기반 반박 검증한 뒤,
  * confirmed 만 보고한다. "찾았다"가 아니라 "증명됐다"만 남긴다.
  *
+ * compound 연동(ADR-009 §3): fan-out 전 forgen-compound MCP 로 과거 솔루션/패턴을
+ * recall 하여 finder 들이 누적 지식을 활용하도록 한다 (recall→fanout). 읽기 전용이라
+ * 안전 — store 에 쓰지 않는다.
+ *
  * 사용:
  *   /evidence-gate-audit            (대상=src/, 기본 차원)
  *   args 로 { target, dimensions } 전달 가능.
@@ -13,8 +17,9 @@
  */
 export const meta = {
   name: 'evidence-gate-audit',
-  description: 'forgen evidence-gated audit — find issues across dimensions, then confirm each with REAL execution evidence (forgen-verify), report only what is proven',
+  description: 'forgen evidence-gated audit — recall prior compound knowledge, find issues across dimensions, then confirm each with REAL execution evidence (forgen-verify), report only what is proven',
   phases: [
+    { title: 'Recall', detail: 'compound-search prior patterns for the target' },
     { title: 'Find', detail: 'fan out finders across dimensions' },
     { title: 'Verify', detail: 'forgen-verify confirms each finding with real execution' },
   ],
@@ -59,10 +64,23 @@ const VERDICT_SCHEMA = {
   required: ['verdict', 'reason'],
 }
 
+// Recall (ADR-009 §3): fan-out 전 누적 compound 지식을 회수해 finder 들에 주입.
+// forgen-compound MCP 가 연결돼 있으면 compound-search 로, 없으면 빈 컨텍스트로 진행.
+const recall = await agent(
+  `Use the forgen-compound MCP tool \`compound-search\` with query "${target} audit bug security race" ` +
+  `(call it via ToolSearch if needed) to recall accumulated patterns/solutions relevant to auditing ${target}. ` +
+  `Return a concise bullet summary of prior knowledge that should inform an audit (gotchas, known pitfalls, ` +
+  `judgment criteria). If the tool is unavailable or returns nothing, reply exactly: (no prior compound knowledge).`,
+  { label: 'recall:compound', phase: 'Recall' },
+)
+const recallContext = recall && !/no prior compound knowledge/i.test(recall)
+  ? `\n\nPrior compound knowledge (apply where relevant):\n${recall}`
+  : ''
+
 // pipeline: 각 차원의 find 가 끝나는 즉시 그 발견들을 forgen-verify 로 검증.
 const results = await pipeline(
   DIMENSIONS,
-  (d) => agent(`${d.prompt}\nReturn each issue as a concrete, testable claim with a repro.`, {
+  (d) => agent(`${d.prompt}\nReturn each issue as a concrete, testable claim with a repro.${recallContext}`, {
     label: `find:${d.key}`, phase: 'Find', schema: FINDINGS_SCHEMA,
   }),
   (found, d) => parallel((found?.findings || []).map((f) => () =>

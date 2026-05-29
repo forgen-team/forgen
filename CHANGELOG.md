@@ -27,6 +27,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   인코딩한 canonical 템플릿 동봉 — `evidence-gate-audit`(no-mock 증거 게이팅 감사),
   `compound-extract`(구현 기록이 아닌 판단 기준 추출). verify 스테이지용 `forgen-verify`
   에이전트 추가(플러그인 agents 키로 자동 배포; built-in agents 13→14).
+  - **compound↔workflow 양방향 배선**: 두 템플릿이 fan-out 전 forgen-compound MCP
+    `compound-search` 로 과거 패턴을 recall(읽기, 안전)하고, `compound-extract` 는
+    `args.persist=true` 일 때만 keep 된 후보를 `forgen compound --solution` 으로 적재
+    (기본은 review-gated — 품질 게이트 우회 금지). 라이브 확인: 워크플로우 에이전트가
+    compound-search MCP 도달·3건 회수.
 - **effort 권고 (§5)**: `forgen doctor [Effort]` 섹션 — long-running(forge-loop) 컨텍스트면
   xhigh/ultracode 권고. nudge-only (forgen 은 effort 를 프로그램적으로 설정 불가).
 
