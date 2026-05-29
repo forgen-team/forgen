@@ -124,7 +124,10 @@ Codex엔 dynamic-workflows 등가물 없음 → `workflow-verify` intent는 Code
 - **§B 동시성** — `maxConcurrentAgents()` env(`FORGEN_MAX_CONCURRENT_AGENTS`, 기본 16) + `shouldWarnConcurrency()` 로 workflow-subagent 면제. 순수 함수 테스트.
 - **§2a 디스패처 추출** — `checks/_shared/meta-guard-dispatch.runMetaGuards()`. stop-guard 가 위임(동작 불변 — stop-guard 110 회귀 그린). 8-case 동등성 테스트.
 - **§2 SubagentStop 검증** — 신규 `hooks/subagent-stop-guard.ts` + registry 등록. transcript 폴백 리더(2b), `(sessionId, agentId)` block-count(2c), per-agent recentTools(2d, `post-tool-use` 가 agent_id 있을 때 `modified-files-{sessionId}.agent-{agentId}` 로 분리).
-- 잔여: §3 워크플로우 템플릿, §5 effort 권고, §7 재캘리브레이션. **릴리스 완료 게이트**: Docker e2e(`e2e-result.json` 1h) 미실행.
+- **§3 워크플로우 통합** — `forgen-verify` 에이전트(플러그인 agents 키 자동배포, built-in 13→14), `evidence-gate-audit`/`compound-extract` 템플릿, `forgen workflows install|list`. 플러그인 매니페스트는 workflows 키 미지원이라 CLI 설치 경로 채택.
+- **§5 effort 권고** — `effort-advisory.ts`(nudge-only, long-running→xhigh) + `forgen doctor [Effort]` 섹션. forgen 은 effort 를 프로그램적으로 설정 불가 → 권고만.
+- **§7 재캘리브레이션** — 코드 아닌 측정 캠페인. `docs/release/v0.4.11-calibration-pending.md` 로 게이트(δ>0 은 sonnet/codex 기준, opus-4.8 재측정 전 효과 주장 금지). 실제 N-run 은 **PENDING**.
+- 커밋: A+B+C=1ad3755, §3/§5/§7=d97c461 (브랜치 feat/opus-4-8-dynamic-workflows). vitest 2721 green, Docker E2E 97/0. **릴리스 완료 게이트**(e2e-result.json) 충족. 푸시 안 함.
 
 ## 0.4.11 스코프 (사용자 결정: 전부 0.4.11)
 
