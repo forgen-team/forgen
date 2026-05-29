@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.11] — 2026-05-29 — Opus 4.8 + Dynamic Workflows 대응
+
+테마: Claude Opus 4.8(2026-05-28 GA)의 **dynamic workflows**(최대 1,000 서브에이전트,
+대화 밖 격리 런타임)·effort(high/xhigh/ultracode) 도입에 forgen 을 정합화. 설계는
+[ADR-009](docs/adr/ADR-009-opus-4-8-dynamic-workflows.md). 핵심 긴장: forgen 검증은
+메인 Stop hook 에 묶여 있는데 워크플로우는 작업을 대화 밖으로 옮긴다 → probe 로
+"워크플로우 내부 에이전트도 forgen 훅을 발화"함을 실측 확인 후 검증을 확장.
+
+### Added
+- **probe (§1)**: `forgen probe-workflow arm|report|status` — dynamic-workflow 서브에이전트가
+  forgen 훅(SubagentStart/Stop·Pre/PostToolUse)을 발화하는지 실측. 결과를
+  `~/.forgen/state/probe-workflow-result.json` 에 박제. 실측 verdict = `workflow-hooks-fire`.
+- **SubagentStop 검증 (§2)**: 신규 `subagent-stop-guard` 훅 — 워크플로우/Task 서브에이전트의
+  마지막 응답에 메타 가드(TEST-1/2/3 + DANGEROUS)를 적용, `decision:block` 으로 재개.
+  `(sessionId,agentId)` block-count 키(동시 서브에이전트 stuck-loop 충돌 방지),
+  per-agent recentTools(`post-tool-use` 가 agent_id 있을 때 분리 → 메인 세션 TEST-2 오염 방지).
+- **워크플로우 템플릿 (§3)**: `forgen workflows install [--project] | list`. forgen 철학을
+  인코딩한 canonical 템플릿 동봉 — `evidence-gate-audit`(no-mock 증거 게이팅 감사),
+  `compound-extract`(구현 기록이 아닌 판단 기준 추출). verify 스테이지용 `forgen-verify`
+  에이전트 추가(플러그인 agents 키로 자동 배포; built-in agents 13→14).
+- **effort 권고 (§5)**: `forgen doctor [Effort]` 섹션 — long-running(forge-loop) 컨텍스트면
+  xhigh/ultracode 권고. nudge-only (forgen 은 effort 를 프로그램적으로 설정 불가).
+
+### Changed
+- **동시성 임계값 (§4)**: `MAX_CONCURRENT_AGENTS` 10 고정 → `FORGEN_MAX_CONCURRENT_AGENTS`
+  env(기본 16) + `workflow-subagent` 면제. workflow/team/swarm 실행마다 뜨던 거짓 경고 제거.
+- **meta-guard 디스패처 추출 (§2a)**: stop-guard 인라인 가드 로직을
+  `checks/_shared/meta-guard-dispatch.runMetaGuards` 로 추출 (Stop/SubagentStop 공유, 동작 불변).
+
+### Fixed
+- **subagent-tracker 동시쓰기 레이스 (§A)**: `load→push→save` 가 파일 락 없는 RMW 였어
+  동시 SubagentStart(워크플로우 fanout) 간 lost-update 로 일부 에이전트 누락(probe 에서
+  3개 중 1개 손실 관찰). `recordAgentEvent` 추출 + `withFileLock` 으로 보호, 락 안 fresh re-read.
+
+### Notes
+- **opus-4.8 재캘리브레이션 PENDING**: v0.4.5 δ>0 측정은 sonnet/codex 드라이버 기준.
+  opus-4.8 재측정 전까지 효과 주장을 하지 않음 — 절차/블로커는
+  [docs/release/v0.4.11-calibration-pending.md](docs/release/v0.4.11-calibration-pending.md).
+- 라이브 검증: forgen-verify 에이전트가 실 워크플로우에서 해소·실행(grep 증거 → confirmed),
+  subagent-stop-guard 가 워크플로우 서브에이전트에 발화(40ms, false-block 없음) 확인.
+
 ## [0.4.8] — 2026-05-15 — Codex 동등화 마무리 + 잔재 청소
 
 테마: v0.4.6 (Unattended Resilience) 이후 남아 있던 **Codex 동등화 마무리**
