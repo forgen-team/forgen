@@ -257,7 +257,10 @@ describe('Level 1: Hook Protocol — hookEventName + additionalContext', () => {
 // Level 2: Claude Code 실제 실행 검증 (API 비용 발생)
 // ──────────────────────────────────────────────
 
-describe('Level 2: Claude Code Live Integration', () => {
+// Level 2 는 실제 `claude -p` 호출(비결정적·느림·claude CLI 필요)이라 기본 `npm test`
+// (= prepublishOnly 게이트)에서 제외한다. 명시적으로 검증할 때만 FORGEN_LIVE=1 로 실행.
+// (이전엔 시나리오 1-live 가 게이트 없이 돌아 publish 시 flaky FAIL 유발 — ADR-009 후속.)
+describe.skipIf(!process.env.FORGEN_LIVE)('Level 2: Claude Code Live Integration', () => {
 
   beforeAll(() => {
     // claude CLI 존재 확인
