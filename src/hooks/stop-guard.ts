@@ -25,11 +25,7 @@ import * as os from 'node:os';
 import { readStdinJSON } from './shared/read-stdin.js';
 import { approve, approveWithWarning, blockStop, failOpenWithTracking } from './shared/hook-response.js';
 import { takeLastExtractionNotice } from '../core/extraction-notice.js';
-import { checkConclusionVerificationRatio } from '../checks/conclusion-verification-ratio.js';
-import { checkSelfScoreInflation } from '../checks/self-score-deflation.js';
-import { checkFactVsAgreement } from '../checks/fact-vs-agreement.js';
-import { checkDangerousResponsePattern } from '../checks/dangerous-response-pattern.js';
-import { sanitizeForGuard } from '../checks/_shared/text-sanitizer.js';
+import { runMetaGuards } from '../checks/_shared/meta-guard-dispatch.js';
 import { STATE_DIR } from '../core/paths.js';
 import { sanitizeId } from './shared/sanitize-id.js';
 import { detectRecallReferences, type InjectedSolutionEntry } from '../core/recall-reference-detector.js';
@@ -526,79 +522,28 @@ export async function main(): Promise<void> {
     const sessionIdForRef = input?.session_id ?? 'unknown';
     emitRecallReferencesFailOpen(sessionIdForRef, lastMessage);
 
-    // TEST-1/2/3: rule-free meta guards — FORGEN_USER_CONFIRMED=1 우회 공통.
-    // Pathfinder D7: 3중 보일러플레이트를 CHECKS 배열 + for-loop 디스패처로 통합.
-    // Pathfinder D4/D5: sanitizeForGuard 가 모든 체크 입력 단계에 일괄 적용.
+    // TEST-1/2/3 + DANGEROUS: rule-free meta guards — FORGEN_USER_CONFIRMED=1 우회 공통.
+    // ADR-009 §2a: 디스패처 본체를 checks/_shared/meta-guard-dispatch 로 추출 (Stop 과
+    // SubagentStop 이 공유). 여기서는 순수 평가 결과를 받아 recordViolation·blockStop
+    // 부수효과만 수행한다. 평가 순서/sanitize/laziness 는 추출 모듈이 보존.
     if (process.env.FORGEN_USER_CONFIRMED !== '1') {
       const sessionId = input?.session_id ?? 'unknown';
       const recentTools = loadRecentToolNames(sessionId);
-      const sanitized = sanitizeForGuard(lastMessage);
+      const results = runMetaGuards({ lastMessage, recentTools, minMeasurements: 1 });
 
-      type GuardOutcome = { triggered: boolean; reason: string };
-      type GuardCheck = {
-        shortId: string;
-        ruleSlug: string;
-        kind: 'block' | 'correction';
-        run: () => GuardOutcome;
-      };
-
-      // 평가 순서: DANGEROUS-RESPONSE (즉시 차단 — 안전 우선) → TEST-2 (강한 신호) → TEST-3 (텍스트 비율) → TEST-1 (alert-only).
-      const checks: GuardCheck[] = [
-        {
-          shortId: 'dangerous-response-pattern',
-          ruleSlug: 'rule:DANGEROUS-RESPONSE — destructive command suggestion',
-          kind: 'block',
-          // 주의: sanitizer 가 백틱/코드블록을 제거하므로 raw lastMessage 를 전달.
-          // 위험 명령은 코드 fence 안에 있어도 동등하게 위험함.
-          run: () => {
-            const r = checkDangerousResponsePattern({ text: lastMessage });
-            return { triggered: r.block, reason: r.reason };
-          },
-        },
-        {
-          shortId: 'self-score-inflation',
-          ruleSlug: 'rule:TEST-2 — self-score inflation',
-          kind: 'block',
-          run: () => {
-            const r = checkSelfScoreInflation({ text: sanitized, recentTools });
-            return { triggered: r.block, reason: r.reason };
-          },
-        },
-        {
-          shortId: 'conclusion-ratio',
-          ruleSlug: 'rule:TEST-3 — conclusion/verification ratio',
-          kind: 'block',
-          run: () => {
-            const r = checkConclusionVerificationRatio({ text: sanitized });
-            return { triggered: r.block, reason: r.reason };
-          },
-        },
-        {
-          shortId: 'fact-vs-agreement',
-          ruleSlug: 'rule:TEST-1 — fact vs agreement',
-          kind: 'correction', // alert-level only per fact-vs-agreement.ts design
-          run: () => {
-            const r = checkFactVsAgreement({ text: sanitized, recentTools, minMeasurements: 1 });
-            return { triggered: r.alert, reason: r.reason };
-          },
-        },
-      ];
-
-      for (const c of checks) {
-        const out = c.run();
-        if (!out.triggered) continue;
+      for (const r of results) {
         recordViolation({
-          rule_id: `builtin:${c.shortId}`,
+          rule_id: `builtin:${r.shortId}`,
           session_id: sessionId,
           source: 'stop-guard',
-          kind: c.kind,
+          kind: r.kind,
           message_preview: lastMessage.slice(0, 120),
         });
-        if (c.kind !== 'block') continue;
-        const reasonText = `[forgen:stop-guard/${c.shortId}] ${out.reason}
+        if (r.kind !== 'block') continue;
+        const reasonText = `[forgen:stop-guard/${r.shortId}] ${r.reason}
 
 (Override this turn: set FORGEN_USER_CONFIRMED=1 (audited).)`;
-        console.log(blockStop(reasonText, c.ruleSlug));
+        console.log(blockStop(reasonText, r.ruleSlug));
         return;
       }
     }
