@@ -7,6 +7,8 @@ import { FORGEN_HOME, LAB_DIR, ME_BEHAVIOR, ME_DIR, ME_SOLUTIONS, ME_RULES, ME_S
 import { getTimingStats } from '../hooks/shared/hook-timing.js';
 import { countSessionScopedFiles, pruneState } from './state-gc.js';
 import { summarizeAllByHost } from '../store/host-mismatch.js';
+import { readForgeLoopState } from '../hooks/shared/forge-loop-state.js';
+import { effortAdvisory } from './effort-advisory.js';
 
 /** ~/.claude/projects/ — Claude Code 세션 저장 경로 */
 const CLAUDE_PROJECTS_DIR = path.join(os.homedir(), '.claude', 'projects');
@@ -619,6 +621,20 @@ export async function runDoctor(opts: DoctorOptions = {}): Promise<void> {
     }
   } catch (e) {
     console.log(`  Unable to read psi-long state: ${e instanceof Error ? e.message : 'unknown'}`);
+  }
+  console.log();
+
+  // [Effort (Opus 4.8)] — ADR-009 §5. nudge-only: forgen 은 effort 를 직접 설정할 수
+  // 없으므로 long-running 컨텍스트(forge-loop)에서 xhigh/ultracode 를 권고만 한다.
+  console.log('  [Effort (Opus 4.8)]');
+  try {
+    const loopActive = !!readForgeLoopState()?.active;
+    const adv = effortAdvisory({ longRunningActive: loopActive });
+    const icon = adv.recommend === 'xhigh' ? '→' : '✓';
+    console.log(`  ${icon} recommend: ${adv.recommend}`);
+    console.log(`    ${adv.reason}`);
+  } catch {
+    console.log('  Unable to compute effort advisory.');
   }
   console.log();
 

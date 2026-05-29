@@ -371,6 +371,14 @@ const commands: Command[] = [
     },
   },
   {
+    name: 'workflows',
+    description: 'Install/list forgen dynamic-workflow templates (install [--project] | list).',
+    handler: async (args) => {
+      const { handleWorkflows } = await import('./core/workflows-cli.js');
+      await handleWorkflows(args);
+    },
+  },
+  {
     name: 'explain',
     description: 'Explain the most recent block — what rule, why, and how to resolve.',
     handler: async (args) => {
@@ -641,6 +649,7 @@ function printHelp() {
     forgen stats                    One-screen trust-layer dashboard (+ philosophy)
     forgen health                   Single-line health score (0-100) with grade
     forgen probe-workflow arm|report  Measure if dynamic-workflow subagents fire hooks (ADR-009 §1)
+    forgen workflows install|list   Install forgen dynamic-workflow templates to .claude/workflows/
     forgen watch                    Real-time hook event stream (tail logs live)
     forgen explain [N]              Explain the last N block(s) — rule, reason, resolution
     forgen changelog                Auto-summarize commits since last release tag

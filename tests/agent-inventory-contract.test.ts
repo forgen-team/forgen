@@ -28,7 +28,7 @@ describe('Invariant: agent 인벤토리 단일 source (W3)', () => {
     expect(names.length).toBeGreaterThan(0);
     // 본 테스트가 깨지면 "ch-solution-evolver 처럼 새 agent 가 추가됨" 의미.
     // README + verify-v3.sh 도 함께 갱신했는지 review 필수.
-    expect(names.length, `현재 ${names.length}개 agent: ${names.join(', ')}`).toBe(13);
+    expect(names.length, `현재 ${names.length}개 agent: ${names.join(', ')}`).toBe(14);
   });
 
   it('README.md 의 "N built-in agents" 가 agents/ 개수와 일치', () => {

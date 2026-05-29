@@ -451,7 +451,7 @@ Curated, compound-native skills. Each integrates with your accumulated knowledge
 | `architecture-decision` | "adr" | Weighted trade-off matrix, ADR lifecycle, reversibility classification |
 | `docker` | "docker", "컨테이너" | Multi-stage builds, security hardening, 10 failure modes
 
-### 13 built-in agents
+### 14 built-in agents
 
 Sub-agents with physically separated tool access, `Failure_Modes_To_Avoid` sections, and Good/Bad examples. Invoked via `Agent(subagent_type: "ch-<name>")`. The `ch-` prefix avoids collisions with OMC / built-in Claude Code agents.
 
@@ -482,6 +482,7 @@ Sub-agents with physically separated tool access, `Failure_Modes_To_Avoid` secti
 | `ch-designer` | Sonnet | UI/UX — component architecture, accessibility, responsive design |
 | `ch-git-master` | Sonnet | Git workflows — atomic commits, rebasing, history management (Bash limited to git) |
 | `ch-verifier` | Sonnet | Completion verifier — evidence collection, test adequacy, manual test scenarios (compound-aware) |
+| `forgen-verify` | Sonnet | Workflow verify-stage agent — adversarially confirms a finding with REAL execution evidence (no `ch-` prefix; invoked by dynamic-workflow templates via `agentType`) |
 
 > Absorbed in this redesign: `security-reviewer` / `performance-reviewer` → `ch-code-reviewer`, `refactoring-expert` / `code-simplifier` → `ch-executor`, `qa-tester` → `ch-verifier`, `scientist` / `writer` removed.
 
