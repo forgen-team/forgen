@@ -49,3 +49,7 @@ hooks/hooks.json
 
 # forgen install codex 가 cwd 에 자동 생성하는 사용자별 파일 (forgen-managed-rules 블록만 포함)
 AGENTS.md
+
+# ADR-009 §7 — cloned eval dataset (separate repo) + vendored personas
+packages/forgen-eval/forgen-eval-data/
+packages/forgen-eval/datasets/opus48-hard/personas/
