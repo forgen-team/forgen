@@ -218,36 +218,50 @@ async function scanCommitDiffForActedOn(sessionId: string, cwd: string, sessionS
  * 세션 종료 후 자동 compound 추출 + USER.md 업데이트.
  * auto-compound-runner.ts를 동기 실행하여 솔루션 추출 + 사용자 패턴 관찰.
  */
-/** ME_SOLUTIONS 디렉토리의 *.md 솔루션 파일 개수 (없으면 0). */
-function countSolutionFiles(): number {
-  try {
-    return fs.readdirSync(ME_SOLUTIONS).filter((f) => f.endsWith('.md')).length;
-  } catch {
-    // 디렉토리 부재(최초 실행) 등 — 0 으로 취급 (fail-open).
-    return 0;
-  }
-}
+// Stop 훅(maybeSpawnAutoCompound)/session-recovery 와 공유하는 dedup cooldown.
+const AUTO_COMPOUND_DEDUP_COOLDOWN_MS = 5 * 60 * 1000; // 5min
 
-async function runAutoCompound(cwd: string, transcriptPath: string, sessionId: string): Promise<void> {
-  // 진행 표시: 내부 추출은 LLM 서브프로세스(`claude -p`)라 최대 90초 무음이다.
-  // before 카운트와 함께 "분석 중" 을 먼저 알려 멈춘 것처럼 보이지 않게 한다.
-  console.log('\n[forgen] 세션 분석 중... (자동 compound, 최대 ~90초)');
-  const before = countSolutionFiles();
+/**
+ * 세션 종료 후 자동 compound 추출을 백그라운드(detached)로 시작.
+ *
+ * 과거에는 execFileSync 로 동기 실행하여 세션 종료가 최대 ~210초(haiku LLM 3회
+ * 순차: 솔루션 추출 90s + behavior 60s + 세션 학습 60s) 동안 블록되었다. 같은
+ * 작업을 context-guard Stop 훅(maybeSpawnAutoCompound)과 session-recovery 가 이미
+ * detached 로 spawn 하므로, 여기서도 detached + unref 로 전환해 세션 종료를 막지
+ * 않는다. 결과(추출 솔루션/패턴)는 다음 세션 시작 시 session-recovery 가 surface 한다.
+ *
+ * dedup: last-auto-compound.json 을 Stop 훅과 공유 — 같은 세션의 최근 run 이 있으면
+ * skip 하여 detached spawn 의 double-run 을 방지한다.
+ */
+export function runAutoCompound(cwd: string, transcriptPath: string, sessionId: string): void {
+  const markerPath = path.join(STATE_DIR, 'last-auto-compound.json');
+  try {
+    const parsed = JSON.parse(fs.readFileSync(markerPath, 'utf-8')) as {
+      sessionId?: string;
+      completedAt?: string;
+    };
+    if (parsed.sessionId === sessionId) {
+      const last = parsed.completedAt ? Date.parse(parsed.completedAt) : 0;
+      if (Number.isFinite(last) && Date.now() - last < AUTO_COMPOUND_DEDUP_COOLDOWN_MS) {
+        log.debug('auto-compound skip: 최근 동일 세션 run 존재 (dedup)');
+        return;
+      }
+    }
+  } catch {
+    // 마커 없음(최초)/손상 — 진행 (fail-open).
+  }
 
   const runnerPath = path.join(path.dirname(fileURLToPath(import.meta.url)), 'auto-compound-runner.js');
   try {
-    execFileSync('node', [runnerPath, cwd, transcriptPath, sessionId], {
+    const child = spawn('node', [runnerPath, cwd, transcriptPath, sessionId], {
       cwd,
-      timeout: 120_000,
-      stdio: ['pipe', 'inherit', 'inherit'],
+      detached: true,
+      stdio: 'ignore',
     });
-    // 결과 요약: no-op(추출 0건)과 실제 추출을 화면에서 구분 가능하게 한다.
-    // 음수 방지(파일 정리/검증 게이트로 줄어들 수 있음) — Math.max 로 하한 0.
-    const extracted = Math.max(0, countSolutionFiles() - before);
-    const summary = extracted > 0 ? `솔루션 ${extracted}개 추출` : '새로 추출된 패턴 없음';
-    console.log(`[forgen] 자동 compound 완료 — ${summary}\n`);
+    child.unref();
+    console.log('\n[forgen] 세션 분석을 백그라운드로 시작했습니다 (자동 compound) — 결과는 다음 세션 시작 시 반영됩니다.\n');
   } catch (e) {
-    log.debug('auto-compound 실패', e);
+    log.debug('auto-compound 시작 실패', e);
   }
 }
 
@@ -440,7 +454,7 @@ export async function spawnClaude(
           // 4. 자동 compound (10+ user 메시지인 경우만) — 양 runtime 호환
           const userMsgCount = await countUserMessages(transcript);
           if (userMsgCount >= 10) {
-            await runAutoCompound(context.cwd, transcript, sessionId);
+            runAutoCompound(context.cwd, transcript, sessionId);
           } else {
             console.log(`[forgen] 세션이 짧아 auto-compound 생략 (${userMsgCount} messages)`);
           }

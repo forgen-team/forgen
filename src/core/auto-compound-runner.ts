@@ -416,10 +416,6 @@ ${sanitizedSummary.slice(0, 6000)}
   // 피해자 권한으로 실행시킬 수 있었다. 이제 `Bash(forgen compound:*)`로 좁혀 Claude
   // 가 compound 추출용 forgen CLI 호출만 가능하게 한다. filter-bypass 시에도 임의
   // 명령 실행 차단.
-  // 진행 표시: 아래 execClaudeRetry 는 LLM 서브프로세스라 최대 90초 무음이다.
-  // stderr 로 1줄 알려 "멈춘 것처럼" 보이지 않게 한다. (fire-and-forget 경로는
-  // stdio:'ignore' 라 무해, runAutoCompound 경로는 stderr inherit 되어 사용자에게 보임)
-  process.stderr.write('[forgen-auto-compound] 솔루션 추출 중 (LLM 분석)...\n');
   try {
     execClaudeRetry(
       ['-p', solutionPrompt, '--allowedTools', 'Bash(forgen compound:*)', '--model', COMPOUND_MODEL],
