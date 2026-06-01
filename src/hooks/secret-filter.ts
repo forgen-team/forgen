@@ -6,6 +6,9 @@
  * 차단하지 않고 경고 메시지만 출력합니다.
  */
 
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { HookError } from '../core/errors.js';
 import { readStdinJSON } from './shared/read-stdin.js';
 import { isHookEnabled } from './hook-config.js';
@@ -73,7 +76,7 @@ export function detectSecrets(text: string): SecretPattern[] {
   return found;
 }
 
-async function main(): Promise<void> {
+export async function main(): Promise<void> {
   const data = await readStdinJSON<PostToolInput>();
 
   if (!isHookEnabled('secret-filter')) {
@@ -109,10 +112,17 @@ async function main(): Promise<void> {
   console.log(approve());
 }
 
-main().catch((e) => {
-  const hookErr = new HookError(e instanceof Error ? e.message : String(e), {
-    hookName: 'secret-filter', eventType: 'PostToolUse', cause: e,
+// ESM main guard: import 시 main() 실행 방지 (context-guard 와 동일 패턴).
+// secret-filter 는 redactSecrets 등을 다른 hook (context-guard) 이 import 하므로,
+// guard 없이 top-level main() 을 호출하면 import 부작용으로 main() 이 실행되어
+// stdout 에 유령 {"continue":true} 가 1줄 추가된다. 그 결과 import 한 hook 의
+// stdout 이 JSON 2줄이 되어 Claude Code 파싱 실패 → raw JSON 이 터미널에 노출됨.
+if (process.argv[1] && fs.realpathSync(path.resolve(process.argv[1])) === fileURLToPath(import.meta.url)) {
+  main().catch((e) => {
+    const hookErr = new HookError(e instanceof Error ? e.message : String(e), {
+      hookName: 'secret-filter', eventType: 'PostToolUse', cause: e,
+    });
+    process.stderr.write(`[ch-hook] ${hookErr.name}: ${hookErr.message}\n`);
+    console.log(failOpenWithTracking('secret-filter', e));
   });
-  process.stderr.write(`[ch-hook] ${hookErr.name}: ${hookErr.message}\n`);
-  console.log(failOpenWithTracking('secret-filter', e));
-});
+}

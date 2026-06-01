@@ -27,7 +27,8 @@ afterEach(() => {
 describe('secret-filter main()', () => {
   it('stdin이 null이면 approve', async () => {
     mockReadStdinJSON.mockResolvedValue(null);
-    await import('../src/hooks/secret-filter.js');
+    const { main } = await import('../src/hooks/secret-filter.js');
+    await main();
     await vi.waitFor(() => {
       expect(logOutput.some(l => l.includes('"continue":true'))).toBe(true);
     });
@@ -38,7 +39,8 @@ describe('secret-filter main()', () => {
       tool_name: 'Read',
       tool_response: 'AKIAIOSFODNN7EXAMPLE',
     });
-    await import('../src/hooks/secret-filter.js');
+    const { main } = await import('../src/hooks/secret-filter.js');
+    await main();
     await vi.waitFor(() => {
       const lastOutput = logOutput[logOutput.length - 1];
       expect(lastOutput).toContain('"continue":true');
@@ -52,7 +54,8 @@ describe('secret-filter main()', () => {
       tool_input: { content: 'const key = "sk_live_1234567890abcdefghij";' },
       tool_response: '',
     });
-    await import('../src/hooks/secret-filter.js');
+    const { main } = await import('../src/hooks/secret-filter.js');
+    await main();
     await vi.waitFor(() => {
       expect(logOutput.some(l => l.includes('compound-security-warning'))).toBe(true);
     });
@@ -64,7 +67,8 @@ describe('secret-filter main()', () => {
       tool_input: { command: 'cat credentials' },
       tool_response: 'password="mysecretpass123"',
     });
-    await import('../src/hooks/secret-filter.js');
+    const { main } = await import('../src/hooks/secret-filter.js');
+    await main();
     await vi.waitFor(() => {
       expect(logOutput.some(l => l.includes('compound-security-warning'))).toBe(true);
     });
@@ -76,7 +80,8 @@ describe('secret-filter main()', () => {
       tool_input: { new_string: 'const greeting = "hello";' },
       tool_response: '',
     });
-    await import('../src/hooks/secret-filter.js');
+    const { main } = await import('../src/hooks/secret-filter.js');
+    await main();
     await vi.waitFor(() => {
       const lastOutput = logOutput[logOutput.length - 1];
       expect(lastOutput).toContain('"continue":true');
@@ -90,7 +95,8 @@ describe('secret-filter main()', () => {
       toolInput: {},
       toolOutput: 'AKIAIOSFODNN7EXAMPLE',
     });
-    await import('../src/hooks/secret-filter.js');
+    const { main } = await import('../src/hooks/secret-filter.js');
+    await main();
     await vi.waitFor(() => {
       expect(logOutput.some(l => l.includes('compound-security-warning'))).toBe(true);
     });

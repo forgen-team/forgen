@@ -218,8 +218,21 @@ async function scanCommitDiffForActedOn(sessionId: string, cwd: string, sessionS
  * 세션 종료 후 자동 compound 추출 + USER.md 업데이트.
  * auto-compound-runner.ts를 동기 실행하여 솔루션 추출 + 사용자 패턴 관찰.
  */
+/** ME_SOLUTIONS 디렉토리의 *.md 솔루션 파일 개수 (없으면 0). */
+function countSolutionFiles(): number {
+  try {
+    return fs.readdirSync(ME_SOLUTIONS).filter((f) => f.endsWith('.md')).length;
+  } catch {
+    // 디렉토리 부재(최초 실행) 등 — 0 으로 취급 (fail-open).
+    return 0;
+  }
+}
+
 async function runAutoCompound(cwd: string, transcriptPath: string, sessionId: string): Promise<void> {
-  console.log('\n[forgen] 세션 분석 중... (자동 compound)');
+  // 진행 표시: 내부 추출은 LLM 서브프로세스(`claude -p`)라 최대 90초 무음이다.
+  // before 카운트와 함께 "분석 중" 을 먼저 알려 멈춘 것처럼 보이지 않게 한다.
+  console.log('\n[forgen] 세션 분석 중... (자동 compound, 최대 ~90초)');
+  const before = countSolutionFiles();
 
   const runnerPath = path.join(path.dirname(fileURLToPath(import.meta.url)), 'auto-compound-runner.js');
   try {
@@ -228,7 +241,11 @@ async function runAutoCompound(cwd: string, transcriptPath: string, sessionId: s
       timeout: 120_000,
       stdio: ['pipe', 'inherit', 'inherit'],
     });
-    console.log('[forgen] 자동 compound 완료\n');
+    // 결과 요약: no-op(추출 0건)과 실제 추출을 화면에서 구분 가능하게 한다.
+    // 음수 방지(파일 정리/검증 게이트로 줄어들 수 있음) — Math.max 로 하한 0.
+    const extracted = Math.max(0, countSolutionFiles() - before);
+    const summary = extracted > 0 ? `솔루션 ${extracted}개 추출` : '새로 추출된 패턴 없음';
+    console.log(`[forgen] 자동 compound 완료 — ${summary}\n`);
   } catch (e) {
     log.debug('auto-compound 실패', e);
   }
