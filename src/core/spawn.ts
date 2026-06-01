@@ -218,19 +218,50 @@ async function scanCommitDiffForActedOn(sessionId: string, cwd: string, sessionS
  * 세션 종료 후 자동 compound 추출 + USER.md 업데이트.
  * auto-compound-runner.ts를 동기 실행하여 솔루션 추출 + 사용자 패턴 관찰.
  */
-async function runAutoCompound(cwd: string, transcriptPath: string, sessionId: string): Promise<void> {
-  console.log('\n[forgen] 세션 분석 중... (자동 compound)');
+// Stop 훅(maybeSpawnAutoCompound)/session-recovery 와 공유하는 dedup cooldown.
+const AUTO_COMPOUND_DEDUP_COOLDOWN_MS = 5 * 60 * 1000; // 5min
+
+/**
+ * 세션 종료 후 자동 compound 추출을 백그라운드(detached)로 시작.
+ *
+ * 과거에는 execFileSync 로 동기 실행하여 세션 종료가 최대 ~210초(haiku LLM 3회
+ * 순차: 솔루션 추출 90s + behavior 60s + 세션 학습 60s) 동안 블록되었다. 같은
+ * 작업을 context-guard Stop 훅(maybeSpawnAutoCompound)과 session-recovery 가 이미
+ * detached 로 spawn 하므로, 여기서도 detached + unref 로 전환해 세션 종료를 막지
+ * 않는다. 결과(추출 솔루션/패턴)는 다음 세션 시작 시 session-recovery 가 surface 한다.
+ *
+ * dedup: last-auto-compound.json 을 Stop 훅과 공유 — 같은 세션의 최근 run 이 있으면
+ * skip 하여 detached spawn 의 double-run 을 방지한다.
+ */
+export function runAutoCompound(cwd: string, transcriptPath: string, sessionId: string): void {
+  const markerPath = path.join(STATE_DIR, 'last-auto-compound.json');
+  try {
+    const parsed = JSON.parse(fs.readFileSync(markerPath, 'utf-8')) as {
+      sessionId?: string;
+      completedAt?: string;
+    };
+    if (parsed.sessionId === sessionId) {
+      const last = parsed.completedAt ? Date.parse(parsed.completedAt) : 0;
+      if (Number.isFinite(last) && Date.now() - last < AUTO_COMPOUND_DEDUP_COOLDOWN_MS) {
+        log.debug('auto-compound skip: 최근 동일 세션 run 존재 (dedup)');
+        return;
+      }
+    }
+  } catch {
+    // 마커 없음(최초)/손상 — 진행 (fail-open).
+  }
 
   const runnerPath = path.join(path.dirname(fileURLToPath(import.meta.url)), 'auto-compound-runner.js');
   try {
-    execFileSync('node', [runnerPath, cwd, transcriptPath, sessionId], {
+    const child = spawn('node', [runnerPath, cwd, transcriptPath, sessionId], {
       cwd,
-      timeout: 120_000,
-      stdio: ['pipe', 'inherit', 'inherit'],
+      detached: true,
+      stdio: 'ignore',
     });
-    console.log('[forgen] 자동 compound 완료\n');
+    child.unref();
+    console.log('\n[forgen] 세션 분석을 백그라운드로 시작했습니다 (자동 compound) — 결과는 다음 세션 시작 시 반영됩니다.\n');
   } catch (e) {
-    log.debug('auto-compound 실패', e);
+    log.debug('auto-compound 시작 실패', e);
   }
 }
 
@@ -423,7 +454,7 @@ export async function spawnClaude(
           // 4. 자동 compound (10+ user 메시지인 경우만) — 양 runtime 호환
           const userMsgCount = await countUserMessages(transcript);
           if (userMsgCount >= 10) {
-            await runAutoCompound(context.cwd, transcript, sessionId);
+            runAutoCompound(context.cwd, transcript, sessionId);
           } else {
             console.log(`[forgen] 세션이 짧아 auto-compound 생략 (${userMsgCount} messages)`);
           }

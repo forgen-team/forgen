@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.12] — 2026-06-01 — Hotfix: 훅 stdout 누출 + 세션 종료 블로킹
+
+핫픽스 두 건.
+
+- **fix(hooks)**: `secret-filter` 에 ESM main-guard 누락 → `context-guard` 가 `redactSecrets`
+  를 import 할 때 `secret-filter.main()` 이 import 부작용으로 실행되어 유령 `{"continue":true}`
+  를 1줄 추가 emit. 그 결과 context-guard 의 stdout 이 JSON 2줄이 되어 Claude Code 파싱
+  실패 → raw `{"continue":true}` 가 매 프롬프트/세션 종료마다 사용자 터미널에 노출되었다.
+  표준 main-guard 추가로 수정. (등록 훅 11개 중 context-guard 만 영향)
+- **perf(compound)**: 세션 종료 시 `runAutoCompound` 가 execFileSync 로 동기 실행되어 최대
+  ~210초(haiku LLM 3회 순차) 블록되었다. 같은 작업을 Stop 훅·session-recovery 가 이미
+  detached 로 spawn 하므로(dedup 마커 공유), 동기 경로를 detached + unref 로 전환해 세션
+  종료를 막지 않게 했다. 결과는 다음 세션 시작 시 surface.
+- **test**: `hook-single-line-output` (훅당 stdout 1줄 + secret-filter import 무부작용),
+  `auto-compound-detached` (detached/unref/dedup 분기) 회귀 테스트 추가.
+
 ## [0.4.11] — 2026-05-29 — Opus 4.8 + Dynamic Workflows 대응
 
 테마: Claude Opus 4.8(2026-05-28 GA)의 **dynamic workflows**(최대 1,000 서브에이전트,
