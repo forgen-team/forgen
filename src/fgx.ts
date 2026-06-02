@@ -92,10 +92,24 @@ async function runClaudeLauncher(): Promise<void> {
 async function main() {
   const sub = findFirstSubcommand(args);
   if (sub !== null) {
+    // cli.js 위임 경로는 건드리지 않는다. watch/dashboard/workflows 등 long-running
+    // 서브커맨드가 여기서 강제 종료되면 잘린다. cli.js 가 자체 process.exit 를 책임진다.
     await routeToCli();
     return;
   }
+
   await runClaudeLauncher();
+
+  // 대화형 세션 종료 후 fgx 프로세스 종료를 명시적으로 보장한다.
+  //
+  // WHY: spawnClaude 는 세션 종료 시 auto-compound-runner 를 detached + unref 로 띄우고
+  // 즉시 resolve 한다(설계상 비차단). 그런데 fgx 는 성공 경로에서 process.exit 를 호출하지
+  // 않고 Node 이벤트 루프 자연 배수에 의존해 왔다. 지금은 미해제 핸들이 없어 정상 종료하지만,
+  // 향후 post-session 경로에 닫히지 않은 핸들(SQLite 커넥션, 타이머, 소켓 등)이 하나라도
+  // 생기면 fgx 가 종료하지 못하고 셸 프롬프트가 돌아오지 않는다(= 터미널 물림). 명시 종료로
+  // 이 종류의 회귀를 원천 차단한다. detached 자식은 unref 되어 독립 실행되므로 백그라운드
+  // compound 는 영향받지 않고 계속된다.
+  process.exit(0);
 }
 
 main().catch((err) => {

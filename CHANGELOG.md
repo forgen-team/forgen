@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.13] — 2026-06-02 — Hotfix: fgx 세션 종료 시 터미널 물림 방지
+
+핫픽스 한 건.
+
+- **fix(fgx)**: `fgx` 가 대화형 세션 성공 경로에서 `process.exit` 를 호출하지 않고 Node
+  이벤트 루프 자연 배수에 의존해 종료해 왔다. `spawnClaude` 는 세션 종료 시
+  `auto-compound-runner` 를 detached + unref 로 띄우고 즉시 resolve 하므로(0.4.12 에서
+  비차단 전환) 현재는 미해제 핸들이 없어 정상 종료한다. 그러나 향후 post-session 경로
+  (`indexTranscriptToFTS`·rate-limit scan 등)에 닫히지 않은 핸들(SQLite 커넥션·타이머·소켓)이
+  하나라도 생기면 fgx 가 종료하지 못하고 셸 프롬프트가 돌아오지 않는다(= 터미널 물림).
+  `runClaudeLauncher()` 직후 명시적 `process.exit(0)` 추가로 이 종류의 회귀를 원천 차단.
+  cli.js 위임 경로(`watch`/`dashboard`/`workflows` 등 long-running)는 자체 exit 를 책임지므로
+  손대지 않았다. detached 자식은 unref 되어 독립 세션에서 실행되므로 `process.exit(0)` 후에도
+  생존(PID 1 로 reparent 확인) — 백그라운드 compound 는 영향받지 않는다.
+
 ## [0.4.12] — 2026-06-01 — Hotfix: 훅 stdout 누출 + 세션 종료 블로킹
 
 핫픽스 두 건.
