@@ -22,7 +22,7 @@
     "@wooojin/forgen": ">=0.4.0"
   },
   "devDependencies": {
-    "@types/node": "^25.9.1",
+    "@types/node": "^26.0.1",
     "claude-mem": "13.3.0",
     "typescript": "^5.4.0",
     "vitest": "^4.1.7"
