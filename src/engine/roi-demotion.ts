@@ -30,6 +30,11 @@ export interface RoiDemotionEntry {
   demotedAt: string;
   /** 연속 강등 유지 윈도 수 — 2 이상이면 격리(주입 제외) */
   windowCount: number;
+  /** 마지막 windowCount 증가 시점 — 24h 미만 재평가는 증가 없음 (리뷰 SEV-2:
+   *  평가는 auto-compound 세션마다 도는데, 같은 날 2세션으로 격리되면
+   *  "2회 연속 윈도" 설계 의도 위반. 90d 통계는 당일 내 사실상 불변이라
+   *  같은 날 재평가는 새 정보가 없다.) */
+  lastEvaluatedAt: string;
   surfaced: number;
   actedOn: number;
 }
@@ -101,20 +106,36 @@ export function evaluateRoiDemotions(
 
     const rate = acted / surfaced;
     if (rate < thresholds.rateMax) {
-      next[row.solutionId] = {
-        solutionId: row.solutionId,
-        reason: 'low-roi',
-        demotedAt: existing?.demotedAt ?? now(),
-        windowCount: (existing?.windowCount ?? 0) + 1,
-        surfaced,
-        actedOn: acted,
-      };
+      // windowCount 증가는 최소 24h 간격 — 같은 날 다중 세션의 재평가는
+      // 동일 스냅샷 재확인일 뿐이므로 증가 없이 엔트리를 유지한다.
+      const nowIso = now();
+      const elapsed = existing
+        ? new Date(nowIso).getTime() - new Date(existing.lastEvaluatedAt).getTime()
+        : Number.POSITIVE_INFINITY;
+      const advanceWindow = elapsed >= 24 * 60 * 60 * 1000;
+
+      next[row.solutionId] = existing && !advanceWindow
+        ? existing // 24h 미만 — 그대로 유지 (카운트/스냅샷 불변)
+        : {
+            solutionId: row.solutionId,
+            reason: 'low-roi',
+            demotedAt: existing?.demotedAt ?? nowIso,
+            windowCount: (existing?.windowCount ?? 0) + 1,
+            lastEvaluatedAt: nowIso,
+            surfaced,
+            actedOn: acted,
+          };
     }
     // 해제 2: rate 회복 → next 에 없음 = 제거
   }
 
   // rows 에 없는 기존 엔트리(이벤트가 180d 밖으로 age-out)는 함께 소멸 —
   // 오래 안 쓰인 솔루션은 T4 time-decay 가 별도로 처리한다.
+  //
+  // 의도된 장주기 순환 (리뷰에서 명시화): 격리된 솔루션은 surfaced 이벤트가
+  // 더 이상 쌓이지 않아 ~6개월 뒤 rows 에서 사라지고 → 엔트리 소멸 → 주입
+  // 풀로 복귀한다. 영구 추방이 아니라 "재시도 기회"다 — 프로젝트 맥락이
+  // 바뀌면 같은 솔루션이 유효해질 수 있고, 여전히 안 쓰이면 다시 강등된다.
   return next;
 }
 
@@ -133,6 +154,12 @@ export interface RoiAdjustable {
 /**
  * 강등 ×0.5, 격리는 제외. relevance 변경 후 내림차순 재정렬.
  * fail-open: demotions 가 비면 원본 그대로.
+ *
+ * 실효 (리뷰에서 명시화): injector 의 MIN_INJECT_RELEVANCE 가 0.3 이므로
+ * relevance < 0.6 인 강등 솔루션은 사실상 주입 차단된다 — 강등은
+ * "중간 신뢰도엔 soft-block, 고신뢰도(≥0.6)엔 우선순위 하락"으로 동작하고,
+ * 격리는 relevance 무관 hard-block. 이 기울기는 의도된 것: δ 가 injection
+ * 품질에서 나오므로 저 ROI 주입엔 보수적으로 군다.
  */
 export function applyRoiDemotions<T extends RoiAdjustable>(
   matches: T[],

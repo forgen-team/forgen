@@ -26,6 +26,8 @@ function row(id: string, surfaced90: number, acted90: number): HitRateRow {
 }
 
 const NOW = () => '2026-07-16T00:00:00.000Z';
+const DAY_LATER = () => '2026-07-17T00:00:00.000Z';
+const TWO_DAYS = () => '2026-07-18T00:00:00.000Z';
 
 describe('evaluateRoiDemotions (순수 판정)', () => {
   it('surfaced>=3 && rate<0.1 → 신규 강등 (windowCount=1)', () => {
@@ -44,18 +46,49 @@ describe('evaluateRoiDemotions (순수 판정)', () => {
     expect(next['sol-ok']).toBeUndefined();
   });
 
-  it('2회 연속 저 ROI → windowCount=2 → 격리', () => {
+  it('24h+ 간격 2회 연속 저 ROI → windowCount=2 → 격리', () => {
     const first = evaluateRoiDemotions([row('sol-a', 5, 0)], {}, DEFAULT_ROI_THRESHOLDS, NOW);
-    const second = evaluateRoiDemotions([row('sol-a', 8, 0)], first, DEFAULT_ROI_THRESHOLDS, NOW);
+    const second = evaluateRoiDemotions([row('sol-a', 8, 0)], first, DEFAULT_ROI_THRESHOLDS, DAY_LATER);
     expect(second['sol-a'].windowCount).toBe(2);
     expect(isRoiQuarantined(second['sol-a'])).toBe(true);
     // demotedAt 은 최초 강등 시점 유지
     expect(second['sol-a'].demotedAt).toBe(first['sol-a'].demotedAt);
   });
 
+  it('리뷰 SEV-2: 같은 날 재평가는 windowCount 를 올리지 않는다 (격리 조기 발동 방지)', () => {
+    const first = evaluateRoiDemotions([row('sol-a', 5, 0)], {}, DEFAULT_ROI_THRESHOLDS, NOW);
+    // 같은 날 두 번째 세션 — 90d 스냅샷은 사실상 동일, 새 정보 없음
+    const sameDay = evaluateRoiDemotions([row('sol-a', 5, 0)], first, DEFAULT_ROI_THRESHOLDS, NOW);
+    expect(sameDay['sol-a'].windowCount).toBe(1);
+    expect(isRoiQuarantined(sameDay['sol-a'])).toBe(false);
+  });
+
+  it('진동 사이클: 강등 → acted 해제 → 재강등은 windowCount=1 부터 (격리 이력 리셋)', () => {
+    const demoted = evaluateRoiDemotions([row('sol-a', 5, 0)], {}, DEFAULT_ROI_THRESHOLDS, NOW);
+    // 사용자가 씀 → 해제
+    const released = evaluateRoiDemotions([row('sol-a', 10, 1)], demoted, DEFAULT_ROI_THRESHOLDS, DAY_LATER);
+    expect(released['sol-a']).toBeUndefined();
+    // 이후 다시 저 ROI — 이력이 리셋됐으므로 1부터
+    const reDemoted = evaluateRoiDemotions([row('sol-a', 30, 1)], released, DEFAULT_ROI_THRESHOLDS, TWO_DAYS);
+    expect(reDemoted['sol-a'].windowCount).toBe(1);
+  });
+
+  it('리뷰 SEV-3: acted age-out 으로 stored actedOn > 현재 acted 여도 1사이클 내 자가치유', () => {
+    // 저장 시점 actedOn=2 인데 rolling window 에서 acted 이벤트가 빠져 1로 감소
+    const stale: RoiDemotions = {
+      'sol-a': { solutionId: 'sol-a', reason: 'low-roi', demotedAt: NOW(), windowCount: 1, lastEvaluatedAt: NOW(), surfaced: 30, actedOn: 2 },
+    };
+    // acted(1) > actedOn(2) 아님 → 해제 안 됨, 재강등으로 actedOn=1 로 갱신됨
+    const next = evaluateRoiDemotions([row('sol-a', 30, 1)], stale, DEFAULT_ROI_THRESHOLDS, DAY_LATER);
+    expect(next['sol-a'].actedOn).toBe(1);
+    // 이제 새 acted 1건만 생겨도 (2 > 1) 해제된다
+    const healed = evaluateRoiDemotions([row('sol-a', 31, 2)], next, DEFAULT_ROI_THRESHOLDS, TWO_DAYS);
+    expect(healed['sol-a']).toBeUndefined();
+  });
+
   it('acted_on 신규 발생 → 즉시 해제 (강등/격리 무관)', () => {
     const demoted: RoiDemotions = {
-      'sol-a': { solutionId: 'sol-a', reason: 'low-roi', demotedAt: NOW(), windowCount: 2, surfaced: 8, actedOn: 0 },
+      'sol-a': { solutionId: 'sol-a', reason: 'low-roi', demotedAt: NOW(), windowCount: 2, lastEvaluatedAt: NOW(), surfaced: 8, actedOn: 0 },
     };
     // 사용자가 실제로 씀: acted 0 → 1 (rate 여전히 <0.1 이어도 해제)
     const next = evaluateRoiDemotions([row('sol-a', 20, 1)], demoted, DEFAULT_ROI_THRESHOLDS, NOW);
@@ -70,14 +103,14 @@ describe('evaluateRoiDemotions (순수 판정)', () => {
 
   it('기존 강등 엔트리는 노출이 임계 밑으로 줄어도 유지 (회복은 acted 로만)', () => {
     const demoted = evaluateRoiDemotions([row('sol-a', 5, 0)], {}, DEFAULT_ROI_THRESHOLDS, NOW);
-    const next = evaluateRoiDemotions([row('sol-a', 1, 0)], demoted, DEFAULT_ROI_THRESHOLDS, NOW);
+    const next = evaluateRoiDemotions([row('sol-a', 1, 0)], demoted, DEFAULT_ROI_THRESHOLDS, DAY_LATER);
     expect(next['sol-a']).toBeDefined();
     expect(next['sol-a'].windowCount).toBe(1); // 유지이지 누적 아님
   });
 
   it('이벤트가 age-out 된 엔트리(rows 부재)는 소멸', () => {
     const demoted: RoiDemotions = {
-      'sol-gone': { solutionId: 'sol-gone', reason: 'low-roi', demotedAt: NOW(), windowCount: 1, surfaced: 5, actedOn: 0 },
+      'sol-gone': { solutionId: 'sol-gone', reason: 'low-roi', demotedAt: NOW(), windowCount: 1, lastEvaluatedAt: NOW(), surfaced: 5, actedOn: 0 },
     };
     const next = evaluateRoiDemotions([], demoted, DEFAULT_ROI_THRESHOLDS, NOW);
     expect(Object.keys(next)).toHaveLength(0);
@@ -86,8 +119,8 @@ describe('evaluateRoiDemotions (순수 판정)', () => {
 
 describe('applyRoiDemotions (matchSolutions 후처리)', () => {
   const demotions: RoiDemotions = {
-    demoted: { solutionId: 'demoted', reason: 'low-roi', demotedAt: NOW(), windowCount: 1, surfaced: 5, actedOn: 0 },
-    isolated: { solutionId: 'isolated', reason: 'low-roi', demotedAt: NOW(), windowCount: 2, surfaced: 9, actedOn: 0 },
+    demoted: { solutionId: 'demoted', reason: 'low-roi', demotedAt: NOW(), windowCount: 1, lastEvaluatedAt: NOW(), surfaced: 5, actedOn: 0 },
+    isolated: { solutionId: 'isolated', reason: 'low-roi', demotedAt: NOW(), windowCount: 2, lastEvaluatedAt: NOW(), surfaced: 9, actedOn: 0 },
   };
 
   it('강등 ×0.5 + 재정렬, 격리는 제외, 나머지 무변화', () => {
@@ -120,7 +153,7 @@ describe('저장소 roundtrip (실제 fs)', () => {
     expect(loadRoiDemotions(HOME)).toEqual({});
 
     const demotions: RoiDemotions = {
-      'sol-a': { solutionId: 'sol-a', reason: 'low-roi', demotedAt: NOW(), windowCount: 1, surfaced: 5, actedOn: 0 },
+      'sol-a': { solutionId: 'sol-a', reason: 'low-roi', demotedAt: NOW(), windowCount: 1, lastEvaluatedAt: NOW(), surfaced: 5, actedOn: 0 },
     };
     saveRoiDemotions(demotions, HOME);
     expect(loadRoiDemotions(HOME)).toEqual(demotions);
