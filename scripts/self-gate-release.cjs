@@ -8,7 +8,9 @@
  *   1. package.json.version == git tag (`v` prefix 제거 비교)
  *   2. CHANGELOG.md 에 해당 버전 섹션 존재
  *   3. dist/ 가 src/ 대비 stale 아님 (dist/ 최신 mtime >= src/ 최신 mtime)
- *   4. .forgen-release/e2e-report.json 존재 + passed=true + mock_detected=false
+ *   4. .forgen-release/smoke-report.json 존재 + passed=true + mock_detected=false
+ *      + vitest check 포함·통과 (ADR-010 W0-2: Docker e2e-report 게이트 폐지,
+ *      evidence a723507f — 증거 수단 적정화, 실제 실행 산출물 원칙은 유지)
  */
 
 'use strict';
@@ -17,7 +19,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 
-const REPO_ROOT = path.resolve(__dirname, '..');
+// FORGEN_GATE_ROOT: fixture 테스트용 오버라이드 (tests/release-gate-smoke.test.ts)
+const REPO_ROOT = process.env.FORGEN_GATE_ROOT || path.resolve(__dirname, '..');
 const failures = [];
 function fail(check, detail) { failures.push({ check, detail }); }
 
@@ -103,19 +106,32 @@ function checkDistFreshness() {
   }
 }
 
-// ── 4) e2e report ──────────────────────────────────────────────────────
-function checkE2EReport() {
-  const reportPath = path.join(REPO_ROOT, '.forgen-release', 'e2e-report.json');
+// ── 4) smoke report (v0.5.0+, 구 e2e-report 대체) ───────────────────────
+// NOTE: self-gate.cjs checkReleaseArtifact() 와 의도적 중복 — 두 스크립트는
+// standalone 유지 (pre-commit용 / release-tag용). 스키마 변경 시 양쪽 동기화.
+function checkSmokeReport() {
+  const reportPath = path.join(REPO_ROOT, '.forgen-release', 'smoke-report.json');
   if (!fs.existsSync(reportPath)) {
-    fail('e2e-report-missing', `.forgen-release/e2e-report.json not found`);
+    const legacy = path.join(REPO_ROOT, '.forgen-release', 'e2e-report.json');
+    if (fs.existsSync(legacy)) {
+      fail('smoke-report-missing', `e2e-report.json is deprecated since v0.5.0 — generate smoke evidence: node scripts/smoke.cjs`);
+    } else {
+      fail('smoke-report-missing', `.forgen-release/smoke-report.json not found — run: node scripts/smoke.cjs`);
+    }
     return;
   }
   try {
     const data = JSON.parse(fs.readFileSync(reportPath, 'utf-8'));
-    if (data.passed !== true) fail('e2e-failed', `e2e-report.passed=${data.passed}`);
-    if (data.mock_detected === true) fail('e2e-mock-detected', `e2e-report.mock_detected=true`);
+    if (data.passed !== true) fail('smoke-failed', `smoke-report.passed=${data.passed}`);
+    if (data.mock_detected === true) fail('smoke-mock-detected', `smoke-report.mock_detected=true`);
+    const checks = Array.isArray(data.checks) ? data.checks : [];
+    if (checks.length === 0) fail('smoke-empty', 'smoke-report has no checks');
+    const vitest = checks.find((c) => c && c.name === 'vitest');
+    if (!vitest) fail('smoke-vitest-missing', 'smoke-report lacks vitest check');
+    else if (vitest.skipped === true) fail('smoke-vitest-skipped', 'vitest was skipped (--skip=vitest) — release evidence requires a full run');
+    else if (vitest.passed !== true) fail('smoke-vitest-failed', `vitest check passed=${vitest.passed}`);
   } catch (e) {
-    fail('e2e-report-parse', `${String(e)}`);
+    fail('smoke-report-parse', `${String(e)}`);
   }
 }
 
@@ -134,7 +150,7 @@ function main() {
   checkVersionTagMatch(version, tag);
   checkChangelog(version);
   checkDistFreshness();
-  checkE2EReport();
+  checkSmokeReport();
 
   if (failures.length === 0) {
     console.log(`  [self-gate-release] ✓ release artifact consistency OK (${tag} / ${version})`);
