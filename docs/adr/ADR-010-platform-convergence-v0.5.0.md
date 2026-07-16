@@ -1,6 +1,6 @@
 # ADR-010: 플랫폼 수렴 대응 — 경계 재정의·컨텍스트 다이어트·2-모델 재캘리브레이션 (v0.5.0)
 
-**Status**: Accepted (2026-07-16)
+**Status**: Implemented (2026-07-16) — W0~W3 전체, W4-1 데이터셋, W4-3 per-model 가드 구현·검증 완료 (적대적 리뷰 6회전). 잔여: W4-2 R2 canonical 재측정 (R1 smoke 는 2026-07-16 실행) — R2 전까지 효과 수치 무주장 (Honest Fail Path).
 **Date**: 2026-07-16
 **Reversibility**: Type 2 (deprecation은 shim 경유로 가역. 단 §7 재캘리브레이션 전 효과 주장 유지가 더 비가역적 신뢰 손상 — 정직성 게이트가 우선)
 **Related ADR**: ADR-009 (Opus 4.8 + dynamic workflows — §7 재캘리브레이션 PENDING을 본 ADR이 승계), ADR-002 (rule lifecycle), ADR-006 (pass-gate 방법론)

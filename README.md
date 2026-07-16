@@ -57,7 +57,7 @@ Claude:  "측정 없이 점수를 매겼습니다. 실 테스트부터 실행합
 
 The same mechanism also fires when Claude writes conclusions faster than evidence ("done. passed. shipped. verified." with no measurement context), or claims facts ("테스트가 통과합니다") without ever having executed them. You can also define **custom rules** (e.g. "require npm test evidence before saying 'done' in this repo") via `forgen compound --rule` — they slot into the same Stop-hook dispatcher.
 
-This is **Mech-B self-check prompt-inject**. It works because Claude Code's Stop hook accepts `decision: "block"` + `reason`, and Claude in the next turn reads that reason as input. Codex CLI gets the same treatment via the symmetric host adapter (v0.4.3, [multi-host core design](docs/superpowers/specs/2026-04-27-forgen-multi-host-core-design.md)). We verified it end-to-end on 10 scenarios at $1.74 total cost ([A1 spike report](docs/spike/mech-b-a1-verification-report.md)), and v0.4.1 added built-in guards so you get the first block **without writing any rule**.
+This is **Mech-B self-check prompt-inject**. It works because Claude Code's Stop hook accepts `decision: "block"` + `reason`, and Claude in the next turn reads that reason as input. Codex CLI gets the same treatment via the symmetric host adapter (v0.4.3, [multi-host core design](docs/superpowers/specs/2026-04-27-forgen-multi-host-core-design.md)). We verified it end-to-end on 10 scenarios at $1.74 total cost (A1 spike report — archived in git history, `docs/spike/` pre-v0.5.0), and v0.4.1 added built-in guards so you get the first block **without writing any rule**.
 
 > **v0.4.3 self-correction story:** the same guards detected their own 16-day false-positive (strict φ 65.66% — 84% from a single Korean-regex bug), and the [`forgen-eval`](packages/forgen-eval/) introspect testbed (alpha) flagged a `TEST-1` wiring gap on top of it. Both fixes shipped in v0.4.3 — forgen finding and fixing forgen. Details in [CHANGELOG](CHANGELOG.md).
 
@@ -73,18 +73,27 @@ This is **Mech-B self-check prompt-inject**. It works because Claude Code's Stop
 > is rescinded as a broken-testbed artifact; ψ (forgen+mem coexistence) is
 > confirmed as ≈0 — **forgen alone is the recommended path**. See
 > [`docs/release/v0.4.5-draft.md`](docs/release/v0.4.5-draft.md).
+>
+> **Scope caveat (v0.5.0, ADR-010):** the numbers above were measured on the
+> models of their era (Claude Sonnet 4.x-class, Codex). On **Opus 4.8** we
+> measured completion-guard **blocks = 0** (easy N=10 / hard N=6) — frontier
+> models got honest on their own, and forgen's measured δ there came **100%
+> from solution injection**, not enforcement. Sonnet 5 is **unmeasured**
+> (recalibration pending); until then we make **no effect claims** for
+> frontier models. Deterministic guards (secrets, destructive commands) are
+> model-independent and unaffected. Per-model guard behavior:
+> measured-honest models get advisory mode instead of blocking (v0.5.0).
 
-🎬 **See it happen** (27 seconds):
+🎬 **See it happen** — try the guard live on your own install:
 
 ```bash
-# Watch the full loop live — actual hook, actual rule, actual block/approve cycle
-bash docs/demo/mech-b-demo.sh
-
-# Or replay the pre-recorded asciinema cast
-asciinema play docs/demo/mech-b-block-unblock.cast
+# Real hook, real block: a self-score claim with zero measurement evidence
+echo '{"session_id":"demo","last_assistant_message":"이번 작업 신뢰도 90% 로 평가됩니다."}' \
+  | node "$(npm root -g)/@wooojin/forgen/dist/hooks/stop-guard.js"
+# → decision:"block" + the exact reason Claude reads on its next turn
 ```
 
-See [`docs/demo/README.md`](docs/demo/README.md) for what's real vs simulated in the demo.
+(The pre-v0.5.0 scripted demo lived in `docs/demo/` — archived in git history.)
 
 ---
 
@@ -843,7 +852,7 @@ forgen and [claude-mem](https://github.com/thedotmack/claude-mem) solve **comple
 | **Trigger** | Stop / PreToolUse hooks | UserPromptSubmit hook |
 | **Cost** | $0 (in-turn block/reason) | $0 (vector recall, local) |
 
-Install both as separate Claude Code plugins (Plugin model — forgen does not bundle claude-mem; AGPL-3.0 stays at arm's length). When both are present forgen's auto-detect yields context budget so claude-mem's recall has room to land, and the orchestration contract — order, failure isolation, Stop-hook ownership — is documented in [ADR-004](docs/adr/ADR-004-claude-mem-hook-orchestration.md). The pairing is one of the 5 arms tracked by [forgen-eval](packages/forgen-eval/) (see [claude-mem spike](docs/spike/2026-04-28-claude-mem-spike.md)).
+Install both as separate Claude Code plugins (Plugin model — forgen does not bundle claude-mem; AGPL-3.0 stays at arm's length). When both are present forgen's auto-detect yields context budget so claude-mem's recall has room to land, and the orchestration contract — order, failure isolation, Stop-hook ownership — is documented in [ADR-004](docs/adr/ADR-004-claude-mem-hook-orchestration.md). The pairing is one of the 5 arms tracked by [forgen-eval](packages/forgen-eval/) (claude-mem spike report — archived in git history, `docs/spike/` pre-v0.5.0).
 
 ```
 You:        "fix the auth flow"
