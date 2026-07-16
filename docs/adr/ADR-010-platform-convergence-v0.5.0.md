@@ -40,7 +40,7 @@
 
 ### §2. 경계 재정의 (native와 싸우지 않기)
 
-- **2a. `doctor.ts` 축소**: Harness Maturity + Quick Wins 섹션 제거(~100줄, native /doctor 영역). hook timing 표시는 `--verbose`로 강등(수집은 유지 — 자체 회귀 테스트용). Effort 섹션은 opus-4.x + forge-loop 활성 시에만. 첫 줄에 명시: *"환경 건강은 native `/doctor`. 이 명령은 forgen 자체 기계와 효과-측정 게이트를 검사한다."* ψ-long 게이트·codex parity·e2e freshness·plugin cache 진단은 **유지·헤드라인화**.
+- **2a. `doctor.ts` 축소**: Harness Maturity + Quick Wins 섹션 제거(~100줄, native /doctor 영역). hook timing 표시는 `--verbose`로 강등(수집은 유지 — 자체 회귀 테스트용). Effort 섹션은 opus-4.x + forge-loop 활성 시에만. 첫 줄에 명시: *"환경 건강은 native `/doctor`. 이 명령은 forgen 자체 기계와 효과-측정 게이트를 검사한다."* ψ-long 게이트·codex parity·plugin cache 진단은 **유지·헤드라인화**. *(수정 2026-07-16: Docker e2e freshness 게이트는 사용자 교정(evidence a723507f)으로 폐지 — vitest+smoke 실행 증거로 대체, 실행 계획 W0-2 참조.)*
 - **2b. `usage-telemetry.ts` deprecate**: statusline/`forgen me` 표시 중단 + "native /usage로 이동" 1회 공지. `recordToolCall()`은 no-op shim (v0.6.0 삭제).
 - **2c. static prose 주입 제거**: `generateSecurityRules()`/`generateAntiPatternRules()`(`config-injector.ts`)를 2줄 포인터로 축약 — 강제는 훅(secret-filter, db-guard)이 하고 있고 prose는 순수 토큰 비용.
 - **2d. 권한 중재 철수**: 렌더 규칙에서 `Trust: …` 정책 문장은 Auto mode 감지 시(`permission_mode`) 생략. facet 유래 "When To Ask" 규칙(학습된 *선호*)은 유지 — 선호 공급자로 남고 중재자에서 물러난다. `trust-layer-intent.ts`(multi-host capability 모델)는 무관, 유지.
