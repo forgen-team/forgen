@@ -26,6 +26,7 @@ import { readStdinJSON } from './shared/read-stdin.js';
 import { approve, approveWithWarning, blockStop, failOpenWithTracking } from './shared/hook-response.js';
 import { takeLastExtractionNotice } from '../core/extraction-notice.js';
 import { runMetaGuards } from '../checks/_shared/meta-guard-dispatch.js';
+import { guardModeForModel, readSessionModel } from '../checks/_shared/model-profile.js';
 import { sanitizeForGuard } from '../checks/_shared/text-sanitizer.js';
 import { STATE_DIR } from '../core/paths.js';
 import { sanitizeId } from './shared/sanitize-id.js';
@@ -535,7 +536,9 @@ export async function main(): Promise<void> {
     if (process.env.FORGEN_USER_CONFIRMED !== '1') {
       const sessionId = input?.session_id ?? 'unknown';
       const recentTools = loadRecentToolNames(sessionId);
-      const results = runMetaGuards({ lastMessage, recentTools, minMeasurements: 1 });
+      // W4-3: 세션 모델 기반 완료-가드 모드 (opus-4.8 실측 blocks=0 → advise)
+      const completionGuardMode = guardModeForModel(readSessionModel(sanitizeId(sessionId)));
+      const results = runMetaGuards({ lastMessage, recentTools, minMeasurements: 1, completionGuardMode });
 
       for (const r of results) {
         recordViolation({

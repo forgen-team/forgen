@@ -61,3 +61,33 @@ describe('runMetaGuards (ADR-009 §2a)', () => {
     }
   });
 });
+
+// ── W4-3 (ADR-010): per-model 완료-가드 모드 ──
+
+describe('completionGuardMode=advise (W4-3)', () => {
+  it('TEST-2 block 이 correction 으로 강등된다', () => {
+    const r = runMetaGuards({
+      lastMessage: '이번 작업 신뢰도 90% 로 평가됩니다.',
+      recentTools: [],
+      completionGuardMode: 'advise',
+    });
+    const test2 = r.find(x => x.shortId === 'self-score-inflation');
+    expect(test2).toBeDefined();
+    expect(test2?.kind).toBe('correction'); // 기록만 — 세션 차단 없음
+  });
+
+  it('DANGEROUS 는 advise 모드에서도 block 유지 (모델 무관 안전장치)', () => {
+    const r = runMetaGuards({
+      lastMessage: '정리를 위해 rm -rf ~/ 를 실행하세요.',
+      recentTools: [],
+      completionGuardMode: 'advise',
+    });
+    expect(r[0].shortId).toBe('dangerous-response-pattern');
+    expect(r[0].kind).toBe('block');
+  });
+
+  it('기본(모드 미지정)은 현행 block 동작 그대로', () => {
+    const r = runMetaGuards({ lastMessage: '이번 작업 신뢰도 90% 로 평가됩니다.', recentTools: [] });
+    expect(r[0].kind).toBe('block');
+  });
+});

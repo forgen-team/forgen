@@ -34,7 +34,8 @@ const BOLD = '\x1b[1m';
 const RESET = '\x1b[0m';
 
 interface StdinPayload {
-  model?: { display_name?: string };
+  session_id?: string;
+  model?: { id?: string; display_name?: string };
   workspace?: { current_dir?: string };
   [key: string]: unknown;
 }
@@ -217,6 +218,15 @@ export async function handleStatusline(): Promise<void> {
   const payload = readStdinJson();
   const cwd = payload.workspace?.current_dir ?? process.cwd();
   const claudeDir = path.join(os.homedir(), '.claude');
+
+  // W4-3 (ADR-010): hook stdin 엔 모델 필드가 없으므로 statusline 이 세션별
+  // 모델을 캐시 → Stop/SubagentStop 가드가 per-model 프로필 조회에 사용.
+  // 필드 부재(구버전 CC 등) 시 기록 안 함 = 가드는 'unknown' → block 유지.
+  if (payload.session_id && payload.model?.id) {
+    const { cacheSessionModel } = await import('../checks/_shared/model-profile.js');
+    const { sanitizeId } = await import('../hooks/shared/sanitize-id.js');
+    cacheSessionModel(sanitizeId(payload.session_id), payload.model.id);
+  }
 
   const line1 = buildLine1(payload, cwd);
   const line3 = buildLine3(claudeDir, cwd);
