@@ -1,5 +1,23 @@
 # Forgen — 포지셔닝 & 셀링 전략
 
+> **⚠ 2026-07-16 애든덤 (ADR-010 W3-2)** — 아래 본문은 2026-04 기준. 이후 변한 것:
+>
+> 1. **"학습 루프"는 더 이상 unique 하지 않다.** ECC 가 "recurring patterns → new skills"
+>    학습 루프를 셀링에 추가했고, 업계 전반(Anthropic 2026 Agentic Coding Trends)이
+>    persistent memory + correction 개인화로 수렴했다. forgen 의 차별화는
+>    **"학습한다"가 아니라 "학습을 증명한다"** — δ 측정(forgen-eval), acted-on
+>    텔레메트리(ROI 루프), calibrate. 아무도 숫자를 내놓지 않는다.
+> 2. **enforcement 는 프론티어 모델이 흡수했다.** v0.4.11 실측: opus-4.8 에서
+>    완료 가드 blocks=0 (easy/hard 양쪽), δ 는 100% injection 기여. §3.3 의
+>    "6개 안전 가드레일" 중 완료-검증 가드는 opus-4.8/sonnet-5 에서 거의 발화하지
+>    않는다 — 모델이 정직해졌다. 그 위에서의 가치는 recall·개인화·측정이며,
+>    이를 정직 한계로 공개한다 (§5 스타일). 결정적 가드(secret/db)는 유효.
+> 3. **README 히어로 교체("학습을 증명한다")는 W4 재캘리브레이션(R2) 수치 확보
+>    후에만** — 수치 없는 "증명" 주장은 자기모순 (실행계획 W3-2, Rev 2).
+> 4. native 흡수 대응(경계 재정의)은 ADR-010 참조 — doctor/usage/권한 중재에서
+>    물러나고 moat 4개(correction→profile, 증거 게이팅 정책, compound recall+ROI,
+>    multi-host)에 재집중.
+
 ---
 
 ## 1. 경쟁자 포지셔닝 맵 — 빈 공간 찾기

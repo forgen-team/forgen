@@ -23,6 +23,7 @@ import { getOrBuildIndex } from './solution-index.js';
 import { defaultNormalizer } from './term-normalizer.js';
 import { rankCandidates } from './ranking-pipeline.js';
 import { loadTunedMatcherWeights } from './meta-learning/matcher-weight-loader.js';
+import { applyRoiDemotions, loadRoiDemotions } from './roi-demotion.js';
 
 // ── Re-exports (backward compatibility) ──
 
@@ -115,7 +116,9 @@ export function matchSolutions(prompt: string, scope: ScopeInfo, cwd: string): S
 
   const ranked = rankCandidates(promptTags, promptLower, allSolutions, tunedWeights);
 
-  return ranked.map((c) => ({
+  // ADR-010 W3-1 (F2): 저 ROI 강등 — ranking-pipeline 은 순수 유지, 여기서
+  // 후처리. surfaced≫acted_on 솔루션은 ×0.5, 2윈도 연속이면 주입 제외.
+  const matches = ranked.map((c) => ({
     name: c.solution.name,
     path: c.solution.filePath,
     scope: c.solution.scope,
@@ -129,4 +132,10 @@ export function matchSolutions(prompt: string, scope: ScopeInfo, cwd: string): S
     matchedTags: [...c.matchedTags, ...c.matchedIdentifiers],
     matchedIdentifiers: c.matchedIdentifiers,
   }));
+
+  try {
+    return applyRoiDemotions(matches, loadRoiDemotions());
+  } catch {
+    return matches; // fail-open — 강등 실패가 주입을 막지 않는다
+  }
 }

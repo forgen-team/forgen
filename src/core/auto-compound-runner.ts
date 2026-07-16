@@ -706,6 +706,18 @@ ${sanitizedSummary.slice(0, 4000)}
     process.stderr.write(`[forgen-gc] state prune failed: ${e instanceof Error ? e.message : String(e)}\n`);
   }
 
+  // ADR-010 W3-1 (F2): 세션 종료마다 ROI 재판정 — surfaced≫acted_on 솔루션
+  // 강등/격리. δ 가 100% injection 에서 나오므로(실측) 주입 품질 = 효과.
+  try {
+    const { updateRoiDemotions } = await import('../engine/roi-demotion.js');
+    const roi = updateRoiDemotions();
+    if (roi && (roi.demoted > 0 || roi.quarantined > 0)) {
+      process.stderr.write(`[forgen-roi] low-ROI solutions: ${roi.demoted} demoted, ${roi.quarantined} quarantined\n`);
+    }
+  } catch (e) {
+    process.stderr.write(`[forgen-roi] update failed: ${e instanceof Error ? e.message : String(e)}\n`);
+  }
+
   // Step 6 (v0.4.1): rule lifecycle 자동 실행 — rule 의 violations/bypass/drift
   // 신호에 따른 자동 강등/승격. 이전에는 CLI (`forgen rule scan --apply`) 수동
   // 호출만 있어서 구매자가 몇 주 써도 rule 정비 안 됨 → 쓸모없는 rule 이 계속
