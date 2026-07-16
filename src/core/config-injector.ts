@@ -133,7 +133,7 @@ function loadProjectMapSummary(cwd: string): string | null {
  * ADR-010 W2-3: 보안 규칙 prose → 2줄 포인터로 축약.
  * 실제 강제는 훅(secret-filter, db-guard)이 결정적으로 수행하며,
  * prose 는 순수 토큰 비용이었다 (native /doctor 도 "코드에서 유추 가능한
- * 규칙"으로 트리밍 제안하는 부류). 상세는 `forgen explain guards`.
+ * 규칙"으로 트리밍 제안하는 부류). 차단 발생 시 확인: `forgen explain`.
  */
 export function generateSecurityRules(): string {
   return [

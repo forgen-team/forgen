@@ -69,6 +69,8 @@ interface DashboardData {
   usage: {
     hour5: { claude: number; codex: number; total: number };
     week: { claude: number; codex: number; total: number };
+    /** ADR-010 W2-2: 기록 중단 — native /usage 이관. 잔존 파일이 age-out 하면 영구 0. */
+    deprecated: true;
   };
   todayExtracted: number;
   solutions: {
@@ -87,10 +89,10 @@ interface DashboardData {
 function collectData(): DashboardData {
   const now = new Date();
 
-  // usage
+  // usage (deprecated — W2-2): 과거 축적분만 읽힘, 신규 기록 없음
   const usage = (() => {
-    try { return getUsageStats(); }
-    catch { return { hour5: { claude: 0, codex: 0, total: 0 }, week: { claude: 0, codex: 0, total: 0 } }; }
+    try { return { ...getUsageStats(), deprecated: true as const }; }
+    catch { return { hour5: { claude: 0, codex: 0, total: 0 }, week: { claude: 0, codex: 0, total: 0 }, deprecated: true as const }; }
   })();
 
   // today extracted: me/solutions/*.md mtime이 오늘인 것 (또는 last-extraction.json)
@@ -177,18 +179,10 @@ function renderTTY(data: DashboardData): string {
   lines.push(boxTop());
   lines.push(boxEmpty());
 
-  // Usage
+  // Usage — ADR-010 W2-2: recordToolCall no-op 이후 이 카운트는 영구 0 으로
+  // 수렴한다. 침묵 열화 대신 이관 안내를 표시 (JSON 은 deprecated 플래그).
   lines.push(boxLine(`${C.bold}Usage${C.reset}`));
-
-  const h5total = data.usage.hour5.total;
-  const h5pct = Math.min(1, h5total / Math.max(h5total + 10, 50));
-  const h5bar = bar(h5pct);
-  lines.push(boxLine(`  5h window:    ${C.yellow}${h5bar}${C.reset}  (${h5total} tool calls)`));
-
-  const wktotal = data.usage.week.total;
-  const wkpct = Math.min(1, wktotal / Math.max(wktotal + 10, 100));
-  const wkbar = bar(wkpct);
-  lines.push(boxLine(`  weekly:       ${C.yellow}${wkbar}${C.reset}  (${wktotal} tool calls)`));
+  lines.push(boxLine(`  ${C.dim}→ native /usage 로 이동 (plan limit 을 skill/subagent별 분해)${C.reset}`));
 
   lines.push(boxEmpty());
 

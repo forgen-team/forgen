@@ -674,7 +674,7 @@ forgen skill list               # List promoted skills
 forgen init                     # Initialize project (+ 15 starter-pack solutions)
 forgen migrate [implicit-feedback|all]
                                 # One-shot schema migrations (idempotent)
-forgen doctor                   # System diagnostics (10 categories + harness maturity)
+forgen doctor                   # Forgen-specific diagnostics (plugin cache, hooks, state, parity, gates — env health: native /doctor)
 forgen doctor --prune-state     # Daily hygiene: state GC + T4 rule decay (90d idle → retire)
 forgen dashboard                # Knowledge overview (6 sections)
 forgen config hooks             # View hook status + context budget
