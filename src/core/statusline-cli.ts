@@ -16,7 +16,6 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import { execSync } from 'node:child_process';
 import { loadActiveRules } from '../store/rule-store.js';
-import { getUsageStats } from './usage-telemetry.js';
 import { STATE_DIR } from './paths.js';
 import { classifySolutions } from './lifecycle-classifier.js';
 
@@ -149,17 +148,19 @@ function buildLifecycleLine(): string | null {
   }
 }
 
-/** Build usage line: "📊 87/5h · 412/wk (claude)" — 0.4.6 신설 */
+/**
+ * ADR-010 W2-2: 사용량 세그먼트("📊 N/5h · N/wk") 제거 — native /usage 가
+ * plan limit 를 정확히 분해한다. 이관 사실을 딱 1회만 공지 (state flag).
+ */
 function buildUsageLine(): string | null {
   try {
-    const stats = getUsageStats();
-    if (stats.week.total === 0) return null;
-    const dominant = stats.week.codex > stats.week.claude ? 'codex' : 'claude';
-    return [
-      `${YELLOW}📊 ${stats.hour5.total}/5h${RESET}`,
-      `${YELLOW}${stats.week.total}/wk${RESET}`,
-      `${DIM}(${dominant})${RESET}`,
-    ].join(`  ${DIM}·${RESET}  `);
+    const noticeFlag = path.join(STATE_DIR, 'usage-notice-shown');
+    if (!fs.existsSync(noticeFlag)) {
+      fs.mkdirSync(STATE_DIR, { recursive: true });
+      fs.writeFileSync(noticeFlag, new Date().toISOString());
+      return `${DIM}ℹ 사용량 표시는 native /usage 로 이동했습니다 (이 안내는 1회만 표시)${RESET}`;
+    }
+    return null;
   } catch {
     return null;
   }
@@ -231,9 +232,10 @@ export async function handleStatusline(): Promise<void> {
   if (usageLine) console.log(usageLine);
   if (lifecycleLine) console.log(lifecycleLine);
 
+  // W2-2: 1회 공지(usageLine)는 캐시에 넣지 않는다 — 캐시 재생 시
+  // "1회만" 약속이 5초 창 동안 반복 위반되는 실측 버그 방지.
   const cacheLines = [line1, line3];
-  if (usageLine) cacheLines.push(usageLine);
   if (lifecycleLine) cacheLines.push(lifecycleLine);
-  const cacheBody = cacheLines.join('\n') + '\n';
+  const cacheBody = `${cacheLines.join('\n')}\n`;
   writeCache(cacheBody);
 }

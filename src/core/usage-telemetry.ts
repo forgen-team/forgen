@@ -37,14 +37,13 @@ interface TelemetryEntry {
   rt?: 'claude' | 'codex';
 }
 
-export function recordToolCall(runtime: 'claude' | 'codex' = 'claude'): void {
-  try {
-    fs.mkdirSync(STATE_DIR, { recursive: true });
-    const entry: TelemetryEntry = { ts: Date.now(), rt: runtime };
-    fs.appendFileSync(TELEMETRY_PATH, `${JSON.stringify(entry)}\n`);
-  } catch (e) {
-    log.debug('telemetry append 실패', e);
-  }
+/**
+ * @deprecated ADR-010 W2-2 (2026-07-16): native `/usage` 가 plan limit 를
+ * skill/subagent/plugin/MCP 별로 정확히 분해하므로 forgen 의 raw count 는
+ * 중복 표면. 기록 중단(no-op shim — API 만 유지), v0.6.0 에서 모듈 삭제 예정.
+ */
+export function recordToolCall(_runtime: 'claude' | 'codex' = 'claude'): void {
+  // no-op — 사용량 추적은 native /usage 로 이관됨.
 }
 
 /**

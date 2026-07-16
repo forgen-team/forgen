@@ -200,7 +200,7 @@ function applySettingsRemoval(home: string, backupDir: string): boolean {
 
     if (changed) {
       fs.copyFileSync(settingsPath, path.join(backupDir, 'settings.json.bak'));
-      atomicWriteFileSync(settingsPath, JSON.stringify(s, null, 2) + '\n');
+      atomicWriteFileSync(settingsPath, `${JSON.stringify(s, null, 2)}\n`);
       applied = true;
     }
   } catch { /* settings 파손 시 건드리지 않음 */ }
@@ -216,7 +216,7 @@ function applySettingsRemoval(home: string, backupDir: string): boolean {
     if (tenetxKeys.length > 0) {
       fs.copyFileSync(registryPath, path.join(backupDir, 'installed_plugins.json.bak'));
       for (const k of tenetxKeys) delete r.plugins[k];
-      atomicWriteFileSync(registryPath, JSON.stringify(r, null, 2) + '\n');
+      atomicWriteFileSync(registryPath, `${JSON.stringify(r, null, 2)}\n`);
       applied = true;
     }
   } catch { /* ignore */ }

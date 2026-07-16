@@ -3,7 +3,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { FORGEN_HOME, LAB_DIR, ME_BEHAVIOR, ME_DIR, ME_SOLUTIONS, ME_RULES, ME_SKILLS, PACKS_DIR, SESSIONS_DIR, STATE_DIR, V1_SESSIONS_DIR } from './paths.js';
+import { FORGEN_HOME, LAB_DIR, ME_BEHAVIOR, ME_DIR, ME_SOLUTIONS, ME_RULES, PACKS_DIR, SESSIONS_DIR, STATE_DIR, V1_SESSIONS_DIR } from './paths.js';
 import { getTimingStats } from '../hooks/shared/hook-timing.js';
 import { countSessionScopedFiles, pruneState } from './state-gc.js';
 import { summarizeAllByHost } from '../store/host-mismatch.js';
@@ -129,6 +129,9 @@ export interface DoctorOptions {
    *  `forgen migrate tenetx` 가 수행). native /doctor 가 비용을 flag 하면
    *  forgen 이 provenance 로 안전하게 회수하는 보완 관계. */
   reclaim?: boolean;
+  /** W2-1 (ADR-010): hook timing 표 등 상세 진단 표시. slow-hook 감지는
+   *  native /doctor 영역이라 기본 출력에서 강등됨 (수집은 유지). */
+  verbose?: boolean;
 }
 
 /** plugin cache 디렉토리에 버전 엔트리가 하나 이상 있는가 (check + repair 재검증 공용) */
@@ -219,7 +222,12 @@ const REPAIRABLE_PLUGIN_LABELS = Object.freeze({
 
 export async function runDoctor(opts: DoctorOptions = {}): Promise<void> {
   failedChecks = [];
-  console.log('\n  Forgen — Diagnostics\n');
+  console.log('\n  Forgen — Diagnostics');
+  // ADR-010 W2-1 경계 선언: 일반 환경 건강(컨텍스트 비용, unused skill/MCP,
+  // CLAUDE.md 정리, slow hook)은 native /doctor 의 영역. 이 명령은 forgen
+  // 자체 기계(플러그인 캐시·훅 오류·상태 위생)와 효과-측정 게이트만 본다.
+  console.log('  환경 전반 진단은 Claude Code native /doctor 를 사용하세요.');
+  console.log('  이 명령은 forgen 자체 기계와 효과-측정 게이트를 검사합니다.\n');
 
   section('Tools');
   check('claude CLI', commandExists('claude'));
@@ -398,26 +406,27 @@ export async function runDoctor(opts: DoctorOptions = {}): Promise<void> {
   }
   console.log();
 
-  // Hook Timing: performance stats
-  console.log('  [Hook Timing]');
-  const timingStats = getTimingStats();
-  if (timingStats.length === 0) {
-    console.log('  No timing data collected yet.');
-  } else {
-    console.log('  Hook                  Count   p50ms   p95ms   max ms');
-    console.log(`  ${'-'.repeat(56)}`);
-    for (const s of timingStats) {
-      const hook = s.hook.padEnd(22);
-      const count = String(s.count).padStart(5);
-      const p50 = String(s.p50).padStart(7);
-      const p95 = String(s.p95).padStart(7);
-      const max = String(s.max).padStart(8);
-      console.log(`  ${hook}${count}${p50}${p95}${max}`);
+  // Hook Timing: W2-1 (ADR-010) — slow hook 감지는 native /doctor 가 하므로
+  // 표시는 --verbose 로 강등. 수집(hook-timing.jsonl)은 자체 회귀 테스트용으로 유지.
+  if (opts.verbose) {
+    console.log('  [Hook Timing]');
+    const timingStats = getTimingStats();
+    if (timingStats.length === 0) {
+      console.log('  No timing data collected yet.');
+    } else {
+      console.log('  Hook                  Count   p50ms   p95ms   max ms');
+      console.log(`  ${'-'.repeat(56)}`);
+      for (const s of timingStats) {
+        const hook = s.hook.padEnd(22);
+        const count = String(s.count).padStart(5);
+        const p50 = String(s.p50).padStart(7);
+        const p95 = String(s.p95).padStart(7);
+        const max = String(s.max).padStart(8);
+        console.log(`  ${hook}${count}${p50}${p95}${max}`);
+      }
     }
+    console.log();
   }
-  console.log();
-
-  console.log();
 
   // v1: 팀 팩 시스템 제거. 개인 모드만 지원.
   console.log('  [Pack Connections]');
@@ -455,106 +464,9 @@ export async function runDoctor(opts: DoctorOptions = {}): Promise<void> {
     }
   }
 
-  // Harness Maturity section
-  console.log('  [Harness Maturity]');
-  const cwd = process.cwd();
-
-  // 1. Preparation
-  const hasClaude = fs.existsSync(path.join(cwd, 'CLAUDE.md'));
-  let rulesCount = 0;
-  try {
-    const rulesDir = path.join(cwd, '.claude', 'rules');
-    if (fs.existsSync(rulesDir)) {
-      rulesCount = fs.readdirSync(rulesDir).filter(f => f.endsWith('.md')).length;
-    }
-  } catch { /* fail-open */ }
-  let hooksActive = 0;
-  try {
-    const hooksJsonPath = path.join(cwd, 'hooks', 'hooks.json');
-    if (fs.existsSync(hooksJsonPath)) {
-      const hooksData = JSON.parse(fs.readFileSync(hooksJsonPath, 'utf-8'));
-      if (hooksData.hooks && typeof hooksData.hooks === 'object') {
-        for (const eventHooks of Object.values(hooksData.hooks)) {
-          if (Array.isArray(eventHooks)) {
-            for (const group of eventHooks) {
-              if (Array.isArray((group as { hooks?: unknown[] }).hooks)) {
-                hooksActive += ((group as { hooks: unknown[] }).hooks).length;
-              }
-            }
-          }
-        }
-      }
-    }
-  } catch { /* fail-open */ }
-  const prepL = hasClaude && rulesCount >= 3 && hooksActive > 0 ? 'L3' : hasClaude && hooksActive > 0 ? 'L2' : hasClaude ? 'L1' : 'L0';
-
-  // 2. Context
-  let solutionsCount = 0;
-  try {
-    if (exists(ME_SOLUTIONS)) solutionsCount = fs.readdirSync(ME_SOLUTIONS).filter(f => f.endsWith('.md')).length;
-  } catch { /* fail-open */ }
-  let behaviorCount = 0;
-  try {
-    if (exists(ME_BEHAVIOR)) behaviorCount = fs.readdirSync(ME_BEHAVIOR).filter(f => f.endsWith('.md')).length;
-  } catch { /* fail-open */ }
-  const ctxL = solutionsCount >= 5 && behaviorCount >= 3 ? 'L3' : solutionsCount >= 3 || behaviorCount >= 1 ? 'L2' : solutionsCount > 0 || behaviorCount > 0 ? 'L1' : 'L0';
-
-  // 3. Execution
-  const hasSkills = exists(ME_SKILLS);
-  const execL = hasSkills ? 'L2' : 'L1';
-
-  // 4. Validation
-  const hasTests = fs.existsSync(path.join(cwd, 'tests'));
-  const hasCI = fs.existsSync(path.join(cwd, '.github', 'workflows'));
-  const validL = hasTests && hasCI ? 'L3' : hasTests ? 'L2' : 'L1';
-
-  // 5. Improvement: reflection rate from solutions
-  let reflectionRate = 0;
-  try {
-    if (exists(ME_SOLUTIONS)) {
-      const solFiles = fs.readdirSync(ME_SOLUTIONS).filter(f => f.endsWith('.md'));
-      if (solFiles.length > 0) {
-        let reflected = 0;
-        for (const f of solFiles) {
-          try {
-            const content = fs.readFileSync(path.join(ME_SOLUTIONS, f), 'utf-8');
-            const match = content.match(/reflected:\s*(\d+)/);
-            if (match && parseInt(match[1], 10) > 0) reflected++;
-          } catch { /* skip */ }
-        }
-        reflectionRate = Math.round((reflected / solFiles.length) * 100);
-      }
-    }
-  } catch { /* fail-open */ }
-  const improvL = reflectionRate > 0 ? 'L3' : solutionsCount > 0 ? 'L2' : 'L1';
-
-  const levelIcon = (l: string) => l === 'L3' ? '✓' : l === 'L2' ? '✓' : l === 'L1' ? '✗' : '✗';
-
-  console.log(`  Axis               Level  Detail`);
-  console.log(`  ${'─'.repeat(55)}`);
-  console.log(`  ${levelIcon(prepL)} Preparation        ${prepL}     CLAUDE.md:${hasClaude ? 'yes' : 'no'}, rules:${rulesCount}, hooks:${hooksActive}`);
-  console.log(`  ${levelIcon(ctxL)} Context            ${ctxL}     solutions:${solutionsCount}, behavior:${behaviorCount}`);
-  console.log(`  ${levelIcon(execL)} Execution          ${execL}     skills:${hasSkills ? 'yes' : 'no'}`);
-  console.log(`  ${levelIcon(validL)} Validation         ${validL}     tests:${hasTests ? 'yes' : 'no'}, CI:${hasCI ? 'yes' : 'no'}`);
-  console.log(`  ${levelIcon(improvL)} Improvement        ${improvL}     reflection:${reflectionRate}%`);
-  console.log();
-
-  // Quick wins: suggest for lowest scoring axes
-  const axes = [
-    { name: 'Preparation', level: prepL, hint: 'Add CLAUDE.md + .claude/rules/ files' },
-    { name: 'Context', level: ctxL, hint: 'Run /compound to accumulate solutions' },
-    { name: 'Execution', level: execL, hint: 'Promote solutions to skills' },
-    { name: 'Validation', level: validL, hint: 'Add tests/ dir and .github/workflows' },
-    { name: 'Improvement', level: improvL, hint: 'Reflect on existing solutions' },
-  ];
-  const quickWins = axes.filter(a => a.level === 'L0' || a.level === 'L1').slice(0, 3);
-  if (quickWins.length > 0) {
-    console.log('  Quick Wins (Top 3):');
-    for (const win of quickWins) {
-      console.log(`  → ${win.name}: ${win.hint}`);
-    }
-    console.log();
-  }
+  // W2-1 (ADR-010): Harness Maturity / Quick Wins 섹션 제거 —
+  // "CLAUDE.md 추가하세요" 류 일반 셋업 조언은 native /doctor 영역.
+  // forgen 고유 진단(아래 State Hygiene, ψ-long, parity 등)만 유지한다.
 
   // State bloat check — session-scoped files accumulate until pruned.
   console.log('  [State Hygiene]');
@@ -675,19 +587,19 @@ export async function runDoctor(opts: DoctorOptions = {}): Promise<void> {
   }
   console.log();
 
-  // [Effort (Opus 4.8)] — ADR-009 §5. nudge-only: forgen 은 effort 를 직접 설정할 수
-  // 없으므로 long-running 컨텍스트(forge-loop)에서 xhigh/ultracode 를 권고만 한다.
-  console.log('  [Effort (Opus 4.8)]');
+  // [Effort] — ADR-009 §5 nudge-only. W2-1 (ADR-010): Sonnet 5 는 adaptive
+  // thinking 으로 effort 를 자체 관리하므로, 권고가 실제로 의미 있는 상황
+  // (forge-loop 활성 = long-running → xhigh 넛지)에서만 표시한다.
   try {
     const loopActive = !!readForgeLoopState()?.active;
-    const adv = effortAdvisory({ longRunningActive: loopActive });
-    const icon = adv.recommend === 'xhigh' ? '→' : '✓';
-    console.log(`  ${icon} recommend: ${adv.recommend}`);
-    console.log(`    ${adv.reason}`);
-  } catch {
-    console.log('  Unable to compute effort advisory.');
-  }
-  console.log();
+    if (loopActive) {
+      const adv = effortAdvisory({ longRunningActive: true });
+      console.log('  [Effort]');
+      console.log(`  → recommend: ${adv.recommend}`);
+      console.log(`    ${adv.reason}`);
+      console.log();
+    }
+  } catch { /* effort 권고 실패는 침묵 — 부가 정보일 뿐 */ }
 
   // W1-1 (ADR-010): --reclaim → legacy 규칙 스프롤 스캔 (읽기 전용).
   if (opts.reclaim) await runReclaimScan();

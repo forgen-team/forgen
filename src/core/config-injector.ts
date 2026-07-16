@@ -129,41 +129,25 @@ function loadProjectMapSummary(cwd: string): string | null {
 // ── v1 Static Rules ──
 
 /** 보안 규칙 (정적 — v1 GLOBAL_SAFETY_RULES와 동일 맥락) */
+/**
+ * ADR-010 W2-3: 보안 규칙 prose → 2줄 포인터로 축약.
+ * 실제 강제는 훅(secret-filter, db-guard)이 결정적으로 수행하며,
+ * prose 는 순수 토큰 비용이었다 (native /doctor 도 "코드에서 유추 가능한
+ * 규칙"으로 트리밍 제안하는 부류). 상세는 `forgen explain guards`.
+ */
 export function generateSecurityRules(): string {
   return [
-    '# Forgen — Security Rules',
+    '# Forgen — Security & Anti-Pattern',
     '',
-    '## Dangerous Command Warning',
-    '- Always confirm before executing destructive commands like `rm -rf`, `git push --force`, `DROP TABLE`',
-    '- Double confirmation required for production environment access',
-    '',
-    '## Secret Key Protection',
-    '- Do not commit sensitive information such as `.env`, `credentials.json`, API keys',
-    '- Manage through environment variables or a secrets manager',
-    '- Detect hardcoded secrets during code review',
+    '- 보안/위험명령/안티패턴 강제는 forgen 훅이 수행: secret-filter(비밀키 커밋 차단), db-guard(위험 SQL/rm -rf 확인), slop-detector(AI 슬롭 감지).',
+    '- 차단이 발생하면 `forgen explain` 으로 규칙·사유·해결책 확인.',
     '',
   ].join('\n');
 }
 
-/** 안티패턴 감지 규칙 (정적) */
+/** ADR-010 W2-3: prose 제거 — 포인터는 generateSecurityRules 로 통합됨 */
 export function generateAntiPatternRules(): string {
-  return [
-    '# Forgen — Anti-Pattern Detection',
-    '',
-    '## Repeated Edit Warning',
-    '- Stop immediately when editing the same file 3+ times → full structure redesign required',
-    '- For 5+ edits, always check current state with Read before replacing with a single Write',
-    '',
-    '## Error Suppression Warning',
-    '- No empty catch blocks — at minimum log or re-throw',
-    '- Minimize suppression comments like eslint-disable, @ts-ignore',
-    '',
-    '## Excessive Complexity Warning',
-    '- Consider splitting single functions exceeding 50 lines',
-    '- Apply early return pattern when nesting depth exceeds 4',
-    '- No unnecessary abstraction — implement only what is currently needed',
-    '',
-  ].join('\n');
+  return '';
 }
 
 /** compound loop + 개인 규칙 (me/rules) 로드 */

@@ -60,7 +60,7 @@ export function recordRenderedFiles(
     for (const [absPath, content] of Object.entries(files)) {
       manifest[absPath] = { sha256: sha256Of(content), version, ts };
     }
-    fs.writeFileSync(p, JSON.stringify(manifest, null, 2) + '\n');
+    fs.writeFileSync(p, `${JSON.stringify(manifest, null, 2)}\n`);
   } catch {
     // manifest 기록 실패는 렌더를 막지 않는다 (fail-open) —
     // 그 경우 reclaimer 가 marker-only 경로로 폴백한다.

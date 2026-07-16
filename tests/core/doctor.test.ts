@@ -1,5 +1,10 @@
 /**
- * Doctor — [Harness Maturity] section (Feature 1-D)
+ * Doctor — ADR-010 W2-1 경계 재정의 회귀 고정.
+ *
+ * 이전: [Harness Maturity]/Quick Wins 섹션 테스트 (Feature 1-D).
+ * W2-1 에서 해당 섹션은 제거됨 — "CLAUDE.md 추가하세요" 류 일반 셋업 조언은
+ * native /doctor 의 영역. 이 파일은 이제 그 *부재*와 경계 선언, --verbose
+ * 강등을 고정한다.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'node:fs';
@@ -33,78 +38,56 @@ import { runDoctor } from '../../src/core/doctor.js';
 const ME_DIR = path.join(TEST_HOME, '.forgen', 'me');
 const STATE_DIR = path.join(TEST_HOME, '.forgen', 'state');
 
-describe('doctor [Harness Maturity]', () => {
-  let output: string;
-  const originalLog = console.log;
+async function captureDoctor(opts: Parameters<typeof runDoctor>[0] = {}): Promise<string> {
+  const lines: string[] = [];
+  vi.spyOn(console, 'log').mockImplementation((...args) => lines.push(args.join(' ')));
+  await runDoctor(opts);
+  return lines.join('\n');
+}
 
+describe('doctor W2-1 boundary (ADR-010)', () => {
   beforeEach(() => {
     fs.rmSync(TEST_HOME, { recursive: true, force: true });
     fs.mkdirSync(ME_DIR, { recursive: true });
     fs.mkdirSync(STATE_DIR, { recursive: true });
-    // Capture console.log output
-    const lines: string[] = [];
-    vi.spyOn(console, 'log').mockImplementation((...args) => {
-      lines.push(args.join(' '));
-    });
-    output = '';
-    // We set output after runDoctor
-    (console as unknown as { _lines: string[] })._lines = lines;
   });
 
   afterEach(() => {
     fs.rmSync(TEST_HOME, { recursive: true, force: true });
     vi.restoreAllMocks();
-    console.log = originalLog;
   });
 
-  it('doctor runs without error and includes [Harness Maturity] section', async () => {
-    const lines: string[] = [];
-    vi.spyOn(console, 'log').mockImplementation((...args) => lines.push(args.join(' ')));
-    await runDoctor();
-    output = lines.join('\n');
-    expect(output).toContain('[Harness Maturity]');
-    expect(output).toContain('Preparation');
-    expect(output).toContain('Context');
-    expect(output).toContain('Execution');
-    expect(output).toContain('Validation');
-    expect(output).toContain('Improvement');
+  it('declares the native /doctor boundary in the header', async () => {
+    const output = await captureDoctor();
+    expect(output).toContain('native /doctor');
+    expect(output).toContain('forgen 자체 기계');
   });
 
-  it('missing directories → L0/L1 levels (graceful, no crash)', async () => {
-    // Remove all forgen dirs so everything is missing
+  it('removed sections stay removed: no Harness Maturity / Quick Wins', async () => {
+    const output = await captureDoctor();
+    expect(output).not.toContain('[Harness Maturity]');
+    expect(output).not.toContain('Quick Wins');
+    // forgen 고유 진단은 유지된다
+    expect(output).toContain('[State Hygiene]');
+    expect(output).toContain('[Codex Parity]');
+  });
+
+  it('hook timing table is verbose-only (collection stays, display demoted)', async () => {
+    const normal = await captureDoctor();
+    expect(normal).not.toContain('[Hook Timing]');
+
+    vi.restoreAllMocks();
+    const verbose = await captureDoctor({ verbose: true });
+    expect(verbose).toContain('[Hook Timing]');
+  });
+
+  it('effort section is silent unless forge-loop is active (nudge-only)', async () => {
+    const output = await captureDoctor();
+    expect(output).not.toContain('[Effort');
+  });
+
+  it('runs without error on empty home (graceful)', async () => {
     fs.rmSync(TEST_HOME, { recursive: true, force: true });
-    const lines: string[] = [];
-    vi.spyOn(console, 'log').mockImplementation((...args) => lines.push(args.join(' ')));
     await expect(runDoctor()).resolves.not.toThrow();
-    output = lines.join('\n');
-    expect(output).toContain('[Harness Maturity]');
-    // Should show L1 for all axes (no L3 when nothing exists)
-    expect(output).not.toContain('L3     solutions:0, behavior:0');
-  });
-
-  it('full setup → L2/L3 level detection', async () => {
-    // Create solutions
-    const solDir = path.join(ME_DIR, 'solutions');
-    fs.mkdirSync(solDir, { recursive: true });
-    for (let i = 0; i < 6; i++) {
-      fs.writeFileSync(path.join(solDir, `sol-${i}.md`), `---\nname: "sol-${i}"\nstatus: "verified"\nconfidence: 0.9\n---\n\n## Content\ntest\nevidence:\n  reflected: ${i > 2 ? 1 : 0}\n`);
-    }
-    // Create behavior
-    const behDir = path.join(ME_DIR, 'behavior');
-    fs.mkdirSync(behDir, { recursive: true });
-    for (let i = 0; i < 4; i++) {
-      fs.writeFileSync(path.join(behDir, `beh-${i}.md`), `---\nname: "beh-${i}"\n---\n`);
-    }
-    const lines: string[] = [];
-    vi.spyOn(console, 'log').mockImplementation((...args) => lines.push(args.join(' ')));
-    await runDoctor();
-    output = lines.join('\n');
-    expect(output).toContain('[Harness Maturity]');
-    // Context should be L3 (6 solutions >= 5, 4 behavior >= 3)
-    expect(output).toContain('Context');
-    // Output should contain L2 or L3 for context axis
-    const ctxLine = lines.find(l => l.includes('Context'));
-    expect(ctxLine).toBeDefined();
-    expect(ctxLine).toMatch(/L[23]/);
   });
 });

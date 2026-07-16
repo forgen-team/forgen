@@ -291,6 +291,7 @@ const commands: Command[] = [
         repair: args.includes('--repair'),
         quick: args.includes('--quick'),
         reclaim: args.includes('--reclaim'),
+        verbose: args.includes('--verbose'),
       });
     },
   },
