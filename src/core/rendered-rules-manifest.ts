@@ -43,9 +43,9 @@ export function loadManifest(home: string = os.homedir()): RulesManifest {
 
 /**
  * 렌더 직후 호출 — 쓴 파일들의 해시를 기존 manifest 에 병합 기록.
- * 과거 해시도 유지한다: 사용자가 구버전 forgen 이 쓴 파일을 그대로 두고
- * 업그레이드한 경우에도 reclaim 매치가 가능해야 하므로, 같은 경로의
- * 이전 해시들을 `history` 로 보존한다.
+ * 같은 경로는 최신 해시로 **덮어쓴다** (history 없음): 같은 경로에 구버전
+ * 내용이 남는 시나리오는 렌더가 즉시 갱신하므로 존재하지 않고, 다른 경로의
+ * 구버전 파일은 marker-only(needs-confirm) 경로로 안전 강등된다.
  */
 export function recordRenderedFiles(
   files: Record<string, string>,

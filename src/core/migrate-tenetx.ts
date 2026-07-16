@@ -18,6 +18,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { loadManifest, matchesManifest } from './rendered-rules-manifest.js';
+import { acquireLock, releaseLock, atomicWriteFileSync } from './settings-lock.js';
 
 // ── 판정 ──
 
@@ -78,6 +79,9 @@ export interface ReclaimResult {
 function listRuleFiles(dir: string): string[] {
   try {
     return fs.readdirSync(dir)
+      // .md 한정: tenetx/forgen 계열 rules 산출물은 전부 마크다운이었다
+      // (2026-07-16 실물 13개 파일 기준). 다른 확장자는 provenance 판단
+      // 근거가 없으므로 건드리지 않는다 — 불간섭이 기본값.
       .filter(f => f.endsWith('.md'))
       .map(f => path.join(dir, f));
   } catch {
@@ -112,8 +116,9 @@ export function scanReclaimables(cwd: string, home: string = os.homedir()): Recl
 
       if (matchesManifest(p, content, manifest)) {
         // (a) forgen 이 쓴 그대로임이 hash 로 증명됨 — 무프롬프트 회수.
-        // (글로벌은 W1-3 이후 forgen 이 더 이상 쓰지 않는 위치, 프로젝트는
-        //  렌더 타겟 외 잔재만 여기 도달한다)
+        // NOTE: 현행 harness 는 프로젝트 경로만 기록하므로 글로벌 파일은
+        // 오늘 기준 여기 도달하지 않는다(항상 marker 경로로 폴백). 이 분기는
+        // 미래에 렌더 대상이 바뀌어 특정 파일이 잔재화될 때를 위한 경로다.
         removable.push({ path: p, reason: 'manifest-hash' });
         continue;
       }
@@ -167,7 +172,14 @@ function scanSettings(home: string): string[] {
 function applySettingsRemoval(home: string, backupDir: string): boolean {
   let applied = false;
 
+  // settings.json 은 코드베이스 불변식대로 settings-lock 하에서만 수정한다
+  // (settings-injector/uninstall 과 동일). 단 lock 은 실제 homedir 의
+  // settings.json 전용이므로, 테스트 주입 home 에서는 lock 을 생략한다.
   const settingsPath = path.join(home, '.claude', 'settings.json');
+  const useLock = home === os.homedir();
+  if (useLock) {
+    try { acquireLock(); } catch { return false; /* 활성 세션과 경합 — 건드리지 않음 */ }
+  }
   try {
     const raw = fs.readFileSync(settingsPath, 'utf-8');
     const s = JSON.parse(raw);
@@ -188,10 +200,13 @@ function applySettingsRemoval(home: string, backupDir: string): boolean {
 
     if (changed) {
       fs.copyFileSync(settingsPath, path.join(backupDir, 'settings.json.bak'));
-      fs.writeFileSync(settingsPath, JSON.stringify(s, null, 2) + '\n');
+      atomicWriteFileSync(settingsPath, JSON.stringify(s, null, 2) + '\n');
       applied = true;
     }
   } catch { /* settings 파손 시 건드리지 않음 */ }
+  finally {
+    if (useLock) releaseLock();
+  }
 
   const registryPath = path.join(home, '.claude', 'plugins', 'installed_plugins.json');
   try {
@@ -201,7 +216,7 @@ function applySettingsRemoval(home: string, backupDir: string): boolean {
     if (tenetxKeys.length > 0) {
       fs.copyFileSync(registryPath, path.join(backupDir, 'installed_plugins.json.bak'));
       for (const k of tenetxKeys) delete r.plugins[k];
-      fs.writeFileSync(registryPath, JSON.stringify(r, null, 2) + '\n');
+      atomicWriteFileSync(registryPath, JSON.stringify(r, null, 2) + '\n');
       applied = true;
     }
   } catch { /* ignore */ }

@@ -199,6 +199,24 @@ function attemptPluginRepair(): boolean {
   }
 }
 
+/** W1-1: --reclaim 스캔 (읽기 전용) — full/quick 양쪽에서 재사용 */
+async function runReclaimScan(): Promise<void> {
+  try {
+    const { runReclaim, printReclaimResult } = await import('./migrate-tenetx.js');
+    printReclaimResult(runReclaim({ cwd: process.cwd(), dryRun: true }));
+    console.log('    실제 회수: forgen migrate tenetx [--yes] [--apply-settings]');
+  } catch (e) {
+    console.warn(`  [reclaim] 스캔 실패: ${e instanceof Error ? e.message : String(e)}`);
+  }
+  console.log();
+}
+
+/** W1-4: repair 성공 시 Summary 에서 걷어내는 대상 — check() 라벨과 단일 소스 */
+const REPAIRABLE_PLUGIN_LABELS = Object.freeze({
+  cache: 'forgen plugin cache',
+  registered: 'forgen plugin registered & installPath exists',
+});
+
 export async function runDoctor(opts: DoctorOptions = {}): Promise<void> {
   failedChecks = [];
   console.log('\n  Forgen — Diagnostics\n');
@@ -219,13 +237,13 @@ export async function runDoctor(opts: DoctorOptions = {}): Promise<void> {
 
   // forgen 플러그인 캐시 / registry 정합성 — 훅 실행의 필수 전제
   const forgenPluginCacheOk = pluginCacheOk();
-  check('forgen plugin cache', forgenPluginCacheOk,
+  check(REPAIRABLE_PLUGIN_LABELS.cache, forgenPluginCacheOk,
     opts.repair
       ? 'Hook execution requires plugin cache. Attempting auto-repair (--repair)…'
       : 'Hook execution requires plugin cache. Fix: node scripts/postinstall.js in the forgen package (or rerun with --repair)');
 
   const pluginRegistered = pluginRegisteredOk();
-  check('forgen plugin registered & installPath exists', pluginRegistered,
+  check(REPAIRABLE_PLUGIN_LABELS.registered, pluginRegistered,
     opts.repair
       ? 'Plugin registered but installPath missing on disk. Attempting auto-repair (--repair)…'
       : 'Plugin registered but installPath missing on disk. Fix: node scripts/postinstall.js in the forgen package (or rerun with --repair)');
@@ -236,7 +254,7 @@ export async function runDoctor(opts: DoctorOptions = {}): Promise<void> {
   if (opts.repair && (!forgenPluginCacheOk || !pluginRegistered)) {
     const repaired = attemptPluginRepair();
     if (repaired) {
-      const pluginLabels = new Set(['forgen plugin cache', 'forgen plugin registered & installPath exists']);
+      const pluginLabels = new Set<string>(Object.values(REPAIRABLE_PLUGIN_LABELS));
       failedChecks = failedChecks.filter(f => !pluginLabels.has(f.label));
     }
   }
@@ -286,6 +304,8 @@ export async function runDoctor(opts: DoctorOptions = {}): Promise<void> {
   console.log();
 
   if (opts.quick) {
+    // --reclaim 은 읽기 전용 스캔이라 --quick 과 조합 가능 (silent-ignore 방지)
+    if (opts.reclaim) await runReclaimScan();
     console.log();
     if (failedChecks.length === 0) {
       console.log('  All essential checks passed.\n');
@@ -670,16 +690,7 @@ export async function runDoctor(opts: DoctorOptions = {}): Promise<void> {
   console.log();
 
   // W1-1 (ADR-010): --reclaim → legacy 규칙 스프롤 스캔 (읽기 전용).
-  if (opts.reclaim) {
-    try {
-      const { runReclaim, printReclaimResult } = await import('./migrate-tenetx.js');
-      printReclaimResult(runReclaim({ cwd: process.cwd(), dryRun: true }));
-      console.log('    실제 회수: forgen migrate tenetx [--yes] [--apply-settings]');
-    } catch (e) {
-      console.warn(`  [reclaim] 스캔 실패: ${e instanceof Error ? e.message : String(e)}`);
-    }
-    console.log();
-  }
+  if (opts.reclaim) await runReclaimScan();
 
   // [Summary] — 최종 상태 요약과 복구 액션을 한눈에 보이게
   console.log('  [Summary]');
