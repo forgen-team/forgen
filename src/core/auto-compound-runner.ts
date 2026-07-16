@@ -18,6 +18,7 @@ import { promisify } from 'node:util';
 const execFileAsync = promisify(execFile);
 import { createRequire } from 'node:module';
 import { containsPromptInjection, filterSolutionContent } from '../hooks/prompt-injection-filter.js';
+import { isSelfReferentialEcho } from './config-injector.js';
 import { redactSecrets } from '../hooks/secret-filter.js';
 import { createEvidence, saveEvidence, promoteSessionCandidates } from '../store/evidence-store.js';
 import { loadProfile } from '../store/profile-store.js';
@@ -474,7 +475,14 @@ ${sanitizedSummary.slice(0, 4000)}
     if (isInjection) {
       process.stderr.write(`[forgen-auto-compound] behavior: injection detected in LLM output, skipping write\n`);
     }
-    if (userResult && !isInjection && !userResult.includes('관찰된 패턴 없음') && userResult.trim().length > 10) {
+    // ADR-010 W1-2 캡처 사이드 에코 차단: Claude-voice 에코("이해했습니다…",
+    // "I see the notification…")를 저장 전에 거른다. 렌더 필터만으로는 스토어
+    // 오염이 누적된다 — 실측(2026-07-16) 오염 49건 전부 이 형태였음.
+    const isEcho = userResult ? isSelfReferentialEcho(userResult.trim()) : false;
+    if (isEcho && !isInjection) {
+      process.stderr.write(`[forgen-auto-compound] behavior: assistant-voice echo detected, skipping write\n`);
+    }
+    if (userResult && !isInjection && !isEcho && !userResult.includes('관찰된 패턴 없음') && userResult.trim().length > 10) {
       userPatternFound = true; // 0.4.6 perf #12 — adaptive cooldown 시그널
       fs.mkdirSync(BEHAVIOR_DIR, { recursive: true });
       const today = new Date().toISOString().split('T')[0];

@@ -129,9 +129,7 @@ function injectClaudeRuleFiles(cwd: string, ruleFiles: Record<string, string>): 
   const PER_RULE_CAP = RULE_FILE_CAPS.perRuleFile;
   const TOTAL_CAP = RULE_FILE_CAPS.totalRuleFiles;
 
-  const globalRulesDir = path.join(os.homedir(), '.claude', 'rules');
   const projectRulesDir = path.join(cwd, '.claude', 'rules');
-  fs.mkdirSync(globalRulesDir, { recursive: true });
   fs.mkdirSync(projectRulesDir, { recursive: true });
 
   let totalWritten = 0;
@@ -143,10 +141,19 @@ function injectClaudeRuleFiles(cwd: string, ruleFiles: Record<string, string>): 
       log.debug(`rules/ 총량 캡 도달, ${filename} 생략`);
       break;
     }
-    const isUserPreference = filename.startsWith('forge-');
-    const targetDir = isUserPreference ? globalRulesDir : projectRulesDir;
-    fs.writeFileSync(path.join(targetDir, filename), capped);
+    // ADR-010 W1-3 (F6 수정): 모든 규칙 파일은 프로젝트 스코프로만 주입한다.
+    // 이전에는 `forge-*` 파일명이 글로벌 ~/.claude/rules/ 로 라우팅되어
+    // 프로젝트 맥락의 behavioral 패턴이 전 프로젝트 세션에 주입됐다.
+    // 목표 상태: 글로벌 rules 디렉토리에 forgen 산출물 0개.
+    fs.writeFileSync(path.join(projectRulesDir, filename), capped);
     totalWritten += capped.length;
+  }
+
+  // 마이그레이션 (W1-3): 구버전이 글로벌에 쓴 forge-behavioral.md 회수.
+  // (tenetx 계열 글로벌 잔재는 W1-1 reclaimer 의 영역)
+  const legacyGlobalBehavioral = path.join(os.homedir(), '.claude', 'rules', 'forge-behavioral.md');
+  if (fs.existsSync(legacyGlobalBehavioral)) {
+    try { fs.unlinkSync(legacyGlobalBehavioral); } catch (e) { log.debug('레거시 글로벌 behavioral 삭제 실패', e); }
   }
 
   // 마이그레이션: 이전 위치 파일 제거

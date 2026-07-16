@@ -257,11 +257,35 @@ const SELF_REFERENTIAL_PATTERNS: readonly RegExp[] = Object.freeze([
   /^I['\u2019]?ll\s+(analyze|review|check|update|add|create|run|fix)/i,
   /^Let me\s+(analyze|check|look|verify|update|add)/i,
   /^I['\u2019]?ve\s+(added|updated|created|fixed|completed)/i,
+  // ADR-010 W1-2 (2026-07-16): \uc2e4\uc720\ucd9c 60\uac74(behavior-echoes \ubc31\uc5c5 = fixture \uc18c\uc2a4)\uc5d0\uc11c
+  // \ud655\uc778\ub41c \ucd94\uac00 \uc5d0\ucf54 \ud615\ud0dc. \uc804\ubd80 line-start \uc575\ucee4 \u2014 H-2 \uc624\ud0d0 \uaddc\uce59 \uc900\uc218.
+  // \uc774 \ubaa9\ub85d\uc740 \ubcf4\uc870 \ubc29\uc5b4\ub2e4: \uc8fc\ub825\uc740 observedCount >= 2 \uac8c\uc774\ud2b8 (\uc544\ub798 \ub80c\ub354 \ub8e8\ud504).
+  /^I (see|notice|understand)\b/i,
+  /^I['\u2019]?m ready\b/i,
+  /^Understood\b/i,
+  /^Got it\b/i,
+  /^[\u26a0\u2705\u274c\u{1f534}\u{1f4cb}]/u, // \u26a0 \u2705 \u274c \ud83d\udd34 \ud83d\udccb \uc120\ub450 \u2014 assistant \uc0c1\ud0dc \ub9c8\ucee4
+  /^(\uc774\ud574\ud588\uc2b5\ub2c8\ub2e4|\uc54c\uaca0\uc2b5\ub2c8\ub2e4|\ud655\uc778\ud588\uc2b5\ub2c8\ub2e4|\ud655\uc778\ud558\uaca0\uc2b5\ub2c8\ub2e4|\ud30c\uc545\ud588\uc2b5\ub2c8\ub2e4)/,
+  /^(\uc791\uc5c5 \uc0c1\ud0dc\ub97c \ud655\uc778|\uc0c1\ud669\uc744 \ud30c\uc545\ud588|\ud604\uc7ac \uc0c1\ud669|\uc900\ube44 \uc644\ub8cc|\uc548\ub155\ud558\uc138\uc694)/,
+  /^\ubc31\uadf8\ub77c\uc6b4\ub4dc .*(\uc644\ub8cc|\uc911\ub2e8)/,
   // Object.freeze is defense-in-depth: the readonly type is compile-time
   // only. Freezing prevents runtime mutation by any other module loaded
   // in the same process from silently disabling the filter by pushing
   // an over-broad pattern or emptying the array.
 ]);
+
+/**
+ * ADR-010 W1-2: 캡처 사이드 공유 판정 — 첫 유효 라인이 Claude-voice 에코인가.
+ *
+ * auto-compound-runner 가 behavior 파일을 디스크에 쓰기 전에 호출한다.
+ * 렌더 타임 필터(위)만으로는 오염 데이터가 스토어에 계속 쌓이므로,
+ * 저장 자체를 차단하는 것이 우선이다. 판정은 첫 유효 라인 기준 —
+ * 에코는 항상 assistant 발화로 시작하고, 진짜 패턴 요약은 지시문으로 시작한다.
+ */
+export function isSelfReferentialEcho(text: string): boolean {
+  const firstLine = text.split('\n').map((l) => l.trim()).find((l) => l.length > 0) ?? '';
+  return SELF_REFERENTIAL_PATTERNS.some((re) => re.test(firstLine));
+}
 
 /**
  * Strip formatting that already exists in the source line BEFORE the
@@ -314,6 +338,13 @@ function generateBehavioralRules(): string {
       const countMatch = fm.match(/^observedCount:\s*(\d+)/m);
       const kind = kindMatch?.[1]?.trim().replace(/^["']|["']$/g, '') ?? '';
       const observedCount = countMatch ? parseInt(countMatch[1], 10) : 0;
+
+      // ADR-010 W1-2 주력 방어 — 1회 관찰 항목은 렌더하지 않는다 (모든 kind).
+      // 실측(2026-07-16): 오염된 behavior 엔트리 49/49(100%)가 observedCount=1.
+      // 진짜 사용자 패턴은 재관찰되어 mergeOrCreateBehavior 가 count 를 누적하지만,
+      // Claude-voice 에코는 같은 문구로 재발하지 않는다. SELF_REFERENTIAL_PATTERNS
+      // regex 는 보조 방어(defense-in-depth)로 강등.
+      if (observedCount < 2) continue;
 
       const contentIdx = body.indexOf('## Content');
       const contentBody = contentIdx >= 0 ? body.slice(contentIdx + '## Content'.length) : body;
