@@ -114,12 +114,12 @@ export interface DoctorOptions {
   pruneState?: boolean;
   /**
    * When true, auto-fix recoverable failures (e.g. missing plugin cache /
-   * stale installPath) by running `npm run build` + `node scripts/postinstall.js`
-   * inside the forgen install directory. Triggered by `forgen doctor --repair`.
+   * stale installPath) by running `node scripts/postinstall.js` inside the
+   * forgen install directory (`npm run build` 는 dist 부재 시에만 — W1-4).
+   * Triggered by `forgen doctor --repair`.
    *
-   * v0.4.8 (E3) — 이전엔 안내문 ("Fix: npm run build && node scripts/postinstall.js")
-   * 만 출력했고 사용자가 직접 실행해야 했음. fail-open: repair 실패해도
-   * doctor 흐름은 정상 종료.
+   * v0.4.8 (E3) — 이전엔 안내문만 출력. fail-open: repair 실패해도 doctor
+   * 흐름은 정상 종료. W1-4 (ADR-010) — 실행 사실이 아니라 재검증 결과를 보고.
    */
   repair?: boolean;
   /** When true, run only essential checks (Tools + Plugins + Directories +
@@ -127,10 +127,44 @@ export interface DoctorOptions {
   quick?: boolean;
 }
 
+/** plugin cache 디렉토리에 버전 엔트리가 하나 이상 있는가 (check + repair 재검증 공용) */
+export function pluginCacheOk(): boolean {
+  const pluginCacheBase = path.join(os.homedir(), '.claude', 'plugins', 'cache', 'forgen-local', 'forgen');
+  if (!exists(pluginCacheBase)) return false;
+  try {
+    return fs.readdirSync(pluginCacheBase).some(f => {
+      try {
+        const lstat = fs.lstatSync(path.join(pluginCacheBase, f));
+        return lstat.isDirectory() || lstat.isSymbolicLink();
+      } catch { return false; }
+    });
+  } catch { return false; }
+}
+
+/** installed_plugins.json 의 forgen entry 가 존재하며 installPath 가 살아있는가 */
+export function pluginRegisteredOk(): boolean {
+  const installedPluginsPath = path.join(os.homedir(), '.claude', 'plugins', 'installed_plugins.json');
+  if (!exists(installedPluginsPath)) return false;
+  try {
+    const installed = JSON.parse(fs.readFileSync(installedPluginsPath, 'utf-8'));
+    const entry = installed?.plugins?.['forgen@forgen-local'];
+    if (Array.isArray(entry) && entry.length > 0) {
+      const installPath = entry[0]?.installPath;
+      return !!installPath && exists(installPath);
+    }
+  } catch { /* ignore */ }
+  return false;
+}
+
 /**
  * v0.4.8 (E3): plugin cache / installPath 진단이 실패했을 때 자동 복구.
- * forgen 패키지 디렉토리에서 `npm run build` + postinstall 을 차례로 실행.
  * 실패해도 doctor 자체는 계속 진행 (fail-open).
+ *
+ * W1-4 수정 (ADR-010, 실측 2026-07-16): 이전 구현은 무조건 `npm run build` 를
+ * 먼저 실행했는데, 글로벌 설치엔 devDeps(tsc)가 없어 MODULE_NOT_FOUND 로 실패
+ * → postinstall 에 도달하지 못해 캐시가 영원히 복구되지 않았다. published
+ * 패키지는 dist 가 이미 있으므로 build 는 dist 부재(dev checkout)시에만 시도.
+ * 또한 "실행했다"가 아니라 "복구됐다"를 재검증 후 보고한다.
  */
 function attemptPluginRepair(): boolean {
   try {
@@ -139,13 +173,24 @@ function attemptPluginRepair(): boolean {
     const here = path.dirname(fileURLToPath(import.meta.url));
     const pkgRoot = path.resolve(here, '..', '..');
     console.log(`\n  [Repair] forgen 패키지 자가복구 시도 — ${pkgRoot}`);
-    execFileSync('npm', ['run', 'build'], { cwd: pkgRoot, stdio: 'inherit' });
+    if (!exists(path.join(pkgRoot, 'dist', 'cli.js'))) {
+      // dev checkout 등 dist 부재 시에만 build (devDeps 가 있는 환경)
+      execFileSync('npm', ['run', 'build'], { cwd: pkgRoot, stdio: 'inherit' });
+    }
     execFileSync('node', ['scripts/postinstall.js'], { cwd: pkgRoot, stdio: 'inherit' });
-    console.log('  [Repair] 완료. 진단 재실행 권장: forgen doctor');
-    return true;
+
+    // 결과 재검증 — 성공 주장은 검증된 상태에만 한다.
+    const ok = pluginCacheOk() && pluginRegisteredOk();
+    if (ok) {
+      console.log('  [Repair] ✓ 복구 확인 — plugin cache/registry 재검증 통과');
+    } else {
+      console.warn('  [Repair] ✗ postinstall 은 실행됐지만 재검증 실패 — 수동 확인 필요');
+      console.warn('  [Repair] 수동 복구: cd <forgen pkgRoot> && node scripts/postinstall.js');
+    }
+    return ok;
   } catch (e) {
     console.warn(`  [Repair] 실패: ${e instanceof Error ? e.message : String(e)}`);
-    console.warn('  [Repair] 수동 복구: cd <forgen pkgRoot> && npm run build && node scripts/postinstall.js');
+    console.warn('  [Repair] 수동 복구: cd <forgen pkgRoot> && node scripts/postinstall.js (dist 부재 시 npm run build 선행)');
     return false;
   }
 }
@@ -168,46 +213,28 @@ export async function runDoctor(opts: DoctorOptions = {}): Promise<void> {
   check('ralph-loop plugin', ralphLoopInstalled,
     'Required for ralph mode auto-iteration. Install: claude plugins install ralph-loop');
 
-  // forgen 플러그인 캐시 디렉토리 확인 — 훅 실행의 필수 전제
-  const pluginCacheBase = path.join(os.homedir(), '.claude', 'plugins', 'cache', 'forgen-local', 'forgen');
-  let forgenPluginCacheOk = false;
-  if (exists(pluginCacheBase)) {
-    const versions = fs.readdirSync(pluginCacheBase).filter(f => {
-      try {
-        const lstat = fs.lstatSync(path.join(pluginCacheBase, f));
-        return lstat.isDirectory() || lstat.isSymbolicLink();
-      } catch { return false; }
-    });
-    forgenPluginCacheOk = versions.length > 0;
-  }
+  // forgen 플러그인 캐시 / registry 정합성 — 훅 실행의 필수 전제
+  const forgenPluginCacheOk = pluginCacheOk();
   check('forgen plugin cache', forgenPluginCacheOk,
     opts.repair
       ? 'Hook execution requires plugin cache. Attempting auto-repair (--repair)…'
-      : 'Hook execution requires plugin cache. Fix: npm run build && node scripts/postinstall.js (or rerun with --repair)');
+      : 'Hook execution requires plugin cache. Fix: node scripts/postinstall.js in the forgen package (or rerun with --repair)');
 
-  // installed_plugins.json 정합성 확인
-  const installedPluginsPath = path.join(os.homedir(), '.claude', 'plugins', 'installed_plugins.json');
-  let pluginRegistered = false;
-  if (exists(installedPluginsPath)) {
-    try {
-      const installed = JSON.parse(fs.readFileSync(installedPluginsPath, 'utf-8'));
-      const entry = installed?.plugins?.['forgen@forgen-local'];
-      if (Array.isArray(entry) && entry.length > 0) {
-        const installPath = entry[0]?.installPath;
-        pluginRegistered = !!installPath && exists(installPath);
-      }
-    } catch { /* ignore */ }
-  }
+  const pluginRegistered = pluginRegisteredOk();
   check('forgen plugin registered & installPath exists', pluginRegistered,
     opts.repair
       ? 'Plugin registered but installPath missing on disk. Attempting auto-repair (--repair)…'
-      : 'Plugin registered but installPath missing on disk. Fix: npm run build && node scripts/postinstall.js (or rerun with --repair)');
+      : 'Plugin registered but installPath missing on disk. Fix: node scripts/postinstall.js in the forgen package (or rerun with --repair)');
 
-  // v0.4.8 (E3): plugin cache 또는 installPath 가 깨졌고 --repair 가 켜져
-  // 있으면 build + postinstall 자동 실행. doctor 진단 자체는 계속 진행하여
-  // 사용자가 다른 health 항목도 한 번에 확인 가능.
+  // v0.4.8 (E3) + W1-4: plugin cache 또는 installPath 가 깨졌고 --repair 가
+  // 켜져 있으면 자가복구. 재검증까지 통과하면 failedChecks 에서 해당 항목을
+  // 걷어내 Summary 가 복구된 상태를 정직하게 반영하게 한다.
   if (opts.repair && (!forgenPluginCacheOk || !pluginRegistered)) {
-    attemptPluginRepair();
+    const repaired = attemptPluginRepair();
+    if (repaired) {
+      const pluginLabels = new Set(['forgen plugin cache', 'forgen plugin registered & installPath exists']);
+      failedChecks = failedChecks.filter(f => !pluginLabels.has(f.label));
+    }
   }
   console.log();
 
