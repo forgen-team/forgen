@@ -19,8 +19,8 @@
 
 - [ ] `node scripts/self-gate.cjs` — 정적 스캔 전부 pass (mock-in-production, secrets-leak, enforce_via-missing, release-artifact)
 - [ ] `node scripts/self-gate-runtime.cjs` — 6 hook scenarios pass
-- [ ] `.forgen-release/e2e-report.json` 생성 (`{ passed: true, mock_detected: false }`)
-- [ ] (tag 후) `node scripts/self-gate-release.cjs` — version/tag/CHANGELOG/dist/e2e-report 전부 일치
+- [ ] `node scripts/smoke.cjs` — smoke 증거 생성 (`.forgen-release/smoke-report.json`, vitest 포함 전체 실행. ADR-010 W0-2: 구 e2e-report 폐지)
+- [ ] (tag 후) `node scripts/self-gate-release.cjs` — version/tag/CHANGELOG/dist/smoke-report 전부 일치 (report.version == package.json)
 
 ## 문서
 

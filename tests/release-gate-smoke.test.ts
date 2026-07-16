@@ -32,6 +32,7 @@ function validSmokeReport(overrides: Record<string, unknown> = {}) {
     schema: 'smoke-report/v1',
     passed: true,
     at: new Date().toISOString(),
+    version: '9.9.9', // fixture package.json 과 바인딩
     mock_detected: false,
     node: process.version,
     checks: [
@@ -149,6 +150,15 @@ describe('self-gate-release.cjs (release-tag gate)', () => {
     expect(r.status).toBe(1);
     expect(`${r.stdout}${r.stderr}`).toContain('smoke-mock-detected');
   });
+
+  it('rejects a stale report from a previous version (version binding)', () => {
+    const dir = makeReleaseFixture();
+    cleanups.push(dir);
+    writeReport(dir, validSmokeReport({ version: '9.9.8' })); // 이전 릴리스 증거 재사용 시나리오
+    const r = runNode(GATE_RELEASE, { env: { ...RELEASE_ENV, FORGEN_GATE_ROOT: dir } });
+    expect(r.status).toBe(1);
+    expect(`${r.stdout}${r.stderr}`).toContain('smoke-version-mismatch');
+  });
 });
 
 describe('self-gate.cjs checkReleaseArtifact (pre-commit static gate)', () => {
@@ -160,8 +170,19 @@ describe('self-gate.cjs checkReleaseArtifact (pre-commit static gate)', () => {
     git('init', '-q');
     git('commit', '-q', '--allow-empty', '-m', commitSubject);
     fs.mkdirSync(path.join(dir, '.forgen-release'), { recursive: true });
+    // version 바인딩 검사가 읽는 package.json
+    fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ version: '9.9.9' }));
     return dir;
   }
+
+  it('release commit + stale version report → fail', () => {
+    const dir = makeGitFixture('chore(release): 9.9.9');
+    cleanups.push(dir);
+    writeReport(dir, validSmokeReport({ version: '9.9.8' }));
+    const r = runNode(GATE_STATIC, { cwd: dir, env: { FORGEN_GATE_ROOT: dir } });
+    expect(r.status).toBe(1);
+    expect(`${r.stdout}${r.stderr}`).toContain('smoke-report.version');
+  });
 
   it('release commit + valid smoke-report → pass', () => {
     const dir = makeGitFixture('chore(release): 9.9.9');

@@ -219,6 +219,15 @@ function checkReleaseArtifact() {
     const data = JSON.parse(fs.readFileSync(report, 'utf-8'));
     if (data.passed !== true) fail('release-artifact', `smoke-report.passed=${data.passed} (expected true)`);
     if (data.mock_detected === true) fail('release-artifact', `smoke-report flagged mock_detected=true`);
+    // stale-evidence 방지: report.version == package.json.version
+    try {
+      const pkgVersion = String(JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'package.json'), 'utf-8')).version);
+      if (data.version !== pkgVersion) {
+        fail('release-artifact', `smoke-report.version=${data.version} but package.json=${pkgVersion} — re-run: node scripts/smoke.cjs`);
+      }
+    } catch {
+      fail('release-artifact', 'cannot read package.json version for smoke-report binding');
+    }
     const checks = Array.isArray(data.checks) ? data.checks : [];
     const vitest = checks.find((c) => c && c.name === 'vitest');
     if (!vitest || vitest.skipped === true || vitest.passed !== true) {

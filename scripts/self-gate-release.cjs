@@ -124,6 +124,9 @@ function checkSmokeReport() {
     const data = JSON.parse(fs.readFileSync(reportPath, 'utf-8'));
     if (data.passed !== true) fail('smoke-failed', `smoke-report.passed=${data.passed}`);
     if (data.mock_detected === true) fail('smoke-mock-detected', `smoke-report.mock_detected=true`);
+    // stale-evidence 방지: report 는 현재 package.json 버전으로 생성된 것이어야 한다.
+    const pkgVersion = readPkgVersion();
+    if (data.version !== pkgVersion) fail('smoke-version-mismatch', `smoke-report.version=${data.version} but package.json=${pkgVersion} — re-run: node scripts/smoke.cjs`);
     const checks = Array.isArray(data.checks) ? data.checks : [];
     if (checks.length === 0) fail('smoke-empty', 'smoke-report has no checks');
     const vitest = checks.find((c) => c && c.name === 'vitest');

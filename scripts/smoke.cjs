@@ -122,10 +122,18 @@ function main() {
   const executed = checks.filter((c) => !c.skipped);
   const passed = executed.length > 0 && executed.every((c) => c.passed === true);
 
+  // version 바인딩: 게이트가 stale report(이전 릴리스 증거 재사용)를 거부할 수 있도록
+  // 생성 시점의 package.json 버전을 박아 넣는다.
+  let pkgVersion = null;
+  try {
+    pkgVersion = String(JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'package.json'), 'utf-8')).version);
+  } catch { /* report 에 null 로 남김 — 게이트에서 mismatch 로 걸린다 */ }
+
   const report = {
     schema: 'smoke-report/v1',
     passed,
     at: new Date().toISOString(),
+    version: pkgVersion,
     // 구조상 항상 false: 모든 check 는 위 spawnSync 산출물에서만 유도된다.
     mock_detected: false,
     node: process.version,

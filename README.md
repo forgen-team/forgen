@@ -712,7 +712,7 @@ Three CI gates prove forgen does not violate its own L1 rules before release:
 ```bash
 node scripts/self-gate.cjs          # Static: mock-in-prod, secrets, enforce_via, release-artifact
 node scripts/self-gate-runtime.cjs  # Runtime smoke: 6 hook scenarios
-node scripts/self-gate-release.cjs  # Tag-only: version/tag/CHANGELOG/dist/e2e-report consistency
+node scripts/self-gate-release.cjs  # Tag-only: version/tag/CHANGELOG/dist/smoke-report consistency
 ```
 
 Triggered by `.github/workflows/self-gate.yml` on push main / PR main / tag v*. Dogfood opt-in: see [.forgen/README.md](.forgen/README.md).
