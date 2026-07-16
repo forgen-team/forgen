@@ -125,6 +125,10 @@ export interface DoctorOptions {
   /** When true, run only essential checks (Tools + Plugins + Directories +
    *  Initialization Status) for fast onboarding verification. ~10 lines output. */
   quick?: boolean;
+  /** W1-1 (ADR-010): tenetx/legacy 규칙 스프롤 스캔 (dry-run — 삭제는
+   *  `forgen migrate tenetx` 가 수행). native /doctor 가 비용을 flag 하면
+   *  forgen 이 provenance 로 안전하게 회수하는 보완 관계. */
+  reclaim?: boolean;
 }
 
 /** plugin cache 디렉토리에 버전 엔트리가 하나 이상 있는가 (check + repair 재검증 공용) */
@@ -664,6 +668,18 @@ export async function runDoctor(opts: DoctorOptions = {}): Promise<void> {
     console.log('  Unable to compute effort advisory.');
   }
   console.log();
+
+  // W1-1 (ADR-010): --reclaim → legacy 규칙 스프롤 스캔 (읽기 전용).
+  if (opts.reclaim) {
+    try {
+      const { runReclaim, printReclaimResult } = await import('./migrate-tenetx.js');
+      printReclaimResult(runReclaim({ cwd: process.cwd(), dryRun: true }));
+      console.log('    실제 회수: forgen migrate tenetx [--yes] [--apply-settings]');
+    } catch (e) {
+      console.warn(`  [reclaim] 스캔 실패: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    console.log();
+  }
 
   // [Summary] — 최종 상태 요약과 복구 액션을 한눈에 보이게
   console.log('  [Summary]');

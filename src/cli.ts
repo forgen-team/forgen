@@ -283,13 +283,14 @@ const commands: Command[] = [
   },
   {
     name: 'doctor',
-    description: 'Diagnostics (--quick for fast check, --prune-state to GC, --repair to auto-fix)',
+    description: 'Diagnostics (--quick fast check, --prune-state GC, --repair auto-fix, --reclaim legacy-rules scan)',
     handler: async (args) => {
       const { runDoctor } = await import('./core/doctor.js');
       await runDoctor({
         pruneState: args.includes('--prune-state'),
         repair: args.includes('--repair'),
         quick: args.includes('--quick'),
+        reclaim: args.includes('--reclaim'),
       });
     },
   },

@@ -18,6 +18,7 @@ import { buildEnv, generateClaudeRuleFiles, registerTmuxBindings } from './confi
 import { createLogger } from './logger.js';
 import { HANDOFFS_DIR, ME_BEHAVIOR, ME_DIR, ME_RULES, ME_SKILLS, ME_SOLUTIONS, SESSIONS_DIR, STATE_DIR, FORGEN_HOME } from './paths.js';
 import { RULE_FILE_CAPS } from '../hooks/shared/injection-caps.js';
+import { recordRenderedFiles } from './rendered-rules-manifest.js';
 import type { RuntimeHost } from './types.js';
 import {
   rollbackSettings,
@@ -133,6 +134,7 @@ function injectClaudeRuleFiles(cwd: string, ruleFiles: Record<string, string>): 
   fs.mkdirSync(projectRulesDir, { recursive: true });
 
   let totalWritten = 0;
+  const writtenForManifest: Record<string, string> = {};
   for (const [filename, content] of Object.entries(ruleFiles)) {
     const capped = content.length > PER_RULE_CAP
       ? `${content.slice(0, PER_RULE_CAP)}\n... (capped at rule file limit)\n`
@@ -145,8 +147,19 @@ function injectClaudeRuleFiles(cwd: string, ruleFiles: Record<string, string>): 
     // 이전에는 `forge-*` 파일명이 글로벌 ~/.claude/rules/ 로 라우팅되어
     // 프로젝트 맥락의 behavioral 패턴이 전 프로젝트 세션에 주입됐다.
     // 목표 상태: 글로벌 rules 디렉토리에 forgen 산출물 0개.
-    fs.writeFileSync(path.join(projectRulesDir, filename), capped);
+    const target = path.join(projectRulesDir, filename);
+    fs.writeFileSync(target, capped);
+    writtenForManifest[target] = capped;
     totalWritten += capped.length;
+  }
+
+  // ADR-010 W1-1: 쓴 그대로의 content-hash 를 manifest 에 기록 —
+  // reclaimer 가 "forgen 산출물 그대로"와 "사용자 편집본"을 구분하는 근거.
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(getPackageRoot(), 'package.json'), 'utf-8'));
+    recordRenderedFiles(writtenForManifest, String(pkg.version ?? '0.0.0'));
+  } catch (e) {
+    log.debug('rendered-rules manifest 기록 실패 (fail-open)', e);
   }
 
   // 마이그레이션 (W1-3): 구버전이 글로벌에 쓴 forge-behavioral.md 회수.

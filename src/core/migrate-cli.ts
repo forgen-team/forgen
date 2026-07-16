@@ -21,6 +21,10 @@ const HELP = `
     forgen migrate evidence-host       behavior/*.json 에 host 필드 백필
       --dry-run                          디스크 미수정, 카운트만 출력
       --default-host <claude|codex>      host 기본값 (default: claude)
+    forgen migrate tenetx              tenetx/legacy 규칙 스프롤 회수 (ADR-010 W1-1)
+      --dry-run                          회수 대상만 표시
+      --yes                              marker-only(사용자 편집 가능성) 파일도 회수
+      --apply-settings                   settings.json/registry 의 tenetx 항목 제거
     forgen migrate --help              이 도움말
 `;
 
@@ -50,6 +54,18 @@ export async function handleMigrate(args: string[]): Promise<void> {
     const result = migrateEvidenceHost({ defaultHost, dryRun });
     const label = dryRun ? ' (dry-run)' : '';
     console.log(`[forgen] migrated: ${result.migrated} (skipped: ${result.skipped}, total: ${result.total})${label}`);
+    return;
+  }
+
+  if (sub === 'tenetx') {
+    const { runReclaim, printReclaimResult } = await import('./migrate-tenetx.js');
+    const result = runReclaim({
+      cwd: process.cwd(),
+      dryRun: args.includes('--dry-run'),
+      yes: args.includes('--yes'),
+      applySettings: args.includes('--apply-settings'),
+    });
+    printReclaimResult(result);
     return;
   }
 
