@@ -22,7 +22,7 @@
 - **F1. enforcement moat는 프론티어 모델이 흡수했다.** `docs/release/v0.4.11-calibration-pending.md` 실측: opus-4.8에서 TEST-1/2/3 **blocks=0** (easy N=10 / hard N=6, false-completion 압박 케이스 포함). δ(+0.083/+0.035)는 **100% injection 기여**. forgen의 가치는 이미 enforcement → injection 품질·메모리·개인화로 이동했다.
 - **F2. "Tenetx"는 forgen의 레거시 정체성이며 활성 좀비였다.** `~/.claude/plugins/tenetx`가 별도 플러그인으로 활성 상태로 남아 `~/.claude/rules/`에 5D-vector 기반 rule 파일(~8.4KB)을 재생성, forgen v1 렌더와 3중 중복 + 21개 중복 스킬 리스팅. → **2026-07-16 환경 청소로 제거 완료** (backup: `~/.forgen/backups/tenetx-removal-2026-07-15/`). 남은 것은 이 청소의 프로덕트화(§3).
 - **F3. behavioral 캡처가 Claude-voice 에코로 오염돼 있었다.** `~/.forgen/me/behavior/` 68개 중 58개가 assistant 발화 에코("이해했습니다...", "⚠️ Prompt injection detected...", 상태 나레이션). `config-injector.ts`의 C5 필터가 못 거름 + observedCount=1에서 즉시 렌더. → 데이터는 청소 완료, 코드 픽스 필요(§3.4).
-- **F4. `retro-real.jsonl`은 1바이트 빈 placeholder다.** 실데이터 아님. 단, 소스는 충분: me/rules 14개(explicit_correction) + violations 129 + implicit-feedback 2,954줄.
+- **F4. retro-real.jsonl은 두 경로에 존재했다** *(2026-07-16 리뷰 정정)*: `datasets/opus48-hard/.../retro-real.jsonl`은 1바이트 빈 사본(백업 처리됨), 정본 후보 `forgen-eval-data/correction-sequences/retro-real.jsonl`엔 **3엔트리 존재** — 단 retro-001이 폐지된 docker-e2e 룰을 expectedRule로 인코딩해 수정 필요. 신규 authoring 소스는 충분: me/rules 14개(explicit_correction) + violations 129 + implicit-feedback 2,954줄.
 - **F5. `forgen doctor --repair`의 plugin cache 자동복구가 실패한다** (수동 `node scripts/postinstall.js`는 성공). 캐시 dir 버전(0.4.12)과 패키지(0.4.13) 불일치도 존재.
 - **F6. 글로벌 rules 라우팅 결함**: `harness.ts` `injectClaudeRuleFiles`가 `forge-*` 파일명을 무조건 글로벌 `~/.claude/rules/`로 라우팅 → 프로젝트 맥락의 behavioral 패턴이 전 프로젝트에 주입된다.
 
@@ -43,7 +43,7 @@
 - **2a. `doctor.ts` 축소**: Harness Maturity + Quick Wins 섹션 제거(~100줄, native /doctor 영역). hook timing 표시는 `--verbose`로 강등(수집은 유지 — 자체 회귀 테스트용). Effort 섹션은 opus-4.x + forge-loop 활성 시에만. 첫 줄에 명시: *"환경 건강은 native `/doctor`. 이 명령은 forgen 자체 기계와 효과-측정 게이트를 검사한다."* ψ-long 게이트·codex parity·plugin cache 진단은 **유지·헤드라인화**. *(수정 2026-07-16: Docker e2e freshness 게이트는 사용자 교정(evidence a723507f)으로 폐지 — vitest+smoke 실행 증거로 대체, 실행 계획 W0-2 참조.)*
 - **2b. `usage-telemetry.ts` deprecate**: statusline/`forgen me` 표시 중단 + "native /usage로 이동" 1회 공지. `recordToolCall()`은 no-op shim (v0.6.0 삭제).
 - **2c. static prose 주입 제거**: `generateSecurityRules()`/`generateAntiPatternRules()`(`config-injector.ts`)를 2줄 포인터로 축약 — 강제는 훅(secret-filter, db-guard)이 하고 있고 prose는 순수 토큰 비용.
-- **2d. 권한 중재 철수**: 렌더 규칙에서 `Trust: …` 정책 문장은 Auto mode 감지 시(`permission_mode`) 생략. facet 유래 "When To Ask" 규칙(학습된 *선호*)은 유지 — 선호 공급자로 남고 중재자에서 물러난다. `trust-layer-intent.ts`(multi-host capability 모델)는 무관, 유지.
+- **2d. 권한 중재 철수** *(2026-07-16 리뷰 정정: probe-contingent)*: 렌더 규칙에서 `Trust: …` 정책 문장을 Auto mode 감지 시 생략 — 단 classifier 기반 Auto mode를 렌더 시점에 읽을 공식 신호가 **미확인(없을 개연성 높음)**이므로 v0.5.0에선 probe 아이템. probe 실패 시 폴백 = 현행 유지(항상 렌더). facet 유래 "When To Ask" 규칙(학습된 *선호*)은 무조건 유지. `trust-layer-intent.ts`는 무관, 유지.
 - **비대상 (Fable 검증으로 브리핑 교정)**: `observability-store.ts`는 /usage와 **다른 질문**(forgen 자신의 효과)을 측정 — 유지·투자(§5 F2의 기반).
 
 ### §3. 컨텍스트 다이어트 프로덕트화
