@@ -200,6 +200,14 @@ describe('self-gate.cjs checkReleaseArtifact (pre-commit static gate)', () => {
     expect(`${r.stdout}${r.stderr}`).toContain('smoke-report.json');
   });
 
+  it("colon format 'release: v9.9.9' is recognized as a release commit (review fix)", () => {
+    const dir = makeGitFixture('release: v9.9.9');
+    cleanups.push(dir);
+    const r = runNode(GATE_STATIC, { cwd: dir, env: { FORGEN_GATE_ROOT: dir } });
+    expect(r.status).toBe(1); // report 없음 → 릴리스 커밋으로 인식돼 실패해야 함
+    expect(`${r.stdout}${r.stderr}`).toContain('smoke-report.json');
+  });
+
   it('non-release commit → report not required', () => {
     const dir = makeGitFixture('feat: unrelated change');
     cleanups.push(dir);

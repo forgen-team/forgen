@@ -195,7 +195,8 @@ function isReleaseCommit() {
     // subject (first line) 만 검사. body 에 "v0.4.0" 같은 문자열이 있어도
     // release commit 으로 오탐되지 않도록.
     const subject = msg.split('\n')[0] ?? '';
-    return /chore\(release\)|^release\s+v?\d|^v\d+\.\d+\.\d+/i.test(subject);
+    // 릴리스 리뷰(2026-07-16): 'release: v0.5.0' 콜론 포맷(ship 스킬 실사용)도 매치
+    return /chore\(release\)|^release[:\s]\s*v?\d|^v\d+\.\d+\.\d+/i.test(subject);
   } catch {
     return false;
   }

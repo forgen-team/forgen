@@ -238,7 +238,7 @@ forgen doctor --quick
 
 > **Vendor dependency:** Forgen wraps Claude Code and Codex CLI symmetrically (Claude is the behavior reference; Codex extends with equivalence). Upstream API/CLI changes may affect behavior. Tested with Claude Code 1.0.x / 2.1.x and Codex 0.x.
 
-> **Upgrading from v0.4.x?** Run `forgen install claude` (or `codex` / `both`) after upgrading — v0.4.3+ requires explicit host registration. Then `forgen doctor --quick` to verify.
+> **Upgrading from v0.4.x?** Run `forgen install claude` (or `codex` / `both`) after upgrading — v0.4.3+ requires explicit host registration. Then run `forgen migrate tenetx --dry-run` to preview and reclaim legacy global rule sprawl (v0.5.0 moved ALL rule injection to project scope — stale `~/.claude/rules/forge-*.md` from older versions should be reclaimed; see CHANGELOG). Finally `forgen doctor --quick` to verify.
 
 ### Try your first block
 
@@ -681,8 +681,9 @@ forgen skill list               # List promoted skills
 
 ```bash
 forgen init                     # Initialize project (+ 15 starter-pack solutions)
-forgen migrate [implicit-feedback|all]
-                                # One-shot schema migrations (idempotent)
+forgen migrate [implicit-feedback|evidence-host|tenetx|all]
+                                # One-shot migrations (idempotent). tenetx: reclaim
+                                # legacy global rules (--dry-run/--yes/--apply-settings)
 forgen doctor                   # Forgen-specific diagnostics (plugin cache, hooks, state, parity, gates — env health: native /doctor)
 forgen doctor --prune-state     # Daily hygiene: state GC + T4 rule decay (90d idle → retire)
 forgen dashboard                # Knowledge overview (6 sections)

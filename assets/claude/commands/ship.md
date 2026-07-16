@@ -184,7 +184,7 @@ fi
 ## Step 7: 릴리스 커밋
 
 ```bash
-git add package.json CHANGELOG.md
+git add package.json package-lock.json CHANGELOG.md
 # forgen 레포: smoke 증거 포함
 [ -f .forgen-release/smoke-report.json ] && git add .forgen-release/smoke-report.json
 git commit -m "release: v{version}"
