@@ -21,6 +21,12 @@ describe('guardModeForModel (측정 기반 테이블)', () => {
     expect(guardModeForModel('gpt-5-codex')).toBe('block');
   });
 
+  it('리뷰 SEV-2: 버전 경계 — 가상의 4-80/4-88 은 미측정이므로 block', () => {
+    expect(guardModeForModel('claude-opus-4-80')).toBe('block');
+    expect(guardModeForModel('claude-opus-4-88')).toBe('block');
+    expect(guardModeForModel('claude-opus-4-8-turbo')).toBe('advise'); // 비숫자 구분자 = 같은 4.8 계열
+  });
+
   it('unknown(null/빈 값) → block (현행 유지 — statusline 캐시 부재 폴백)', () => {
     expect(guardModeForModel(null)).toBe('block');
     expect(guardModeForModel(undefined)).toBe('block');

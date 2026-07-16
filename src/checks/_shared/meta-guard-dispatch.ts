@@ -110,7 +110,11 @@ export function runMetaGuards(ctx: MetaGuardContext): MetaGuardResult[] {
         ? 'correction'
         : c.kind;
     results.push({ shortId: c.shortId, ruleSlug: c.ruleSlug, kind: effectiveKind, reason: out.reason });
-    if (effectiveKind === 'block') break; // 첫 block 에서 중단 (이후 가드는 기록되지 않음)
+    // 원래 kind 기준으로 중단 (강등돼도 동일) — 리뷰 SEV-1: 강등 결과가 루프를
+    // 계속 돌면 턴당 violation 기록이 2-3배로 불어나 lifecycle T2 트리거
+    // (violations_30d>=3)를 조기 발화시키고 meta 승격을 영구 차단한다.
+    // 기록 카디널리티는 block 모드와 정확히 동일하게 보존한다.
+    if (c.kind === 'block') break;
   }
   return results;
 }

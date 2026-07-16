@@ -207,7 +207,20 @@ function writeCache(content: string): void {
 }
 
 export async function handleStatusline(): Promise<void> {
-  // 캐시 hit 시 stdin payload 무시하고 바로 출력 (5초 윈도우 내 동일 출력 가정).
+  // W4-3 (ADR-010): hook stdin 엔 모델 필드가 없으므로 statusline 이 세션별
+  // 모델을 캐시 → Stop/SubagentStop 가드가 per-model 프로필 조회에 사용.
+  // 리뷰 SEV-2: 이 기록은 반드시 5초 표시-캐시 early-return **앞**에 있어야
+  // 한다 — /model 로 세션 중 모델을 바꾸면 cache-hit 렌더가 payload 를 아예
+  // 안 읽어 stale 모델(잘못된 가드 모드)이 유지되는 창이 생긴다.
+  // 필드 부재(구버전 CC 등) 시 기록 안 함 = 가드는 'unknown' → block 유지.
+  const payload = readStdinJson();
+  if (payload.session_id && payload.model?.id) {
+    const { cacheSessionModel } = await import('../checks/_shared/model-profile.js');
+    const { sanitizeId } = await import('../hooks/shared/sanitize-id.js');
+    cacheSessionModel(sanitizeId(payload.session_id), payload.model.id);
+  }
+
+  // 캐시 hit 시 표시만 캐시에서 (5초 윈도우 내 동일 출력 가정).
   // 라인 단위 cache → console.log 라인별 (테스트 호환).
   const cached = readCacheIfFresh();
   if (cached !== null) {
@@ -215,18 +228,8 @@ export async function handleStatusline(): Promise<void> {
     return;
   }
 
-  const payload = readStdinJson();
   const cwd = payload.workspace?.current_dir ?? process.cwd();
   const claudeDir = path.join(os.homedir(), '.claude');
-
-  // W4-3 (ADR-010): hook stdin 엔 모델 필드가 없으므로 statusline 이 세션별
-  // 모델을 캐시 → Stop/SubagentStop 가드가 per-model 프로필 조회에 사용.
-  // 필드 부재(구버전 CC 등) 시 기록 안 함 = 가드는 'unknown' → block 유지.
-  if (payload.session_id && payload.model?.id) {
-    const { cacheSessionModel } = await import('../checks/_shared/model-profile.js');
-    const { sanitizeId } = await import('../hooks/shared/sanitize-id.js');
-    cacheSessionModel(sanitizeId(payload.session_id), payload.model.id);
-  }
 
   const line1 = buildLine1(payload, cwd);
   const line3 = buildLine3(claudeDir, cwd);

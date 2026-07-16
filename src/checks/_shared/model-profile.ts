@@ -25,16 +25,18 @@ import * as path from 'node:path';
 export type CompletionGuardMode = 'block' | 'advise';
 
 /**
- * 측정 기반 기본 테이블. key = model id prefix.
- * opus-4-8 만 측정됨(blocks=0) — 그 외는 전부 보수적 block.
+ * 측정 기반 기본 테이블. 버전 경계 안전 매칭 (리뷰 SEV-2: 단순 prefix 는
+ * 가상의 'claude-opus-4-80' 같은 미측정 후속 모델까지 매치한다) —
+ * 정확히 해당 버전이거나 뒤에 비숫자 구분자([·- 등)가 와야 한다.
+ * opus-4-8 만 측정됨(v0.4.11 blocks=0, easy+hard) — 그 외 전부 보수적 block.
  */
-const MEASURED_ADVISE_PREFIXES: readonly string[] = Object.freeze([
-  'claude-opus-4-8', // v0.4.11 실측 blocks=0 (easy+hard)
+const MEASURED_ADVISE_RES: readonly RegExp[] = Object.freeze([
+  /^claude-opus-4-8(?![0-9])/, // claude-opus-4-8, claude-opus-4-8[1m] — 4-80 은 불일치
 ]);
 
 export function guardModeForModel(modelId: string | null | undefined): CompletionGuardMode {
   if (!modelId) return 'block'; // unknown → 현행 유지
-  return MEASURED_ADVISE_PREFIXES.some(p => modelId.startsWith(p)) ? 'advise' : 'block';
+  return MEASURED_ADVISE_RES.some(re => re.test(modelId)) ? 'advise' : 'block';
 }
 
 function cachePath(sessionId: string, home: string): string {
