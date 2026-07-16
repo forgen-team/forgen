@@ -253,6 +253,10 @@ function cleanCompoundRules(cwd: string): void {
     // v4.1+ consolidated
     'project-context.md',
     'routing.md',
+    // v0.5.0+ project-scoped (ADR-010 W1-3)
+    'v1-rules.md',
+    'forge-behavioral.md',
+    'user-profile.md',
     // legacy (v4.0 and earlier)
     'security.md',
     'golden-principles.md',
@@ -274,6 +278,15 @@ function cleanCompoundRules(cwd: string): void {
   const legacyPath = path.join(cwd, '.claude', 'compound-rules.md');
   if (fs.existsSync(legacyPath)) {
     fs.unlinkSync(legacyPath);
+    removedCount++;
+  }
+
+  // 레거시 글로벌 사이드채널 (ADR-010 W1-3 이전 버전이 ~/.claude/rules/ 에 씀).
+  // 새 세션이 열리기 전에 uninstall 하는 경우 harness 마이그레이션이 못 지우므로
+  // 여기서도 회수한다 — 방치 시 언인스톨 후에도 전 세션에 주입된다.
+  const legacyGlobalBehavioral = path.join(os.homedir(), '.claude', 'rules', 'forge-behavioral.md');
+  if (fs.existsSync(legacyGlobalBehavioral)) {
+    fs.unlinkSync(legacyGlobalBehavioral);
     removedCount++;
   }
 

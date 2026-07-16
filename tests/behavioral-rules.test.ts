@@ -295,4 +295,22 @@ ${content}
     expect(isSelfReferentialEcho('[기술선호] Testing은 vitest 우선\n- fixture 기반')).toBe(false);
     expect(isSelfReferentialEcho('')).toBe(false);
   });
+
+  it('W1-2: auto-compound-runner wires the echo skip before the behavior write (structural pin)', async () => {
+    // 실행 경로 테스트는 fake claude 바이너리 하네스를 요구해 과중 — 대신
+    // chain-verification 관용구(소스 구조 고정)로 와이어링 제거 회귀를 잡는다.
+    // 렌더 게이트(위 테스트)가 2차 방어로 실동작을 커버한다.
+    const src = fs.readFileSync(
+      path.resolve(process.cwd(), 'src', 'core', 'auto-compound-runner.ts'), 'utf-8');
+
+    // (1) 헬퍼를 import 하고
+    expect(src).toMatch(/import \{ isSelfReferentialEcho \} from '\.\/config-injector\.js'/);
+    // (2) 저장 조건이 !isEcho 를 포함하며
+    expect(src).toMatch(/!isInjection && !isEcho/);
+    // (3) isEcho 판정이 mergeOrCreateBehavior 호출보다 앞선다
+    const echoIdx = src.indexOf('isSelfReferentialEcho(userResult');
+    const mergeCallIdx = src.indexOf('mergeOrCreateBehavior(BEHAVIOR_DIR');
+    expect(echoIdx).toBeGreaterThan(0);
+    expect(mergeCallIdx).toBeGreaterThan(echoIdx);
+  });
 });

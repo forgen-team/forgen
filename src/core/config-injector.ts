@@ -266,7 +266,11 @@ const SELF_REFERENTIAL_PATTERNS: readonly RegExp[] = Object.freeze([
   /^Got it\b/i,
   /^[\u26a0\u2705\u274c\u{1f534}\u{1f4cb}]/u, // \u26a0 \u2705 \u274c \ud83d\udd34 \ud83d\udccb \uc120\ub450 \u2014 assistant \uc0c1\ud0dc \ub9c8\ucee4
   /^(\uc774\ud574\ud588\uc2b5\ub2c8\ub2e4|\uc54c\uaca0\uc2b5\ub2c8\ub2e4|\ud655\uc778\ud588\uc2b5\ub2c8\ub2e4|\ud655\uc778\ud558\uaca0\uc2b5\ub2c8\ub2e4|\ud30c\uc545\ud588\uc2b5\ub2c8\ub2e4)/,
-  /^(\uc791\uc5c5 \uc0c1\ud0dc\ub97c \ud655\uc778|\uc0c1\ud669\uc744 \ud30c\uc545\ud588|\ud604\uc7ac \uc0c1\ud669|\uc900\ube44 \uc644\ub8cc|\uc548\ub155\ud558\uc138\uc694)/,
+  // "\ud604\uc7ac \uc0c1\ud669"/"\uc900\ube44 \uc644\ub8cc"\ub294 Claude-voice \ubb38\uc7a5 \uc644\uacb0\ud615\ub9cc \ub9e4\uce58 \u2014 \uc0ac\uc6a9\uc790 \uc9c0\uc2dc\ubb38
+  // "\ud604\uc7ac \uc0c1\ud669 \ud30c\uc545 \ud6c4 \uc791\uc5c5 \uc2dc\uc791", "\uc900\ube44 \uc644\ub8cc\ub418\uba74 \uc54c\ub824\uc8fc\uc138\uc694"\ub294 \ud1b5\uacfc\ud574\uc57c \ud55c\ub2e4 (H-2).
+  /^(\uc791\uc5c5 \uc0c1\ud0dc\ub97c \ud655\uc778|\uc0c1\ud669\uc744 \ud30c\uc545\ud588|\uc548\ub155\ud558\uc138\uc694)/,
+  /^\ud604\uc7ac \uc0c1\ud669(:|\uc774|\uc740|\uc744 (\ud30c\uc545|\ud655\uc778|\uc815\ub9ac))/,
+  /^\uc900\ube44 \uc644\ub8cc(\uc785\ub2c8\ub2e4|\ud588\uc2b5\ub2c8\ub2e4|[.!])/,
   /^\ubc31\uadf8\ub77c\uc6b4\ub4dc .*(\uc644\ub8cc|\uc911\ub2e8)/,
   // Object.freeze is defense-in-depth: the readonly type is compile-time
   // only. Freezing prevents runtime mutation by any other module loaded
@@ -341,9 +345,10 @@ function generateBehavioralRules(): string {
 
       // ADR-010 W1-2 주력 방어 — 1회 관찰 항목은 렌더하지 않는다 (모든 kind).
       // 실측(2026-07-16): 오염된 behavior 엔트리 49/49(100%)가 observedCount=1.
-      // 진짜 사용자 패턴은 재관찰되어 mergeOrCreateBehavior 가 count 를 누적하지만,
-      // Claude-voice 에코는 같은 문구로 재발하지 않는다. SELF_REFERENTIAL_PATTERNS
-      // regex 는 보조 방어(defense-in-depth)로 강등.
+      // 진짜 사용자 패턴은 재관찰되어 mergeOrCreateBehavior 가 count 를 누적한다.
+      // 주의(정직한 한계): count 는 50% word-overlap merge 로도 오르므로, regex
+      // 3중 방어(캡처/렌더)를 모두 뚫는 novel echo 2건이 서로 merge 되면 이 게이트도
+      // 뚫린다 — 알려진 60건 형태는 캡처 사이드에서 차단되므로 잔존 리스크는 낮음.
       if (observedCount < 2) continue;
 
       const contentIdx = body.indexOf('## Content');
