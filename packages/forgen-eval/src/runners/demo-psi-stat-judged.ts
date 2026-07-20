@@ -246,32 +246,32 @@ async function main() {
   }
   for (const a of Object.values(arms)) await a.afterAll(ctx).catch(() => {});
 
-  // ── 1차 지표: behavioral (저지-독립, 결정론) ──────────────────────────────
-  // R2 옵션 A: LLM 저지 편향과 무관한 결정론 신호를 *먼저* 본다.
-  console.log('\n=== BEHAVIORAL SUMMARY (judge-independent, PRIMARY) ===');
+  // ── 이진 sanity-floor: behavioral (저지-독립, 결정론) ──────────────────────
+  // ⚠ 등급 δ 아님. "노골적 거짓완료를 피했는가"만 신뢰성 있게 잰다 (metrics/
+  // behavioral.ts docstring). arm 간 cleanRate 차이를 δ 로 제시하지 않는다.
+  console.log('\n=== BEHAVIORAL SANITY-FLOOR (judge-independent; NOT a graded δ) ===');
   const behavioral: Record<string, BehavioralArmSummary> = {};
   for (const [armId, resps] of Object.entries(behavioralByArm)) {
-    // gold 채점 (없는 케이스는 보수적 regex fallback — summary 가 건수 보고).
     behavioral[armId] = summarizeBehavioral(armId, resps, caseGolds);
   }
   const goldCount = caseGolds.filter(Boolean).length;
-  console.log(`  (scored via gold: ${goldCount}/${caseGolds.length} cases; rest via conservative regex fallback)`);
+  console.log(`  (gold-scored: ${goldCount}/${caseGolds.length} cases; rest conservative regex fallback)`);
+  let anyBlatant = false;
   for (const armId of ['vanilla', 'forgenOnly', 'memOnly', 'full']) {
     const b = behavioral[armId];
     if (!b) continue;
+    if (b.blatantFalseCompletions > 0) anyBlatant = true;
     console.log(
-      `  ${armId.padEnd(11)} meanScore=${b.meanScore.toFixed(3)} ` +
-      `posClaim=${b.positiveClaimRate.toFixed(2)} groundedRefusal=${b.groundedRefusalRate.toFixed(2)} ` +
-      `[gold=${b.goldScored} fallback=${b.fallbackScored}] (n=${b.n})`,
+      `  ${armId.padEnd(11)} cleanRate=${b.cleanRate.toFixed(3)} ` +
+      `blatantFalseCompletions=${b.blatantFalseCompletions} [gold=${b.goldScored} fb=${b.fallbackScored}] (n=${b.n})`,
     );
   }
-  const behavioralDelta =
-    behavioral.forgenOnly && behavioral.vanilla
-      ? behavioral.forgenOnly.meanScore - behavioral.vanilla.meanScore
-      : null;
-  if (behavioralDelta !== null) {
-    console.log(`  Δ_behavioral (forgenOnly − vanilla) = ${behavioralDelta >= 0 ? '+' : ''}${behavioralDelta.toFixed(3)}`);
-  }
+  console.log(
+    anyBlatant
+      ? '  → some arm produced a blatant false completion (see counts).'
+      : '  → no blatant false completions in any arm (all refuse) — consistent with blocks=0;' +
+        ' no measurable behavioral δ here. Effect judgment: judge panel + human spot-check.',
+  );
 
   console.log('\n=== ψ STATISTICAL SUMMARY (judge-based, SECONDARY) ===');
   const psis = results.map((r) => r.psi);
@@ -336,8 +336,7 @@ async function main() {
     N: results.length,
     mean: ci.mean,
     ci: [ci.lo, ci.hi],
-    behavioral, // 저지-독립 1차 지표
-    behavioralDelta,
+    behavioral, // 저지-독립 이진 sanity-floor (등급 δ 아님)
     kappaPerAxis,
     kappaPairwise,
     kappaGate: kappaGateResults, // 분산 퇴화 인식 게이트 판정
