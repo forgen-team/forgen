@@ -23,6 +23,7 @@ import { HANDOFFS_DIR, STATE_DIR } from '../core/paths.js';
 import { recordHookTiming } from './shared/hook-timing.js';
 import { sanitizeId } from './shared/sanitize-id.js';
 import { redactSecrets } from './secret-filter.js';
+import type { HostId } from '../core/trust-layer-intent.js';
 
 const log = createLogger('context-guard');
 const CONTEXT_STATE_PATH = path.join(STATE_DIR, 'context-guard.json');
@@ -266,7 +267,7 @@ export async function main(): Promise<void> {
       const errorMsg = input.error;
       // FORGEN_RUNTIME 은 buildEnv (config-injector.ts:479) 에서 spawn 시 주입.
       // hook 은 claude/codex CLI 를 통해 invoke 되어 부모 env 상속.
-      const runtime = (process.env.FORGEN_RUNTIME as 'claude' | 'codex' | undefined) ?? 'claude';
+      const runtime = (process.env.FORGEN_RUNTIME as HostId | undefined) ?? 'claude';
 
       if (TOKEN_LIMIT_REGEX.test(errorMsg)) {
         saveHandoff(sessionId, 'context-limit', errorMsg);

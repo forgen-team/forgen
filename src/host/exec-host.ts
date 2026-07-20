@@ -13,6 +13,7 @@
 import { execFileSync, type ExecFileSyncOptions } from 'node:child_process';
 import { resolveDefaultHost } from '../store/profile-store.js';
 import { parseCodexJsonlOutput } from './codex-output-parser.js';
+import type { HostId } from '../core/trust-layer-intent.js';
 
 export interface ExecHostOptions {
   /** prompt — `-p`/`exec` 의 본문 */
@@ -24,7 +25,7 @@ export interface ExecHostOptions {
   /** working directory */
   cwd?: string;
   /** explicit host override (default: profile.default_host). */
-  host?: 'claude' | 'codex';
+  host?: HostId;
   /** ENV vars 추가 (기존 process.env 위에 머지) */
   env?: NodeJS.ProcessEnv;
 }
@@ -36,14 +37,14 @@ export interface ExecHostOptions {
  *     30s default 가 false-positive ETIMEDOUT 발생. 90s 마진 필요.
  *   - 명시 timeout 옵션은 그대로 우선.
  */
-export const DEFAULT_TIMEOUT_BY_HOST: Record<'claude' | 'codex', number> = {
+export const DEFAULT_TIMEOUT_BY_HOST: Record<HostId, number> = {
   claude: 30_000,
   codex: 90_000,
 };
 
 export interface ExecHostResult {
   message: string;
-  host: 'claude' | 'codex';
+  host: HostId;
   /** 토큰 사용량 (codex 만 노출. claude 는 null). */
   usage: { input_tokens?: number; output_tokens?: number } | null;
 }
@@ -61,7 +62,7 @@ export function execHost(opts: ExecHostOptions): ExecHostResult {
   const resolved = resolveDefaultHost(opts.host);
   // 'ask' 는 자동 호출 컨텍스트라 명시 fallback. 그러나 Codex-only 사용자가 'ask'
   // 설정 후 claude 가 PATH 에 없으면 ENOENT 발생 → 명시 안내. (Phase 2 critic fix)
-  const host: 'claude' | 'codex' = resolved === 'codex' ? 'codex' : 'claude';
+  const host: HostId = resolved === 'codex' ? 'codex' : 'claude';
   if (resolved === 'ask' && opts.host === undefined) {
     // 자동 호출에서 'ask' 도달 — caller 가 명시 host 안 줬으므로 default fallback 안내.
     process.stderr.write(

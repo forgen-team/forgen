@@ -14,8 +14,7 @@
 
 import { loadAllEvidence } from './evidence-store.js';
 import type { Evidence } from './types.js';
-
-export type HostId = 'claude' | 'codex';
+import type { HostId } from '../core/trust-layer-intent.js';
 
 export interface HostMismatchSummary {
   readonly byHost: Record<HostId, number>;

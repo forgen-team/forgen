@@ -13,10 +13,11 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { ME_BEHAVIOR } from './paths.js';
 import { atomicWriteJSON, safeReadJSON } from '../hooks/shared/atomic-write.js';
+import type { HostId } from './trust-layer-intent.js';
 
 export interface MigrateEvidenceHostOptions {
   /** backfill 할 host 값 (host 필드 없는 파일에만 적용) */
-  defaultHost: 'claude' | 'codex';
+  defaultHost: HostId;
   /**
    * true 이면 디스크를 수정하지 않고 카운트만 반환.
    * @default false

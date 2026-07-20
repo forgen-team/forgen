@@ -9,6 +9,7 @@ import * as fs from 'node:fs';
 import { FORGE_PROFILE } from '../core/paths.js';
 import { atomicWriteJSON, safeReadJSON } from '../hooks/shared/atomic-write.js';
 import type { Profile, QualityPack, AutonomyPack, JudgmentPack, CommunicationPack, TrustPolicy } from './types.js';
+import type { HostId } from '../core/trust-layer-intent.js';
 import {
   qualityCentroid,
   autonomyCentroid,
@@ -148,7 +149,7 @@ export function bumpAxisConfidence(
  * fgx / forgen 무인자 실행 시 어느 host 를 spawn 할지 결정. 'ask' 면 매번 묻기.
  * 미설정(undefined) 은 legacy 사용자 호환 — 'claude' 로 resolve.
  */
-export type DefaultHost = 'claude' | 'codex' | 'ask';
+export type DefaultHost = HostId | 'ask';
 
 export function getDefaultHost(): DefaultHost | undefined {
   const profile = loadProfile();
@@ -169,7 +170,7 @@ export function setDefaultHost(host: DefaultHost): boolean {
  * 우선순위: explicit override > profile.default_host > 'claude' fallback.
  * 'ask' 는 caller 가 별도 처리 (interactive prompt).
  */
-export function resolveDefaultHost(override?: 'claude' | 'codex'): 'claude' | 'codex' | 'ask' {
+export function resolveDefaultHost(override?: HostId): DefaultHost {
   if (override) return override;
   const stored = getDefaultHost();
   if (stored === undefined) return 'claude';

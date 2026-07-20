@@ -11,6 +11,7 @@
 
 import { migrateImplicitFeedbackLog } from '../store/implicit-feedback-store.js';
 import { migrateEvidenceHost } from './migrate-evidence-host.js';
+import type { HostId } from './trust-layer-intent.js';
 
 const HELP = `
   forgen migrate — one-shot schema migrations
@@ -50,7 +51,7 @@ export async function handleMigrate(args: string[]): Promise<void> {
       console.error(`[forgen migrate] --default-host 는 'claude' 또는 'codex' 여야 합니다. 받은 값: ${rawHost}`);
       process.exit(1);
     }
-    const defaultHost = rawHost as 'claude' | 'codex';
+    const defaultHost = rawHost as HostId;
     const result = migrateEvidenceHost({ defaultHost, dryRun });
     const label = dryRun ? ' (dry-run)' : '';
     console.log(`[forgen] migrated: ${result.migrated} (skipped: ${result.skipped}, total: ${result.total})${label}`);

@@ -24,6 +24,7 @@ import { createEvidence, saveEvidence, promoteSessionCandidates } from '../store
 import { loadProfile } from '../store/profile-store.js';
 import { FORGEN_HOME, ME_DIR } from './paths.js';
 import { classifyBehaviorKind, mapKindToAxisRefs } from './behavior-classifier.js';
+import type { HostId } from './trust-layer-intent.js';
 
 /** Auto-compound에 사용할 모델 — background 추출이므로 haiku로 충분 */
 const COMPOUND_MODEL = 'haiku';
@@ -43,7 +44,7 @@ function execClaudeRetry(args: string[], opts: ExecFileSyncOptions): string {
   // profile.default_host 로 host 결정 (lazy load)
   const profileMod = createRequire(import.meta.url)('../store/profile-store.js') as typeof import('../store/profile-store.js');
   const resolved = profileMod.resolveDefaultHost();
-  const host: 'claude' | 'codex' = resolved === 'codex' ? 'codex' : 'claude';
+  const host: HostId = resolved === 'codex' ? 'codex' : 'claude';
 
   if (host === 'claude') {
     // Claude 측은 기존 보안 hardening 보존: --allowedTools 등 args 그대로 전달.
@@ -106,7 +107,7 @@ export async function execClaudeRetryAsync(args: string[], opts: ExecFileOptions
   const mod = createRequire(import.meta.url)('../host/exec-host.js') as typeof import('../host/exec-host.js');
   const profileMod = createRequire(import.meta.url)('../store/profile-store.js') as typeof import('../store/profile-store.js');
   const resolved = profileMod.resolveDefaultHost();
-  const host: 'claude' | 'codex' = resolved === 'codex' ? 'codex' : 'claude';
+  const host: HostId = resolved === 'codex' ? 'codex' : 'claude';
 
   if (host === 'claude') {
     const TRANSIENT = /ETIMEDOUT|ECONNRESET|ECONNREFUSED|EPIPE/;

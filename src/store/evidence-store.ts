@@ -11,6 +11,7 @@ import * as crypto from 'node:crypto';
 import { ME_BEHAVIOR } from '../core/paths.js';
 import { atomicWriteJSON, safeReadJSON } from '../hooks/shared/atomic-write.js';
 import type { Evidence, EvidenceType, RuleCategory } from './types.js';
+import type { HostId } from '../core/trust-layer-intent.js';
 import { createRule, saveRule, loadActiveRules } from './rule-store.js';
 import { classify, applyProposal } from '../engine/enforce-classifier.js';
 import { detect as detectT1 } from '../engine/lifecycle/trigger-t1-correction.js';
@@ -33,7 +34,7 @@ function evidencePath(evidenceId: string): string {
  * auto-compound-runner 가 생성하는 behavior_observation evidence 가 전부 'claude'
  * 로 잘못 태깅 → doctor 가 98/2 격차 경고. FORGEN_RUNTIME 을 직접 읽도록 추가.
  */
-function detectHost(explicit?: 'claude' | 'codex'): 'claude' | 'codex' {
+function detectHost(explicit?: HostId): HostId {
   if (explicit) return explicit;
   const fromEnv = process.env.FORGEN_HOST;
   if (fromEnv === 'claude' || fromEnv === 'codex') return fromEnv;
@@ -52,7 +53,7 @@ export function createEvidence(params: {
   candidate_rule_refs?: string[];
   confidence: number;
   raw_payload?: Record<string, unknown>;
-  host?: 'claude' | 'codex';
+  host?: HostId;
 }): Evidence {
   return {
     evidence_id: crypto.randomUUID(),

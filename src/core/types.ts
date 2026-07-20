@@ -1,3 +1,5 @@
+import type { HostId } from './trust-layer-intent.js';
+
 export interface Principle {
   belief: string;
   /**
@@ -108,8 +110,8 @@ export interface HarnessContext {
   routingPreset?: string;
 }
 
-/** 런타임 Host */
-export type RuntimeHost = 'claude' | 'codex';
+/** 런타임 Host — 정식 정의는 `trust-layer-intent.ts` 의 HostId (Multi-Harness Adapter Plan P0). */
+export type RuntimeHost = HostId;
 
 /** 런칭 컨텍스트 — CLI에서 runtime/args 결정을 모델화 */
 export interface LaunchContext {

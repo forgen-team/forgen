@@ -13,6 +13,7 @@
 
 import { createRequire } from 'node:module';
 import type { LaunchContext, RuntimeHost } from '../core/types.js';
+import type { DefaultHost } from '../store/profile-store.js';
 
 const localRequire = createRequire(import.meta.url);
 
@@ -38,7 +39,7 @@ const DEFAULT_RUNTIME: RuntimeHost = 'claude';
  */
 function readProfileDefaultRuntime(): RuntimeHost | null {
   try {
-    const mod = localRequire('../store/profile-store.js') as { getDefaultHost?: () => 'claude' | 'codex' | 'ask' | undefined };
+    const mod = localRequire('../store/profile-store.js') as { getDefaultHost?: () => DefaultHost | undefined };
     const stored = mod.getDefaultHost?.();
     if (stored === 'claude' || stored === 'codex') return stored;
     return null; // 'ask' 또는 미설정

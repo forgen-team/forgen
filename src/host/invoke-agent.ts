@@ -13,6 +13,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execHost, type ExecHostResult } from './exec-host.js';
+import type { HostId } from '../core/trust-layer-intent.js';
 
 const MAX_DEPTH = 2;
 const MAX_CONCURRENT = 3;
@@ -24,12 +25,12 @@ export interface InvokeAgentOptions {
   /** Child process timeout (ms). Default 60s. */
   timeoutMs?: number;
   /** Override host (default: profile.default_host). */
-  host?: 'claude' | 'codex';
+  host?: HostId;
 }
 
 export interface InvokeAgentResult {
   agentName: string;
-  host: 'claude' | 'codex';
+  host: HostId;
   summary: string;
   durationMs: number;
   usage: ExecHostResult['usage'];

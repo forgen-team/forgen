@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { prepareHarness, isFirstRun } from './core/harness.js';
 import { spawnClaudeWithResume } from './core/spawn.js';
 import { resolveLaunchContext } from './services/session.js';
+import type { DefaultHost } from './store/profile-store.js';
 // global-config is used by harness internally
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -143,7 +144,7 @@ const commands: Command[] = [
           process.exit(1);
         } else {
           const { setDefaultHost } = await import('./store/profile-store.js');
-          const ok = setDefaultHost(value as 'claude' | 'codex' | 'ask');
+          const ok = setDefaultHost(value as DefaultHost);
           if (!ok) {
             console.log('  ✗ Profile not found. Run `forgen onboarding` first.');
             process.exit(1);

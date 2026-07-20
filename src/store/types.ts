@@ -5,6 +5,8 @@
  * Runtime contracts: docs/plans/2026-04-03-forgen-component-interface-design.md
  */
 
+import type { HostId } from '../core/trust-layer-intent.js';
+
 // ── Quality packs ──
 
 export type QualityPack = '보수형' | '균형형' | '속도형';
@@ -176,7 +178,7 @@ export interface Evidence {
    * evidence 가 어느 host 에서 발생했는지 태그. 미지정 시 'claude' 로 backfill (기존 데이터 호환).
    * core 의 학습 로직은 이 필드를 *호스트별 가중치* 가 아니라 *불일치 demote 신호* 로만 사용한다.
    */
-  host?: 'claude' | 'codex';
+  host?: HostId;
 }
 
 // ── Facets ──
@@ -247,7 +249,7 @@ export interface Profile {
    *   - 'ask': 매번 묻기 (interactive prompt)
    *   - undefined: legacy / 미설정 → 'claude' fallback (마이그레이션 호환)
    */
-  default_host?: 'claude' | 'codex' | 'ask';
+  default_host?: HostId | 'ask';
 }
 
 // ── Pack Recommendation ──

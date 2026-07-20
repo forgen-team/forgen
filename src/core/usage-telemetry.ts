@@ -18,6 +18,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { STATE_DIR } from './paths.js';
 import { createLogger } from './logger.js';
+import type { HostId } from './trust-layer-intent.js';
 
 const log = createLogger('usage-telemetry');
 
@@ -34,7 +35,7 @@ export interface UsageStats {
 
 interface TelemetryEntry {
   ts: number;       // epoch ms
-  rt?: 'claude' | 'codex';
+  rt?: HostId;
 }
 
 /**
@@ -42,7 +43,7 @@ interface TelemetryEntry {
  * skill/subagent/plugin/MCP 별로 정확히 분해하므로 forgen 의 raw count 는
  * 중복 표면. 기록 중단(no-op shim — API 만 유지), v0.6.0 에서 모듈 삭제 예정.
  */
-export function recordToolCall(_runtime: 'claude' | 'codex' = 'claude'): void {
+export function recordToolCall(_runtime: HostId = 'claude'): void {
   // no-op — 사용량 추적은 native /usage 로 이관됨.
 }
 
