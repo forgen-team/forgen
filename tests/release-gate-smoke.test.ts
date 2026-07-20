@@ -91,6 +91,8 @@ describe('smoke.cjs (evidence generator)', () => {
     const byName = Object.fromEntries(report.checks.map((c: { name: string }) => [c.name, c]));
     // vitest 는 스킵 마킹 — 게이트가 거부해야 하는 형태
     expect(byName['vitest'].skipped).toBe(true);
+    // 리뷰 SEV-3: skip 이 있으면 report.passed 는 false — "passed:true = 전 체크 실행+통과" 불변식
+    expect(report.passed).toBe(false);
     // 나머지는 실제 실행 결과 — 이 레포의 dist 는 빌드돼 있으므로 통과해야 한다
     expect(byName['cli-version'].passed).toBe(true);
     expect(byName['statusline-roundtrip'].passed).toBe(true);
@@ -213,5 +215,22 @@ describe('self-gate.cjs checkReleaseArtifact (pre-commit static gate)', () => {
     cleanups.push(dir);
     const r = runNode(GATE_STATIC, { cwd: dir, env: { FORGEN_GATE_ROOT: dir } });
     expect(r.status, `stdout=${r.stdout} stderr=${r.stderr}`).toBe(0);
+  });
+});
+
+describe('dogfood 룰 정합 (e2e 게이트 폐지 회귀 방지 — 리뷰 SEV-2)', () => {
+  it('.forgen/rules 에 active 상태의 e2e 완료게이트 룰이 없다', () => {
+    // e2e 게이트 폐지(교정 a723507f) 후 v1-rules.md(안내)와 rule-store JSON(강제)이
+    // 갈라지는 split-brain 회귀 방지: 완료-선언을 e2e 증거에 묶는 룰은 retired 여야 한다.
+    const rulesDir = path.join(REPO_ROOT, '.forgen', 'rules');
+    if (!fs.existsSync(rulesDir)) return;
+    for (const f of fs.readdirSync(rulesDir).filter((n) => n.endsWith('.json'))) {
+      const rule = JSON.parse(fs.readFileSync(path.join(rulesDir, f), 'utf-8'));
+      const bindsCompletionToE2e =
+        rule.trigger === 'completion-before-e2e' || /e2e-result\.json/.test(JSON.stringify(rule.enforce_via ?? []));
+      if (bindsCompletionToE2e) {
+        expect(rule.status, `${f} 는 e2e 완료게이트를 강제하므로 retired 여야 한다`).not.toBe('active');
+      }
+    }
   });
 });

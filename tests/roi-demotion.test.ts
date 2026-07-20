@@ -162,4 +162,18 @@ describe('저장소 roundtrip (실제 fs)', () => {
     fs.writeFileSync(path.join(HOME, '.forgen', 'state', 'roi-demotions.json'), '{broken');
     expect(loadRoiDemotions(HOME)).toEqual({});
   });
+
+  it('save 는 원자적 tmp+rename — .tmp 잔여물 없이 유효 JSON 만 남긴다 (리뷰 SEV-3)', () => {
+    const demotions: RoiDemotions = {
+      'sol-b': { solutionId: 'sol-b', reason: 'low-roi', demotedAt: NOW(), windowCount: 2, lastEvaluatedAt: NOW(), surfaced: 9, actedOn: 0 },
+    };
+    saveRoiDemotions(demotions, HOME);
+    saveRoiDemotions(demotions, HOME); // 덮어쓰기 경로도 rename 이 성공해야 한다
+
+    const stateDir = path.join(HOME, '.forgen', 'state');
+    const leftovers = fs.readdirSync(stateDir).filter((f) => f.endsWith('.tmp'));
+    expect(leftovers).toEqual([]);
+    // 최종 파일은 곧바로 파싱 가능한 완전한 JSON
+    expect(JSON.parse(fs.readFileSync(path.join(stateDir, 'roi-demotions.json'), 'utf-8'))).toEqual(demotions);
+  });
 });

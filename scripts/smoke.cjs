@@ -120,7 +120,10 @@ function main() {
   checks.push(checkHookExec());
 
   const executed = checks.filter((c) => !c.skipped);
-  const passed = executed.length > 0 && executed.every((c) => c.passed === true);
+  const executedPassed = executed.length > 0 && executed.every((c) => c.passed === true);
+  // report.passed 불변식: "전 체크가 실행되고 전부 통과" — skip 이 하나라도 있으면 false.
+  // exit code 는 실행된 체크 기준(executedPassed)이라 --skip 개발 플로우는 그대로 exit 0.
+  const passed = executedPassed && executed.length === checks.length;
 
   // version 바인딩: 게이트가 stale report(이전 릴리스 증거 재사용)를 거부할 수 있도록
   // 생성 시점의 package.json 버전을 박아 넣는다.
@@ -149,8 +152,8 @@ function main() {
     const mark = c.skipped ? '○' : c.passed ? '✓' : '✗';
     console.log(`  [smoke] ${mark} ${c.name} — ${c.summary}`);
   }
-  console.log(`  [smoke] report → ${outPath} (passed=${passed})`);
-  process.exit(passed ? 0 : 1);
+  console.log(`  [smoke] report → ${outPath} (passed=${passed}, executed=${executed.length}/${checks.length})`);
+  process.exit(executedPassed ? 0 : 1);
 }
 
 main();

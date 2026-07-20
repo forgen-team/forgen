@@ -67,7 +67,11 @@ export function saveRoiDemotions(demotions: RoiDemotions, home: string = os.home
   try {
     const p = roiDemotionsPath(home);
     fs.mkdirSync(path.dirname(p), { recursive: true });
-    fs.writeFileSync(p, `${JSON.stringify(demotions, null, 2)}\n`);
+    // tmp+rename 원자 교체 — 동시 세션(auto-compound 병행 종료)에서 부분 쓰기로
+    // 파일이 깨지는 것을 방지. rename 은 동일 fs 내 원자적.
+    const tmp = `${p}.${process.pid}.tmp`;
+    fs.writeFileSync(tmp, `${JSON.stringify(demotions, null, 2)}\n`);
+    fs.renameSync(tmp, p);
   } catch { /* fail-open — 강등 실패가 주입을 막지 않는다 */ }
 }
 
