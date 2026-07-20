@@ -208,7 +208,7 @@ Facets are micro-adjusted based on accumulated evidence. If your corrections con
 
 ### Next session
 
-Updated rules are rendered with your corrections included. Compound knowledge is searchable via MCP. Retrieval precision grows as your personal accumulation grows — the mechanism is in place from day 1 (starter-pack covers common dev queries on a fresh install), and the signal-to-noise ratio improves over roughly 2–4 weeks of real use as low-fitness solutions are auto-demoted and your specific patterns get promoted.
+Updated rules are rendered with your corrections included. Compound knowledge is searchable via MCP. The retrieval mechanism is in place from day 1 (starter-pack covers common dev queries on a fresh install); as you accumulate your own solutions, low-fitness ones get auto-demoted (ROI loop) and your specific patterns get promoted, so what surfaces skews toward *your* corpus over time. We describe this as a mechanism, not a measured speedup — we make no effect-size claim (see the honest-null caveat above).
 
 ---
 
