@@ -3,7 +3,7 @@
  * ADR-006 §judges. Blinding은 별도 layer (runners/blinding.ts).
  */
 
-import type { JudgeScore } from '../types.js';
+import type { JudgeScore, JudgeId } from '../types.js';
 
 export type JudgeAxis = 'gamma' | 'beta' | 'phi';
 
@@ -21,7 +21,7 @@ export interface JudgePromptInput {
 }
 
 export interface JudgeClient {
-  id: 'sonnet' | 'qwen-72b' | 'llama-70b' | 'qwen-14b' | 'llama-8b' | 'claude-cli' | 'codex-cli';
+  id: JudgeId;
   /** Returns a 1-4 likert + rationale. Throws on transport failure. */
   judge(input: JudgePromptInput): Promise<JudgeScore>;
   /** Health check before run start. */

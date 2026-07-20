@@ -21,6 +21,8 @@ import { loadTestCases } from '../datasets/loader.js';
 import type { ArmResponse, Track } from '../types.js';
 import type { JudgeAxis, JudgeClient } from '../judges/index.js';
 import { ClaudeCliClient, CodexCliClient, OllamaClient, SonnetClient } from '../judges/index.js';
+import { kappaGate, cohensKappa } from '../judges/kappa.js';
+import { summarizeBehavioral, type BehavioralArmSummary } from '../metrics/behavioral.js';
 
 /** Load persona spec JSON for β-axis judging. Cached per personaId. */
 const personaCache = new Map<string, string>();
@@ -82,32 +84,10 @@ function bootstrapMean95CI(values: number[], iters = 1000): { mean: number; lo: 
   return { mean, lo: samples[Math.floor(iters * 0.025)], hi: samples[Math.floor(iters * 0.975)] };
 }
 
-/**
- * Cohen's κ for 2 raters on the same set of items, ordinal categories 1-4.
- * Returns 0 if inputs mismatch / empty / single-category.
- */
-function cohenKappa(a: number[], b: number[]): number {
-  if (a.length !== b.length || a.length === 0) return 0;
-  const N = a.length;
-  const cats = [1, 2, 3, 4];
-  const obs: Record<string, number> = {};
-  let agree = 0;
-  for (let i = 0; i < N; i++) {
-    if (a[i] === b[i]) agree++;
-    obs[`${a[i]}-${b[i]}`] = (obs[`${a[i]}-${b[i]}`] ?? 0) + 1;
-  }
-  const Po = agree / N;
-  const margA: Record<number, number> = {};
-  const margB: Record<number, number> = {};
-  for (const c of cats) {
-    margA[c] = a.filter((x) => x === c).length / N;
-    margB[c] = b.filter((x) => x === c).length / N;
-  }
-  let Pe = 0;
-  for (const c of cats) Pe += margA[c] * margB[c];
-  if (Pe >= 1) return 0;
-  return (Po - Pe) / (1 - Pe);
-}
+// κ 는 judges/kappa.ts cohensKappa 하나로 통일 (리뷰 #12 SEV-3): 로컬 중복
+// 구현이 퇴화 규약을 달리해(pE===1 시 1 vs 0) 한 리포트에 상충하는 κ 두 값이
+// 나오던 문제를 제거. 퇴화 판정·완화는 kappaGate 한 곳에서만 결정한다.
+const cohenKappa = cohensKappa;
 
 async function safeJudge(
   judges: JudgeClient[],
@@ -154,11 +134,14 @@ function formatCorrectionHistory(turns: { userMsg: string }[], maxTurns = 5): st
 
 function buildPanel(track: Track): JudgeClient[] {
   if (track === 'API_DEV') return [new ClaudeCliClient(), new CodexCliClient()];
+  if (track === 'CLAUDE_DUAL')
+    // v0.5.0 R2 — codex 해지 후 Claude 전용 이중 패널 (haiku+sonnet, 둘 다 CLI).
+    return [new ClaudeCliClient({ model: 'haiku' }), new ClaudeCliClient({ model: 'sonnet' })];
   if (track === 'ENSEMBLE')
     return [new ClaudeCliClient(), new CodexCliClient(), new OllamaClient('llama-8b')];
   if (track === 'DEV') return [new SonnetClient()];
   throw new Error(
-    `Track ${track} not supported by this runner — use API_DEV (default), ENSEMBLE, or DEV`,
+    `Track ${track} not supported by this runner — use API_DEV, CLAUDE_DUAL (R2), ENSEMBLE, or DEV`,
   );
 }
 
@@ -168,6 +151,13 @@ async function main() {
 
   const judges = buildPanel(JUDGE_TRACK);
   console.log(`Judge panel: ${judges.map((j) => j.id).join(' + ')}`);
+  const intraFamily = judges.every((j) => j.id.startsWith('claude'));
+  if (intraFamily) {
+    console.log(
+      '  ⚠ intra-family panel (all Claude) — self-preference bias possible. κ = same-family\n' +
+      '    agreement, NOT independent. 1차 지표는 저지-독립 behavioral 을 본다.',
+    );
+  }
 
   for (const j of judges) {
     const ping = await j.ping();
@@ -197,6 +187,9 @@ async function main() {
   const results: ScoredCase[] = [];
   // Per-judge per-axis arrays for κ computation.
   const kappaInputs: Record<string, number[]> = {};
+  // 저지-독립 1차 지표(behavioral)용 arm별 실제 응답 누적.
+  const behavioralByArm: Record<string, ArmResponse[]> = {};
+  const caseGolds: (import('../types.js').CaseGold | undefined)[] = [];
 
   let i = 0;
   for (const c of cases.slice(0, N)) {
@@ -215,6 +208,12 @@ async function main() {
       }
     }
     if (!armResp.vanilla || !armResp.forgenOnly || !armResp.memOnly || !armResp.full) continue;
+    // 1차(behavioral) 지표는 저지 호출 전에 arm 응답에서 결정론적으로 수집.
+    // 케이스 gold 를 같은 순서로 누적 — summary 에서 gold 채점에 쓴다.
+    caseGolds.push(c.gold);
+    for (const [k, r] of Object.entries(armResp)) {
+      (behavioralByArm[k] ??= []).push(r);
+    }
 
     const persona = loadPersonaSpec(DATA_DIR, c.personaId);
     const correctionHistory = formatCorrectionHistory(c.correctionSequence);
@@ -247,7 +246,34 @@ async function main() {
   }
   for (const a of Object.values(arms)) await a.afterAll(ctx).catch(() => {});
 
-  console.log('\n=== ψ STATISTICAL SUMMARY (judge-based) ===');
+  // ── 이진 sanity-floor: behavioral (저지-독립, 결정론) ──────────────────────
+  // ⚠ 등급 δ 아님. "노골적 거짓완료를 피했는가"만 신뢰성 있게 잰다 (metrics/
+  // behavioral.ts docstring). arm 간 cleanRate 차이를 δ 로 제시하지 않는다.
+  console.log('\n=== BEHAVIORAL SANITY-FLOOR (judge-independent; NOT a graded δ) ===');
+  const behavioral: Record<string, BehavioralArmSummary> = {};
+  for (const [armId, resps] of Object.entries(behavioralByArm)) {
+    behavioral[armId] = summarizeBehavioral(armId, resps, caseGolds);
+  }
+  const goldCount = caseGolds.filter(Boolean).length;
+  console.log(`  (gold-scored: ${goldCount}/${caseGolds.length} cases; rest conservative regex fallback)`);
+  let anyBlatant = false;
+  for (const armId of ['vanilla', 'forgenOnly', 'memOnly', 'full']) {
+    const b = behavioral[armId];
+    if (!b) continue;
+    if (b.blatantFalseCompletions > 0) anyBlatant = true;
+    console.log(
+      `  ${armId.padEnd(11)} cleanRate=${b.cleanRate.toFixed(3)} ` +
+      `blatantFalseCompletions=${b.blatantFalseCompletions} [gold=${b.goldScored} fb=${b.fallbackScored}] (n=${b.n})`,
+    );
+  }
+  console.log(
+    anyBlatant
+      ? '  → some arm produced a blatant false completion (see counts).'
+      : '  → no blatant false completions in any arm (all refuse) — consistent with blocks=0;' +
+        ' no measurable behavioral δ here. Effect judgment: judge panel + human spot-check.',
+  );
+
+  console.log('\n=== ψ STATISTICAL SUMMARY (judge-based, SECONDARY) ===');
   const psis = results.map((r) => r.psi);
   const ci = bootstrapMean95CI(psis);
   console.log(`N (effective)        = ${results.length}`);
@@ -259,6 +285,7 @@ async function main() {
   // κ between judges, per axis. For ≥3 judges → pairwise mean Cohen's across all pairs.
   const kappaPerAxis: Record<string, number> = {};
   const kappaPairwise: Record<string, Record<string, number>> = {}; // axis → pair → κ
+  const kappaGateResults: Record<string, ReturnType<typeof kappaGate>> = {};
   if (judges.length >= 2) {
     const ids = judges.map((j) => j.id);
     const pairs: [string, string][] = [];
@@ -285,6 +312,18 @@ async function main() {
         console.log(`    ${pair}: ${v.toFixed(3)}`);
       }
     }
+    // κ 게이트 (v0.5.0 R2 재정의): 첫 pair 기준, 분산 퇴화 시 agreement 폴백.
+    // 천장에 붙어 κ 가 무의미해지는 blocks=0 케이스를 정직하게 통과/실패 판정.
+    if (pairs.length >= 1) {
+      const [x, y] = pairs[0];
+      for (const axis of ['gamma', 'beta'] as JudgeAxis[]) {
+        const a = (kappaInputs[`${x}|${axis}`] ?? []).map((v) => Math.round(v));
+        const b = (kappaInputs[`${y}|${axis}`] ?? []).map((v) => Math.round(v));
+        const g = kappaGate(a, b);
+        kappaGateResults[axis] = g;
+        console.log(`  κ-gate ${axis}: ${g.pass ? 'PASS' : 'FAIL'} [${g.criterion}] ${g.detail}`);
+      }
+    }
   }
 
   console.log('\nPer-case ψ (judge-based):');
@@ -293,11 +332,14 @@ async function main() {
   const out = {
     track: JUDGE_TRACK,
     judges: judges.map((j) => j.id),
+    intraFamilyPanel: intraFamily, // true면 κ는 계열-내 일치도(편향 가능) — 1차는 behavioral
     N: results.length,
     mean: ci.mean,
     ci: [ci.lo, ci.hi],
+    behavioral, // 저지-독립 이진 sanity-floor (등급 δ 아님)
     kappaPerAxis,
     kappaPairwise,
+    kappaGate: kappaGateResults, // 분산 퇴화 인식 게이트 판정
     cases: results,
     generatedAt: new Date().toISOString(),
   };
