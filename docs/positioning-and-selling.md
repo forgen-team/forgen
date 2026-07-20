@@ -423,26 +423,28 @@ Step 3: 안전 가드레일 확인 (신규)
 
 ### 6.3 Compound 투명성 강화
 
-매 세션 종료 시 (20+ 프롬프트 세션):
+매 세션 종료 시 (20+ 프롬프트 세션) — *비인과* 활동 요약만:
 
 ```
 SESSION SUMMARY
 ═══════════════
 Compound 활동:
   주입된 솔루션: 3개 (vitest-mock, prisma-upsert, error-boundary)
-  이 중 실제 적용된 것: 2개 (67%)
+  이 중 실제 적용된 것: 2개 (67%)   ← 적용률(관찰), 시간절약 아님
   새로 발견된 패턴: 1개 (저장? [Y/n])
 
 프로필 학습:
   교정 발생: 1회 ("더 간결하게 → communication_style 반영")
   드리프트: 없음
-
-이번 세션 forgen 없었으면?
-  → prisma-upsert 패턴 모르고 직접 구현 시도 → 추정 15분 절약
 ```
 
-"forgen 없었으면?" 카운터팩추얼을 보여주는 것이 핵심.
-사용자가 "이거 진짜 도움이 되는구나"를 매번 확인.
+정직한 SESSION SUMMARY 는 "무엇이 축적·주입·적용됐나"(관찰 가능한 활동)만 보여준다.
+
+> ⚠ 2026-07-20 은퇴: 이전 판은 여기에 `이번 세션 forgen 없었으면? → 추정 15분 절약`
+> 카운터팩추얼을 넣고 "이게 핵심"이라 했다. **은퇴한다.** "forgen 없었으면 N분
+> 절약"은 인과 시간절약 추정 = honest-null 로 폐기한 정량-효과 주장 그 자체다
+> (측정된 δ 없이 카운터팩추얼을 추정하는 것은 날조). SESSION SUMMARY 에서 인과
+> 절약 추정은 넣지 않는다 — §9 P0 은퇴·recalibration 문서와 정합.
 
 ### 6.4 "함께 쓰기" 호환성 보장
 
@@ -581,12 +583,13 @@ forgen은 당신의 교정을 기억하고, 지난 해결책을 되살립니다.
 > (무엇이 축적됐나) 같은 *비인과* 투명성 뷰는 유효하나, "절약 시간/교정 N% 감소"는
 > 넣지 않는다.
 
-2. **Session Summary with Counterfactual** 📋 TODO
-   - 세션 종료 시 "이번 세션에서 compound가 도움이 된 순간" 표시
-   - "forgen 없었으면 추정 X분 더 걸렸을 것" 계산
-   - 이것이 사용자가 "계속 쓸 이유"를 매번 확인하게 만듦
+2. ~~**Session Summary with Counterfactual**~~ 🚫 은퇴 (honest-null)
+   - ~~"forgen 없었으면 추정 X분 더 걸렸을 것" 계산~~ — 인과 절약 추정은
+     측정된 δ 없이 날조가 된다. 은퇴.
+   - 유효한 대체: 비인과 활동 요약(주입/적용률/축적)만 표시 (§6.3 참조).
 
-> **참고**: `/retro` (199줄, 구현 완료)가 Learning Dashboard의 인간 친화적 버전 역할을 부분적으로 수행하지만, 자동화된 대시보드 CLI는 아직 미구현.
+> **참고**: `/retro` (구현 완료)가 비인과 활동 요약 역할을 부분적으로 수행한다.
+> 인과 절약/개선 수치는 넣지 않는다.
 
 ### P1: 경쟁력에 필요 — 셀링 보조 (대부분 완료)
 
@@ -703,8 +706,9 @@ MOAT:  학습 축적 → 사용할수록 전환 비용 증가 → lock-in
   ✅ 1531/1531 테스트 통과
 
 남은 작업:
-  📋 Learning Dashboard (P0 — 셀링 증거 필수)
-  📋 Session Summary with Counterfactual (P0)
+  🚫 Learning Dashboard (정량 개선 증거) — 은퇴 (honest-null)
+  🚫 Session Summary with Counterfactual (추정 절약) — 은퇴 (honest-null)
+  📋 Compound Health 뷰 (비인과: 축적·주입·적용률만) — 선택
   ⏳ 호환 모드 (gstack/OMC 감지)
 
 경쟁자 대비:
