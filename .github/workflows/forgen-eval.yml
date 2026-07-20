@@ -39,13 +39,24 @@ jobs:
       - name: Read pinned commit
         id: pin
         run: |
-          COMMIT=$(jq -r '.commit' packages/forgen-eval/datasets-version.json 2>/dev/null || \
-                   curl -fsSL https://raw.githubusercontent.com/forgen-team/forgen-eval-data/main/datasets-version.json | jq -r '.commit')
+          # 실제 벤더링된 핀 파일을 읽는다. 과거엔 존재하지 않는 경로
+          # (packages/forgen-eval/datasets-version.json)를 읽고 flaky 원격 curl로
+          # fallback해 빈 커밋으로 깨졌다 — 로컬 vendored 파일을 단일 소스로 사용.
+          PIN_FILE=packages/forgen-eval/datasets/opus48-hard/datasets-version.json
+          if [ ! -f "$PIN_FILE" ]; then
+            echo "::error::pin file missing: $PIN_FILE"
+            exit 1
+          fi
+          COMMIT=$(jq -r '.commit' "$PIN_FILE")
           echo "commit=$COMMIT" >> $GITHUB_OUTPUT
       - name: Verify commit exists in forgen-eval-data
         run: |
+          # 데이터셋은 datasets/opus48-hard/ 로 in-repo vendored 라 이 레포만으로
+          # 재현 가능하다. 외부 소스 핀은 provenance 용 belt-and-suspenders이며,
+          # PLACEHOLDER_BOOTSTRAP 는 "외부 핀 미확립" 을 정직하게 표기한 상태로
+          # warning 처리(비차단). 실제 커밋 해시가 박히면 원격 존재를 강제 검증한다.
           if [ "${{ steps.pin.outputs.commit }}" = "PLACEHOLDER_BOOTSTRAP" ]; then
-            echo "::warning::dataset version is bootstrap placeholder — replace before v0.5.0 release"
+            echo "::warning::external dataset pin unresolved (bootstrap placeholder) — dataset is vendored in-repo; push forgen-eval-data + re-pin in R2 before publishing effect claims"
             exit 0
           fi
           gh api repos/forgen-team/forgen-eval-data/commits/${{ steps.pin.outputs.commit }} > /dev/null
