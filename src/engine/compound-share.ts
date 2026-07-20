@@ -38,6 +38,7 @@ import {
   type SolutionFrontmatter,
 } from './solution-format.js';
 import { statusConfidence } from './compound-lifecycle.js';
+import { loadRoiDemotions, isRoiQuarantined } from './roi-demotion.js';
 import { mutateSolutionFile } from './solution-writer.js';
 import { detectSecrets } from '../hooks/secret-filter.js';
 import { atomicWriteText } from '../hooks/shared/atomic-write.js';
@@ -153,6 +154,39 @@ function findLocalSolution(category: 'solution' | 'rule', name: string): LocalSo
   return null;
 }
 
+/** import 시 태그로 남기는 원본 번들 해시 표식. */
+const IMPORT_HASH_TAG_PREFIX = 'import-hash:';
+
+function importHashTag(contentHash: string): string {
+  return `${IMPORT_HASH_TAG_PREFIX}${contentHash.slice(0, 16)}`;
+}
+
+/**
+ * 같은 원본 패턴이 이미 수입됐는지를 `import-hash:` 태그로 찾는다.
+ *
+ * import는 provenance(태그/노트)를 덧붙여 저장하므로 로컬 재계산 해시가 원본
+ * 번들 해시와 달라진다 — 콘텐츠 해시 비교만으로는 재import를 인식하지 못해
+ * 같은 번들을 다시 들이면 매번 suffix 사본이 늘었다 (리뷰 #10 SEV-3 실증).
+ * 수입 시점의 *원본* 해시를 태그로 보존해두고 여기서 우선 조회한다.
+ */
+function findLocalByImportHash(category: 'solution' | 'rule', contentHash: string): LocalSolution | null {
+  const dir = category === 'solution' ? ME_SOLUTIONS : ME_RULES;
+  if (!fs.existsSync(dir)) return null;
+  const tag = importHashTag(contentHash);
+  try {
+    const files = fs.readdirSync(dir).filter(f => f.endsWith('.md'));
+    for (const file of files) {
+      const filePath = path.join(dir, file);
+      try {
+        if (fs.lstatSync(filePath).isSymbolicLink()) continue;
+        const solution = parseSolutionV3(fs.readFileSync(filePath, 'utf-8'));
+        if (solution && solution.frontmatter.tags.includes(tag)) return { filePath, solution };
+      } catch { /* 다음 후보로 */ }
+    }
+  } catch { /* dir read 실패 — not found로 취급 */ }
+  return null;
+}
+
 function findSolutionOrRule(name: string): (LocalSolution & { category: 'solution' | 'rule' }) | null {
   const sol = findLocalSolution('solution', name);
   if (sol) return { ...sol, category: 'solution' };
@@ -202,7 +236,16 @@ export function buildShareBundle(names: string[]): BuildBundleResult {
     }
 
     const { category, solution } = found;
-    const secretHits = [...detectSecrets(solution.context), ...detectSecrets(solution.content)];
+    // 시크릿 스캔은 패턴의 *직렬화 전체*에 건다 — context/content만 검사하면
+    // frontmatter(identifiers/tags 등 auto-추출 필드)에 붙여넣기된 토큰이
+    // 공유 번들로 그대로 유출된다 (리뷰 #10 SEV-2 실증: identifiers 안의
+    // AWS 키가 번들에 포함됨). 번들에 실리는 바이트 = 스캔되는 바이트.
+    const serialized = JSON.stringify({
+      frontmatter: solution.frontmatter,
+      context: solution.context,
+      content: solution.content,
+    });
+    const secretHits = detectSecrets(serialized);
     if (secretHits.length > 0) {
       const kinds = [...new Set(secretHits.map(h => h.name))].join(', ');
       rejectedSecrets.push(`${name} (${kinds})`);
@@ -401,6 +444,20 @@ export function planShareImport(bundle: ShareBundleV1): ShareImportAction[] {
   const actions: ShareImportAction[] = [];
 
   for (const pattern of bundle.patterns) {
+    // 재import 인식이 이름/콘텐츠 비교보다 우선한다 — 수입본은 provenance가
+    // 덧붙어 해시가 달라지므로, 원본 해시 태그로 먼저 찾는다 (suffix sprawl 방지).
+    const priorImport = findLocalByImportHash(pattern.category, pattern.contentHash);
+    if (priorImport) {
+      actions.push({
+        sourceName: pattern.name,
+        category: pattern.category,
+        action: 'merge-reextract',
+        targetName: priorImport.solution.frontmatter.name,
+        detail: '이미 수입된 패턴(import-hash 일치) — reExtracted 카운터만 증가',
+      });
+      continue;
+    }
+
     const existing = findLocalSolution(pattern.category, pattern.name);
 
     if (!existing) {
@@ -465,7 +522,14 @@ export function executeShareImport(bundle: ShareBundleV1, opts: { dryRun?: boole
     }
 
     const today = new Date().toISOString().split('T')[0];
-    const tags = Array.from(new Set([...pattern.frontmatter.tags, 'imported', `origin:${bundle.originHash}`]));
+    const tags = Array.from(new Set([
+      ...pattern.frontmatter.tags,
+      'imported',
+      `origin:${bundle.originHash}`,
+      // 원본 번들 해시 표식 — 재import 시 findLocalByImportHash가 이 태그로
+      // 기존 수입본을 찾아 merge로 라우팅한다 (suffix 사본 무한 증식 방지).
+      importHashTag(pattern.contentHash),
+    ]));
     const provenanceNote = `[imported: origin=${bundle.originHash} exportedAt=${bundle.exportedAt} `
       + `sourceName=${pattern.name} sourceConfidence=${pattern.frontmatter.confidence.toFixed(2)} `
       + `sourceStatus=${pattern.frontmatter.status}]`;
@@ -558,6 +622,18 @@ export async function handleShareExport(args: string[]): Promise<void> {
   }
   if (notFound.length) console.log(`  Not found: ${notFound.join(', ')}`);
   if (rejectedSecrets.length) console.log(`  Excluded (secrets detected): ${rejectedSecrets.join(', ')}`);
+  // 죽은 패턴을 조용히 공유하지 않는다 — 받는 쪽 probation을 거치더라도,
+  // 보내는 쪽이 이미 은퇴(status)·격리(ROI 저장소)시킨 지식임을 명시 경고
+  // (리뷰 #10 관찰. quarantine은 SolutionStatus가 아니라 roi-demotions 저장소 소관).
+  const roiDemotions = loadRoiDemotions();
+  const dead = bundle.patterns.filter(p => {
+    if (p.frontmatter.status === 'retired') return true;
+    const roiEntry = roiDemotions[p.name];
+    return roiEntry ? isRoiQuarantined(roiEntry) : false;
+  });
+  if (dead.length) {
+    console.log(`  ⚠ Warning: ${dead.map(p => p.name).join(', ')} — 로컬에서 retired 또는 ROI-격리 상태인 패턴입니다. 공유 전 유효성을 확인하세요.`);
+  }
   console.log();
 }
 
@@ -577,11 +653,23 @@ export async function handleShareImport(args: string[]): Promise<void> {
     return;
   }
 
-  let raw: unknown;
+  // 크기컷은 read/parse *전에* — 번들은 외부 수신 산출물이라 악성 대용량
+  // 파일을 통째로 메모리에 올린 뒤 거부하면 이미 늦다 (리뷰 #10 SEV-3).
   let rawSize: number;
   try {
+    rawSize = fs.statSync(resolved).size;
+  } catch (e) {
+    console.log(`\n  Bundle stat failed: ${(e as Error).message}\n`);
+    return;
+  }
+  if (rawSize > MAX_BUNDLE_BYTES) {
+    console.log(`\n  Bundle too large: ${rawSize} bytes (max ${MAX_BUNDLE_BYTES})\n`);
+    return;
+  }
+
+  let raw: unknown;
+  try {
     const text = fs.readFileSync(resolved, 'utf-8');
-    rawSize = Buffer.byteLength(text, 'utf-8');
     raw = JSON.parse(text);
   } catch (e) {
     console.log(`\n  Bundle read/parse failed: ${(e as Error).message}\n`);

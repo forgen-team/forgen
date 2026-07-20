@@ -51,12 +51,14 @@ function writeSolutionFixture(
     confidence?: number;
     tags?: string[];
     content?: string;
+    identifiers?: string[];
   },
 ): void {
   fs.mkdirSync(solutionsDir, { recursive: true });
   const status = params.status ?? 'verified';
   const confidence = params.confidence ?? 0.75;
   const tags = params.tags ?? ['docker', 'e2e'];
+  const identifiers = params.identifiers ?? [];
   const content = params.content ?? `${params.name} 관련 실증 솔루션 콘텐츠`;
   const body = `---
 name: "${params.name}"
@@ -66,7 +68,7 @@ confidence: ${confidence}
 type: "pattern"
 scope: "me"
 tags: [${tags.map(t => `"${t}"`).join(', ')}]
-identifiers: []
+identifiers: [${identifiers.map(i => `"${i}"`).join(', ')}]
 evidence:
   injected: 12
   reflected: 8
@@ -326,6 +328,65 @@ describe('compound-share — 패턴별 export/import 번들', () => {
     const { bundle, notFound } = shareA.buildShareBundle(['nonexistent-pattern']);
     expect(bundle.patterns).toEqual([]);
     expect(notFound).toEqual(['nonexistent-pattern']);
+  });
+
+  describe('리뷰 #10 회귀 방지', () => {
+    it('[SEV-2] frontmatter(identifiers)에 든 시크릿도 export가 거부한다', async () => {
+      process.env.FORGEN_HOME = homeA;
+      const shareA = await reloadShare();
+      const pathsA = await reloadPaths();
+      writeSolutionFixture(pathsA.ME_SOLUTIONS, {
+        name: 'frontmatter-leaky',
+        identifiers: ['AKIA1234567890ABCD99'],
+        content: '본문 자체는 깨끗함',
+      });
+
+      const { bundle, rejectedSecrets } = shareA.buildShareBundle(['frontmatter-leaky']);
+      expect(bundle.patterns).toEqual([]);
+      expect(rejectedSecrets).toHaveLength(1);
+      expect(rejectedSecrets[0]).toContain('frontmatter-leaky');
+      // 번들 직렬화 어디에도 키가 없어야 한다
+      expect(JSON.stringify(bundle)).not.toContain('AKIA1234567890ABCD99');
+    });
+
+    it('[SEV-3] 같은 번들 3회 import → 파일 1개 유지 + reExtracted만 누적 (suffix sprawl 없음)', async () => {
+      process.env.FORGEN_HOME = homeA;
+      const shareA = await reloadShare();
+      const pathsA = await reloadPaths();
+      writeSolutionFixture(pathsA.ME_SOLUTIONS, { name: 'reimport-target', content: '재수입 대상' });
+      const { bundle } = shareA.buildShareBundle(['reimport-target']);
+
+      process.env.FORGEN_HOME = homeB;
+      const shareB = await reloadShare();
+      const pathsB = await reloadPaths();
+
+      for (let i = 0; i < 3; i++) shareB.executeShareImport(bundle);
+
+      const files = fs.readdirSync(pathsB.ME_SOLUTIONS).filter(f => f.endsWith('.md'));
+      expect(files).toEqual(['reimport-target.md']);
+      const imported = fs.readFileSync(path.join(pathsB.ME_SOLUTIONS, 'reimport-target.md'), 'utf-8');
+      // 1회차 create(reExtracted 0 리셋) + 2·3회차 merge-reextract(+1씩) = 2
+      expect(imported).toMatch(/reExtracted:\s*2/);
+      expect(imported).toContain('import-hash:');
+    });
+
+    it('[SEV-3] MAX 초과 번들은 read/parse 전에 크기로 거부된다', async () => {
+      const share = await reloadShare();
+      const bigPath = path.join(bundleDir, 'huge.json');
+      // 유효 JSON일 필요도 없다 — 크기컷이 파싱보다 먼저여야 하므로
+      fs.writeFileSync(bigPath, 'x'.repeat(3 * 1024 * 1024));
+
+      const logs: string[] = [];
+      const spy = vi.spyOn(console, 'log').mockImplementation((...a: unknown[]) => { logs.push(a.join(' ')); });
+      try {
+        await share.handleShareImport([bigPath, '--dry-run']);
+      } finally {
+        spy.mockRestore();
+      }
+      const out = logs.join('\n');
+      expect(out).toContain('Bundle too large');
+      expect(out).not.toContain('read/parse failed');
+    });
   });
 
   describe('looksLikeShareBundle — 파일 타입 sniffing', () => {
