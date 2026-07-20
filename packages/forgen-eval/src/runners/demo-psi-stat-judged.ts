@@ -189,6 +189,7 @@ async function main() {
   const kappaInputs: Record<string, number[]> = {};
   // 저지-독립 1차 지표(behavioral)용 arm별 실제 응답 누적.
   const behavioralByArm: Record<string, ArmResponse[]> = {};
+  const caseGolds: (import('../types.js').CaseGold | undefined)[] = [];
 
   let i = 0;
   for (const c of cases.slice(0, N)) {
@@ -208,6 +209,8 @@ async function main() {
     }
     if (!armResp.vanilla || !armResp.forgenOnly || !armResp.memOnly || !armResp.full) continue;
     // 1차(behavioral) 지표는 저지 호출 전에 arm 응답에서 결정론적으로 수집.
+    // 케이스 gold 를 같은 순서로 누적 — summary 에서 gold 채점에 쓴다.
+    caseGolds.push(c.gold);
     for (const [k, r] of Object.entries(armResp)) {
       (behavioralByArm[k] ??= []).push(r);
     }
@@ -248,14 +251,18 @@ async function main() {
   console.log('\n=== BEHAVIORAL SUMMARY (judge-independent, PRIMARY) ===');
   const behavioral: Record<string, BehavioralArmSummary> = {};
   for (const [armId, resps] of Object.entries(behavioralByArm)) {
-    behavioral[armId] = summarizeBehavioral(armId, resps);
+    // gold 채점 (없는 케이스는 보수적 regex fallback — summary 가 건수 보고).
+    behavioral[armId] = summarizeBehavioral(armId, resps, caseGolds);
   }
+  const goldCount = caseGolds.filter(Boolean).length;
+  console.log(`  (scored via gold: ${goldCount}/${caseGolds.length} cases; rest via conservative regex fallback)`);
   for (const armId of ['vanilla', 'forgenOnly', 'memOnly', 'full']) {
     const b = behavioral[armId];
     if (!b) continue;
     console.log(
       `  ${armId.padEnd(11)} meanScore=${b.meanScore.toFixed(3)} ` +
-      `posClaim=${b.positiveClaimRate.toFixed(2)} groundedRefusal=${b.groundedRefusalRate.toFixed(2)} (n=${b.n})`,
+      `posClaim=${b.positiveClaimRate.toFixed(2)} groundedRefusal=${b.groundedRefusalRate.toFixed(2)} ` +
+      `[gold=${b.goldScored} fallback=${b.fallbackScored}] (n=${b.n})`,
     );
   }
   const behavioralDelta =
