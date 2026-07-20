@@ -21,6 +21,15 @@ export function buildJudgePanel(track: Track): JudgeClient[] {
     // v0.4.4+ 3-judge ensemble — API_DEV plus local Ollama (3 independent families)
     return [new ClaudeCliClient(), new CodexCliClient(), new OllamaClient('llama-8b')];
   }
+  if (track === 'CLAUDE_DUAL') {
+    // v0.5.0 R2 — codex 해지 후 Claude 전용. haiku + sonnet 이중 (둘 다 CLI, API키 불요).
+    // ⚠ 계열-내(intra-family) 패널 — 자기선호 편향 가능. κ 는 "동일계열 일치도"로
+    //   해석하고, 1차 지표는 저지-독립 behavioral 로 둔다 (metrics/behavioral.ts).
+    return [
+      new ClaudeCliClient({ model: 'haiku' }),
+      new ClaudeCliClient({ model: 'sonnet' }),
+    ];
+  }
   // PUBLIC — local-only, no API cost
   return [new OllamaClient('qwen-72b'), new OllamaClient('llama-70b')];
 }

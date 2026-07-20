@@ -24,7 +24,7 @@ export type TurnDepth = 1 | 5 | 10 | 50;
  * - ENSEMBLE: API_DEV + Ollama llama3.1:8b — 3-judge panel for cross-family agreement.
  *   κ generalized to pairwise mean Cohen's across all judge pairs.
  */
-export type Track = 'DEV' | 'PUBLIC' | 'API_DEV' | 'ENSEMBLE';
+export type Track = 'DEV' | 'PUBLIC' | 'API_DEV' | 'ENSEMBLE' | 'CLAUDE_DUAL';
 
 export type Tier = 'smoke' | 'full';
 
@@ -71,10 +71,21 @@ export interface InjectEvent {
 }
 
 /** Judge verdict — 4-likert per ADR-006. */
+/** 저지 식별자. claude-cli-sonnet 은 v0.5.0 R2 이중 Claude 패널(haiku+sonnet)용. */
+export type JudgeId =
+  | 'sonnet'
+  | 'qwen-72b'
+  | 'llama-70b'
+  | 'qwen-14b'
+  | 'llama-8b'
+  | 'claude-cli'
+  | 'claude-cli-sonnet'
+  | 'codex-cli';
+
 export interface JudgeScore {
   caseId: string;
   blindedArmId: string; // anonymized
-  judgeId: 'sonnet' | 'qwen-72b' | 'llama-70b' | 'qwen-14b' | 'llama-8b' | 'claude-cli' | 'codex-cli';
+  judgeId: JudgeId;
   axis: 'gamma' | 'beta' | 'phi'; // δ/ε/ζ are derived from event traces, not judged directly
   score: 1 | 2 | 3 | 4;
   rationale: string;

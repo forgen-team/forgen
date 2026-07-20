@@ -9,7 +9,7 @@ import { computeBeta } from '../src/metrics/beta.js';
 import { computeDelta, computeEpsilon, computeZeta } from '../src/metrics/delta-epsilon-zeta.js';
 import { computePhi } from '../src/metrics/phi.js';
 import { computePsi } from '../src/metrics/psi.js';
-import { cohensKappa, fleissKappa } from '../src/judges/kappa.js';
+import { cohensKappa, fleissKappa, rawAgreement, hasVarianceCollapse, kappaGate } from '../src/judges/kappa.js';
 import { judgePassFail } from '../src/reports/pass-fail.js';
 
 describe('γ (gamma)', () => {
@@ -188,5 +188,51 @@ describe('passFail master gate priority', () => {
   it('all good → PASS', () => {
     const v = judgePassFail(goodMetrics, 0.05);
     expect(v.passed).toBe(true);
+  });
+});
+
+describe('κ gate (v0.5.0 R2 재정의 — 분산 퇴화 인식)', () => {
+  // R1 재파일럿 실측 (repilot-raw-revised.json): codex 전원 4, claude 20/24가 4.
+  const claudeGamma = [3, 3, 1, 2, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4];
+  const codexGamma = Array(24).fill(4);
+
+  it('rawAgreement: 같은 점수 분율을 정확히 센다', () => {
+    expect(rawAgreement([4, 4, 3, 2], [4, 4, 4, 4])).toBeCloseTo(0.5, 5);
+    expect(rawAgreement(claudeGamma, codexGamma)).toBeCloseTo(20 / 24, 5);
+  });
+
+  it('hasVarianceCollapse: 상수 rater / 단일범주 지배를 잡는다', () => {
+    expect(hasVarianceCollapse(Array(24).fill(4))).toBe(true); // 전부 4
+    expect(hasVarianceCollapse(claudeGamma)).toBe(false); // 4범주 분산
+    expect(hasVarianceCollapse([4, 4, 4, 3])).toBe(true); // 1개 빼고 전부 4
+    expect(hasVarianceCollapse([4, 4, 3, 3])).toBe(false); // 2/2 분산
+  });
+
+  it('정상 분산 + κ≥0.5 → criterion=kappa, PASS', () => {
+    const r1 = [1, 2, 3, 4, 1, 2, 3, 4];
+    const r2 = [1, 2, 3, 4, 1, 2, 4, 3];
+    const g = kappaGate(r1, r2);
+    expect(g.varianceCollapse).toBe(false);
+    expect(g.criterion).toBe('kappa');
+    expect(g.pass).toBe(g.kappa >= 0.5);
+  });
+
+  it('R1 퇴화 케이스(codex all-4): κ=0 이지만 agreement 83% → PASS via agreement', () => {
+    const g = kappaGate(claudeGamma, codexGamma);
+    expect(g.kappa).toBeCloseTo(0, 5); // Cohen κ 퇴화
+    expect(g.varianceCollapse).toBe(true);
+    expect(g.criterion).toBe('agreement');
+    expect(g.rawAgreement).toBeCloseTo(20 / 24, 5); // 83%
+    expect(g.pass).toBe(true); // 0.833 ≥ 0.8
+  });
+
+  it('퇴화 + agreement<0.8 → FAIL (숨은 완화 아님)', () => {
+    const claude = [1, 2, 3, 4, 1, 2, 3, 4, 1, 2]; // 분산 있음
+    const codex = Array(10).fill(4); // 상수 → 퇴화
+    const g = kappaGate(claude, codex);
+    expect(g.varianceCollapse).toBe(true);
+    expect(g.criterion).toBe('agreement');
+    expect(g.rawAgreement).toBeLessThan(0.8);
+    expect(g.pass).toBe(false);
   });
 });

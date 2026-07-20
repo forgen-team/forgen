@@ -14,7 +14,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { buildJudgePrompt, parseJudgeOutput } from './judge-types.js';
 import type { JudgeClient, JudgePromptInput } from './judge-types.js';
-import type { JudgeScore } from '../types.js';
+import type { JudgeScore, JudgeId } from '../types.js';
 import { retryWithBackoff } from '../utils/retry.js';
 
 const execFileAsync = promisify(execFile);
@@ -29,13 +29,17 @@ const JUDGE_SYSTEM_PROMPT =
   'You are a blind evaluator. Reply with ONLY a single JSON object that matches the schema in the user message. Do not use tools. Do not access files. Output JSON only, no prose, no markdown fences.';
 
 export class ClaudeCliClient implements JudgeClient {
-  readonly id = 'claude-cli' as const;
+  // id 는 모델에서 유도 — 이중 Claude 패널(haiku+sonnet)에서 두 인스턴스가
+  // 구분돼야 κ 가 haiku↔sonnet 을 짝지을 수 있다. sonnet → 'claude-cli-sonnet',
+  // 그 외(haiku 기본) → 'claude-cli'. opts.id 로 명시 override 가능.
+  readonly id: JudgeId;
   private readonly model: string;
   private readonly timeoutMs: number;
   private readonly cwd: string;
 
-  constructor(opts: { model?: string; timeoutMs?: number; cwd?: string } = {}) {
+  constructor(opts: { model?: string; id?: JudgeId; timeoutMs?: number; cwd?: string } = {}) {
     this.model = opts.model ?? DEFAULT_MODEL;
+    this.id = opts.id ?? (/sonnet/i.test(this.model) ? 'claude-cli-sonnet' : 'claude-cli');
     this.timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     this.cwd = opts.cwd ?? fs.mkdtempSync(path.join(os.tmpdir(), 'forgen-eval-claude-'));
   }
