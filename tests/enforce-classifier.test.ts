@@ -104,6 +104,40 @@ describe('enforce-classifier.classify', () => {
     expect(p.proposed.some((s) => s.hook === 'Stop' && s.mech === 'A')).toBe(false);
   });
 
+  it('리뷰 #9 구성 케이스: 다양한 폐지 문구도 완료 게이트 미제안 (선택사항/필요없다)', () => {
+    for (const policy of [
+      '완료 선언 시 e2e-result.json 은 이제 선택사항이다',
+      '배포 완료에 results.json 확인은 필요없다',
+    ]) {
+      const p = classify(ruleOf({ trigger: 'repeal-variant', policy, strength: 'strong' }));
+      expect(p.proposed.some((s) => s.verifier?.kind === 'artifact_check'), policy).toBe(false);
+    }
+  });
+
+  it('리뷰 #9 구성 케이스: 부수적 .json 언급은 artifact_check 로 승격되지 않는다', () => {
+    for (const policy of [
+      '배포 완료 후 package.json 버전을 확인하라',
+      '완료 전 tsconfig.json 설정을 점검할 것',
+    ]) {
+      const p = classify(ruleOf({ trigger: 'incidental-json', policy, strength: 'strong' }));
+      expect(p.proposed.some((s) => s.verifier?.kind === 'artifact_check'), policy).toBe(false);
+      // 완료 룰 자체는 self_check 로 여전히 강제된다
+      expect(p.proposed.some((s) => s.verifier?.kind === 'self_check_prompt'), policy).toBe(true);
+    }
+  });
+
+  it('리뷰 #9 구성 케이스: 금지문은 repeal 오탐을 이긴다 — 게이트 유지', () => {
+    // "완화" 단어가 있어도 "~하지 마라" 금지문이면 강제 룰이다
+    const p = classify(ruleOf({
+      trigger: 'prohibition-with-repeal-word',
+      policy: '커버리지 완화 없이 검증 완료를 선언하지 마라',
+      strength: 'strong',
+    }));
+    expect(p.proposed.some((s) => s.hook === 'Stop' && s.verifier?.kind === 'self_check_prompt')).toBe(true);
+    // drift-only(Mech-C) 로 강등되지 않았다
+    expect(p.proposed.every((s) => s.mech !== 'C')).toBe(true);
+  });
+
   it('strong strength + style context → Mech-B Stop + self_check_prompt', () => {
     const r = ruleOf({
       trigger: 'verbose-style',
