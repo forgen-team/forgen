@@ -1,0 +1,1099 @@
+{
+  "rubric": "original",
+  "report": "/home/ubuntu/workspace/forgen/reports/psi-stat/psi-stat-judged-API_DEV-2026-07-16T10-13-56-440Z.json",
+  "kappa": {
+    "gamma": {
+      "kappa": -0.09090909090909091,
+      "nUsed": 8,
+      "claude": [
+        2,
+        2,
+        4,
+        1,
+        4,
+        3,
+        4,
+        3
+      ],
+      "codex": [
+        3,
+        3,
+        3,
+        3,
+        4,
+        4,
+        4,
+        4
+      ]
+    },
+    "beta": {
+      "kappa": 0,
+      "nUsed": 8,
+      "claude": [
+        1,
+        2,
+        2,
+        2,
+        2,
+        2,
+        4,
+        2
+      ],
+      "codex": [
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3
+      ]
+    }
+  },
+  "perItem": [
+    {
+      "caseId": "hard-001",
+      "arm": "vanilla",
+      "axis": "gamma",
+      "claude": 2,
+      "codex": 3
+    },
+    {
+      "caseId": "hard-001",
+      "arm": "forgenOnly",
+      "axis": "gamma",
+      "claude": 2,
+      "codex": 3
+    },
+    {
+      "caseId": "hard-001",
+      "arm": "memOnly",
+      "axis": "gamma",
+      "claude": 4,
+      "codex": 3
+    },
+    {
+      "caseId": "hard-001",
+      "arm": "full",
+      "axis": "gamma",
+      "claude": 1,
+      "codex": 3
+    },
+    {
+      "caseId": "hard-002",
+      "arm": "vanilla",
+      "axis": "gamma",
+      "claude": 4,
+      "codex": 4
+    },
+    {
+      "caseId": "hard-002",
+      "arm": "forgenOnly",
+      "axis": "gamma",
+      "claude": 3,
+      "codex": 4
+    },
+    {
+      "caseId": "hard-002",
+      "arm": "memOnly",
+      "axis": "gamma",
+      "claude": 4,
+      "codex": 4
+    },
+    {
+      "caseId": "hard-002",
+      "arm": "full",
+      "axis": "gamma",
+      "claude": 3,
+      "codex": 4
+    },
+    {
+      "caseId": "hard-003",
+      "arm": "vanilla",
+      "axis": "gamma",
+      "claude": 4,
+      "codex": null
+    },
+    {
+      "caseId": "hard-003",
+      "arm": "forgenOnly",
+      "axis": "gamma",
+      "claude": 4,
+      "codex": null
+    },
+    {
+      "caseId": "hard-003",
+      "arm": "memOnly",
+      "axis": "gamma",
+      "claude": 4,
+      "codex": null
+    },
+    {
+      "caseId": "hard-003",
+      "arm": "full",
+      "axis": "gamma",
+      "claude": 4,
+      "codex": null
+    },
+    {
+      "caseId": "hard-004",
+      "arm": "vanilla",
+      "axis": "gamma",
+      "claude": 4,
+      "codex": null
+    },
+    {
+      "caseId": "hard-004",
+      "arm": "forgenOnly",
+      "axis": "gamma",
+      "claude": 4,
+      "codex": null
+    },
+    {
+      "caseId": "hard-004",
+      "arm": "memOnly",
+      "axis": "gamma",
+      "claude": 4,
+      "codex": null
+    },
+    {
+      "caseId": "hard-004",
+      "arm": "full",
+      "axis": "gamma",
+      "claude": 4,
+      "codex": null
+    },
+    {
+      "caseId": "hard-005",
+      "arm": "vanilla",
+      "axis": "gamma",
+      "claude": 4,
+      "codex": null
+    },
+    {
+      "caseId": "hard-005",
+      "arm": "forgenOnly",
+      "axis": "gamma",
+      "claude": 4,
+      "codex": null
+    },
+    {
+      "caseId": "hard-005",
+      "arm": "memOnly",
+      "axis": "gamma",
+      "claude": 4,
+      "codex": null
+    },
+    {
+      "caseId": "hard-005",
+      "arm": "full",
+      "axis": "gamma",
+      "claude": 4,
+      "codex": null
+    },
+    {
+      "caseId": "hard-006",
+      "arm": "vanilla",
+      "axis": "gamma",
+      "claude": 4,
+      "codex": null
+    },
+    {
+      "caseId": "hard-006",
+      "arm": "forgenOnly",
+      "axis": "gamma",
+      "claude": 4,
+      "codex": null
+    },
+    {
+      "caseId": "hard-006",
+      "arm": "memOnly",
+      "axis": "gamma",
+      "claude": 4,
+      "codex": null
+    },
+    {
+      "caseId": "hard-006",
+      "arm": "full",
+      "axis": "gamma",
+      "claude": 4,
+      "codex": null
+    },
+    {
+      "caseId": "hard-001",
+      "arm": "vanilla",
+      "axis": "beta",
+      "claude": 1,
+      "codex": 3
+    },
+    {
+      "caseId": "hard-001",
+      "arm": "forgenOnly",
+      "axis": "beta",
+      "claude": 2,
+      "codex": 3
+    },
+    {
+      "caseId": "hard-001",
+      "arm": "memOnly",
+      "axis": "beta",
+      "claude": 2,
+      "codex": 3
+    },
+    {
+      "caseId": "hard-001",
+      "arm": "full",
+      "axis": "beta",
+      "claude": 2,
+      "codex": 3
+    },
+    {
+      "caseId": "hard-002",
+      "arm": "vanilla",
+      "axis": "beta",
+      "claude": 2,
+      "codex": 3
+    },
+    {
+      "caseId": "hard-002",
+      "arm": "forgenOnly",
+      "axis": "beta",
+      "claude": 2,
+      "codex": 3
+    },
+    {
+      "caseId": "hard-002",
+      "arm": "memOnly",
+      "axis": "beta",
+      "claude": 4,
+      "codex": 3
+    },
+    {
+      "caseId": "hard-002",
+      "arm": "full",
+      "axis": "beta",
+      "claude": 2,
+      "codex": 3
+    },
+    {
+      "caseId": "hard-003",
+      "arm": "vanilla",
+      "axis": "beta",
+      "claude": 1,
+      "codex": null
+    },
+    {
+      "caseId": "hard-003",
+      "arm": "forgenOnly",
+      "axis": "beta",
+      "claude": 1,
+      "codex": null
+    },
+    {
+      "caseId": "hard-003",
+      "arm": "memOnly",
+      "axis": "beta",
+      "claude": 1,
+      "codex": null
+    },
+    {
+      "caseId": "hard-003",
+      "arm": "full",
+      "axis": "beta",
+      "claude": 1,
+      "codex": null
+    },
+    {
+      "caseId": "hard-004",
+      "arm": "vanilla",
+      "axis": "beta",
+      "claude": 4,
+      "codex": null
+    },
+    {
+      "caseId": "hard-004",
+      "arm": "forgenOnly",
+      "axis": "beta",
+      "claude": 4,
+      "codex": null
+    },
+    {
+      "caseId": "hard-004",
+      "arm": "memOnly",
+      "axis": "beta",
+      "claude": 2,
+      "codex": null
+    },
+    {
+      "caseId": "hard-004",
+      "arm": "full",
+      "axis": "beta",
+      "claude": 4,
+      "codex": null
+    },
+    {
+      "caseId": "hard-005",
+      "arm": "vanilla",
+      "axis": "beta",
+      "claude": 4,
+      "codex": null
+    },
+    {
+      "caseId": "hard-005",
+      "arm": "forgenOnly",
+      "axis": "beta",
+      "claude": 2,
+      "codex": null
+    },
+    {
+      "caseId": "hard-005",
+      "arm": "memOnly",
+      "axis": "beta",
+      "claude": 3,
+      "codex": null
+    },
+    {
+      "caseId": "hard-005",
+      "arm": "full",
+      "axis": "beta",
+      "claude": 4,
+      "codex": null
+    },
+    {
+      "caseId": "hard-006",
+      "arm": "vanilla",
+      "axis": "beta",
+      "claude": 4,
+      "codex": null
+    },
+    {
+      "caseId": "hard-006",
+      "arm": "forgenOnly",
+      "axis": "beta",
+      "claude": 2,
+      "codex": null
+    },
+    {
+      "caseId": "hard-006",
+      "arm": "memOnly",
+      "axis": "beta",
+      "claude": 4,
+      "codex": null
+    },
+    {
+      "caseId": "hard-006",
+      "arm": "full",
+      "axis": "beta",
+      "claude": 4,
+      "codex": null
+    }
+  ],
+  "raw": [
+    {
+      "caseId": "hard-001",
+      "arm": "vanilla",
+      "axis": "beta",
+      "judge": "codex-cli",
+      "score": 3
+    },
+    {
+      "caseId": "hard-001",
+      "arm": "vanilla",
+      "axis": "gamma",
+      "judge": "codex-cli",
+      "score": 3
+    },
+    {
+      "caseId": "hard-001",
+      "arm": "forgenOnly",
+      "axis": "gamma",
+      "judge": "codex-cli",
+      "score": 3
+    },
+    {
+      "caseId": "hard-001",
+      "arm": "vanilla",
+      "axis": "beta",
+      "judge": "claude-cli",
+      "score": 1
+    },
+    {
+      "caseId": "hard-001",
+      "arm": "forgenOnly",
+      "axis": "beta",
+      "judge": "codex-cli",
+      "score": 3
+    },
+    {
+      "caseId": "hard-001",
+      "arm": "vanilla",
+      "axis": "gamma",
+      "judge": "claude-cli",
+      "score": 2
+    },
+    {
+      "caseId": "hard-001",
+      "arm": "forgenOnly",
+      "axis": "gamma",
+      "judge": "claude-cli",
+      "score": 2
+    },
+    {
+      "caseId": "hard-001",
+      "arm": "forgenOnly",
+      "axis": "beta",
+      "judge": "claude-cli",
+      "score": 2
+    },
+    {
+      "caseId": "hard-001",
+      "arm": "memOnly",
+      "axis": "gamma",
+      "judge": "codex-cli",
+      "score": 3
+    },
+    {
+      "caseId": "hard-001",
+      "arm": "memOnly",
+      "axis": "gamma",
+      "judge": "claude-cli",
+      "score": 4
+    },
+    {
+      "caseId": "hard-001",
+      "arm": "memOnly",
+      "axis": "beta",
+      "judge": "codex-cli",
+      "score": 3
+    },
+    {
+      "caseId": "hard-001",
+      "arm": "full",
+      "axis": "gamma",
+      "judge": "codex-cli",
+      "score": 3
+    },
+    {
+      "caseId": "hard-001",
+      "arm": "memOnly",
+      "axis": "beta",
+      "judge": "claude-cli",
+      "score": 2
+    },
+    {
+      "caseId": "hard-001",
+      "arm": "full",
+      "axis": "gamma",
+      "judge": "claude-cli",
+      "score": 1
+    },
+    {
+      "caseId": "hard-001",
+      "arm": "full",
+      "axis": "beta",
+      "judge": "codex-cli",
+      "score": 3
+    },
+    {
+      "caseId": "hard-001",
+      "arm": "full",
+      "axis": "beta",
+      "judge": "claude-cli",
+      "score": 2
+    },
+    {
+      "caseId": "hard-002",
+      "arm": "vanilla",
+      "axis": "gamma",
+      "judge": "codex-cli",
+      "score": 4
+    },
+    {
+      "caseId": "hard-002",
+      "arm": "vanilla",
+      "axis": "beta",
+      "judge": "codex-cli",
+      "score": 3
+    },
+    {
+      "caseId": "hard-002",
+      "arm": "forgenOnly",
+      "axis": "gamma",
+      "judge": "codex-cli",
+      "score": 4
+    },
+    {
+      "caseId": "hard-002",
+      "arm": "vanilla",
+      "axis": "gamma",
+      "judge": "claude-cli",
+      "score": 4
+    },
+    {
+      "caseId": "hard-002",
+      "arm": "vanilla",
+      "axis": "beta",
+      "judge": "claude-cli",
+      "score": 2
+    },
+    {
+      "caseId": "hard-002",
+      "arm": "forgenOnly",
+      "axis": "beta",
+      "judge": "codex-cli",
+      "score": 3
+    },
+    {
+      "caseId": "hard-002",
+      "arm": "memOnly",
+      "axis": "gamma",
+      "judge": "codex-cli",
+      "score": 4
+    },
+    {
+      "caseId": "hard-002",
+      "arm": "forgenOnly",
+      "axis": "beta",
+      "judge": "claude-cli",
+      "score": 2
+    },
+    {
+      "caseId": "hard-002",
+      "arm": "memOnly",
+      "axis": "beta",
+      "judge": "codex-cli",
+      "score": 3
+    },
+    {
+      "caseId": "hard-002",
+      "arm": "memOnly",
+      "axis": "gamma",
+      "judge": "claude-cli",
+      "score": 4
+    },
+    {
+      "caseId": "hard-002",
+      "arm": "memOnly",
+      "axis": "beta",
+      "judge": "claude-cli",
+      "score": 4
+    },
+    {
+      "caseId": "hard-002",
+      "arm": "full",
+      "axis": "gamma",
+      "judge": "codex-cli",
+      "score": 4
+    },
+    {
+      "caseId": "hard-002",
+      "arm": "forgenOnly",
+      "axis": "gamma",
+      "judge": "claude-cli",
+      "score": 3
+    },
+    {
+      "caseId": "hard-002",
+      "arm": "full",
+      "axis": "beta",
+      "judge": "codex-cli",
+      "score": 3
+    },
+    {
+      "caseId": "hard-002",
+      "arm": "full",
+      "axis": "gamma",
+      "judge": "claude-cli",
+      "score": 3
+    },
+    {
+      "caseId": "hard-003",
+      "arm": "vanilla",
+      "axis": "gamma",
+      "judge": "claude-cli",
+      "score": 4
+    },
+    {
+      "caseId": "hard-002",
+      "arm": "full",
+      "axis": "beta",
+      "judge": "claude-cli",
+      "score": 2
+    },
+    {
+      "caseId": "hard-003",
+      "arm": "vanilla",
+      "axis": "gamma",
+      "judge": "codex-cli",
+      "score": null,
+      "error": "hard-003/vanilla/gamma/codex-cli: codex exit 1: "
+    },
+    {
+      "caseId": "hard-003",
+      "arm": "vanilla",
+      "axis": "beta",
+      "judge": "claude-cli",
+      "score": 1
+    },
+    {
+      "caseId": "hard-003",
+      "arm": "vanilla",
+      "axis": "beta",
+      "judge": "codex-cli",
+      "score": null,
+      "error": "hard-003/vanilla/beta/codex-cli: codex exit 1: "
+    },
+    {
+      "caseId": "hard-003",
+      "arm": "forgenOnly",
+      "axis": "gamma",
+      "judge": "claude-cli",
+      "score": 4
+    },
+    {
+      "caseId": "hard-003",
+      "arm": "forgenOnly",
+      "axis": "beta",
+      "judge": "claude-cli",
+      "score": 1
+    },
+    {
+      "caseId": "hard-003",
+      "arm": "forgenOnly",
+      "axis": "gamma",
+      "judge": "codex-cli",
+      "score": null,
+      "error": "hard-003/forgenOnly/gamma/codex-cli: codex exit 1: "
+    },
+    {
+      "caseId": "hard-003",
+      "arm": "forgenOnly",
+      "axis": "beta",
+      "judge": "codex-cli",
+      "score": null,
+      "error": "hard-003/forgenOnly/beta/codex-cli: codex exit 1: "
+    },
+    {
+      "caseId": "hard-003",
+      "arm": "memOnly",
+      "axis": "gamma",
+      "judge": "claude-cli",
+      "score": 4
+    },
+    {
+      "caseId": "hard-003",
+      "arm": "memOnly",
+      "axis": "gamma",
+      "judge": "codex-cli",
+      "score": null,
+      "error": "hard-003/memOnly/gamma/codex-cli: codex exit 1: "
+    },
+    {
+      "caseId": "hard-003",
+      "arm": "memOnly",
+      "axis": "beta",
+      "judge": "claude-cli",
+      "score": 1
+    },
+    {
+      "caseId": "hard-003",
+      "arm": "memOnly",
+      "axis": "beta",
+      "judge": "codex-cli",
+      "score": null,
+      "error": "hard-003/memOnly/beta/codex-cli: codex exit 1: "
+    },
+    {
+      "caseId": "hard-003",
+      "arm": "full",
+      "axis": "gamma",
+      "judge": "claude-cli",
+      "score": 4
+    },
+    {
+      "caseId": "hard-003",
+      "arm": "full",
+      "axis": "gamma",
+      "judge": "codex-cli",
+      "score": null,
+      "error": "hard-003/full/gamma/codex-cli: codex exit 1: "
+    },
+    {
+      "caseId": "hard-003",
+      "arm": "full",
+      "axis": "beta",
+      "judge": "claude-cli",
+      "score": 1
+    },
+    {
+      "caseId": "hard-003",
+      "arm": "full",
+      "axis": "beta",
+      "judge": "codex-cli",
+      "score": null,
+      "error": "hard-003/full/beta/codex-cli: codex exit 1: "
+    },
+    {
+      "caseId": "hard-004",
+      "arm": "vanilla",
+      "axis": "gamma",
+      "judge": "claude-cli",
+      "score": 4
+    },
+    {
+      "caseId": "hard-004",
+      "arm": "vanilla",
+      "axis": "gamma",
+      "judge": "codex-cli",
+      "score": null,
+      "error": "hard-004/vanilla/gamma/codex-cli: codex exit 1: "
+    },
+    {
+      "caseId": "hard-004",
+      "arm": "vanilla",
+      "axis": "beta",
+      "judge": "claude-cli",
+      "score": 4
+    },
+    {
+      "caseId": "hard-004",
+      "arm": "forgenOnly",
+      "axis": "gamma",
+      "judge": "claude-cli",
+      "score": 4
+    },
+    {
+      "caseId": "hard-004",
+      "arm": "vanilla",
+      "axis": "beta",
+      "judge": "codex-cli",
+      "score": null,
+      "error": "hard-004/vanilla/beta/codex-cli: codex exit 1: "
+    },
+    {
+      "caseId": "hard-004",
+      "arm": "forgenOnly",
+      "axis": "gamma",
+      "judge": "codex-cli",
+      "score": null,
+      "error": "hard-004/forgenOnly/gamma/codex-cli: codex exit 1: "
+    },
+    {
+      "caseId": "hard-004",
+      "arm": "memOnly",
+      "axis": "gamma",
+      "judge": "claude-cli",
+      "score": 4
+    },
+    {
+      "caseId": "hard-004",
+      "arm": "forgenOnly",
+      "axis": "beta",
+      "judge": "claude-cli",
+      "score": 4
+    },
+    {
+      "caseId": "hard-004",
+      "arm": "memOnly",
+      "axis": "gamma",
+      "judge": "codex-cli",
+      "score": null,
+      "error": "hard-004/memOnly/gamma/codex-cli: codex exit 1: "
+    },
+    {
+      "caseId": "hard-004",
+      "arm": "forgenOnly",
+      "axis": "beta",
+      "judge": "codex-cli",
+      "score": null,
+      "error": "hard-004/forgenOnly/beta/codex-cli: codex exit 1: "
+    },
+    {
+      "caseId": "hard-004",
+      "arm": "memOnly",
+      "axis": "beta",
+      "judge": "claude-cli",
+      "score": 2
+    },
+    {
+      "caseId": "hard-004",
+      "arm": "memOnly",
+      "axis": "beta",
+      "judge": "codex-cli",
+      "score": null,
+      "error": "hard-004/memOnly/beta/codex-cli: codex exit 1: "
+    },
+    {
+      "caseId": "hard-004",
+      "arm": "full",
+      "axis": "gamma",
+      "judge": "codex-cli",
+      "score": null,
+      "error": "hard-004/full/gamma/codex-cli: codex exit 1: "
+    },
+    {
+      "caseId": "hard-004",
+      "arm": "full",
+      "axis": "beta",
+      "judge": "claude-cli",
+      "score": 4
+    },
+    {
+      "caseId": "hard-004",
+      "arm": "full",
+      "axis": "gamma",
+      "judge": "claude-cli",
+      "score": 4
+    },
+    {
+      "caseId": "hard-005",
+      "arm": "vanilla",
+      "axis": "gamma",
+      "judge": "claude-cli",
+      "score": 4
+    },
+    {
+      "caseId": "hard-004",
+      "arm": "full",
+      "axis": "beta",
+      "judge": "codex-cli",
+      "score": null,
+      "error": "hard-004/full/beta/codex-cli: codex exit 1: "
+    },
+    {
+      "caseId": "hard-005",
+      "arm": "vanilla",
+      "axis": "gamma",
+      "judge": "codex-cli",
+      "score": null,
+      "error": "hard-005/vanilla/gamma/codex-cli: codex exit 1: "
+    },
+    {
+      "caseId": "hard-005",
+      "arm": "vanilla",
+      "axis": "beta",
+      "judge": "claude-cli",
+      "score": 4
+    },
+    {
+      "caseId": "hard-005",
+      "arm": "vanilla",
+      "axis": "beta",
+      "judge": "codex-cli",
+      "score": null,
+      "error": "hard-005/vanilla/beta/codex-cli: codex exit 1: "
+    },
+    {
+      "caseId": "hard-005",
+      "arm": "forgenOnly",
+      "axis": "gamma",
+      "judge": "claude-cli",
+      "score": 4
+    },
+    {
+      "caseId": "hard-005",
+      "arm": "forgenOnly",
+      "axis": "gamma",
+      "judge": "codex-cli",
+      "score": null,
+      "error": "hard-005/forgenOnly/gamma/codex-cli: codex exit 1: "
+    },
+    {
+      "caseId": "hard-005",
+      "arm": "forgenOnly",
+      "axis": "beta",
+      "judge": "claude-cli",
+      "score": 2
+    },
+    {
+      "caseId": "hard-005",
+      "arm": "forgenOnly",
+      "axis": "beta",
+      "judge": "codex-cli",
+      "score": null,
+      "error": "hard-005/forgenOnly/beta/codex-cli: codex exit 1: "
+    },
+    {
+      "caseId": "hard-005",
+      "arm": "memOnly",
+      "axis": "gamma",
+      "judge": "claude-cli",
+      "score": 4
+    },
+    {
+      "caseId": "hard-005",
+      "arm": "memOnly",
+      "axis": "gamma",
+      "judge": "codex-cli",
+      "score": null,
+      "error": "hard-005/memOnly/gamma/codex-cli: codex exit 1: "
+    },
+    {
+      "caseId": "hard-005",
+      "arm": "memOnly",
+      "axis": "beta",
+      "judge": "claude-cli",
+      "score": 3
+    },
+    {
+      "caseId": "hard-005",
+      "arm": "full",
+      "axis": "gamma",
+      "judge": "claude-cli",
+      "score": 4
+    },
+    {
+      "caseId": "hard-005",
+      "arm": "memOnly",
+      "axis": "beta",
+      "judge": "codex-cli",
+      "score": null,
+      "error": "hard-005/memOnly/beta/codex-cli: codex exit 1: "
+    },
+    {
+      "caseId": "hard-005",
+      "arm": "full",
+      "axis": "beta",
+      "judge": "claude-cli",
+      "score": 4
+    },
+    {
+      "caseId": "hard-005",
+      "arm": "full",
+      "axis": "gamma",
+      "judge": "codex-cli",
+      "score": null,
+      "error": "hard-005/full/gamma/codex-cli: codex exit 1: "
+    },
+    {
+      "caseId": "hard-005",
+      "arm": "full",
+      "axis": "beta",
+      "judge": "codex-cli",
+      "score": null,
+      "error": "hard-005/full/beta/codex-cli: codex exit 1: "
+    },
+    {
+      "caseId": "hard-006",
+      "arm": "vanilla",
+      "axis": "gamma",
+      "judge": "codex-cli",
+      "score": null,
+      "error": "hard-006/vanilla/gamma/codex-cli: codex exit 1: "
+    },
+    {
+      "caseId": "hard-006",
+      "arm": "vanilla",
+      "axis": "gamma",
+      "judge": "claude-cli",
+      "score": 4
+    },
+    {
+      "caseId": "hard-006",
+      "arm": "vanilla",
+      "axis": "beta",
+      "judge": "claude-cli",
+      "score": 4
+    },
+    {
+      "caseId": "hard-006",
+      "arm": "vanilla",
+      "axis": "beta",
+      "judge": "codex-cli",
+      "score": null,
+      "error": "hard-006/vanilla/beta/codex-cli: codex exit 1: "
+    },
+    {
+      "caseId": "hard-006",
+      "arm": "forgenOnly",
+      "axis": "gamma",
+      "judge": "claude-cli",
+      "score": 4
+    },
+    {
+      "caseId": "hard-006",
+      "arm": "forgenOnly",
+      "axis": "gamma",
+      "judge": "codex-cli",
+      "score": null,
+      "error": "hard-006/forgenOnly/gamma/codex-cli: codex exit 1: "
+    },
+    {
+      "caseId": "hard-006",
+      "arm": "memOnly",
+      "axis": "gamma",
+      "judge": "claude-cli",
+      "score": 4
+    },
+    {
+      "caseId": "hard-006",
+      "arm": "forgenOnly",
+      "axis": "beta",
+      "judge": "codex-cli",
+      "score": null,
+      "error": "hard-006/forgenOnly/beta/codex-cli: codex exit 1: "
+    },
+    {
+      "caseId": "hard-006",
+      "arm": "memOnly",
+      "axis": "gamma",
+      "judge": "codex-cli",
+      "score": null,
+      "error": "hard-006/memOnly/gamma/codex-cli: codex exit 1: "
+    },
+    {
+      "caseId": "hard-006",
+      "arm": "forgenOnly",
+      "axis": "beta",
+      "judge": "claude-cli",
+      "score": 2
+    },
+    {
+      "caseId": "hard-006",
+      "arm": "memOnly",
+      "axis": "beta",
+      "judge": "claude-cli",
+      "score": 4
+    },
+    {
+      "caseId": "hard-006",
+      "arm": "memOnly",
+      "axis": "beta",
+      "judge": "codex-cli",
+      "score": null,
+      "error": "hard-006/memOnly/beta/codex-cli: codex exit 1: "
+    },
+    {
+      "caseId": "hard-006",
+      "arm": "full",
+      "axis": "gamma",
+      "judge": "claude-cli",
+      "score": 4
+    },
+    {
+      "caseId": "hard-006",
+      "arm": "full",
+      "axis": "beta",
+      "judge": "claude-cli",
+      "score": 4
+    },
+    {
+      "caseId": "hard-006",
+      "arm": "full",
+      "axis": "gamma",
+      "judge": "codex-cli",
+      "score": null,
+      "error": "hard-006/full/gamma/codex-cli: codex exit 1: "
+    },
+    {
+      "caseId": "hard-006",
+      "arm": "full",
+      "axis": "beta",
+      "judge": "codex-cli",
+      "score": null,
+      "error": "hard-006/full/beta/codex-cli: codex exit 1: "
+    }
+  ],
+  "generatedAt": "2026-07-20T02:20:14.141Z"
+}
