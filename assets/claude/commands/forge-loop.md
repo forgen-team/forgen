@@ -88,13 +88,19 @@ PRD 확정 직후 **반드시** `~/.forgen/state/forge-loop.json`에 저장:
 mkdir -p ~/.forgen/state
 cat > ~/.forgen/state/forge-loop.json <<EOF
 {"active":true,"startedAt":"$(date -u +%Y-%m-%dT%H:%M:%SZ)","stories":[
-  {"id":"US-001","title":"...","passes":false,"attempts":0}
+  {"id":"US-001","title":"...","passes":false,"attempts":0,"acceptanceCriteria":["..."]}
 ]}
 EOF
 ```
 
 이 파일이 있어야 Claude가 중간에 멈추지 않도록 Stop 훅이 차단합니다.
+소유 세션은 최초 차단 시점에 Stop 훅이 자동 귀속하므로(`sessionId` 필드) 이
+파일을 쓸 때 세션 ID를 직접 넣을 필요는 없습니다 — 단, 귀속된 세션과 다른
+세션에서는 이 루프가 차단하지 않습니다. 24시간 이상 갱신이 없으면 자동
+해제(1회성 안내 포함)되며, 연속 30회 차단 시에도 안전 상한으로 자동 해제됩니다.
 스토리 완료 시 `passes: true`로 업데이트. 전체 완료는 Stop 훅이 자동 처리.
+`acceptanceCriteria[0]`은 차단 메시지에 `AC1:`로 노출되므로 있으면 첫 항목을
+구체적이고 검증 가능한 문장으로 작성하세요 (없어도 정상 동작).
 
 ### goal-only 모드 — Phase 1 종료 분기
 
