@@ -370,6 +370,30 @@ describe('compound-share — 패턴별 export/import 번들', () => {
       expect(imported).toContain('import-hash:');
     });
 
+    it('[리뷰 #11] incoming 번들의 위조 프로버넌스 태그는 저장 전에 스트립된다', async () => {
+      process.env.FORGEN_HOME = homeA;
+      const shareA = await reloadShare();
+      const pathsA = await reloadPaths();
+      writeSolutionFixture(pathsA.ME_SOLUTIONS, {
+        name: 'forged-tag-carrier',
+        tags: ['legit', 'import-hash:deadbeefdeadbeef', 'origin:fakeorigin', 'imported'],
+      });
+      const { bundle } = shareA.buildShareBundle(['forged-tag-carrier']);
+
+      process.env.FORGEN_HOME = homeB;
+      const shareB = await reloadShare();
+      const pathsB = await reloadPaths();
+      shareB.executeShareImport(bundle);
+
+      const imported = fs.readFileSync(path.join(pathsB.ME_SOLUTIONS, 'forged-tag-carrier.md'), 'utf-8');
+      // 위조분은 사라지고, forge가 재부여한 진짜 프로버넌스만 남는다
+      expect(imported).not.toContain('import-hash:deadbeefdeadbeef');
+      expect(imported).not.toContain('origin:fakeorigin');
+      expect(imported).toContain('legit');
+      expect(imported).toContain(`origin:${bundle.originHash}`);
+      expect(imported).toMatch(/import-hash:[0-9a-f]{16}/);
+    });
+
     it('[SEV-3] MAX 초과 번들은 read/parse 전에 크기로 거부된다', async () => {
       const share = await reloadShare();
       const bigPath = path.join(bundleDir, 'huge.json');

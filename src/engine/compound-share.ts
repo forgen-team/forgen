@@ -522,8 +522,14 @@ export function executeShareImport(bundle: ShareBundleV1, opts: { dryRun?: boole
     }
 
     const today = new Date().toISOString().split('T')[0];
+    // 프로버넌스 태그는 forge(이 코드)만 부여한다 — incoming 번들이 위조
+    // `import-hash:`/`origin:`/`imported` 태그를 로컬 스토어에 심지 못하게
+    // 스트립 후 재부여 (리뷰 #11 defense-in-depth: 위조 태그 기반 merge
+    // hijack 메커니즘 원천 제거).
+    const incomingTags = pattern.frontmatter.tags.filter(t =>
+      t !== 'imported' && !t.startsWith('origin:') && !t.startsWith(IMPORT_HASH_TAG_PREFIX));
     const tags = Array.from(new Set([
-      ...pattern.frontmatter.tags,
+      ...incomingTags,
       'imported',
       `origin:${bundle.originHash}`,
       // 원본 번들 해시 표식 — 재import 시 findLocalByImportHash가 이 태그로
@@ -670,6 +676,14 @@ export async function handleShareImport(args: string[]): Promise<void> {
   let raw: unknown;
   try {
     const text = fs.readFileSync(resolved, 'utf-8');
+    // TOCTOU 봉쇄: stat과 read 사이 파일이 커졌을 수 있다 — 실제 읽은 길이로 재검
+    // (리뷰 #11). rawSize도 실측치로 갱신해 validateShareBundle이 stale 크기를
+    // 신뢰하지 않게 한다.
+    rawSize = Buffer.byteLength(text, 'utf-8');
+    if (rawSize > MAX_BUNDLE_BYTES) {
+      console.log(`\n  Bundle too large: ${rawSize} bytes (max ${MAX_BUNDLE_BYTES})\n`);
+      return;
+    }
     raw = JSON.parse(text);
   } catch (e) {
     console.log(`\n  Bundle read/parse failed: ${(e as Error).message}\n`);
