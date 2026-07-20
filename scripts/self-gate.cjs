@@ -9,7 +9,8 @@
  *   1. Mock in production — src/ 비-test 파일에 vi.mock|jest.mock|sinon
  *   2. Secrets leak — API key 패턴
  *   3. enforce_via 누락 — L1 hard/strong rules 가 enforce_via 없이 커밋
- *   4. 릴리즈 일관성 (릴리즈 커밋 한정) — .forgen-release/e2e-report.json 부재
+ *   4. 릴리즈 일관성 (릴리즈 커밋 한정) — .forgen-release/smoke-report.json
+ *      (ADR-010 W0-2: e2e-report 폐지, evidence a723507f)
  *
  * β1 제약: 외부 LLM 호출 금지. 순수 파일 스캔.
  */
@@ -20,7 +21,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 
-const REPO_ROOT = path.resolve(__dirname, '..');
+// FORGEN_GATE_ROOT: fixture 테스트용 오버라이드 (tests/release-gate-smoke.test.ts)
+const REPO_ROOT = process.env.FORGEN_GATE_ROOT || path.resolve(__dirname, '..');
 const SRC_DIR = path.join(REPO_ROOT, 'src');
 
 const failures = [];
@@ -193,25 +195,47 @@ function isReleaseCommit() {
     // subject (first line) 만 검사. body 에 "v0.4.0" 같은 문자열이 있어도
     // release commit 으로 오탐되지 않도록.
     const subject = msg.split('\n')[0] ?? '';
-    return /chore\(release\)|^release\s+v?\d|^v\d+\.\d+\.\d+/i.test(subject);
+    // 릴리스 리뷰(2026-07-16): 'release: v0.5.0' 콜론 포맷(ship 스킬 실사용)도 매치
+    return /chore\(release\)|^release[:\s]\s*v?\d|^v\d+\.\d+\.\d+/i.test(subject);
   } catch {
     return false;
   }
 }
 
+// NOTE: self-gate-release.cjs checkSmokeReport() 와 의도적 중복 — 두 스크립트는
+// standalone 유지 (pre-commit용 / release-tag용). 스키마 변경 시 양쪽 동기화.
 function checkReleaseArtifact() {
   if (!isReleaseCommit()) return;
-  const report = path.join(REPO_ROOT, '.forgen-release', 'e2e-report.json');
+  const report = path.join(REPO_ROOT, '.forgen-release', 'smoke-report.json');
   if (!fs.existsSync(report)) {
-    fail('release-artifact', `release commit missing .forgen-release/e2e-report.json`);
+    const legacy = path.join(REPO_ROOT, '.forgen-release', 'e2e-report.json');
+    if (fs.existsSync(legacy)) {
+      fail('release-artifact', `e2e-report.json is deprecated since v0.5.0 — generate smoke evidence: node scripts/smoke.cjs`);
+    } else {
+      fail('release-artifact', `release commit missing .forgen-release/smoke-report.json — run: node scripts/smoke.cjs`);
+    }
     return;
   }
   try {
     const data = JSON.parse(fs.readFileSync(report, 'utf-8'));
-    if (data.passed !== true) fail('release-artifact', `e2e-report.passed=${data.passed} (expected true)`);
-    if (data.mock_detected === true) fail('release-artifact', `e2e-report flagged mock_detected=true`);
+    if (data.passed !== true) fail('release-artifact', `smoke-report.passed=${data.passed} (expected true)`);
+    if (data.mock_detected === true) fail('release-artifact', `smoke-report flagged mock_detected=true`);
+    // stale-evidence 방지: report.version == package.json.version
+    try {
+      const pkgVersion = String(JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'package.json'), 'utf-8')).version);
+      if (data.version !== pkgVersion) {
+        fail('release-artifact', `smoke-report.version=${data.version} but package.json=${pkgVersion} — re-run: node scripts/smoke.cjs`);
+      }
+    } catch {
+      fail('release-artifact', 'cannot read package.json version for smoke-report binding');
+    }
+    const checks = Array.isArray(data.checks) ? data.checks : [];
+    const vitest = checks.find((c) => c && c.name === 'vitest');
+    if (!vitest || vitest.skipped === true || vitest.passed !== true) {
+      fail('release-artifact', `smoke-report vitest check missing/skipped/failed — release evidence requires a full vitest run`);
+    }
   } catch (e) {
-    fail('release-artifact', `cannot parse e2e-report.json: ${String(e)}`);
+    fail('release-artifact', `cannot parse smoke-report.json: ${String(e)}`);
   }
 }
 

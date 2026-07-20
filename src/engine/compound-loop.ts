@@ -232,10 +232,16 @@ export async function handleCompound(args: string[]): Promise<void> {
     forgen compound --lifecycle      Run promotion/demotion/circuit-breaker check
     forgen compound --verify <name>  Manually promote solution to verified
 
-  Export/Import:
+  Export/Import (whole store, tar.gz):
     forgen compound export [--output path]
                                      Export knowledge to tar.gz archive
     forgen compound import <path>    Import knowledge from archive (skip existing)
+
+  Export/Import (per-pattern, JSON — with confidence + provenance):
+    forgen compound export <name...> [--out file]
+                                     Export named solutions/rules as a portable bundle
+    forgen compound import <bundle.json> [--dry-run]
+                                     Import a bundle (probation trust, never overwrites)
 
   Auto-extraction:
     forgen compound --pause-auto     Pause auto-extraction
@@ -248,16 +254,37 @@ export async function handleCompound(args: string[]): Promise<void> {
   }
 
   // --- export command ---
+  // 통짜 tar.gz export(플래그만, positional 없음) vs 이름 지정 패턴 export를
+  // positional 인자 유무로 구분한다. `compound export foo` = 패턴 export,
+  // `compound export --output x` = 기존 whole-store export.
   if (args[0] === 'export') {
-    const { handleExport } = await import('./compound-export.js');
-    await handleExport(args.slice(1));
+    const rest = args.slice(1);
+    const hasPatternNames = rest.length > 0 && !rest[0].startsWith('--');
+    if (hasPatternNames) {
+      const { handleShareExport } = await import('./compound-share.js');
+      await handleShareExport(rest);
+    } else {
+      const { handleExport } = await import('./compound-export.js');
+      await handleExport(rest);
+    }
     return;
   }
 
   // --- import command ---
+  // 대상 파일이 JSON 패턴 번들인지 tar.gz 아카이브인지 확장자/매직바이트로
+  // sniff해서 라우팅한다 (looksLikeShareBundle). 기존 tar.gz import 동작은
+  // 그대로 유지.
   if (args[0] === 'import') {
-    const { handleImport } = await import('./compound-export.js');
-    await handleImport(args.slice(1));
+    const rest = args.slice(1);
+    const filePath = rest.find(a => !a.startsWith('--'));
+    const { looksLikeShareBundle } = await import('./compound-share.js');
+    if (filePath && looksLikeShareBundle(path.resolve(filePath))) {
+      const { handleShareImport } = await import('./compound-share.js');
+      await handleShareImport(rest);
+    } else {
+      const { handleImport } = await import('./compound-export.js');
+      await handleImport(rest);
+    }
     return;
   }
 
@@ -461,7 +488,7 @@ export async function handleCompound(args: string[]): Promise<void> {
     '--lifecycle', '--verify', '--save', '--interactive',
     'list', 'inspect', 'remove', 'rollback', 'retag', 'lifecycle',
     '--list', '--inspect', '--remove', '--rollback', '--retag', '--since', 'interactive',
-    'export', 'import', '--output',
+    'export', 'import', '--output', '--out', '--dry-run',
   ];
   const hasTypeFlag = knownFlags.some(f => args.includes(f));
 

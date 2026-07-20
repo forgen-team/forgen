@@ -1,6 +1,6 @@
 # ADR-003: 릴리즈 Self-Gate — forgen이 자기 자신의 L1 규칙을 위반하지 않음을 CI에서 자동 검증
 
-**Status**: Accepted (2026-04-22)
+**Status**: Accepted (2026-04-22) — 부분 대체: 게이트 4번 아티팩트가 e2e-report.json → smoke-report.json 으로 교체됨 (ADR-010 W0-2, 2026-07-16, evidence a723507f). 본문의 e2e-report 언급은 역사 기록으로 보존.
 **Date**: 2026-04-22
 **Reversibility**: Type 2 (CI 단계는 비교적 가역 — 스크립트 교체만으로 되돌릴 수 있음)
 **Related Interview**: Deep Interview v0.4.0 Trust Restoration (Round 10 — "신뢰도 회복 미션")

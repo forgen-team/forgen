@@ -8,6 +8,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { getUsageStats } from './usage-telemetry.js';
+import { loadRoiDemotions, isRoiQuarantined } from '../engine/roi-demotion.js';
 import { classifySolutions } from './lifecycle-classifier.js';
 import type { LifecycleClass } from './lifecycle-classifier.js';
 import { STATE_DIR } from './paths.js';
@@ -33,7 +34,7 @@ const C = {
 
 const BOX_WIDTH = 66;
 
-function bar(pct: number, width = 10): string {
+function _bar(pct: number, width = 10): string {
   const filled = Math.round(pct * width);
   const empty = width - filled;
   return '█'.repeat(Math.max(0, filled)) + '░'.repeat(Math.max(0, empty));
@@ -69,7 +70,11 @@ interface DashboardData {
   usage: {
     hour5: { claude: number; codex: number; total: number };
     week: { claude: number; codex: number; total: number };
+    /** ADR-010 W2-2: 기록 중단 — native /usage 이관. 잔존 파일이 age-out 하면 영구 0. */
+    deprecated: true;
   };
+  /** ADR-010 W3-1 (F2): surfaced≫acted_on 저 ROI 솔루션 top-5 */
+  roiDemoted: Array<{ id: string; surfaced: number; actedOn: number; windowCount: number; quarantined: boolean }>;
   todayExtracted: number;
   solutions: {
     total: number;
@@ -87,10 +92,23 @@ interface DashboardData {
 function collectData(): DashboardData {
   const now = new Date();
 
-  // usage
+  // usage (deprecated — W2-2): 과거 축적분만 읽힘, 신규 기록 없음
   const usage = (() => {
-    try { return getUsageStats(); }
-    catch { return { hour5: { claude: 0, codex: 0, total: 0 }, week: { claude: 0, codex: 0, total: 0 } }; }
+    try { return { ...getUsageStats(), deprecated: true as const }; }
+    catch { return { hour5: { claude: 0, codex: 0, total: 0 }, week: { claude: 0, codex: 0, total: 0 }, deprecated: true as const }; }
+  })();
+
+  // ROI 강등 (W3-1): surfaced-but-ignored top-5
+  const roiDemoted = (() => {
+    try {
+      return Object.values(loadRoiDemotions())
+        .sort((a, b) => b.surfaced - a.surfaced)
+        .slice(0, 5)
+        .map(e => ({
+          id: e.solutionId, surfaced: e.surfaced, actedOn: e.actedOn,
+          windowCount: e.windowCount, quarantined: isRoiQuarantined(e),
+        }));
+    } catch { return []; }
   })();
 
   // today extracted: me/solutions/*.md mtime이 오늘인 것 (또는 last-extraction.json)
@@ -158,6 +176,7 @@ function collectData(): DashboardData {
   return {
     timestamp: now.toISOString(),
     usage,
+    roiDemoted,
     todayExtracted,
     solutions: {
       total: classified.length,
@@ -177,18 +196,24 @@ function renderTTY(data: DashboardData): string {
   lines.push(boxTop());
   lines.push(boxEmpty());
 
-  // Usage
+  // Usage — ADR-010 W2-2: recordToolCall no-op 이후 이 카운트는 영구 0 으로
+  // 수렴한다. 침묵 열화 대신 이관 안내를 표시 (JSON 은 deprecated 플래그).
   lines.push(boxLine(`${C.bold}Usage${C.reset}`));
+  lines.push(boxLine(`  ${C.dim}→ native /usage 로 이동 (plan limit 을 skill/subagent별 분해)${C.reset}`));
 
-  const h5total = data.usage.hour5.total;
-  const h5pct = Math.min(1, h5total / Math.max(h5total + 10, 50));
-  const h5bar = bar(h5pct);
-  lines.push(boxLine(`  5h window:    ${C.yellow}${h5bar}${C.reset}  (${h5total} tool calls)`));
+  lines.push(boxEmpty());
 
-  const wktotal = data.usage.week.total;
-  const wkpct = Math.min(1, wktotal / Math.max(wktotal + 10, 100));
-  const wkbar = bar(wkpct);
-  lines.push(boxLine(`  weekly:       ${C.yellow}${wkbar}${C.reset}  (${wktotal} tool calls)`));
+  // Surfaced-but-ignored (W3-1): 저 ROI 주입 top-5 — δ 는 injection 에서 오므로
+  // "노출되는데 안 쓰이는" 솔루션이 곧 낭비되는 컨텍스트다.
+  lines.push(boxLine(`${C.bold}Surfaced but ignored (low ROI)${C.reset}`));
+  if (data.roiDemoted.length === 0) {
+    lines.push(boxLine(`  ${C.dim}none — 주입되는 솔루션이 실제로 쓰이고 있음${C.reset}`));
+  } else {
+    for (const e of data.roiDemoted) {
+      const mark = e.quarantined ? `${C.red}⛔ quarantined` : `${C.yellow}↓ demoted`;
+      lines.push(boxLine(`  ${mark}${C.reset} ${e.id}  (surfaced ${e.surfaced}, acted ${e.actedOn})`));
+    }
+  }
 
   lines.push(boxEmpty());
 
@@ -215,7 +240,7 @@ function renderTTY(data: DashboardData): string {
     lines.push(boxLine(`${C.bold}Top ${data.solutions.topHot.length} hot (90d)${C.reset}`));
     for (const h of data.solutions.topHot) {
       const pctStr = `${Math.round(h.rate * 100)}%`;
-      const idShort = h.id.length > 36 ? h.id.slice(0, 33) + '...' : h.id;
+      const idShort = h.id.length > 36 ? `${h.id.slice(0, 33)}...` : h.id;
       lines.push(boxLine(`  · ${C.yellow}${idShort}${C.reset}  surf=${h.surfaced} acted=${h.acted} (${pctStr})`));
     }
     lines.push(boxEmpty());
@@ -246,7 +271,7 @@ export async function runDashboard(opts: DashboardOptions): Promise<void> {
     if (opts.json) {
       // Strip classified array (verbose) from JSON output for cleaner schema
       const { solutions: { classified: _c, ...solutionStats }, ...rest } = data;
-      process.stdout.write(JSON.stringify({ ...rest, solutions: solutionStats }, null, 2) + '\n');
+      process.stdout.write(`${JSON.stringify({ ...rest, solutions: solutionStats }, null, 2)}\n`);
       return;
     }
 
@@ -254,7 +279,7 @@ export async function runDashboard(opts: DashboardOptions): Promise<void> {
     if (opts.watch) {
       process.stdout.write('\x1b[2J\x1b[H'); // clear screen
     }
-    process.stdout.write(output + '\n');
+    process.stdout.write(`${output}\n`);
   };
 
   render();

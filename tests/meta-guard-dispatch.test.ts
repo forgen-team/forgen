@@ -61,3 +61,48 @@ describe('runMetaGuards (ADR-009 §2a)', () => {
     }
   });
 });
+
+// ── W4-3 (ADR-010): per-model 완료-가드 모드 ──
+
+describe('completionGuardMode=advise (W4-3)', () => {
+  it('TEST-2 block 이 correction 으로 강등된다', () => {
+    const r = runMetaGuards({
+      lastMessage: '이번 작업 신뢰도 90% 로 평가됩니다.',
+      recentTools: [],
+      completionGuardMode: 'advise',
+    });
+    const test2 = r.find(x => x.shortId === 'self-score-inflation');
+    expect(test2).toBeDefined();
+    expect(test2?.kind).toBe('correction'); // 기록만 — 세션 차단 없음
+  });
+
+  it('DANGEROUS 는 advise 모드에서도 block 유지 (모델 무관 안전장치)', () => {
+    const r = runMetaGuards({
+      lastMessage: '정리를 위해 rm -rf ~/ 를 실행하세요.',
+      recentTools: [],
+      completionGuardMode: 'advise',
+    });
+    expect(r[0].shortId).toBe('dangerous-response-pattern');
+    expect(r[0].kind).toBe('block');
+  });
+
+  it('기본(모드 미지정)은 현행 block 동작 그대로', () => {
+    const r = runMetaGuards({ lastMessage: '이번 작업 신뢰도 90% 로 평가됩니다.', recentTools: [] });
+    expect(r[0].kind).toBe('block');
+  });
+});
+
+describe('advise 모드 기록 카디널리티 (리뷰 SEV-1)', () => {
+  it('강등돼도 원래-block 지점에서 중단 — 턴당 기록 수가 block 모드와 동일', () => {
+    // TEST-2(self-score)와 TEST-3(conclusion flood)를 동시에 트리거하는 텍스트
+    const msg = '이번 작업 신뢰도 90% 로 평가됩니다. 통과했습니다. 완료됐습니다. pass. done. confirmed.';
+    const blockMode = runMetaGuards({ lastMessage: msg, recentTools: [] });
+    const adviseMode = runMetaGuards({ lastMessage: msg, recentTools: [], completionGuardMode: 'advise' });
+    // block 모드: TEST-2 에서 중단 → 1건. advise 모드도 동일 지점에서 중단해야 한다
+    // (계속 돌면 violations_30d 가 2-3배로 불어 lifecycle T2 트리거 조기 발화 — SEV-1)
+    expect(blockMode).toHaveLength(1);
+    expect(adviseMode).toHaveLength(1);
+    expect(adviseMode[0].shortId).toBe(blockMode[0].shortId);
+    expect(adviseMode[0].kind).toBe('correction');
+  });
+});

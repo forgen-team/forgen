@@ -1,5 +1,27 @@
 # Forgen — 포지셔닝 & 셀링 전략
 
+> **⚠ 2026-07-16 애든덤 (ADR-010 W3-2)** — 아래 본문은 2026-04 기준. 이후 변한 것:
+>
+> 1. **"학습 루프"는 더 이상 unique 하지 않다.** ECC 가 신뢰도 스코어·진화·프루닝 학습
+>    루프를 셀링에 추가했고, 업계 전반(Anthropic 2026 Agentic Coding Trends)이
+>    persistent memory + correction 개인화로 수렴했다. forgen 의 차별화는
+>    **"학습한다"가 아니라 "학습을 증명한다"** — δ 측정(forgen-eval), acted-on
+>    텔레메트리(ROI 루프), calibrate. **코딩 결과물에 대한 도구 기여도(tool-lift)를 judged eval로 재고 공개하는 곳은 없다.**
+> 2. **enforcement 는 프론티어 모델이 흡수했다.** v0.4.11 실측: opus-4.8 에서
+>    완료 가드 blocks=0 (easy/hard 양쪽), δ 는 100% injection 기여. §3.3 의
+>    "6개 안전 가드레일" 중 완료-검증 가드는 opus-4.8/sonnet-5 에서 거의 발화하지
+>    않는다 — 모델이 정직해졌다. 그 위에서의 가치는 recall·개인화·측정이며,
+>    이를 정직 한계로 공개한다 (§5 스타일). 결정적 가드(secret/db)는 유효.
+> 3. **README 히어로 교체("학습을 증명한다")는 W4 재캘리브레이션(R2) 수치 확보
+>    후에만** — 수치 없는 "증명" 주장은 자기모순 (실행계획 W3-2, Rev 2).
+>
+> 경쟁 수치·기능 서술의 출처: `reports/competitive/oss-comparison-2026-07-20.md`
+> (2026-07-20 gh api + repo 직접 fetch 실측. ECC=affaan-m/ECC 리네임, OMO=oh-my-openagent
+> 리네임·멀티하네스 피벗 확정, ECC 학습루프는 "셀링"이 아니라 **출시 완료**).
+> 4. native 흡수 대응(경계 재정의)은 ADR-010 참조 — doctor/usage/권한 중재에서
+>    물러나고 moat 4개(correction→profile, 증거 게이팅 정책, compound recall+ROI,
+>    multi-host)에 재집중.
+
 ---
 
 ## 1. 경쟁자 포지셔닝 맵 — 빈 공간 찾기
@@ -8,18 +30,18 @@
              "더 많은 기능"
                   ▲
                   │
-    ECC(155K)     │     gstack(72K)
+    ECC(231K)     │     gstack(72K)
     "완전한 시스템"│     "소프트웨어 팩토리"
-    181 skills    │     브라우저+디자인+배포
+    자동 학습루프  │     브라우저+디자인+배포
                   │
 "단순" ───────────┼────────────── "복잡"
                   │
-    claude-mem    │     OMC(29K)
-    (54K)         │     "스테로이드 Claude"
+    claude-mem    │     OMC(37K)
+    (87K)         │     "스테로이드 Claude"
     "기억만 한다" │     멀티에이전트 오케스트레이션
                   │
-                  │     GSD(52K)
-                  │     "context rot 해결"
+                  │     OMO(66K)
+                  │     "멀티하네스 인터랙션"
                   ▼
              "한 가지 잘"
 
@@ -76,11 +98,12 @@ Forgen은 Claude를 당신에게 맞게 만든다.
 
 **경쟁자들의 프레이밍:**
 ```
-ECC:        "Claude + 181개 스킬 = 완전한 시스템"
+ECC:        "Claude + 자동 학습 루프 + 신뢰도 스코어 + cross-user 공유 = 에이전트 통합 플랫폼"
 gstack:     "Claude + 23개 역할 = 소프트웨어 팩토리"
 OMC:        "Claude + 19개 에이전트 = 스테로이드"
-claude-mem: "Claude + 메모리 = 기억하는 AI"
-GSD:        "Claude + spec = context rot 해결"
+OMO:        "Claude + OpenCode + Codex + 멀티하네스 = 통합 에이전트 오케스트레이터"
+claude-mem: "Claude + 메모리 압축·회상 = 기억하는 AI"
+claude-flow: "Claude + 벡터 메모리 + 라우팅 최적화 = 에이전트 하이퍼바이저"
 ```
 
 **Forgen의 프레이밍:**

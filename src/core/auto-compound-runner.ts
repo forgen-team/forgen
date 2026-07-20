@@ -18,11 +18,13 @@ import { promisify } from 'node:util';
 const execFileAsync = promisify(execFile);
 import { createRequire } from 'node:module';
 import { containsPromptInjection, filterSolutionContent } from '../hooks/prompt-injection-filter.js';
+import { isSelfReferentialEcho } from './config-injector.js';
 import { redactSecrets } from '../hooks/secret-filter.js';
 import { createEvidence, saveEvidence, promoteSessionCandidates } from '../store/evidence-store.js';
 import { loadProfile } from '../store/profile-store.js';
 import { FORGEN_HOME, ME_DIR } from './paths.js';
 import { classifyBehaviorKind, mapKindToAxisRefs } from './behavior-classifier.js';
+import type { HostId } from './trust-layer-intent.js';
 
 /** Auto-compound에 사용할 모델 — background 추출이므로 haiku로 충분 */
 const COMPOUND_MODEL = 'haiku';
@@ -42,7 +44,7 @@ function execClaudeRetry(args: string[], opts: ExecFileSyncOptions): string {
   // profile.default_host 로 host 결정 (lazy load)
   const profileMod = createRequire(import.meta.url)('../store/profile-store.js') as typeof import('../store/profile-store.js');
   const resolved = profileMod.resolveDefaultHost();
-  const host: 'claude' | 'codex' = resolved === 'codex' ? 'codex' : 'claude';
+  const host: HostId = resolved === 'codex' ? 'codex' : 'claude';
 
   if (host === 'claude') {
     // Claude 측은 기존 보안 hardening 보존: --allowedTools 등 args 그대로 전달.
@@ -105,7 +107,7 @@ export async function execClaudeRetryAsync(args: string[], opts: ExecFileOptions
   const mod = createRequire(import.meta.url)('../host/exec-host.js') as typeof import('../host/exec-host.js');
   const profileMod = createRequire(import.meta.url)('../store/profile-store.js') as typeof import('../store/profile-store.js');
   const resolved = profileMod.resolveDefaultHost();
-  const host: 'claude' | 'codex' = resolved === 'codex' ? 'codex' : 'claude';
+  const host: HostId = resolved === 'codex' ? 'codex' : 'claude';
 
   if (host === 'claude') {
     const TRANSIENT = /ETIMEDOUT|ECONNRESET|ECONNREFUSED|EPIPE/;
@@ -474,7 +476,14 @@ ${sanitizedSummary.slice(0, 4000)}
     if (isInjection) {
       process.stderr.write(`[forgen-auto-compound] behavior: injection detected in LLM output, skipping write\n`);
     }
-    if (userResult && !isInjection && !userResult.includes('관찰된 패턴 없음') && userResult.trim().length > 10) {
+    // ADR-010 W1-2 캡처 사이드 에코 차단: Claude-voice 에코("이해했습니다…",
+    // "I see the notification…")를 저장 전에 거른다. 렌더 필터만으로는 스토어
+    // 오염이 누적된다 — 실측(2026-07-16) 오염 49건 전부 이 형태였음.
+    const isEcho = userResult ? isSelfReferentialEcho(userResult.trim()) : false;
+    if (isEcho && !isInjection) {
+      process.stderr.write(`[forgen-auto-compound] behavior: assistant-voice echo detected, skipping write\n`);
+    }
+    if (userResult && !isInjection && !isEcho && !userResult.includes('관찰된 패턴 없음') && userResult.trim().length > 10) {
       userPatternFound = true; // 0.4.6 perf #12 — adaptive cooldown 시그널
       fs.mkdirSync(BEHAVIOR_DIR, { recursive: true });
       const today = new Date().toISOString().split('T')[0];
@@ -696,6 +705,18 @@ ${sanitizedSummary.slice(0, 4000)}
     }
   } catch (e) {
     process.stderr.write(`[forgen-gc] state prune failed: ${e instanceof Error ? e.message : String(e)}\n`);
+  }
+
+  // ADR-010 W3-1 (F2): 세션 종료마다 ROI 재판정 — surfaced≫acted_on 솔루션
+  // 강등/격리. δ 가 100% injection 에서 나오므로(실측) 주입 품질 = 효과.
+  try {
+    const { updateRoiDemotions } = await import('../engine/roi-demotion.js');
+    const roi = updateRoiDemotions();
+    if (roi && (roi.demoted > 0 || roi.quarantined > 0)) {
+      process.stderr.write(`[forgen-roi] low-ROI solutions: ${roi.demoted} demoted, ${roi.quarantined} quarantined\n`);
+    }
+  } catch (e) {
+    process.stderr.write(`[forgen-roi] update failed: ${e instanceof Error ? e.message : String(e)}\n`);
   }
 
   // Step 6 (v0.4.1): rule lifecycle 자동 실행 — rule 의 violations/bypass/drift

@@ -17,8 +17,9 @@ import { fileURLToPath } from 'node:url';
 import { detectAvailableHosts, type HostAvailability } from '../core/host-detect.js';
 import { planClaudeInstall, type ClaudeInstallResult } from './install-claude.js';
 import { planCodexInstall, type CodexInstallResult } from './install-codex.js';
+import type { HostId } from '../core/trust-layer-intent.js';
 
-export type InstallTarget = 'claude' | 'codex' | 'both';
+export type InstallTarget = HostId | 'both';
 
 export interface OrchestratorOptions {
   /** Sub-command 인자: 'claude'|'codex'|'both' 또는 undefined (interactive). */

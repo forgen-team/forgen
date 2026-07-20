@@ -129,41 +129,25 @@ function loadProjectMapSummary(cwd: string): string | null {
 // ── v1 Static Rules ──
 
 /** 보안 규칙 (정적 — v1 GLOBAL_SAFETY_RULES와 동일 맥락) */
+/**
+ * ADR-010 W2-3: 보안 규칙 prose → 2줄 포인터로 축약.
+ * 실제 강제는 훅(secret-filter, db-guard)이 결정적으로 수행하며,
+ * prose 는 순수 토큰 비용이었다 (native /doctor 도 "코드에서 유추 가능한
+ * 규칙"으로 트리밍 제안하는 부류). 차단 발생 시 확인: `forgen explain`.
+ */
 export function generateSecurityRules(): string {
   return [
-    '# Forgen — Security Rules',
+    '# Forgen — Security & Anti-Pattern',
     '',
-    '## Dangerous Command Warning',
-    '- Always confirm before executing destructive commands like `rm -rf`, `git push --force`, `DROP TABLE`',
-    '- Double confirmation required for production environment access',
-    '',
-    '## Secret Key Protection',
-    '- Do not commit sensitive information such as `.env`, `credentials.json`, API keys',
-    '- Manage through environment variables or a secrets manager',
-    '- Detect hardcoded secrets during code review',
+    '- 보안/위험명령/안티패턴 강제는 forgen 훅이 수행: secret-filter(비밀키 커밋 차단), db-guard(위험 SQL/rm -rf 확인), slop-detector(AI 슬롭 감지).',
+    '- 차단이 발생하면 `forgen explain` 으로 규칙·사유·해결책 확인.',
     '',
   ].join('\n');
 }
 
-/** 안티패턴 감지 규칙 (정적) */
+/** ADR-010 W2-3: prose 제거 — 포인터는 generateSecurityRules 로 통합됨 */
 export function generateAntiPatternRules(): string {
-  return [
-    '# Forgen — Anti-Pattern Detection',
-    '',
-    '## Repeated Edit Warning',
-    '- Stop immediately when editing the same file 3+ times → full structure redesign required',
-    '- For 5+ edits, always check current state with Read before replacing with a single Write',
-    '',
-    '## Error Suppression Warning',
-    '- No empty catch blocks — at minimum log or re-throw',
-    '- Minimize suppression comments like eslint-disable, @ts-ignore',
-    '',
-    '## Excessive Complexity Warning',
-    '- Consider splitting single functions exceeding 50 lines',
-    '- Apply early return pattern when nesting depth exceeds 4',
-    '- No unnecessary abstraction — implement only what is currently needed',
-    '',
-  ].join('\n');
+  return '';
 }
 
 /** compound loop + 개인 규칙 (me/rules) 로드 */
@@ -257,11 +241,39 @@ const SELF_REFERENTIAL_PATTERNS: readonly RegExp[] = Object.freeze([
   /^I['\u2019]?ll\s+(analyze|review|check|update|add|create|run|fix)/i,
   /^Let me\s+(analyze|check|look|verify|update|add)/i,
   /^I['\u2019]?ve\s+(added|updated|created|fixed|completed)/i,
+  // ADR-010 W1-2 (2026-07-16): \uc2e4\uc720\ucd9c 60\uac74(behavior-echoes \ubc31\uc5c5 = fixture \uc18c\uc2a4)\uc5d0\uc11c
+  // \ud655\uc778\ub41c \ucd94\uac00 \uc5d0\ucf54 \ud615\ud0dc. \uc804\ubd80 line-start \uc575\ucee4 \u2014 H-2 \uc624\ud0d0 \uaddc\uce59 \uc900\uc218.
+  // \uc774 \ubaa9\ub85d\uc740 \ubcf4\uc870 \ubc29\uc5b4\ub2e4: \uc8fc\ub825\uc740 observedCount >= 2 \uac8c\uc774\ud2b8 (\uc544\ub798 \ub80c\ub354 \ub8e8\ud504).
+  /^I (see|notice|understand)\b/i,
+  /^I['\u2019]?m ready\b/i,
+  /^Understood\b/i,
+  /^Got it\b/i,
+  /^[\u26a0\u2705\u274c\u{1f534}\u{1f4cb}]/u, // \u26a0 \u2705 \u274c \ud83d\udd34 \ud83d\udccb \uc120\ub450 \u2014 assistant \uc0c1\ud0dc \ub9c8\ucee4
+  /^(\uc774\ud574\ud588\uc2b5\ub2c8\ub2e4|\uc54c\uaca0\uc2b5\ub2c8\ub2e4|\ud655\uc778\ud588\uc2b5\ub2c8\ub2e4|\ud655\uc778\ud558\uaca0\uc2b5\ub2c8\ub2e4|\ud30c\uc545\ud588\uc2b5\ub2c8\ub2e4)/,
+  // "\ud604\uc7ac \uc0c1\ud669"/"\uc900\ube44 \uc644\ub8cc"\ub294 Claude-voice \ubb38\uc7a5 \uc644\uacb0\ud615\ub9cc \ub9e4\uce58 \u2014 \uc0ac\uc6a9\uc790 \uc9c0\uc2dc\ubb38
+  // "\ud604\uc7ac \uc0c1\ud669 \ud30c\uc545 \ud6c4 \uc791\uc5c5 \uc2dc\uc791", "\uc900\ube44 \uc644\ub8cc\ub418\uba74 \uc54c\ub824\uc8fc\uc138\uc694"\ub294 \ud1b5\uacfc\ud574\uc57c \ud55c\ub2e4 (H-2).
+  /^(\uc791\uc5c5 \uc0c1\ud0dc\ub97c \ud655\uc778|\uc0c1\ud669\uc744 \ud30c\uc545\ud588|\uc548\ub155\ud558\uc138\uc694)/,
+  /^\ud604\uc7ac \uc0c1\ud669(:|\uc774|\uc740|\uc744 (\ud30c\uc545|\ud655\uc778|\uc815\ub9ac))/,
+  /^\uc900\ube44 \uc644\ub8cc(\uc785\ub2c8\ub2e4|\ud588\uc2b5\ub2c8\ub2e4|[.!])/,
+  /^\ubc31\uadf8\ub77c\uc6b4\ub4dc .*(\uc644\ub8cc|\uc911\ub2e8)/,
   // Object.freeze is defense-in-depth: the readonly type is compile-time
   // only. Freezing prevents runtime mutation by any other module loaded
   // in the same process from silently disabling the filter by pushing
   // an over-broad pattern or emptying the array.
 ]);
+
+/**
+ * ADR-010 W1-2: 캡처 사이드 공유 판정 — 첫 유효 라인이 Claude-voice 에코인가.
+ *
+ * auto-compound-runner 가 behavior 파일을 디스크에 쓰기 전에 호출한다.
+ * 렌더 타임 필터(위)만으로는 오염 데이터가 스토어에 계속 쌓이므로,
+ * 저장 자체를 차단하는 것이 우선이다. 판정은 첫 유효 라인 기준 —
+ * 에코는 항상 assistant 발화로 시작하고, 진짜 패턴 요약은 지시문으로 시작한다.
+ */
+export function isSelfReferentialEcho(text: string): boolean {
+  const firstLine = text.split('\n').map((l) => l.trim()).find((l) => l.length > 0) ?? '';
+  return SELF_REFERENTIAL_PATTERNS.some((re) => re.test(firstLine));
+}
 
 /**
  * Strip formatting that already exists in the source line BEFORE the
@@ -314,6 +326,14 @@ function generateBehavioralRules(): string {
       const countMatch = fm.match(/^observedCount:\s*(\d+)/m);
       const kind = kindMatch?.[1]?.trim().replace(/^["']|["']$/g, '') ?? '';
       const observedCount = countMatch ? parseInt(countMatch[1], 10) : 0;
+
+      // ADR-010 W1-2 주력 방어 — 1회 관찰 항목은 렌더하지 않는다 (모든 kind).
+      // 실측(2026-07-16): 오염된 behavior 엔트리 49/49(100%)가 observedCount=1.
+      // 진짜 사용자 패턴은 재관찰되어 mergeOrCreateBehavior 가 count 를 누적한다.
+      // 주의(정직한 한계): count 는 50% word-overlap merge 로도 오르므로, regex
+      // 3중 방어(캡처/렌더)를 모두 뚫는 novel echo 2건이 서로 merge 되면 이 게이트도
+      // 뚫린다 — 알려진 60건 형태는 캡처 사이드에서 차단되므로 잔존 리스크는 낮음.
+      if (observedCount < 2) continue;
 
       const contentIdx = body.indexOf('## Content');
       const contentBody = contentIdx >= 0 ? body.slice(contentIdx + '## Content'.length) : body;

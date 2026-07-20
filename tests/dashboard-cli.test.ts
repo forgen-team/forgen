@@ -61,6 +61,8 @@ describe('dashboard-cli', () => {
     const usage = parsed.usage as Record<string, unknown>;
     expect(usage).toHaveProperty('hour5');
     expect(usage).toHaveProperty('week');
+    // W2-2: 기록 중단 이관 표식 — 소비자가 침묵 열화를 감지할 수 있게
+    expect(usage).toHaveProperty('deprecated', true);
 
     // solutions shape
     const solutions = parsed.solutions as Record<string, unknown>;

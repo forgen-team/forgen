@@ -18,6 +18,7 @@ import { buildEnv, generateClaudeRuleFiles, registerTmuxBindings } from './confi
 import { createLogger } from './logger.js';
 import { HANDOFFS_DIR, ME_BEHAVIOR, ME_DIR, ME_RULES, ME_SKILLS, ME_SOLUTIONS, SESSIONS_DIR, STATE_DIR, FORGEN_HOME } from './paths.js';
 import { RULE_FILE_CAPS } from '../hooks/shared/injection-caps.js';
+import { recordRenderedFiles } from './rendered-rules-manifest.js';
 import type { RuntimeHost } from './types.js';
 import {
   rollbackSettings,
@@ -25,6 +26,10 @@ import {
 import { bootstrapV1Session, ensureV1Directories, type V1BootstrapResult } from './v1-bootstrap.js';
 import { injectSettings } from './settings-injector.js';
 import { installAgents, installSlashCommands } from './installer.js';
+import type { HostId } from './trust-layer-intent.js';
+import { getHostCapabilities } from '../host/capabilities-registry.js';
+import { getProjection } from '../host/projection.js';
+import type { HostBinding, HarnessSessionContext } from '../host/host-binding.js';
 
 const log = createLogger('harness');
 
@@ -129,12 +134,11 @@ function injectClaudeRuleFiles(cwd: string, ruleFiles: Record<string, string>): 
   const PER_RULE_CAP = RULE_FILE_CAPS.perRuleFile;
   const TOTAL_CAP = RULE_FILE_CAPS.totalRuleFiles;
 
-  const globalRulesDir = path.join(os.homedir(), '.claude', 'rules');
   const projectRulesDir = path.join(cwd, '.claude', 'rules');
-  fs.mkdirSync(globalRulesDir, { recursive: true });
   fs.mkdirSync(projectRulesDir, { recursive: true });
 
   let totalWritten = 0;
+  const writtenForManifest: Record<string, string> = {};
   for (const [filename, content] of Object.entries(ruleFiles)) {
     const capped = content.length > PER_RULE_CAP
       ? `${content.slice(0, PER_RULE_CAP)}\n... (capped at rule file limit)\n`
@@ -143,10 +147,30 @@ function injectClaudeRuleFiles(cwd: string, ruleFiles: Record<string, string>): 
       log.debug(`rules/ 총량 캡 도달, ${filename} 생략`);
       break;
     }
-    const isUserPreference = filename.startsWith('forge-');
-    const targetDir = isUserPreference ? globalRulesDir : projectRulesDir;
-    fs.writeFileSync(path.join(targetDir, filename), capped);
+    // ADR-010 W1-3 (F6 수정): 모든 규칙 파일은 프로젝트 스코프로만 주입한다.
+    // 이전에는 `forge-*` 파일명이 글로벌 ~/.claude/rules/ 로 라우팅되어
+    // 프로젝트 맥락의 behavioral 패턴이 전 프로젝트 세션에 주입됐다.
+    // 목표 상태: 글로벌 rules 디렉토리에 forgen 산출물 0개.
+    const target = path.join(projectRulesDir, filename);
+    fs.writeFileSync(target, capped);
+    writtenForManifest[target] = capped;
     totalWritten += capped.length;
+  }
+
+  // ADR-010 W1-1: 쓴 그대로의 content-hash 를 manifest 에 기록 —
+  // reclaimer 가 "forgen 산출물 그대로"와 "사용자 편집본"을 구분하는 근거.
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(getPackageRoot(), 'package.json'), 'utf-8'));
+    recordRenderedFiles(writtenForManifest, String(pkg.version ?? '0.0.0'));
+  } catch (e) {
+    log.debug('rendered-rules manifest 기록 실패 (fail-open)', e);
+  }
+
+  // 마이그레이션 (W1-3): 구버전이 글로벌에 쓴 forge-behavioral.md 회수.
+  // (tenetx 계열 글로벌 잔재는 W1-1 reclaimer 의 영역)
+  const legacyGlobalBehavioral = path.join(os.homedir(), '.claude', 'rules', 'forge-behavioral.md');
+  if (fs.existsSync(legacyGlobalBehavioral)) {
+    try { fs.unlinkSync(legacyGlobalBehavioral); } catch (e) { log.debug('레거시 글로벌 behavioral 삭제 실패', e); }
   }
 
   // 마이그레이션: 이전 위치 파일 제거
@@ -353,6 +377,67 @@ function checkCompoundStaleness(): void {
   }
 }
 
+// ── Host Bindings (Multi-Harness Adapter Plan P0 — 구 if-ladder 대체) ──
+
+/**
+ * Claude 세션 준비: settings.json 인젝션 + 에이전트 설치 + 규칙 파일 생성/주입 +
+ * 슬래시 명령 설치. (구 `if (runtime === 'claude')` 분기, 동작 동일.)
+ */
+async function prepareClaudeSession(ctx: HarnessSessionContext): Promise<void> {
+  const { cwd, pkgRoot, env, v1Result } = ctx;
+  try {
+    injectSettings(env, v1Result, 'claude', cwd, pkgRoot);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (msg.includes('settings.json lock') || msg.includes('SettingsLockError')) {
+      console.error(`[forgen] ${msg} — settings 갱신 스킵, 이전 값 유지`);
+    } else {
+      throw e;
+    }
+  }
+  installAgents(cwd, pkgRoot);
+  const ruleFiles = generateClaudeRuleFiles(cwd, v1Result.renderedRules);
+  injectClaudeRuleFiles(cwd, ruleFiles);
+  installSlashCommands(cwd, pkgRoot);
+}
+
+/**
+ * Codex 세션 준비: hooks.json 자동 reconcile-on-launch.
+ * (구 `else if (runtime === 'codex')` 분기, 동작 동일.)
+ */
+async function prepareCodexSession(ctx: HarnessSessionContext): Promise<void> {
+  try {
+    await ensureCodexHooksFresh(ctx.pkgRoot);
+  } catch (e) {
+    log.debug('Codex hooks reconcile 실패 (fail-open)', e);
+  }
+}
+
+/**
+ * capabilities 선언 + projection 함수 + 세션 준비(hook-surface wiring)를 host 별로
+ * 묶은 registry. `Record<HostId, HostBinding>` 이 완전성을 강제하므로 새 host 추가 시
+ * (예: OpenCode, P1) 엔트리 누락은 컴파일 타임에 걸린다.
+ *
+ * capabilities/projection 은 현재 prepareHarness 자체가 소비하지 않지만(각각
+ * capabilities-registry.ts / parity-harness.ts 가 독립 소비), HostBinding 계약의
+ * 일부로 함께 선언해 두어 향후 확장(§4.1 P1) 시 registry 엔트리 하나만 추가하면
+ * 되는 형태를 만든다.
+ */
+const HOST_BINDINGS: Record<HostId, HostBinding> = {
+  claude: {
+    id: 'claude',
+    capabilities: getHostCapabilities('claude'),
+    projection: getProjection('claude'),
+    prepareSession: prepareClaudeSession,
+  },
+  codex: {
+    id: 'codex',
+    capabilities: getHostCapabilities('codex'),
+    projection: getProjection('codex'),
+    prepareSession: prepareCodexSession,
+  },
+};
+
 interface PrepareHarnessOptions {
   runtime?: RuntimeHost;
 }
@@ -416,44 +501,19 @@ export async function prepareHarness(
     // 3. 환경 확인
     const inTmux = !!process.env.TMUX;
 
-    // 4-7. Claude artifact 작업 (settings.json + agents + rules + slash commands).
+    // 4-7. Host artifact 작업 (Claude: settings.json + agents + rules + slash commands.
+    // Codex: hooks.json reconcile). HOST_BINDINGS 로 dispatch — host 별 구체 동작은
+    // prepareClaudeSession / prepareCodexSession 참조.
     //
     // feat/codex-support P1-7 (2026-04-27): runtime === 'codex' 시 *.claude/* 계열
     // 작업은 *no-op*. Codex 측 동치 prep 은 Phase 3 (install-codex.ts 의 prompts +
-    // AGENTS.md inject) 에서 처리. 본 분기는 *Claude artifact 가 Codex 환경을
-    // 오염시키지 않도록* 보호하는 비대칭 게이트.
+    // AGENTS.md inject) 에서 처리. 본 dispatch 는 *Claude artifact 가 Codex 환경을
+    // 오염시키지 않도록* 보호하는 비대칭 게이트를 그대로 보존한다.
     const pkgRoot = getPackageRoot();
     const env = buildEnv(cwd, v1Result.session?.session_id, runtime);
-    if (runtime === 'claude') {
-      // 4. settings.json 인젝션
-      try {
-        injectSettings(env, v1Result, runtime, cwd, pkgRoot);
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        if (msg.includes('settings.json lock') || msg.includes('SettingsLockError')) {
-          console.error(`[forgen] ${msg} — settings 갱신 스킵, 이전 값 유지`);
-        } else {
-          throw e;
-        }
-      }
-      // 5. 에이전트 설치
-      installAgents(cwd, pkgRoot);
-      // 6. 규칙 파일 생성 + 주입
-      const ruleFiles = generateClaudeRuleFiles(cwd, v1Result.renderedRules);
-      injectClaudeRuleFiles(cwd, ruleFiles);
-      // 7. 슬래시 명령 설치
-      installSlashCommands(cwd, pkgRoot);
-    } else if (runtime === 'codex') {
-      // 0.4.6 — Codex hooks 자동 reconcile-on-launch.
-      // 매 fgx --codex / forgen --runtime codex 호출 시 hooks.json 의 forgen entry 가
-      // 현재 pkgRoot 와 일치하는지 fast check. 불일치 (다른 머신/버전 install,
-      // pkg path 변경, 신규 설치) → silent reinstall.
-      // 사용자가 `forgen install codex` 를 명시 호출 안 해도 매번 정합성 보장.
-      try {
-        await ensureCodexHooksFresh(pkgRoot);
-      } catch (e) {
-        log.debug('Codex hooks reconcile 실패 (fail-open)', e);
-      }
+    const binding = HOST_BINDINGS[runtime];
+    if (binding) {
+      await binding.prepareSession({ cwd, pkgRoot, env, v1Result });
     } else {
       log.debug(`prepareHarness: runtime=${runtime} — artifact prep skipped`);
     }

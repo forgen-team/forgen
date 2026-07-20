@@ -55,19 +55,19 @@ Claude:  "撤回完成声明。证据文件不存在。先执行 e2e..."
 
 **刚刚发生了什么**: Claude 的 Stop hook 被你定义的规则 (`L1-e2e-before-done`) 拦截。Claude 读取了 block `reason`, 撤回过早的完成声明, 产生证据, 重新提交。**零额外 API 调用** — 全部发生在 Claude 本来就会产出的同一个 session turn 内。
 
-这就是 **Mech-B 自检 prompt-inject**。它工作是因为 Claude Code 的 Stop hook 接受 `decision: "block"` + `reason`, 而 Claude 在下一轮把那个 reason 作为输入读取。我们用 10 个场景、$1.74 总成本端到端验证 ([A1 spike report](docs/spike/mech-b-a1-verification-report.md))。
+这就是 **Mech-B 自检 prompt-inject**。它工作是因为 Claude Code 的 Stop hook 接受 `decision: "block"` + `reason`, 而 Claude 在下一轮把那个 reason 作为输入读取。我们用 10 个场景、$1.74 总成本端到端验证 (A1 spike report — 已归档于 git 历史, `docs/spike/` pre-v0.5.0)。
 
 🎬 **观看实际运行** (27秒):
 
 ```bash
 # 现场观看完整循环 — 真实的 hook、真实的规则、真实的 block/approve 周期
-bash docs/demo/mech-b-demo.sh
+# demo 脚本已归档于 git 历史 (docs/demo/ pre-v0.5.0)
 
 # 或重放预录制的 asciinema cast
-asciinema play docs/demo/mech-b-block-unblock.cast
+# asciinema cast 同上
 ```
 
-关于 demo 中"真实 vs 模拟"的详情见 [`docs/demo/README.md`](docs/demo/README.md)。
+
 
 ---
 

@@ -54,10 +54,12 @@ describe('E2E: correction → rule with enforce_via → live enforcement', () =>
 
   it('avoid-this 완료선언 교정 → rule 자동생성 + Mech-A Stop enforce_via → 다음 Stop hook 에서 block 발화', () => {
     // 1) 사용자 교정 (MCP correction-record 가 처음 이 함수 호출)
+    // 명시적 증거 경로 포함 — 분류기가 이 경로를 추출해 artifact_check 로 강제한다.
+    // (경로 미명시 교정은 Mech-B self_check 로 분류됨 — enforce-classifier.test.ts 커버)
     const result = processCorrection({
       session_id: 'e2e-sess',
       kind: 'avoid-this',
-      message: 'Docker e2e 없이 완료했다 선언하지 마라',
+      message: 'Docker e2e 통과 증거 ~/.forgen/state/e2e-result.json 없이 완료했다 선언하지 마라',
       target: 'completion-before-e2e',
       axis_hint: 'quality_safety',
     });

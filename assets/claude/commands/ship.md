@@ -166,10 +166,27 @@ npm version {patch|minor|major} --no-git-tag-version
 
 커밋을 주제별 그룹핑 -> CHANGELOG.md 상단에 추가.
 
+## Step 6.5: Smoke 증거 생성 (forgen 레포 한정)
+
+forgen 레포 자체를 ship 할 때는 릴리스 커밋 전에 smoke 증거를 생성한다
+(ADR-010 W0-2 — CI self-gate 가 릴리스 커밋에서 smoke-report 를 요구).
+
+```bash
+# forgen 레포에서만. vitest 는 Step 3 에서 이미 돌았지만 게이트 증거는
+# smoke.cjs 산출물만 인정 — 전체 실행 (실제 프로세스 산출물 원칙).
+if [ -f scripts/smoke.cjs ]; then
+  node scripts/smoke.cjs || ABORT
+fi
+```
+
+- 실패 -> ABORT ("smoke 증거 생성 실패 — 게이트 통과 불가")
+
 ## Step 7: 릴리스 커밋
 
 ```bash
-git add package.json CHANGELOG.md
+git add package.json package-lock.json CHANGELOG.md
+# forgen 레포: smoke 증거 포함
+[ -f .forgen-release/smoke-report.json ] && git add .forgen-release/smoke-report.json
 git commit -m "release: v{version}"
 ```
 

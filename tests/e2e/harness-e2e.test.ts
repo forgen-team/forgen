@@ -162,28 +162,27 @@ describe('Scenario 1: Harness Bootstrap E2E', () => {
    * 체인 검증(생성된 파일의 내용이 다음 단계에서 소비 가능한 형태인가)에 집중.
    */
 
-  it('project-context.md에 보안 규칙 + 안티패턴 + compound 섹션이 모두 포함된다', async () => {
+  it('project-context.md: 보안/안티패턴은 훅 포인터 2줄, compound 섹션 유지 (W2-3)', async () => {
     const { generateClaudeRuleFiles } = await import('../../src/core/config-injector.js');
     const tmpCwd = makeTempDir('bootstrap');
     try {
       const ruleFiles = generateClaudeRuleFiles(tmpCwd);
 
-      // project-context.md는 3개 섹션의 합본
       expect(ruleFiles['project-context.md']).toBeDefined();
       const content = ruleFiles['project-context.md'];
-      expect(content).toContain('Forgen — Security Rules');
-      expect(content).toContain('Forgen — Anti-Pattern Detection');
+
+      // W2-3: prose → 포인터. 강제 주체(훅)와 확인 경로가 명시된다.
+      expect(content).toContain('Forgen — Security & Anti-Pattern');
+      expect(content).toContain('secret-filter');
+      expect(content).toContain('db-guard');
+      expect(content).toContain('forgen explain');
       expect(content).toContain('Forgen — Compound Loop');
 
-      // 보안 규칙 내 필수 키워드
-      expect(content).toContain('rm -rf');
-      expect(content).toContain('git push --force');
-      expect(content).toContain('.env');
-
-      // 안티패턴 규칙 내 필수 키워드
-      expect(content).toContain('3+ times');
-      expect(content).toContain('empty catch');
-      expect(content).toContain('50 lines');
+      // 제거된 prose 는 돌아오지 않는다 (native /doctor 가 트리밍 대상으로
+      // 지목하는 "코드에서 유추 가능한 규칙" 부류 — ADR-010 §2c)
+      expect(content).not.toContain('Anti-Pattern Detection');
+      expect(content).not.toContain('3+ times');
+      expect(content).not.toContain('empty catch');
     } finally {
       fs.rmSync(tmpCwd, { recursive: true, force: true });
     }

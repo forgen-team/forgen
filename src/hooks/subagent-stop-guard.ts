@@ -28,6 +28,7 @@ import { sanitizeId } from './shared/sanitize-id.js';
 import { recordHookTiming } from './shared/hook-timing.js';
 import { STATE_DIR } from '../core/paths.js';
 import { runMetaGuards } from '../checks/_shared/meta-guard-dispatch.js';
+import { guardModeForModel, readSessionModel } from '../checks/_shared/model-profile.js';
 import { recordViolation } from '../engine/lifecycle/signals.js';
 import {
   incrementBlockCount,
@@ -120,7 +121,9 @@ export async function main(): Promise<void> {
     const agentId = input?.agent_id ?? input?.agentId ?? 'unknown';
     const recentTools = loadAgentRecentTools(sessionId, agentId);
 
-    const results = runMetaGuards({ lastMessage, recentTools, minMeasurements: 1 });
+    // W4-3: 세션 모델 기반 완료-가드 모드 (opus-4.8 실측 blocks=0 → advise)
+    const completionGuardMode = guardModeForModel(readSessionModel(sanitizeId(sessionId)));
+    const results = runMetaGuards({ lastMessage, recentTools, minMeasurements: 1, completionGuardMode });
     // 2c: stuck-loop 카운터를 (sessionId, agentId) 로 분리해 동시 subagent 간 충돌 방지.
     const counterKey = `${sessionId}:${agentId}`;
 

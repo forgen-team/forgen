@@ -5,13 +5,20 @@
  * dist/hooks/*.js 를 spawn 하여 fake stdin 으로 호출, 기대 응답 JSON 이 리턴되는지
  * 확인한다. Claude Code 구동 없이 — hook 로직 자체의 self-consistency 를 증명.
  *
- * 시나리오 (ADR-003 §scripts/self-gate-runtime.cjs + A1 spike 산출물):
- *   SG-S1: 완료 선언 + 증거 없음 → stop-guard 가 decision:block
- *   SG-S2: retraction → stop-guard approve
- *   SG-S3: 일반 진행 메시지 → stop-guard approve
- *   SG-S4: shipped keyword → stop-guard block
- *   SG-S5: 한글 '완성되었습니다' → stop-guard block
- *   SG-S6: 테스트 맥락 vi.mock → stop-guard approve (exclude)
+ * 시나리오 (ADR-003 §scripts/self-gate-runtime.cjs + A1 spike, ADR-010 강등 반영):
+ *   SG-S1: bare 완료 선언 → approve (ADR-010: 완료가드 강등, blocks=0 검증 —
+ *          무증거 bare 완료선언은 hard-block 아니라 correction 기록. 과거 block은
+ *          은퇴한 L1-e2e 도그푸드 룰이 만들던 것. R1/v0.4.11 blocks=0 발견 참조)
+ *   SG-S2: retraction → approve
+ *   SG-S3: 일반 진행 메시지 → approve
+ *   SG-S4: shipped keyword (bare) → approve (S1과 동일 근거)
+ *   SG-S5: 한글 '완성되었습니다' (bare) → approve (S1과 동일 근거)
+ *   SG-S6: 테스트 맥락 vi.mock → approve (exclude)
+ *   SG-S7: mock-as-proof (실행 없이 mock으로 완료 주장) → block (L1-no-mock 생존 가드)
+ *   SG-S8: 파괴적 명령(rm -rf) 제안 → block (결정적 가드 생존)
+ *
+ * 게이트 의도: 은퇴한 도그푸드 e2e 룰이 아니라 *현재 실제로 살아있는* enforcement
+ * (mock-as-proof self_check + 결정적 파괴명령 가드)의 block 경로를 검증한다.
  *
  * 각 시나리오는 일시 HOME 으로 격리 — dev 의 실제 ~/.forgen 에 영향 없음.
  */
@@ -56,12 +63,16 @@ function runStopGuard(lastMessage, sandbox) {
 }
 
 const scenarios = [
-  { id: 'SG-S1', lastMessage: '구현 완료했습니다.',                       expect: 'block' },
+  // bare 완료 선언 (증거·mock 무관) → ADR-010 강등으로 approve (correction 기록)
+  { id: 'SG-S1', lastMessage: '구현 완료했습니다.',                       expect: 'approve' },
   { id: 'SG-S2', lastMessage: '완료 선언을 취소합니다. 증거 없음.',        expect: 'approve' },
   { id: 'SG-S3', lastMessage: '작업 진행 중입니다.',                       expect: 'approve' },
-  { id: 'SG-S4', lastMessage: 'shipped.',                                  expect: 'block' },
-  { id: 'SG-S5', lastMessage: '기능 구현이 완성되었습니다.',               expect: 'block' },
+  { id: 'SG-S4', lastMessage: 'shipped.',                                  expect: 'approve' },
+  { id: 'SG-S5', lastMessage: '기능 구현이 완성되었습니다.',               expect: 'approve' },
   { id: 'SG-S6', lastMessage: '테스트에서 vi.mock 쓴 건 맞지만 dry-run 으로 동작 검증했습니다.', expect: 'approve' },
+  // 살아있는 가드: block 경로가 실제로 동작하는지 검증
+  { id: 'SG-S7', lastMessage: 'mock 으로 검증 완료했습니다. 실제 실행은 안 했습니다.', expect: 'block' },
+  { id: 'SG-S8', lastMessage: 'rm -rf / 를 실행하면 정리가 끝납니다.',      expect: 'block' },
 ];
 
 const failures = [];
@@ -113,8 +124,8 @@ for (const sc of scenarios) {
   const bcDir = path.join(sandbox, '.forgen', 'state', 'enforcement', 'block-count');
   const ackPath = path.join(sandbox, '.forgen', 'state', 'enforcement', 'acknowledgments.jsonl');
   try {
-    // Step 1: block
-    const blk = spawnCall('구현 완료했습니다.');
+    // Step 1: block (살아있는 mock-as-proof 가드로 — bare 완료선언은 ADR-010 강등)
+    const blk = spawnCall('mock 으로 검증 완료했습니다. 실제 실행은 안 했습니다.');
     const blkLast = JSON.parse(blk.stdout.trim().split('\n').filter(Boolean).pop());
     if (blkLast.decision !== 'block') {
       failures.push({ id: 'SG-ACK/1', detail: `expected block, got ${JSON.stringify(blkLast)}` });

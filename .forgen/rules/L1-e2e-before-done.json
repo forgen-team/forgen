@@ -6,18 +6,21 @@
   "policy": "forgen 프로젝트에서 변경 후 vitest 만으로 완료 선언 금지. 반드시 Docker e2e (tests/e2e/docker/run-test.sh 또는 equivalent) 통과 증거가 ~/.forgen/state/e2e-result.json 에 최근 1시간 내 생성되어야 완료.",
   "strength": "hard",
   "source": "explicit_correction",
-  "status": "active",
+  "status": "retired",
   "evidence_refs": [],
   "render_key": "quality_safety.l1-e2e-before-done",
   "created_at": "2026-04-22T00:00:00.000Z",
-  "updated_at": "2026-04-22T00:00:00.000Z",
+  "updated_at": "2026-07-20T01:30:00.000Z",
   "enforce_via": [
     {
       "mech": "A",
       "hook": "Stop",
       "verifier": {
         "kind": "artifact_check",
-        "params": { "path": ".forgen/state/e2e-result.json", "max_age_s": 3600 }
+        "params": {
+          "path": ".forgen/state/e2e-result.json",
+          "max_age_s": 3600
+        }
       },
       "block_message": "L1-e2e-before-done: 완료 선언 전 Docker e2e 증거 (~/.forgen/state/e2e-result.json, 1시간 이내) 필요. 지금 실행 후 재응답하라.",
       "trigger_keywords_regex": "(완료했|완성됐|완성되|완성했|done\\.|ready\\.|shipped\\.|LGTM|finished\\.)",

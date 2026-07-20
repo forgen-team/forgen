@@ -11,21 +11,21 @@ import {
   buildEnv,
 } from '../src/core/config-injector.js';
 
-describe('generateSecurityRules', () => {
-  it('보안 관련 키워드를 포함한다', () => {
+describe('generateSecurityRules (W2-3: prose → 포인터)', () => {
+  it('강제 주체(훅)와 확인 경로를 가리키는 2줄 포인터다', () => {
     const result = generateSecurityRules();
-    expect(result).toContain('Security Rules');
-    expect(result).toContain('Dangerous Command');
-    expect(result).toContain('Secret Key Protection');
+    // 강제는 훅이 한다는 사실 + 실존 명령 포인터
+    expect(result).toContain('secret-filter');
+    expect(result).toContain('db-guard');
+    expect(result).toContain('forgen explain');
+    // W2-3 AC: prose 시절(~1.2KB) 대비 대폭 축소 — 토큰 다이어트가 실제로 일어났는가
+    expect(result.length).toBeLessThan(400);
   });
 });
 
-describe('generateAntiPatternRules', () => {
-  it('안티패턴 관련 규칙을 포함한다', () => {
-    const result = generateAntiPatternRules();
-    expect(result).toContain('Anti-Pattern Detection');
-    expect(result).toContain('Repeated Edit Warning');
-    expect(result).toContain('Error Suppression Warning');
+describe('generateAntiPatternRules (W2-3: 통합·제거)', () => {
+  it('빈 문자열 — 포인터는 generateSecurityRules 로 통합됨', () => {
+    expect(generateAntiPatternRules()).toBe('');
   });
 });
 

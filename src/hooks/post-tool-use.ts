@@ -23,7 +23,7 @@ import { STATE_DIR } from '../core/paths.js';
 import { recordHookTiming } from './shared/hook-timing.js';
 import { type DriftState, createDriftState, evaluateDrift } from '../core/drift-score.js';
 import { appendImplicitFeedback } from '../store/implicit-feedback-store.js';
-import { recordToolCall } from '../core/usage-telemetry.js';
+// ADR-010 W2-2: usage-telemetry 기록 제거 — native /usage 이관. (hot path I/O 절감)
 import { emitSolutionEvent, querySurfacedWithin } from '../core/observability-store.js';
 import { parseSolutionV3 } from '../engine/solution-format.js';
 import { ME_SOLUTIONS } from '../core/paths.js';
@@ -183,8 +183,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  // ADR-008 / 0.4.6 — usage telemetry. fail-open, hook 차단 안 함.
-  recordToolCall((process.env.FORGEN_RUNTIME as 'claude' | 'codex' | undefined) ?? 'claude');
+  // (ADR-010 W2-2: usage-telemetry 기록 제거됨 — native /usage 이관)
 
   const toolName = data.tool_name ?? data.toolName ?? '';
   const toolInput = data.tool_input ?? data.toolInput ?? {};

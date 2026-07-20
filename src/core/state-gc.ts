@@ -32,6 +32,7 @@ const SESSION_SCOPED_PREFIXES = [
   'reminder-',
   'context-',
   'last-',
+  'current-model-', // W4-3 per-model 가드 프로필의 세션별 모델 캐시
 ];
 
 const DEFAULT_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;

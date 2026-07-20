@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-07-16 — 플랫폼 수렴 대응: 경계 재정의 · 컨텍스트 다이어트 · ROI 루프 (ADR-010)
+
+Claude Code 가 forgen 영역을 native 로 흡수하기 시작한 것(`/doctor`, `/usage`,
+Auto mode)과 Sonnet 5 기본 모델 전환에 대한 전략 릴리스. 방향: native 와 겹치는
+표면에서 물러나고, moat(교정→프로필 학습·증거 게이팅 정책·compound recall+ROI·
+multi-host)에 재집중. 상세 결정 기록: `docs/adr/ADR-010`, 실행 스펙:
+`docs/plans/2026-07-16-v0.5.0-execution-plan.md`. 전 작업 청크가 적대적 리뷰
+6회전을 거침 (SEV-1 3건 포함 전 발견 반영).
+
+### 측정 기반 재정렬 (핵심 배경)
+- **v0.4.11 실측: opus-4.8 에서 완료 가드 blocks=0** (easy/hard 양쪽) — δ 효과는
+  100% injection 에서 나온다. enforcement 는 프론티어 모델이 흡수했고, forgen 의
+  가치는 injection 품질·메모리·개인화·측정으로 이동했다. 효과 수치는 Sonnet 5
+  재측정(R2) 전까지 주장하지 않는다 (Honest Fail Path).
+
+### Added
+- **`forgen migrate tenetx`** (+ `doctor --reclaim`): tenetx(레거시 정체성)/구버전
+  forgen 이 `~/.claude/rules/` 등에 남긴 규칙 스프롤을 provenance 기반으로 회수.
+  manifest content-hash 일치 = 무프롬프트, 마커만 = `--yes` 필요, 그 외 불간섭.
+  전량 백업-이동(가역), `--dry-run`, `--apply-settings`(settings-lock 준수).
+- **Injection ROI 루프**: `surfaced ≫ acted_on` 저 ROI 솔루션 자동 강등(×0.5,
+  24h 게이트 2윈도 연속 시 주입 제외, acted 발생 시 즉시 해제). `forgen status`
+  에 "Surfaced but ignored" 패널. native 메모리에 없는 acted-on 피드백 루프.
+- **per-model 완료-가드 프로필**: 측정된 opus-4.8 은 advise(기록만), 미측정
+  모델(sonnet-5 포함)은 block 유지. 모델 식별은 statusline 세션 캐시 경유
+  (hook stdin 에 모델 필드 없음 — probe 실측). DANGEROUS 가드는 모델 무관 block.
+- **smoke 릴리스 게이트**: `scripts/smoke.cjs` — 실제 프로세스 실행 증거만 기록
+  (vitest/cli/statusline/hook-exec), report.version ↔ package.json 바인딩으로
+  stale 증거 재사용 차단. Docker e2e 게이트 폐지 대체 (증거 수단 적정화 —
+  원칙 유지).
+- retro-real 평가 데이터셋 15엔트리 (실세션 anonymized, 완화 역방향 케이스 포함).
+
+### Changed
+- **경계 재정의**: `forgen doctor` 는 forgen 자체 기계+효과-측정 게이트만
+  (환경 건강 → native `/doctor` 안내, Maturity/QuickWins 제거, hook timing →
+  `--verbose`); 사용량 표시 → native `/usage` 이관(1회 공지, dashboard 는
+  deprecated 플래그); 보안/안티패턴 prose → 훅 포인터 2줄 (71.8% 축소).
+- **규칙 주입 전면 프로젝트 스코프화**: `forge-*` 글로벌 사이드채널 제거 —
+  behavioral 패턴이 전 프로젝트에 새던 결함(F6) 수정. 렌더 파일 content-hash
+  manifest 기록 (reclaimer 근거).
+- **behavioral 에코 하드닝**: observedCount≥2 게이트(주력 — 실오염 49/49 가
+  1회 관찰) + 캡처 사이드 차단 + 앵커드 패턴 보강. Claude-voice 에코가 규칙으로
+  재주입되던 오염 경로 차단.
+
+### Fixed
+- `doctor --repair` 가 글로벌 설치에서 실제로 복구하지 못하던 버그 (devDeps 부재로
+  build 실패 → postinstall 미도달) — dist 존재 시 build 생략 + 결과 재검증 보고.
+- statusline 1회 공지가 5초 캐시에 섞여 반복되던 버그.
+
+### Deprecated
+- `usage-telemetry` 기록 (no-op shim, v0.6.0 모듈 삭제 예정) — native `/usage`.
+
 ## [0.4.13] — 2026-06-02 — Hotfix: fgx 세션 종료 시 터미널 물림 방지
 
 핫픽스 한 건.

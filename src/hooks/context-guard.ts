@@ -23,6 +23,7 @@ import { HANDOFFS_DIR, STATE_DIR } from '../core/paths.js';
 import { recordHookTiming } from './shared/hook-timing.js';
 import { sanitizeId } from './shared/sanitize-id.js';
 import { redactSecrets } from './secret-filter.js';
+import type { HostId } from '../core/trust-layer-intent.js';
 
 const log = createLogger('context-guard');
 const CONTEXT_STATE_PATH = path.join(STATE_DIR, 'context-guard.json');
@@ -255,7 +256,7 @@ export async function main(): Promise<void> {
     }
 
     // forge-loop 활성 시 미완료 스토리 감지 → 지속 메시지 주입 (polite-stop 방지)
-    const forgeLoopBlock = checkForgeLoopActive();
+    const forgeLoopBlock = checkForgeLoopActive(sessionId);
     if (forgeLoopBlock) {
       console.log(forgeLoopBlock);
       return;
@@ -266,7 +267,7 @@ export async function main(): Promise<void> {
       const errorMsg = input.error;
       // FORGEN_RUNTIME 은 buildEnv (config-injector.ts:479) 에서 spawn 시 주입.
       // hook 은 claude/codex CLI 를 통해 invoke 되어 부모 env 상속.
-      const runtime = (process.env.FORGEN_RUNTIME as 'claude' | 'codex' | undefined) ?? 'claude';
+      const runtime = (process.env.FORGEN_RUNTIME as HostId | undefined) ?? 'claude';
 
       if (TOKEN_LIMIT_REGEX.test(errorMsg)) {
         saveHandoff(sessionId, 'context-limit', errorMsg);
@@ -533,18 +534,26 @@ async function maybeSpawnAutoCompound(
 
 // forge-loop 차단 안전 상한 (무한 루프 방지)
 const FORGE_LOOP_MAX_BLOCKS = 30;
-const FORGE_LOOP_STALE_MS = 2 * 60 * 60 * 1000; // 2시간
+// TTL: 24시간. 과거 2시간은 정상적으로 오래 걸리는 forge-loop 세션까지 중도
+// 해제시켰다. "크래시된 세션의 잔여 active:true 가 무관한 후속 세션을 영구
+// 차단"하는 문제는 이 TTL 이 아니라 아래 sessionId 바인딩으로 별도 해결한다 —
+// TTL 은 진짜로 죽은(재개 안 되는) 세션을 회수하기 위한 상한일 뿐이다.
+const FORGE_LOOP_STALE_MS = 24 * 60 * 60 * 1000;
 
 interface ForgeLoopStory {
   id: string;
   title: string;
   passes: boolean;
   attempts?: number;
+  /** 첫 항목만 차단 메시지에 AC1으로 노출 (선택 필드 — 없어도 정상 동작). */
+  acceptanceCriteria?: string[];
 }
 
 interface ForgeLoopState {
   active: boolean;
   startedAt: string;
+  /** 최초 차단 시점에 자동 귀속되는 소유 세션. 다른 세션의 Stop 은 이 루프를 건드리지 않는다. */
+  sessionId?: string;
   lastBlockAt?: string;
   blockCount?: number;
   stories: ForgeLoopStory[];
@@ -554,31 +563,57 @@ interface ForgeLoopState {
 /**
  * forge-loop 활성 시 미완료 스토리가 있으면 Stop을 차단하고 지속 메시지 주입.
  * OMC의 persistent-mode.cjs 패턴 참고.
+ *
+ * @param sessionId 호출한 Stop hook 의 세션 ID. 미지정 시(레거시 호출) 세션
+ *   바인딩을 건너뛰고 기존처럼 전역으로 평가한다.
  */
-export function checkForgeLoopActive(): string | null {
+export function checkForgeLoopActive(sessionId?: string): string | null {
   try {
     if (!fs.existsSync(FORGE_LOOP_STATE_PATH)) return null;
 
     const state: ForgeLoopState = JSON.parse(fs.readFileSync(FORGE_LOOP_STATE_PATH, 'utf-8'));
     if (!state.active) return null;
 
-    // Stale 감지: 2시간+ 미활동 → 자동 비활성화
+    // 세션 바인딩: 이미 다른 세션에 귀속된 루프라면 이 세션과 무관 — 손대지 않고 통과.
+    // 크래시된 세션이 남긴 active:true 가 이후 전혀 다른 세션을 영구 차단하는 것을 방지.
+    if (state.sessionId && sessionId && state.sessionId !== sessionId) {
+      return null;
+    }
+    // 최초 차단 후보 세션에 자동 귀속 (스킬은 세션 ID를 알 필요 없음).
+    if (!state.sessionId && sessionId) {
+      state.sessionId = sessionId;
+    }
+
+    // 사용자 명시 우회 — 이번 턴만 통과시키고 루프 상태(active/blockCount)는 보존.
+    // pre-tool-use/stop-guard 와 동일한 FORGEN_USER_CONFIRMED=1 관용구.
+    if (process.env.FORGEN_USER_CONFIRMED === '1') return null;
+
+    // Stale 감지: TTL(24h) 초과 → 자동 비활성화 + 1회성 안내 (침묵 해제 금지).
     const startedAt = new Date(state.startedAt).getTime();
     if (Number.isFinite(startedAt) && Date.now() - startedAt > FORGE_LOOP_STALE_MS) {
       state.active = false;
       atomicWriteJSON(FORGE_LOOP_STATE_PATH, state);
+      return approveWithWarning(
+        `[Forgen] forge-loop 상태가 ${Math.round(FORGE_LOOP_STALE_MS / 3_600_000)}시간 이상 갱신되지 않아 자동 해제되었습니다. ` +
+        `재개하려면 "/forge-loop resume" 를 입력하세요.`
+      );
+    }
+
+    // 확인 대기 중이면 차단하지 않음 (사용자 개입 허용) — 귀속은 반영 후 통과.
+    if (state.awaitingConfirmation) {
+      atomicWriteJSON(FORGE_LOOP_STATE_PATH, state);
       return null;
     }
 
-    // 확인 대기 중이면 차단하지 않음 (사용자 개입 허용)
-    if (state.awaitingConfirmation) return null;
-
-    // 안전 상한: 30회 이상 차단 시 무한 루프로 간주하여 해제
+    // 안전 상한: 30회 이상 연속 차단 시 무한 루프로 간주하여 해제 + 1회성 안내.
     const blockCount = state.blockCount ?? 0;
     if (blockCount >= FORGE_LOOP_MAX_BLOCKS) {
       state.active = false;
       atomicWriteJSON(FORGE_LOOP_STATE_PATH, state);
-      return null;
+      return approveWithWarning(
+        `[Forgen] forge-loop 이 연속 ${FORGE_LOOP_MAX_BLOCKS}회 차단되어 안전 상한으로 자동 해제되었습니다. ` +
+        `무한 루프 가능성을 점검한 뒤 필요 시 "/forge-loop resume" 로 재개하세요.`
+      );
     }
 
     // 미완료 스토리 확인
@@ -597,10 +632,14 @@ export function checkForgeLoopActive(): string | null {
     atomicWriteJSON(FORGE_LOOP_STATE_PATH, state);
 
     const nextStory = pending[0];
-    const message = [
+    const firstAC = Array.isArray(nextStory.acceptanceCriteria) ? nextStory.acceptanceCriteria[0] : undefined;
+    const lines = [
       `<forgen-forge-loop iteration="${state.blockCount}/${FORGE_LOOP_MAX_BLOCKS}">`,
       `[FORGE-LOOP] ${pending.length}개 스토리가 미완료입니다.`,
       `현재 스토리: ${nextStory.id} — ${nextStory.title}`,
+    ];
+    if (firstAC) lines.push(`AC1: ${firstAC}`);
+    lines.push(
       ``,
       `계속 진행하세요. 보고는 다음 시점에만 합니다:`,
       `  1. 모든 스토리 완료 (최종 리포트)`,
@@ -610,13 +649,13 @@ export function checkForgeLoopActive(): string | null {
       `중간 "완료했습니다" 보고는 polite-stop anti-pattern입니다.`,
       `취소하려면: "/forge-loop cancel" 또는 "cancelforgen" 입력`,
       `</forgen-forge-loop>`,
-    ].join('\n');
+    );
 
     // block 결정으로 Claude가 계속 작업하도록 강제
     return JSON.stringify({
       continue: true,
       decision: 'block',
-      reason: message,
+      reason: lines.join('\n'),
     });
   } catch (e) {
     // fail-open: forge-loop 상태 읽기 실패는 차단하지 않음

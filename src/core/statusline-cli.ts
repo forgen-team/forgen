@@ -16,7 +16,6 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import { execSync } from 'node:child_process';
 import { loadActiveRules } from '../store/rule-store.js';
-import { getUsageStats } from './usage-telemetry.js';
 import { STATE_DIR } from './paths.js';
 import { classifySolutions } from './lifecycle-classifier.js';
 
@@ -35,7 +34,8 @@ const BOLD = '\x1b[1m';
 const RESET = '\x1b[0m';
 
 interface StdinPayload {
-  model?: { display_name?: string };
+  session_id?: string;
+  model?: { id?: string; display_name?: string };
   workspace?: { current_dir?: string };
   [key: string]: unknown;
 }
@@ -149,17 +149,19 @@ function buildLifecycleLine(): string | null {
   }
 }
 
-/** Build usage line: "📊 87/5h · 412/wk (claude)" — 0.4.6 신설 */
+/**
+ * ADR-010 W2-2: 사용량 세그먼트("📊 N/5h · N/wk") 제거 — native /usage 가
+ * plan limit 를 정확히 분해한다. 이관 사실을 딱 1회만 공지 (state flag).
+ */
 function buildUsageLine(): string | null {
   try {
-    const stats = getUsageStats();
-    if (stats.week.total === 0) return null;
-    const dominant = stats.week.codex > stats.week.claude ? 'codex' : 'claude';
-    return [
-      `${YELLOW}📊 ${stats.hour5.total}/5h${RESET}`,
-      `${YELLOW}${stats.week.total}/wk${RESET}`,
-      `${DIM}(${dominant})${RESET}`,
-    ].join(`  ${DIM}·${RESET}  `);
+    const noticeFlag = path.join(STATE_DIR, 'usage-notice-shown');
+    if (!fs.existsSync(noticeFlag)) {
+      fs.mkdirSync(STATE_DIR, { recursive: true });
+      fs.writeFileSync(noticeFlag, new Date().toISOString());
+      return `${DIM}ℹ 사용량 표시는 native /usage 로 이동했습니다 (이 안내는 1회만 표시)${RESET}`;
+    }
+    return null;
   } catch {
     return null;
   }
@@ -205,7 +207,20 @@ function writeCache(content: string): void {
 }
 
 export async function handleStatusline(): Promise<void> {
-  // 캐시 hit 시 stdin payload 무시하고 바로 출력 (5초 윈도우 내 동일 출력 가정).
+  // W4-3 (ADR-010): hook stdin 엔 모델 필드가 없으므로 statusline 이 세션별
+  // 모델을 캐시 → Stop/SubagentStop 가드가 per-model 프로필 조회에 사용.
+  // 리뷰 SEV-2: 이 기록은 반드시 5초 표시-캐시 early-return **앞**에 있어야
+  // 한다 — /model 로 세션 중 모델을 바꾸면 cache-hit 렌더가 payload 를 아예
+  // 안 읽어 stale 모델(잘못된 가드 모드)이 유지되는 창이 생긴다.
+  // 필드 부재(구버전 CC 등) 시 기록 안 함 = 가드는 'unknown' → block 유지.
+  const payload = readStdinJson();
+  if (payload.session_id && payload.model?.id) {
+    const { cacheSessionModel } = await import('../checks/_shared/model-profile.js');
+    const { sanitizeId } = await import('../hooks/shared/sanitize-id.js');
+    cacheSessionModel(sanitizeId(payload.session_id), payload.model.id);
+  }
+
+  // 캐시 hit 시 표시만 캐시에서 (5초 윈도우 내 동일 출력 가정).
   // 라인 단위 cache → console.log 라인별 (테스트 호환).
   const cached = readCacheIfFresh();
   if (cached !== null) {
@@ -213,7 +228,6 @@ export async function handleStatusline(): Promise<void> {
     return;
   }
 
-  const payload = readStdinJson();
   const cwd = payload.workspace?.current_dir ?? process.cwd();
   const claudeDir = path.join(os.homedir(), '.claude');
 
@@ -231,9 +245,10 @@ export async function handleStatusline(): Promise<void> {
   if (usageLine) console.log(usageLine);
   if (lifecycleLine) console.log(lifecycleLine);
 
+  // W2-2: 1회 공지(usageLine)는 캐시에 넣지 않는다 — 캐시 재생 시
+  // "1회만" 약속이 5초 창 동안 반복 위반되는 실측 버그 방지.
   const cacheLines = [line1, line3];
-  if (usageLine) cacheLines.push(usageLine);
   if (lifecycleLine) cacheLines.push(lifecycleLine);
-  const cacheBody = cacheLines.join('\n') + '\n';
+  const cacheBody = `${cacheLines.join('\n')}\n`;
   writeCache(cacheBody);
 }

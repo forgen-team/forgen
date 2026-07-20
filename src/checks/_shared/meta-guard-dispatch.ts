@@ -24,6 +24,13 @@ export interface MetaGuardContext {
   recentTools: string[];
   /** TEST-1 fact-vs-agreement 최소 측정 횟수 (기본 1). */
   minMeasurements?: number;
+  /**
+   * W4-3 (ADR-010): 완료 가드(TEST-1/2/3)의 동작 모드. 'advise' 면 block 을
+   * correction(기록만)으로 강등한다 — 측정된 프론티어 모델(opus-4.8 blocks=0)
+   * 에서 잔여 발화는 거짓양성 개연성이 높으므로. DANGEROUS-RESPONSE 는 모델
+   * 무관 안전장치라 이 모드의 영향을 받지 않는다. 기본 'block' (현행 유지).
+   */
+  completionGuardMode?: 'block' | 'advise';
 }
 
 export interface MetaGuardResult {
@@ -92,11 +99,22 @@ export function runMetaGuards(ctx: MetaGuardContext): MetaGuardResult[] {
   ];
 
   const results: MetaGuardResult[] = [];
+  const adviseMode = ctx.completionGuardMode === 'advise';
   for (const c of checks) {
     const out = c.run();
     if (!out.triggered) continue;
-    results.push({ shortId: c.shortId, ruleSlug: c.ruleSlug, kind: c.kind, reason: out.reason });
-    if (c.kind === 'block') break; // 첫 block 에서 중단 (이후 가드는 기록되지 않음)
+    // W4-3: advise 모드에선 완료 가드(TEST-*)의 block 을 correction 으로 강등.
+    // DANGEROUS 는 모델 무관 결정적 안전장치 — 강등 대상 아님.
+    const effectiveKind: 'block' | 'correction' =
+      adviseMode && c.kind === 'block' && c.shortId !== 'dangerous-response-pattern'
+        ? 'correction'
+        : c.kind;
+    results.push({ shortId: c.shortId, ruleSlug: c.ruleSlug, kind: effectiveKind, reason: out.reason });
+    // 원래 kind 기준으로 중단 (강등돼도 동일) — 리뷰 SEV-1: 강등 결과가 루프를
+    // 계속 돌면 턴당 violation 기록이 2-3배로 불어나 lifecycle T2 트리거
+    // (violations_30d>=3)를 조기 발화시키고 meta 승격을 영구 차단한다.
+    // 기록 카디널리티는 block 모드와 정확히 동일하게 보존한다.
+    if (c.kind === 'block') break;
   }
   return results;
 }

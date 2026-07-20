@@ -1,7 +1,7 @@
 {
   "repo": "https://github.com/forgen-team/forgen-eval-data",
   "commit": "PLACEHOLDER_BOOTSTRAP",
-  "fetchedAt": "2026-04-29T00:00:00Z",
+  "fetchedAt": "2026-07-16T07:09:19.640Z",
   "schemaVersion": "0.1.0",
-  "notes": "Bootstrap commit — personas are seed scaffolding awaiting external review. forgen-eval runner should pin a real commit hash after first review pass."
+  "notes": "W4-1 (ADR-010): retro-real 15 entries (3 bootstrap + 12 real anonymized 2026-05~07). The eval dataset used by the runners lives vendored in-repo at packages/forgen-eval/datasets/opus48-hard/, so runs ARE reproducible from this repo. The EXTERNAL source pin, however, is unresolved: the W4-1 commit was authored in a local forgen-eval-data checkout and never pushed to the public repo (both f5ab2e3 and 488077a return 422 there). Set back to PLACEHOLDER_BOOTSTRAP honestly until R2 pushes the dataset public and re-pins to a resolvable commit. Do NOT claim 'resolved' before that push."
 }

@@ -3,6 +3,7 @@ import {
   extractTags,
   expandCompoundTags,
   expandQueryBigrams,
+  expandQueryKoreanStems,
   parseFrontmatterOnly,
   parseSolutionV3,
   serializeSolutionV3,
@@ -246,6 +247,41 @@ describe('expandQueryBigrams (R4-T1)', () => {
     const out = expandQueryBigrams(['api', 'key', 'api-key']);
     const compoundCount = out.filter(t => t === 'api-key').length;
     expect(compoundCount).toBe(1);
+  });
+});
+
+// ── expandQueryKoreanStems (vec-probe 2026-07-20: 회화체 활용형 어간 회복) ──
+
+describe('expandQueryKoreanStems', () => {
+  it('회화체 활용형에서 어간을 추가한다 (원본 유지)', () => {
+    const cases: Array<[string, string]> = [
+      ['검증해줘', '검증'],
+      ['최적화하자', '최적화'],
+      ['배포하면', '배포'],
+      ['테스트했는데', '테스트'],
+      ['배포되면', '배포'],
+      ['리팩토링해줘', '리팩토링'],
+    ];
+    for (const [conjugated, stem] of cases) {
+      const out = expandQueryKoreanStems([conjugated]);
+      expect(out, conjugated).toContain(stem);
+      expect(out, conjugated).toContain(conjugated); // 치환이 아니라 확장
+    }
+  });
+
+  it('하/해/되가 1번째 위치인 명사는 건드리지 않는다 (≥2자 어간 보호)', () => {
+    for (const noun of ['이해', '피해', '유해물질', '하드코딩', '해결', '대하여']) {
+      expect(expandQueryKoreanStems([noun])).toEqual([noun]);
+    }
+  });
+
+  it('비활용형 한국어·영어·혼합 토큰은 그대로 통과한다', () => {
+    expect(expandQueryKoreanStems(['에러', 'docker', 'api-key'])).toEqual(['에러', 'docker', 'api-key']);
+  });
+
+  it('영어 쿼리는 어떤 변형도 추가되지 않는다 (baseline 무회귀)', () => {
+    const en = ['refactor', 'deploy', 'validation'];
+    expect(expandQueryKoreanStems(en)).toEqual(en);
   });
 });
 

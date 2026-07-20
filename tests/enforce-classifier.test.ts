@@ -61,10 +61,10 @@ describe('enforce-classifier.classify', () => {
     expect(new RegExp(pattern, 'i').test('DROP TABLE users')).toBe(true);
   });
 
-  it('completion keyword → Mech-A Stop + artifact_check', () => {
+  it('completion + 명시적 증거 경로 → Mech-A Stop + artifact_check (경로 추출, ~/ 제거)', () => {
     const r = ruleOf({
       trigger: 'test-completion-criteria',
-      policy: 'forgen 프로젝트에서 변경 후 반드시 docker e2e 까지 통과시켜야 완료다.',
+      policy: '통과 증거가 ~/.forgen/state/e2e-result.json 에 최근 1시간 내 생성되어야 완료다.',
       strength: 'strong',
     });
     const p = classify(r);
@@ -72,6 +72,70 @@ describe('enforce-classifier.classify', () => {
     expect(a).toBeDefined();
     expect(a?.verifier?.kind).toBe('artifact_check');
     expect(a?.verifier?.params.path).toBe('.forgen/state/e2e-result.json');
+  });
+
+  it('completion + 경로 미명시 → Mech-B self_check (죽은 e2e 디폴트 재생산 금지 — 리뷰 회귀 방지)', () => {
+    const r = ruleOf({
+      trigger: 'test-completion-criteria',
+      policy: 'forgen 프로젝트에서 변경 후 반드시 docker e2e 까지 통과시켜야 완료다.',
+      strength: 'strong',
+    });
+    const p = classify(r);
+    // 죽은 디폴트 artifact_check 가 더 이상 제안되지 않는다
+    expect(p.proposed.some((s) => s.verifier?.kind === 'artifact_check')).toBe(false);
+    const b = p.proposed.find((s) => s.mech === 'B' && s.hook === 'Stop');
+    expect(b).toBeDefined();
+    expect(b?.verifier?.kind).toBe('self_check_prompt');
+    expect(b?.system_tag).toContain('completion-self-check');
+    // 중복 self-check 없음 (Mech-B 일반 분기와 합쳐 1개만)
+    expect(p.proposed.filter((s) => s.verifier?.kind === 'self_check_prompt').length).toBe(1);
+  });
+
+  it('폐지/완화 룰 → 완료 게이트 미제안 (게이트 해제 룰이 게이트를 강제하는 오분류 방지)', () => {
+    // 실사례: e2e 게이트 폐지 교정 룰이 "완료"+경로 텍스트 때문에 artifact_check 를 부착받아
+    // 폐지 대상 게이트를 스스로 강제했다 (rule efe2580a).
+    const r = ruleOf({
+      trigger: 'e2e-gate-repeal',
+      policy: '완료 선언에 Docker e2e 증거(~/.forgen/state/e2e-result.json)를 더 이상 요구하지 않는다. 기존 룰을 완화.',
+      strength: 'strong',
+    });
+    const p = classify(r);
+    expect(p.proposed.some((s) => s.verifier?.kind === 'artifact_check')).toBe(false);
+    expect(p.proposed.some((s) => s.hook === 'Stop' && s.mech === 'A')).toBe(false);
+  });
+
+  it('리뷰 #9 구성 케이스: 다양한 폐지 문구도 완료 게이트 미제안 (선택사항/필요없다)', () => {
+    for (const policy of [
+      '완료 선언 시 e2e-result.json 은 이제 선택사항이다',
+      '배포 완료에 results.json 확인은 필요없다',
+    ]) {
+      const p = classify(ruleOf({ trigger: 'repeal-variant', policy, strength: 'strong' }));
+      expect(p.proposed.some((s) => s.verifier?.kind === 'artifact_check'), policy).toBe(false);
+    }
+  });
+
+  it('리뷰 #9 구성 케이스: 부수적 .json 언급은 artifact_check 로 승격되지 않는다', () => {
+    for (const policy of [
+      '배포 완료 후 package.json 버전을 확인하라',
+      '완료 전 tsconfig.json 설정을 점검할 것',
+    ]) {
+      const p = classify(ruleOf({ trigger: 'incidental-json', policy, strength: 'strong' }));
+      expect(p.proposed.some((s) => s.verifier?.kind === 'artifact_check'), policy).toBe(false);
+      // 완료 룰 자체는 self_check 로 여전히 강제된다
+      expect(p.proposed.some((s) => s.verifier?.kind === 'self_check_prompt'), policy).toBe(true);
+    }
+  });
+
+  it('리뷰 #9 구성 케이스: 금지문은 repeal 오탐을 이긴다 — 게이트 유지', () => {
+    // "완화" 단어가 있어도 "~하지 마라" 금지문이면 강제 룰이다
+    const p = classify(ruleOf({
+      trigger: 'prohibition-with-repeal-word',
+      policy: '커버리지 완화 없이 검증 완료를 선언하지 마라',
+      strength: 'strong',
+    }));
+    expect(p.proposed.some((s) => s.hook === 'Stop' && s.verifier?.kind === 'self_check_prompt')).toBe(true);
+    // drift-only(Mech-C) 로 강등되지 않았다
+    expect(p.proposed.every((s) => s.mech !== 'C')).toBe(true);
   });
 
   it('strong strength + style context → Mech-B Stop + self_check_prompt', () => {
@@ -107,9 +171,9 @@ describe('enforce-classifier.classify', () => {
     });
     const p = classify(r);
     // destructive → A/PreToolUse
-    // completion → A/Stop
+    // completion (경로 미명시) → B/Stop self_check — 죽은 e2e 디폴트 제거 후 의미 변화
     expect(p.proposed.some((s) => s.hook === 'PreToolUse')).toBe(true);
-    expect(p.proposed.some((s) => s.hook === 'Stop' && s.mech === 'A')).toBe(true);
+    expect(p.proposed.some((s) => s.hook === 'Stop' && s.verifier?.kind === 'self_check_prompt')).toBe(true);
   });
 
   it('applyProposal does not overwrite existing enforce_via (force=false)', () => {

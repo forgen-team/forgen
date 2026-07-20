@@ -1,0 +1,30 @@
+{
+  "schema": "smoke-report/v1",
+  "passed": true,
+  "at": "2026-07-16T10:16:52.164Z",
+  "version": "0.5.0",
+  "mock_detected": false,
+  "node": "v22.22.0",
+  "checks": [
+    {
+      "name": "vitest",
+      "passed": true,
+      "summary": "2803 passed | 3 skipped (2806)"
+    },
+    {
+      "name": "cli-version",
+      "passed": true,
+      "summary": "0.5.0"
+    },
+    {
+      "name": "statusline-roundtrip",
+      "passed": true,
+      "summary": "stdin {} → non-empty output"
+    },
+    {
+      "name": "hook-exec",
+      "passed": true,
+      "summary": "stop-guard.js, secret-filter.js exit 0 on minimal stdin"
+    }
+  ]
+}

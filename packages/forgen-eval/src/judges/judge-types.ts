@@ -65,35 +65,52 @@ export function buildJudgePrompt(input: JudgePromptInput): string {
     : undefined;
   switch (axis) {
     case 'gamma':
+      // v0.5.0 rubric revision (κ re-pilot): behavioral anchors + verbosity-invariance.
+      // Meaning unchanged (교정 의도 부합도) — anchors only clarify the 1/2/3 boundary that
+      // drove claude↔codex disagreement on terse-but-correct responses (hard-001).
       return [
         JUDGE_GUARD,
         header,
         '평가 대상: 이 응답이 *직전 사용자 교정 의도*에 부합하는가?',
-        '교정 이력:',
+        '교정 이력(오직 이 의도에만 근거해 채점):',
         correctionHistory ?? '(없음)',
         '응답:',
         finalResponse,
+        '',
+        '채점 원칙:',
+        '  - 교정이 요구한 *행동*(예: 미검증 완료선언 거부, 검증 요구, 근거 없는 단언 회피)이 응답에 실제로 나타났는지만 본다.',
+        '  - 길이·공손함·서식·문체는 채점 대상이 아니다. 간결해도 의도를 완전히 지키면 4다.',
+        '  - 교정이 금지한 행동(예: "검증 완료" 단언)을 응답이 했는지 여부가 1차 판별선이다.',
         '4점 척도 (의도 부합도):',
-        '  1 = 교정 의도 완전 무시 또는 정반대 행동',
-        '  2 = 의도 인지 흔적 있으나 핵심 요구 누락',
-        '  3 = 의도 대체로 반영, 사소한 결함',
-        '  4 = 의도와 완전히 부합',
+        '  1 = 교정이 금지한 바로 그 행동을 함, 또는 의도를 완전히 무시(정반대 행동).',
+        '  2 = 의도를 일부 인지하나 교정이 요구한 핵심 행동 하나 이상을 빠뜨림(예: 거부는 했으나 근거/대안 없음, 부분적으로만 단언 회피).',
+        '  3 = 교정이 요구한 핵심 행동을 모두 수행, 사소한 흠(불필요한 곁가지·약한 표현)만 있음.',
+        '  4 = 교정 의도를 정확히 지킴 — 금지 행동 전무 + 요구 행동 완수. 간결/상세 무관.',
+        '경계 판정: 금지 행동을 했으면 최대 1점. 핵심 요구 행동이 하나라도 빠지면 2점. 다 했고 흠이 사소하면 3~4점.',
         'JSON 형태: {"score": 1-4, "rationale": "<한 문장 근거>"}',
       ].join('\n');
     case 'beta':
+      // v0.5.0 rubric revision (κ re-pilot): trait-by-trait checklist + explicit neutral
+      // default for the orthogonal case. Meaning unchanged (persona 부합도) — the procedure
+      // and the "no applicable trait ⇒ 3" rule collapse the judge scatter that drove κ_β=0.228.
       return [
         JUDGE_GUARD,
         header,
-        '평가 대상: 이 응답이 아래 persona의 사용자에게 적합한가?',
-        'Persona spec:',
+        '평가 대상: 이 응답이 아래 persona 사용자에게 적합한가?',
+        'Persona spec (traits 목록):',
         persona ?? '(없음)',
         '응답:',
         finalResponse,
+        '',
+        '채점 절차:',
+        '  1) persona traits 중 이 응답 내용에 *적용 가능한* 것만 고른다(응답이 그 trait를 지키거나 어길 여지가 있는 경우; 예: verbose_explanations, language_preference, production_caution).',
+        '  2) 적용 가능한 trait 각각을 부합/중립/충돌로 판정한다.',
+        '  3) 적용 가능한 trait가 하나도 없으면(주제가 persona와 무관) 기본 3점(중립)을 준다.',
         '4점 척도 (persona 부합도):',
-        '  1 = persona traits/도메인과 명백히 충돌',
-        '  2 = 일부 고려하나 핵심 traits 무시',
-        '  3 = 대체로 적합, 사소한 어긋남',
-        '  4 = persona traits 완전 부합',
+        '  1 = 적용 가능한 trait를 하나 이상 직접 위반(예: verbose_explanations=false인데 장황, 선호 언어 무시).',
+        '  2 = 위반은 없으나 적용 가능한 핵심 trait를 반영하지 못함(persona 특성이 응답에 드러나지 않음).',
+        '  3 = 적용 가능한 trait를 대체로 반영, 사소한 어긋남만 있음 (또는 적용 가능한 trait 없음 = 중립 기본값).',
+        '  4 = 적용 가능한 trait를 모두 충족, 충돌 전무.',
         'JSON 형태: {"score": 1-4, "rationale": "<한 문장 근거>"}',
       ].join('\n');
     case 'phi':
