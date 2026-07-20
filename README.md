@@ -3,8 +3,9 @@
 </p>
 
 <p align="center">
-  <strong>When your agent says "done", forgen makes it prove it.</strong><br/>
-  Turn-level self-verification + personalized rules for <strong>Claude Code</strong> and <strong>Codex CLI</strong>, at <strong>$0 extra API cost</strong>.
+  <strong>forgen makes Claude fit <em>you</em> — and measures whether that actually helps, honestly.</strong><br/>
+  Your corrections become persistent rules; past solutions resurface when relevant; stale ones fade.<br/>
+  For <strong>Claude Code</strong> and <strong>Codex CLI</strong>, at <strong>$0 extra API cost</strong>.
 </p>
 
 <p align="center">
@@ -35,7 +36,7 @@
 
 ## The first block (30 seconds)
 
-You've been burned: Claude says "tests pass, implementation done" — you run it — it doesn't work. forgen closes that gap.
+Here's forgen's most *visible* mechanism — a live guard you can trigger in 30 seconds. Fair warning up front (this is the honest-measurement tool, after all): on current frontier models this particular guard rarely fires, because Opus 4.8 / Sonnet 5 mostly stopped making unverified "done" claims on their own (we measured **blocks = 0** — see the caveat below). So treat this as a **safety net for weaker models and the occasional tail case**, not forgen's daily value. The daily value is quieter: your corrections becoming rules, and past solutions resurfacing. But the guard is the fastest thing to *see*, so we lead with it.
 
 ```
 You:     "Update the auth middleware."
@@ -74,15 +75,21 @@ This is **Mech-B self-check prompt-inject**. It works because Claude Code's Stop
 > confirmed as ≈0 — **forgen alone is the recommended path**. See
 > [`docs/release/v0.4.5-draft.md`](docs/release/v0.4.5-draft.md).
 >
-> **Scope caveat (v0.5.0, ADR-010):** the numbers above were measured on the
-> models of their era (Claude Sonnet 4.x-class, Codex). On **Opus 4.8** we
-> measured completion-guard **blocks = 0** (easy N=10 / hard N=6) — frontier
-> models got honest on their own, and forgen's measured δ there came **100%
-> from solution injection**, not enforcement. Sonnet 5 is **unmeasured**
-> (recalibration pending); until then we make **no effect claims** for
-> frontier models. Deterministic guards (secrets, destructive commands) are
-> model-independent and unaffected. Per-model guard behavior:
-> measured-honest models get advisory mode instead of blocking (v0.5.0).
+> **Scope caveat (v0.5.0, ADR-010 + 2026-07-20 honest null):** the δ numbers
+> above were measured on the **models of their era** (Claude Sonnet 4.x-class,
+> Codex) and we do **not** carry them forward as a claim about current frontier
+> models. On **Opus 4.8** and **Sonnet 5** we measured completion-guard
+> **blocks = 0** — frontier models got honest on their own. Our v0.5.0 judge
+> redesign then re-scored the hard "false-completion pressure" cases and found
+> **no measurable behavioral δ** there (all arms avoid blatant false completion;
+> [`docs/release/v0.5.0-recalibration.md`](docs/release/v0.5.0-recalibration.md)).
+> So for current frontier models we make **no effect-size claim** — and we
+> publish that null rather than bury it. What forgen reliably provides is
+> **personalization** (corrections → persistent rules), **recall** (past
+> solutions injected when relevant), **ROI demotion** of stale knowledge, and
+> **deterministic guards** (secrets, destructive commands) that fire regardless
+> of model honesty. Per-model guard behavior: measured-honest models get
+> advisory mode instead of blocking.
 
 🎬 **See it happen** — try the guard live on your own install:
 
