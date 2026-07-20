@@ -312,7 +312,7 @@ describe('compound-share — 패턴별 export/import 번들', () => {
     const pathsA = await reloadPaths();
     writeSolutionFixture(pathsA.ME_SOLUTIONS, {
       name: 'leaky-pattern',
-      content: 'AWS key: AKIAABCDEFGHIJKLMNOP 사용해서 배포',
+      content: 'AWS key: AKIAIOSFODNN7EXAMPLE 사용해서 배포',
     });
     writeSolutionFixture(pathsA.ME_SOLUTIONS, { name: 'clean-pattern', content: '깨끗한 콘텐츠' });
 
@@ -337,7 +337,7 @@ describe('compound-share — 패턴별 export/import 번들', () => {
       const pathsA = await reloadPaths();
       writeSolutionFixture(pathsA.ME_SOLUTIONS, {
         name: 'frontmatter-leaky',
-        identifiers: ['AKIA1234567890ABCD99'],
+        identifiers: ['AKIAIOSFODNN7EXAMPLE'],
         content: '본문 자체는 깨끗함',
       });
 
@@ -346,7 +346,7 @@ describe('compound-share — 패턴별 export/import 번들', () => {
       expect(rejectedSecrets).toHaveLength(1);
       expect(rejectedSecrets[0]).toContain('frontmatter-leaky');
       // 번들 직렬화 어디에도 키가 없어야 한다
-      expect(JSON.stringify(bundle)).not.toContain('AKIA1234567890ABCD99');
+      expect(JSON.stringify(bundle)).not.toContain('AKIAIOSFODNN7EXAMPLE');
     });
 
     it('[SEV-3] 같은 번들 3회 import → 파일 1개 유지 + reExtracted만 누적 (suffix sprawl 없음)', async () => {
