@@ -8,7 +8,7 @@
 
 import { maskBlockedTokens } from './phrase-blocklist.js';
 import { calculateRelevance } from './relevance-scorer.js';
-import { expandCompoundTags, expandQueryBigrams } from './solution-format.js';
+import { expandCompoundTags, expandQueryBigrams, expandQueryKoreanStems } from './solution-format.js';
 import { shouldRejectByR4T3Rules } from './precision-guards.js';
 import { defaultNormalizer } from './term-normalizer.js';
 
@@ -58,7 +58,9 @@ export function rankCandidates<T extends RankableSolution>(
   if (maskedPromptTags.length === 0) return [];
 
   // R4-T1: expand prompt tags with adjacent-token bigrams
-  const promptTagsWithBigrams = expandQueryBigrams(maskedPromptTags);
+  // R5(vec-probe): 한국어 활용형 어간 회복 — `검증해줘` 류 회화체 쿼리가
+  // `검증` 계열 솔루션 태그에 도달하게 한다 (쿼리 사이드 전용, 인덱스 불변).
+  const promptTagsWithBigrams = expandQueryKoreanStems(expandQueryBigrams(maskedPromptTags));
   const normalizedPromptTags = defaultNormalizer.normalizeTerms(promptTagsWithBigrams);
 
   return solutions

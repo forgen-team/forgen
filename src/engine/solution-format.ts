@@ -680,6 +680,32 @@ export function expandQueryBigrams(tags: readonly string[]): string[] {
   return [...out];
 }
 
+/**
+ * 한국어 활용형 어간 회복 (매칭 **쿼리 전용** — vec-probe 2026-07-20 실측 갭).
+ *
+ * `KO_SUFFIXES`(조사)와 term-matcher의 `KO_VERBAL_SUFFIXES`(`중`,`시`)는
+ * `검증해줘`·`최적화하자`·`배포하면` 같은 회화체 활용형에 도달하지 못한다 —
+ * 자연어 한국어 프롬프트에서 `검증` 계열 솔루션 태그가 영원히 매칭 불가.
+ * (match-eval-log 2,371행 기준 한국어 장형 토큰의 지배적 형태가 이 부류.)
+ *
+ * 규칙: `어간(≥2자) + (했|하|해|됐|되|돼) + 나머지` 형태에서 어간을 **추가**한다
+ * — 원본 토큰은 유지(치환 아님)라 오탐은 확장 노이즈에 그치고, ≥2자 어간
+ * 요구가 `이해`·`피해`·`유해물질`(하/해가 1번째 위치) 류 명사를 보호한다.
+ * 쿼리 사이드만 확장하므로 인덱스 재구축·ROUND3_BASELINE 재측정이 불필요
+ * (expandQueryBigrams와 같은 계약).
+ */
+const KO_CONJUGATION_RE = /^([가-힣]{2,}?)(했|하|해|됐|되|돼)[가-힣]*$/;
+
+export function expandQueryKoreanStems(tags: readonly string[]): string[] {
+  const out = new Set<string>(tags);
+  for (const tag of tags) {
+    if (!/^[가-힣]+$/.test(tag)) continue;
+    const m = tag.match(KO_CONJUGATION_RE);
+    if (m) out.add(m[1]);
+  }
+  return [...out];
+}
+
 // ── Migration ──
 
 const V1_TYPE_MAP: Record<string, SolutionType> = {
