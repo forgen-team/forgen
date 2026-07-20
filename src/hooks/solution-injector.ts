@@ -28,6 +28,7 @@ import { withFileLock, withFileLockSync, FileLockError } from './shared/file-loc
 import { calculateBudget } from './shared/context-budget.js';
 import { writeSignal } from './shared/plugin-signal.js';
 import { approve, approveWithContext, failOpenWithTracking } from './shared/hook-response.js';
+import { truncateContent } from './shared/injection-caps.js';
 import { STATE_DIR } from '../core/paths.js';
 import { recordHookTiming } from './shared/hook-timing.js';
 import { appendPending, flushAccept } from '../engine/solution-outcomes.js';
@@ -326,6 +327,129 @@ async function detectActOnFromPriorSurface(sessionId: string, promptLower: strin
   }
 }
 
+// ── Progressive Disclosure tiers (claude-mem 스타일 index→summary→full 대응) ──
+//
+// forgen은 이미 Tier 3(전문)를 compound-read MCP tool로 갖고 있었다 (fs 안 읽고
+// on-demand pull). 이번 변경은 Tier 0~2 배분만 다시 나눈다: 매치가 여러 건일 때
+// 상위 랭크만 두껍게(Tier 2 요약) 주입하고, 나머지는 포인터 한 줄(Tier 1 인덱스)만
+// 준다 — claude-mem이 상위만 전개하고 나머지는 인덱스로 남겨 ~10x 토큰을 아끼는
+// 것과 같은 원리. 매치가 정확히 1건이면 굳이 요약할 필요가 없으므로 전문이
+// 작으면(Tier 0) 통째로 준다.
+//
+// 상위 몇 건이 Tier 2를 받는지 — 세션당 솔루션 수(2~3)를 감안해 1건만 두껍게 두면
+// 3건 매치 시나리오에서 인덱스 라인 2개로 대체되어 눈에 띄는 절감이 난다.
+const TOP_TIER_COUNT = 1;
+/** Tier 2(요약 블록): 헤더 + 핵심 최대 3줄. 이전 "Tier 2.5"와 동일한 예산 유지. */
+const SUMMARY_MAX_CHARS = 300;
+/**
+ * Tier 1(인덱스 라인): one-liner 부분만의 캡 — 힌트는 별도.
+ * 인덱스 라인은 의도적으로 type/confidence 헤더를 생략한다(포인터 성격 —
+ * 상세는 compound-read pull). 3건 매치 시 "1×Tier2 + N×Tier1"이 구 방식
+ * "N×Tier2" 대비 ≥50% 절감되도록 하는 예산의 핵심 변수.
+ */
+const INDEX_ONE_LINER_MAX_CHARS = 50;
+/**
+ * Tier 0(전문): 매치가 정확히 1건이고 전문(Context+Content)이 이 캡 이하일 때만
+ * 요약 대신 전문을 그대로 준다. solutionMax(1500, injection-caps.ts) 보다 낮춰
+ * 세션 누적 버짓에 여유를 남긴다.
+ */
+const FULL_TEXT_MAX_CHARS = 1200;
+/**
+ * 한 턴(UserPromptSubmit) 주입 전체의 최종 안전판. 세션 누적 캡
+ * (context-budget.ts의 solutionSessionMax, 기본 8000)과는 별개 축 — 그건
+ * "세션 전체 합"이고 이건 "이번 한 번의 additionalContext 크기" 상한이다.
+ * 매칭/렌더 로직에 버그가 생겨도 한 턴이 컨텍스트를 과점하지 못하게 막는
+ * 최후 backstop (경쟁 리포트 §5-2 기준값과 정합).
+ */
+const INJECTION_HARD_CAP_CHARS = 4000;
+
+interface TierSolution {
+  name: string;
+  type: string;
+  confidence: number;
+  matchedTags: string[];
+}
+
+/** `## Content` 섹션 본문만 추출 (없으면 빈 문자열) */
+function extractContentSection(raw: string): string {
+  const contentMatch = raw.match(/## Content\n([\s\S]*?)(?:\n## |\n---|$)/);
+  return contentMatch ? contentMatch[1] : '';
+}
+
+/** 코드블록 제거 + 트림 + 빈 줄 제거된 본문 줄 목록 */
+function contentLines(raw: string): string[] {
+  return extractContentSection(raw)
+    .replace(/```[\s\S]*?```/g, '')
+    .split('\n')
+    .map(l => l.trim())
+    .filter(l => l.length > 0);
+}
+
+function tierHeader(sol: TierSolution): string {
+  return `${sol.name} [${sol.type}|${sol.confidence.toFixed(2)}]`;
+}
+
+/** Tier 2 — 헤더 + 태그 + 핵심 최대 3줄 (최대 SUMMARY_MAX_CHARS) */
+export function buildSummaryTier(sol: TierSolution, raw: string): string {
+  let snippet = contentLines(raw).slice(0, 3).join('\n');
+  if (snippet.length > SUMMARY_MAX_CHARS) {
+    snippet = `${snippet.slice(0, SUMMARY_MAX_CHARS - 3)}...`;
+  }
+  const header = `${tierHeader(sol)}: ${sol.matchedTags.slice(0, 5).join(', ')}`;
+  return snippet ? `${header}\n  ${snippet.replace(/\n/g, '\n  ')}` : header;
+}
+
+/**
+ * Tier 1 — 이름 + one-liner + compound-read MCP 힌트 (전문은 pull-on-demand).
+ * type/confidence 헤더는 의도적으로 생략 — 인덱스 라인은 포인터일 뿐, 상세는
+ * compound-read로 당겨 읽는다.
+ */
+export function buildIndexTier(sol: TierSolution, raw: string): string {
+  let oneLiner = contentLines(raw)[0] ?? '';
+  if (oneLiner.length > INDEX_ONE_LINER_MAX_CHARS) {
+    oneLiner = `${oneLiner.slice(0, INDEX_ONE_LINER_MAX_CHARS - 3)}...`;
+  }
+  const hint = `compound-read("${sol.name}")`;
+  return oneLiner ? `${sol.name}: ${oneLiner} — ${hint}` : `${sol.name} — ${hint}`;
+}
+
+/** Tier 0 — 전문(Context+Content) 그대로. 파싱 실패/캡 초과면 null (호출부가 Tier 2로 폴백). */
+export function buildFullTier(sol: TierSolution, raw: string): string | null {
+  const parsed = parseSolutionV3(raw);
+  if (!parsed) return null;
+  const body = [parsed.context, parsed.content].filter(Boolean).join('\n\n').trim();
+  if (!body || body.length > FULL_TEXT_MAX_CHARS) return null;
+  const header = `${tierHeader(sol)}: ${sol.matchedTags.slice(0, 5).join(', ')}`;
+  return `${header}\n  ${body.replace(/\n/g, '\n  ')}`;
+}
+
+/**
+ * 매치 목록(relevance desc 정렬 가정)을 Progressive Disclosure 텍스트로 렌더한다.
+ * 순수 함수 — fs 읽기는 caller(main)가 `rawByName`으로 미리 채워 넣는다.
+ *
+ *   - 매치가 정확히 1건 & 전문이 FULL_TEXT_MAX_CHARS 이하 → Tier 0(전문)
+ *   - 그 외 상위 TOP_TIER_COUNT건 → Tier 2(요약)
+ *   - 나머지 → Tier 1(인덱스 라인)
+ */
+export function renderSolutionTiers(
+  sols: readonly TierSolution[],
+  rawByName: ReadonlyMap<string, string>,
+): Map<string, string> {
+  const rendered = new Map<string, string>();
+  const singleFullEligible = sols.length === 1;
+
+  sols.forEach((sol, rank) => {
+    const raw = rawByName.get(sol.name) ?? '';
+    if (singleFullEligible) {
+      rendered.set(sol.name, buildFullTier(sol, raw) ?? buildSummaryTier(sol, raw));
+      return;
+    }
+    rendered.set(sol.name, rank < TOP_TIER_COUNT ? buildSummaryTier(sol, raw) : buildIndexTier(sol, raw));
+  });
+
+  return rendered;
+}
+
 async function main(): Promise<void> {
   const _hookStart = Date.now();
   try {
@@ -482,36 +606,20 @@ async function main(): Promise<void> {
     if (toInject.length >= Math.min(budget.solutionsPerPrompt, MAX_SOLUTIONS_PER_SESSION - injected.size)) break;
   }
 
-  // Progressive Disclosure Tier 2.5: 핵심 요약 push (이름+태그+본문 핵심 3줄)
-  // 이전 Tier 2(이름+태그만)는 반영률 0% → Claude가 행동 가능한 정보 부족
-  // 토큰 예산: 솔루션당 최대 300자, 3개 제한 → 최대 ~900자
-  const SUMMARY_MAX_CHARS = 300;
-  const summaries = new Map<string, string>();
-  const candidateEntries: Array<{ name: string; chars: number }> = [];
+  // Progressive Disclosure: 매치 랭크에 따라 Tier 0(전문)/2(요약)/1(인덱스)로 나눠 렌더.
+  // rank 순서는 toInject 자체(matchSolutions/applyRoiDemotions가 이미 relevance desc
+  // 정렬해 반환) — 여기서 별도 재정렬하지 않는다.
+  const rawByName = new Map<string, string>();
   for (const sol of toInject) {
-    let contentSnippet = '';
     try {
-      const raw = fs.readFileSync(sol.path, 'utf-8');
-      const contentMatch = raw.match(/## Content\n([\s\S]*?)(?:\n## |\n---|$)/);
-      if (contentMatch) {
-        // 코드 블록 제거 후 핵심 텍스트만 추출, 최대 3줄
-        const lines = contentMatch[1]
-          .replace(/```[\s\S]*?```/g, '')
-          .split('\n')
-          .map(l => l.trim())
-          .filter(l => l.length > 0);
-        contentSnippet = lines.slice(0, 3).join('\n');
-        if (contentSnippet.length > SUMMARY_MAX_CHARS) {
-          contentSnippet = `${contentSnippet.slice(0, SUMMARY_MAX_CHARS - 3)}...`;
-        }
-      }
-    } catch { /* fail-open: 파일 읽기 실패 시 이름+태그만 사용 */ }
-
-    const header = `${sol.name} [${sol.type}|${sol.confidence.toFixed(2)}]: ${sol.matchedTags.slice(0, 5).join(', ')}`;
-    const summary = contentSnippet ? `${header}\n  ${contentSnippet.replace(/\n/g, '\n  ')}` : header;
-    summaries.set(sol.name, summary);
-    candidateEntries.push({ name: sol.name, chars: summary.length });
+      rawByName.set(sol.name, fs.readFileSync(sol.path, 'utf-8'));
+    } catch { /* fail-open: 파일 읽기 실패 시 이름+태그만으로 렌더 */ }
   }
+  const summaries = renderSolutionTiers(toInject, rawByName);
+  const candidateEntries: Array<{ name: string; chars: number }> = toInject.map(sol => ({
+    name: sol.name,
+    chars: (summaries.get(sol.name) ?? sol.name).length,
+  }));
 
   // H-1 + M-3 fix: lock 안 disjoint 검증으로 새로 추가된 entry만 반환받는다.
   // 다른 hook이 같은 sessionId로 동시에 같은 솔루션을 inject했다면 이 hook의
@@ -613,7 +721,10 @@ async function main(): Promise<void> {
 
   const header = `Matched solutions (apply these patterns to your response):\n`;
   const footer = `\n\nAPPLY the patterns above to your response. If a pattern is directly relevant, follow its guidance. Use compound-read MCP tool for full details if needed.\nWhen using Grep or Bash, always set head_limit or pipe through | head -n to limit output size.`;
-  const fullInjection = header + injections + footer;
+  // 최종 안전판: 위 tier 배분이 어떤 조합이든 이 턴의 additionalContext는
+  // INJECTION_HARD_CAP_CHARS를 넘지 않는다 (context-budget.ts의 세션 누적
+  // 캡과는 별도 축 — 이건 "한 턴" 상한).
+  const fullInjection = truncateContent(header + injections + footer, INJECTION_HARD_CAP_CHARS);
 
   // 플러그인 시그널 기록 (다른 플러그인이 참고할 수 있도록)
   try { writeSignal(sessionId, 'UserPromptSubmit', fullInjection.length); } catch (e) { log.debug('plugin signal 기록 실패', e); }
