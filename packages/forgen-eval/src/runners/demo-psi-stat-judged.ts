@@ -21,7 +21,7 @@ import { loadTestCases } from '../datasets/loader.js';
 import type { ArmResponse, Track } from '../types.js';
 import type { JudgeAxis, JudgeClient } from '../judges/index.js';
 import { ClaudeCliClient, CodexCliClient, OllamaClient, SonnetClient } from '../judges/index.js';
-import { kappaGate } from '../judges/kappa.js';
+import { kappaGate, cohensKappa } from '../judges/kappa.js';
 import { summarizeBehavioral, type BehavioralArmSummary } from '../metrics/behavioral.js';
 
 /** Load persona spec JSON for β-axis judging. Cached per personaId. */
@@ -84,32 +84,10 @@ function bootstrapMean95CI(values: number[], iters = 1000): { mean: number; lo: 
   return { mean, lo: samples[Math.floor(iters * 0.025)], hi: samples[Math.floor(iters * 0.975)] };
 }
 
-/**
- * Cohen's κ for 2 raters on the same set of items, ordinal categories 1-4.
- * Returns 0 if inputs mismatch / empty / single-category.
- */
-function cohenKappa(a: number[], b: number[]): number {
-  if (a.length !== b.length || a.length === 0) return 0;
-  const N = a.length;
-  const cats = [1, 2, 3, 4];
-  const obs: Record<string, number> = {};
-  let agree = 0;
-  for (let i = 0; i < N; i++) {
-    if (a[i] === b[i]) agree++;
-    obs[`${a[i]}-${b[i]}`] = (obs[`${a[i]}-${b[i]}`] ?? 0) + 1;
-  }
-  const Po = agree / N;
-  const margA: Record<number, number> = {};
-  const margB: Record<number, number> = {};
-  for (const c of cats) {
-    margA[c] = a.filter((x) => x === c).length / N;
-    margB[c] = b.filter((x) => x === c).length / N;
-  }
-  let Pe = 0;
-  for (const c of cats) Pe += margA[c] * margB[c];
-  if (Pe >= 1) return 0;
-  return (Po - Pe) / (1 - Pe);
-}
+// κ 는 judges/kappa.ts cohensKappa 하나로 통일 (리뷰 #12 SEV-3): 로컬 중복
+// 구현이 퇴화 규약을 달리해(pE===1 시 1 vs 0) 한 리포트에 상충하는 κ 두 값이
+// 나오던 문제를 제거. 퇴화 판정·완화는 kappaGate 한 곳에서만 결정한다.
+const cohenKappa = cohensKappa;
 
 async function safeJudge(
   judges: JudgeClient[],

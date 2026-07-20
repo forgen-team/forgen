@@ -71,7 +71,7 @@ export interface InjectEvent {
 }
 
 /** Judge verdict — 4-likert per ADR-006. */
-/** 저지 식별자. claude-cli-sonnet 은 v0.5.0 R2 이중 Claude 패널(haiku+sonnet)용. */
+/** 저지 식별자. claude-cli-* 는 v0.5.0 R2 다중 Claude 패널(모델별 구분)용. */
 export type JudgeId =
   | 'sonnet'
   | 'qwen-72b'
@@ -80,6 +80,7 @@ export type JudgeId =
   | 'llama-8b'
   | 'claude-cli'
   | 'claude-cli-sonnet'
+  | 'claude-cli-opus'
   | 'codex-cli';
 
 export interface JudgeScore {

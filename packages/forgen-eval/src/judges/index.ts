@@ -9,7 +9,20 @@ import { CodexCliClient } from './codex-cli-client.js';
 import type { JudgeClient } from './judge-types.js';
 import type { Track } from '../types.js';
 
+/** 패널 id 가 전부 구분되는지 강제 — 중복 id 는 κ 입력을 뒤섞는다 (리뷰 #12 SEV-3). */
+function assertDistinctIds(panel: JudgeClient[]): JudgeClient[] {
+  const ids = panel.map((j) => j.id);
+  if (new Set(ids).size !== ids.length) {
+    throw new Error(`Judge panel has duplicate ids: ${ids.join(', ')} — κ pairing would collide`);
+  }
+  return panel;
+}
+
 export function buildJudgePanel(track: Track): JudgeClient[] {
+  return assertDistinctIds(buildJudgePanelInner(track));
+}
+
+function buildJudgePanelInner(track: Track): JudgeClient[] {
   if (track === 'DEV') {
     return [new SonnetClient(), new OllamaClient('qwen-72b'), new OllamaClient('llama-70b')];
   }

@@ -28,6 +28,17 @@ const DEFAULT_TIMEOUT_MS = Number(process.env.CLAUDE_CLI_TIMEOUT_MS ?? 60_000);
 const JUDGE_SYSTEM_PROMPT =
   'You are a blind evaluator. Reply with ONLY a single JSON object that matches the schema in the user message. Do not use tools. Do not access files. Output JSON only, no prose, no markdown fences.';
 
+/**
+ * 모델명 → 저지 id. haiku/기본 → 'claude-cli'(하위호환), sonnet/opus 는 구분 id.
+ * 다중 Claude 패널에서 두 인스턴스가 같은 id 로 충돌해 κ 입력이 뒤섞이는 것을
+ * 방지 (리뷰 #12 SEV-3). JudgeId 는 닫힌 union 이라 알려진 계열만 매핑한다.
+ */
+function deriveClaudeId(model: string): JudgeId {
+  if (/sonnet/i.test(model)) return 'claude-cli-sonnet';
+  if (/opus/i.test(model)) return 'claude-cli-opus';
+  return 'claude-cli'; // haiku 및 기본
+}
+
 export class ClaudeCliClient implements JudgeClient {
   // id 는 모델에서 유도 — 이중 Claude 패널(haiku+sonnet)에서 두 인스턴스가
   // 구분돼야 κ 가 haiku↔sonnet 을 짝지을 수 있다. sonnet → 'claude-cli-sonnet',
@@ -39,7 +50,7 @@ export class ClaudeCliClient implements JudgeClient {
 
   constructor(opts: { model?: string; id?: JudgeId; timeoutMs?: number; cwd?: string } = {}) {
     this.model = opts.model ?? DEFAULT_MODEL;
-    this.id = opts.id ?? (/sonnet/i.test(this.model) ? 'claude-cli-sonnet' : 'claude-cli');
+    this.id = opts.id ?? deriveClaudeId(this.model);
     this.timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     this.cwd = opts.cwd ?? fs.mkdtempSync(path.join(os.tmpdir(), 'forgen-eval-claude-'));
   }
