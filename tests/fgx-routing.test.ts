@@ -22,7 +22,7 @@ const EXPECTED_SUBCOMMANDS = new Set([
   // Wave 1 통합: status(←9 status cmds), dev(←probe-workflow/parity/migrate/regress-map).
   'forge', 'compound', 'skill', 'status', 'learn', 'statusline',
   'config', 'mcp', 'init', 'install', 'maintenance', 'dev',
-  'notepad', 'inspect', 'onboarding', 'doctor', 'uninstall', 'rule',
+  'notepad', 'inspect', 'doctor', 'uninstall', 'rule',
   'classify-enforce', 'rule-meta-scan', 'lifecycle-scan',
   'suppress-rule', 'activate-rule', 'workflows', 'changelog',
   'help', '--help', '-h', '--version', '-V',

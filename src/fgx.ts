@@ -22,7 +22,7 @@ const FORGEN_SUBCOMMANDS = new Set([
   // recall/explain/last-block/watch), dev(←probe-workflow/parity/migrate/regress-map).
   'forge', 'compound', 'skill', 'status', 'learn', 'statusline',
   'config', 'mcp', 'init', 'install', 'maintenance', 'dev',
-  'notepad', 'inspect', 'onboarding', 'doctor', 'uninstall', 'rule',
+  'notepad', 'inspect', 'doctor', 'uninstall', 'rule',
   'classify-enforce', 'rule-meta-scan', 'lifecycle-scan',
   'suppress-rule', 'activate-rule', 'workflows', 'changelog',
   // 메타 명령도 cli.ts 가 처리 (fgx claude spawn 으로는 의미 없음)
@@ -69,7 +69,7 @@ async function runClaudeLauncher(): Promise<void> {
   if (firstRun) {
     console.log('\n  Forgen — Setting up for the first time.\n');
     console.log('  Creating ~/.forgen/ directory and default philosophy.');
-    console.log('  Run `forgen onboarding` afterwards to complete personalization.\n');
+    console.log('  Run `forgen forge --onboarding` afterwards to complete personalization.\n');
   }
 
   const context = await prepareHarness(process.cwd(), { runtime });

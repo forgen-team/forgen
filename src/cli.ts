@@ -37,7 +37,7 @@ interface Command {
 const commands: Command[] = [
   {
     name: 'forge',
-    description: 'Personalization profile (--profile|--export|--reset)',
+    description: 'Personalization single entry (--onboarding|--profile|--export|--reset)',
     handler: async (args) => {
       const { handleForge } = await import('./forge/cli.js');
       await handleForge(args);
@@ -138,7 +138,7 @@ const commands: Command[] = [
           const { setDefaultHost } = await import('./store/profile-store.js');
           const ok = setDefaultHost(value as DefaultHost);
           if (!ok) {
-            console.log('  ✗ Profile not found. Run `forgen onboarding` first.');
+            console.log('  ✗ Profile not found. Run `forgen forge --onboarding` first.');
             process.exit(1);
           }
           console.log(`  ✓ default_host set to: ${value}`);
@@ -235,14 +235,6 @@ const commands: Command[] = [
     handler: async (args) => {
       const { handleInspect } = await import('./core/inspect-cli.js');
       await handleInspect(args);
-    },
-  },
-  {
-    name: 'onboarding',
-    description: 'v1 4-question onboarding flow',
-    handler: async (_args) => {
-      const { runOnboarding } = await import('./forge/onboarding-cli.js');
-      await runOnboarding();
     },
   },
   {
@@ -534,8 +526,8 @@ function printHelp() {
     forgen --runtime claude|codex   Select launch runtime
 
   Commands:
-    forgen forge                    Personalize your coding profile
-    forgen onboarding               Run 4-question onboarding
+    forgen forge [--onboarding|--profile|--reset]
+                                    Personalization single entry (first run = 4-question onboarding)
     forgen inspect [profile|rules|corrections|session]
                                     Inspect v1 state (alias: evidence → corrections)
     forgen rule <list|suppress|activate|scan|health-scan|classify>

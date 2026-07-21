@@ -19,7 +19,7 @@ describe('cli - command structure', () => {
     return [...source.matchAll(/name:\s*'([^']+)'/g)]
       .map((match) => match[1])
       .filter((name) => name !== 'string')
-      .slice(0, 17); // top-level COMMANDS registry (Wave 1: 19→17 after status 통합)
+      .slice(0, 16); // top-level (Wave 1: status+dev 통합, onboarding→forge --onboarding)
   }
 
   it('CLI 모듈이 로드 가능하다', async () => {
@@ -46,7 +46,6 @@ describe('cli - command structure', () => {
       'dev',
       'notepad',
       'inspect',
-      'onboarding',
       'doctor',
       'uninstall',
     ]);
