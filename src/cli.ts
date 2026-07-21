@@ -86,7 +86,7 @@ const commands: Command[] = [
   },
   {
     name: 'status',
-    description: 'Unified status: forgen status [--compound|--profile|--rules|--blocks [N]|--live]',
+    description: 'Unified status: forgen status [--compound|--profile|--rules|--blocks [N]|--overview|--live]',
     handler: async (args) => {
       const { handleStatus } = await import('./core/status-cli.js');
       await handleStatus(args);
@@ -439,11 +439,23 @@ async function main() {
   // 등록되지 않은 서브커맨드는 에러 처리
   // 플래그(--resume 등), 따옴표 프롬프트, 인자 없는 실행은 하네스로 통과
   if (args[0] && !args[0].startsWith('-') && !args[0].startsWith('"') && !args[0].startsWith("'")) {
-    const suggestion = commands
-      .map(c => ({ name: c.name, dist: levenshtein(args[0], c.name) }))
-      .filter(c => c.dist <= 3)
-      .sort((a, b) => a.dist - b.dist)[0];
-    const hint = suggestion ? `\n  Did you mean: forgen ${suggestion.name}` : '';
+    // Wave 1 통합(feature-audit): 제거된 명령 → 새 위치 명시 매핑 (levenshtein 오유도 방지).
+    const RENAMED: Record<string, string> = {
+      stats: 'status', health: 'status', dashboard: 'status --overview', me: 'status --profile',
+      recall: 'status --compound', explain: 'status --blocks', 'last-block': 'status --blocks',
+      watch: 'status --live', 'probe-workflow': 'dev probe-workflow', parity: 'dev parity',
+      migrate: 'dev migrate', 'regress-map': 'dev regress-map', onboarding: 'forge --onboarding',
+    };
+    let hint: string;
+    if (RENAMED[args[0]]) {
+      hint = `\n  → moved: forgen ${RENAMED[args[0]]}`;
+    } else {
+      const suggestion = commands
+        .map(c => ({ name: c.name, dist: levenshtein(args[0], c.name) }))
+        .filter(c => c.dist <= 3)
+        .sort((a, b) => a.dist - b.dist)[0];
+      hint = suggestion ? `\n  Did you mean: forgen ${suggestion.name}` : '';
+    }
     console.error(`[forgen] Unknown command: ${args[0]}${hint}\n  Run "forgen help" for available commands.`);
     process.exit(1);
   }
@@ -537,6 +549,7 @@ function printHelp() {
                                       --profile   4-axis profile + recent corrections
                                       --rules     active rules
                                       --blocks [N] recent block(s): rule/reason/fix
+                                      --overview  rich dashboard (hooks·history·curve)
                                       --live      real-time hook event stream
     forgen workflows install|list   Install forgen dynamic-workflow templates to .claude/workflows/
     forgen changelog                Auto-summarize commits since last release tag

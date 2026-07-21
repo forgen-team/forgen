@@ -17,7 +17,7 @@ describe('generateSecurityRules (W2-3: prose → 포인터)', () => {
     // 강제는 훅이 한다는 사실 + 실존 명령 포인터
     expect(result).toContain('secret-filter');
     expect(result).toContain('db-guard');
-    expect(result).toContain('forgen explain');
+    expect(result).toContain('forgen status --blocks');
     // W2-3 AC: prose 시절(~1.2KB) 대비 대폭 축소 — 토큰 다이어트가 실제로 일어났는가
     expect(result.length).toBeLessThan(400);
   });

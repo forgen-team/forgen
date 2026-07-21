@@ -140,7 +140,7 @@ export function generateSecurityRules(): string {
     '# Forgen — Security & Anti-Pattern',
     '',
     '- 보안/위험명령/안티패턴 강제는 forgen 훅이 수행: secret-filter(비밀키 커밋 차단), db-guard(위험 SQL/rm -rf 확인), slop-detector(AI 슬롭 감지).',
-    '- 차단이 발생하면 `forgen explain` 으로 규칙·사유·해결책 확인.',
+    '- 차단이 발생하면 `forgen status --blocks` 로 규칙·사유·해결책 확인.',
     '',
   ].join('\n');
 }
@@ -472,7 +472,7 @@ export function generateClaudeRules(cwd: string, v1RenderedRules?: string | null
 export async function registerTmuxBindings(): Promise<void> {
   const { execFileSync } = await import('node:child_process');
   try {
-    execFileSync('tmux', ['bind-key', 'T', 'run-shell', 'forgen me'], { stdio: 'ignore' });
+    execFileSync('tmux', ['bind-key', 'T', 'run-shell', 'forgen status --profile'], { stdio: 'ignore' });
   } catch (e) {
     log.debug('tmux 키바인딩 등��� 실패', e);
   }

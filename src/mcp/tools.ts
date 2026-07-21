@@ -417,7 +417,7 @@ export function registerTools(server: McpServer): void {
         return {
           content: [{
             type: 'text' as const,
-            text: 'No profile configured. Run forgen onboarding.',
+            text: 'No profile configured. Run forgen forge --onboarding.',
           }],
         };
       }

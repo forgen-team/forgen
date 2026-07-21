@@ -175,7 +175,7 @@ describe('Scenario 1: Harness Bootstrap E2E', () => {
       expect(content).toContain('Forgen — Security & Anti-Pattern');
       expect(content).toContain('secret-filter');
       expect(content).toContain('db-guard');
-      expect(content).toContain('forgen explain');
+      expect(content).toContain('forgen status --blocks');
       expect(content).toContain('Forgen — Compound Loop');
 
       // 제거된 prose 는 돌아오지 않는다 (native /doctor 가 트리밍 대상으로

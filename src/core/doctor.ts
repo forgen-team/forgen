@@ -71,7 +71,7 @@ function renderCodexParity(): void {
   const parityPath = path.join(STATE_DIR, 'parity-result.json');
 
   if (!fs.existsSync(parityPath)) {
-    console.log('  △ Codex parity 미실행 — tests/e2e/codex/run-parity.sh 또는 forgen parity codex');
+    console.log('  △ Codex parity 미실행 — tests/e2e/codex/run-parity.sh 또는 forgen dev parity codex');
     return;
   }
 
@@ -525,7 +525,7 @@ export async function runDoctor(opts: DoctorOptions = {}): Promise<void> {
         if (map.available && map.hotspots.length > 0) {
           const top = map.hotspots.map((h) => `${h.path} (${h.fixHits})`).join(', ');
           console.log(`  → 진앙 후보 top 3: ${top}`);
-          console.log('  → 전체 보기: forgen regress-map');
+          console.log('  → 전체 보기: forgen dev regress-map');
         }
       }
     }

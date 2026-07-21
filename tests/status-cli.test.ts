@@ -80,3 +80,37 @@ describe('W1-3 dev 네임스페이스', () => {
     expect(`${r.stdout}${r.stderr}`).toContain('developer / maintenance utilities');
   });
 });
+
+describe('W1 리뷰 회귀: 배포 문자열이 죽은 명령을 가리키지 않음', () => {
+  // 프룬이 남긴 stale ref(주입 룰·차단 메시지·tmux·doctor·mcp) 가 죽은 명령을
+  // 가리켜 "Unknown command" 로 사용자를 막다른 곳에 보냈다. 소스 전역에서
+  // `forgen <removed>` 배포 문자열을 금지 (자체 cli 파일의 docstring 은 예외).
+  const REMOVED = ['explain', 'last-block', 'recall', 'stats', 'health', 'dashboard', 'watch',
+    'probe-workflow', 'parity', 'regress-map', 'onboarding'];
+  // `forgen me` 는 statusline 마이그레이션 체크(existing==='forgen me')에서 정당하게 등장 → 제외.
+
+  it('src/ 배포 문자열에 `forgen <removed-cmd>` 지시가 없다', async () => {
+    const { execSync } = await import('node:child_process');
+    const bad: string[] = [];
+    for (const cmd of REMOVED) {
+      // 각 명령의 *자체* cli 파일(핸들러는 status/dev 로 여전히 호출됨)의 docstring 은 예외.
+      const selfFile = `${cmd.replace('-', '')}`; // heuristic; grep 로 파일 경로도 필터
+      let out = '';
+      try {
+        out = execSync(
+          `grep -rn "forgen ${cmd}\\b" src/ --include="*.ts" || true`,
+          { encoding: 'utf-8', cwd: process.cwd() },
+        );
+      } catch { /* grep no-match */ }
+      for (const line of out.split('\n').filter(Boolean)) {
+        // 은퇴 명령의 자체 cli/docstring, 주석(//, *), 마이그레이션 체크는 예외
+        const isSelfCli = new RegExp(`src/core/${cmd}-cli\\.ts|src/core/${cmd}\\.ts`).test(line);
+        const isComment = /:\s*\d+:\s*(\/\/|\*|\s*\*)/.test(line) || /\/\*|\*\/|^\s*\*/.test(line.split(':').slice(2).join(':'));
+        const isRenameMap = /RENAMED|moved:|status-cli\.test/.test(line);
+        void selfFile;
+        if (!isSelfCli && !isComment && !isRenameMap) bad.push(line.trim());
+      }
+    }
+    expect(bad, `죽은 명령을 가리키는 배포 문자열:\n${bad.join('\n')}`).toEqual([]);
+  });
+});

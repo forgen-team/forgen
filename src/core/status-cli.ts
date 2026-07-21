@@ -14,7 +14,7 @@
  *   forgen status --live       실시간 훅 이벤트 스트림
  */
 
-const VIEWS = ['--compound', '--profile', '--rules', '--blocks', '--live'] as const;
+const VIEWS = ['--compound', '--profile', '--rules', '--blocks', '--live', '--overview'] as const;
 type View = (typeof VIEWS)[number];
 
 const ALIASES: Record<string, View> = {
@@ -23,6 +23,7 @@ const ALIASES: Record<string, View> = {
   '-r': '--rules',
   '-b': '--blocks',
   '-l': '--live',
+  '-o': '--overview',
 };
 
 export function resolveView(args: string[]): View | null {
@@ -78,6 +79,14 @@ export async function handleStatus(args: string[]): Promise<void> {
     case '--live': {
       const { handleWatch } = await import('./watch-cli.js');
       await handleWatch();
+      return;
+    }
+    case '--overview': {
+      // 리치 운영 대시보드(hook health·session history·learning curve·multi-host).
+      // 구 `forgen dashboard`의 고유 콘텐츠 — --compound(ROI/compound)와 다른 축이라
+      // 별도 뷰로 보존 (Wave 1 리뷰: 콘텐츠 손실 방지).
+      const { handleDashboard } = await import('./dashboard.js');
+      await handleDashboard();
       return;
     }
     default: {
