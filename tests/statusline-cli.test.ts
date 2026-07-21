@@ -100,3 +100,18 @@ describe('handleStatusline', () => {
     expect(output[1]).toContain('8 rules');
   });
 });
+
+describe('buildValueLine (W1-2 — forgen 가치 카운터)', () => {
+  it('실측 카운터 라벨을 포함한 한 줄을 렌더 (또는 fail-open null)', async () => {
+    // real state 읽음 — 빈 상태면 0으로 채워진 라인. 절대 throw 안 함.
+    const mod = await import('../src/core/statusline-cli.js');
+    const line = mod.buildValueLine();
+    if (line === null) return; // fail-open 허용
+    expect(line).toContain('recall');
+    expect(line).toContain('surfaced');
+    expect(line).toContain('교정');
+    expect(line).toContain('ROI');
+    expect(line).toContain('차단');
+    expect(line).toContain('✦');
+  });
+});

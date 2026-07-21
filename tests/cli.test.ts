@@ -19,7 +19,7 @@ describe('cli - command structure', () => {
     return [...source.matchAll(/name:\s*'([^']+)'/g)]
       .map((match) => match[1])
       .filter((name) => name !== 'string')
-      .slice(0, 19);
+      .slice(0, 16); // top-level (Wave 1: status+dev 통합, onboarding→forge --onboarding)
   }
 
   it('CLI 모듈이 로드 가능하다', async () => {
@@ -29,24 +29,23 @@ describe('cli - command structure', () => {
   });
 
   it('현재 CLI 명령어 레지스트리가 실제 구현과 일치한다', () => {
+    // Wave 1 통합: stats/health/dashboard/me/recall/explain/last-block/watch →
+    // 단일 'status' (feature-audit 2026-07-21). inspect 는 저수준 프리미티브로 유지.
     expect(extractCommandNames(loadCliSource())).toEqual([
       'forge',
       'compound',
       'skill',
-      'dashboard',
+      'status',
       'learn',
-      'me',
       'statusline',
       'config',
       'mcp',
       'init',
       'install',
-      'status',
       'maintenance',
-      'parity',
+      'dev',
       'notepad',
       'inspect',
-      'onboarding',
       'doctor',
       'uninstall',
     ]);

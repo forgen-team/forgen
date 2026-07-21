@@ -18,12 +18,13 @@ const args = process.argv.slice(2);
 // v0.4.10: forgen 서브커맨드 인벤토리. src/cli.ts 의 commands[] 와 sync 유지.
 // 첫 비-플래그 인자가 이 집합에 들어가면 forgen cli 로 라우팅.
 const FORGEN_SUBCOMMANDS = new Set([
-  'forge', 'compound', 'skill', 'dashboard', 'learn', 'me', 'statusline',
-  'config', 'mcp', 'init', 'install', 'status', 'maintenance', 'parity',
-  'notepad', 'inspect', 'onboarding', 'doctor', 'uninstall', 'rule',
+  // Wave 1 통합(feature-audit 2026-07-21): status(←stats/health/dashboard/me/
+  // recall/explain/last-block/watch), dev(←probe-workflow/parity/migrate/regress-map).
+  'forge', 'compound', 'skill', 'status', 'learn', 'statusline',
+  'config', 'mcp', 'init', 'install', 'maintenance', 'dev',
+  'notepad', 'inspect', 'doctor', 'uninstall', 'rule',
   'classify-enforce', 'rule-meta-scan', 'lifecycle-scan',
-  'stats', 'last-block', 'recall', 'migrate', 'suppress-rule', 'activate-rule',
-  'regress-map', 'watch', 'health', 'probe-workflow', 'workflows', 'explain', 'changelog',
+  'suppress-rule', 'activate-rule', 'workflows', 'changelog',
   // 메타 명령도 cli.ts 가 처리 (fgx claude spawn 으로는 의미 없음)
   'help', '--help', '-h', '--version', '-V',
 ]);
@@ -68,7 +69,7 @@ async function runClaudeLauncher(): Promise<void> {
   if (firstRun) {
     console.log('\n  Forgen — Setting up for the first time.\n');
     console.log('  Creating ~/.forgen/ directory and default philosophy.');
-    console.log('  Run `forgen onboarding` afterwards to complete personalization.\n');
+    console.log('  Run `forgen forge --onboarding` afterwards to complete personalization.\n');
   }
 
   const context = await prepareHarness(process.cwd(), { runtime });

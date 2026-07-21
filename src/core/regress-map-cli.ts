@@ -33,7 +33,7 @@ export async function handleRegressMap(args: string[] = []): Promise<void> {
     return;
   }
 
-  console.log('  ┌─ forgen regress-map ───────────────────────────────────┐');
+  console.log('  ┌─ forgen dev regress-map ───────────────────────────────────┐');
   console.log(`  │ window: last ${map.windowDays} days · fix commits: ${map.fixCommits}`.padEnd(60) + '│');
   if (ratio.available) {
     console.log(`  │ ${formatFixRatio(ratio)}`.padEnd(60) + '│');

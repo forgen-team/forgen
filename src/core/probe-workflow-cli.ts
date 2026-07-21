@@ -1,5 +1,5 @@
 /**
- * forgen probe-workflow — ADR-009 §1 결정적 미확인 변수 실측 도구.
+ * forgen dev probe-workflow — ADR-009 §1 결정적 미확인 변수 실측 도구.
  *
  * 질문: dynamic workflow **내부** 에이전트에 대해 SubagentStart/Stop·PostToolUse
  *       훅이 발화하는가? (워크플로우 런타임은 "대화와 분리된 격리 백그라운드"로
@@ -16,9 +16,9 @@
  *   - (보조) hook-timing.jsonl 의 event 별 엔트리
  *
  * 절차 (2단계 — 런타임이 격리되어 있어 단일 프로세스로는 트리거 불가):
- *   1. `forgen probe-workflow arm`    → baseline 마커 기록 + 안내 출력
+ *   1. `forgen dev probe-workflow arm`    → baseline 마커 기록 + 안내 출력
  *   2. 사용자가 Claude Code 에서 워크플로우 1회 실행 (그 사이 다른 작업 금지)
- *   3. `forgen probe-workflow report` → baseline 이후 신호 수집 → verdict 박제
+ *   3. `forgen dev probe-workflow report` → baseline 이후 신호 수집 → verdict 박제
  *
  * 가정 (detailed-communication): arm~report 사이에 사용자가 **워크플로우만**
  * 실행했다고 전제한다. 일반 Task-tool subagent 를 같이 돌리면 신호가 섞인다.
@@ -231,14 +231,14 @@ function armProbe(): void {
   fs.mkdirSync(STATE_DIR, { recursive: true });
   fs.writeFileSync(BASELINE_PATH, JSON.stringify(baseline, null, 2));
   console.log(`
-${C.bold}forgen probe-workflow — armed${C.reset} ${C.dim}(${baseline.armedIso})${C.reset}
+${C.bold}forgen dev probe-workflow — armed${C.reset} ${C.dim}(${baseline.armedIso})${C.reset}
 
 ${C.cyan}다음을 정확히 순서대로 실행하세요:${C.reset}
   1. Claude Code (v2.1.154+, workflows 활성) 세션에서 ${C.bold}워크플로우 1회만${C.reset} 실행
      예: ${C.dim}Run a workflow to list files under src/${C.reset}
      또는: ${C.dim}/deep-research <질문>${C.reset}
   2. ${C.yellow}그 사이 다른 Task/subagent 작업은 돌리지 마세요${C.reset} (신호 오염 방지)
-  3. 워크플로우가 끝나면: ${C.bold}forgen probe-workflow report${C.reset}
+  3. 워크플로우가 끝나면: ${C.bold}forgen dev probe-workflow report${C.reset}
 
 ${C.dim}전제: forgen 의 SubagentStart/Stop·PostToolUse 훅이 설치/활성 상태여야 합니다.
 불확실하면 'forgen config hooks' 로 확인하세요.${C.reset}
@@ -262,7 +262,7 @@ function colorForOutcome(outcome: ProbeOutcome): string {
 function reportProbe(): void {
   const baseline = loadBaseline();
   if (!baseline) {
-    console.log(`\n  ${C.red}✗ armed 상태가 아닙니다.${C.reset} 먼저 ${C.bold}forgen probe-workflow arm${C.reset} 를 실행하세요.\n`);
+    console.log(`\n  ${C.red}✗ armed 상태가 아닙니다.${C.reset} 먼저 ${C.bold}forgen dev probe-workflow arm${C.reset} 를 실행하세요.\n`);
     process.exitCode = 1;
     return;
   }
@@ -273,7 +273,7 @@ function reportProbe(): void {
 
   const oc = colorForOutcome(verdict.outcome);
   console.log(`
-${C.bold}forgen probe-workflow — report${C.reset} ${C.dim}(armed ${baseline.armedIso})${C.reset}
+${C.bold}forgen dev probe-workflow — report${C.reset} ${C.dim}(armed ${baseline.armedIso})${C.reset}
 
   SubagentStart/Stop 발화 : ${verdict.subagentStartStopFired ? `${C.green}YES${C.reset}` : `${C.yellow}NO${C.reset}`}
   PostToolUse 발화        : ${verdict.postToolUseFired ? `${C.green}YES${C.reset}` : `${C.yellow}NO${C.reset}`}
@@ -304,8 +304,8 @@ function statusProbe(): void {
   const baseline = loadBaseline();
   console.log(
     baseline
-      ? `\n  armed: ${C.cyan}${baseline.armedIso}${C.reset}\n  → 워크플로우 실행 후 ${C.bold}forgen probe-workflow report${C.reset}\n`
-      : `\n  ${C.dim}armed 상태 아님.${C.reset} ${C.bold}forgen probe-workflow arm${C.reset} 로 시작하세요.\n`,
+      ? `\n  armed: ${C.cyan}${baseline.armedIso}${C.reset}\n  → 워크플로우 실행 후 ${C.bold}forgen dev probe-workflow report${C.reset}\n`
+      : `\n  ${C.dim}armed 상태 아님.${C.reset} ${C.bold}forgen dev probe-workflow arm${C.reset} 로 시작하세요.\n`,
   );
 }
 
@@ -323,12 +323,12 @@ export async function handleProbeWorkflow(args: string[]): Promise<void> {
       return;
     default:
       console.log(`
-  ${C.bold}forgen probe-workflow${C.reset} — ADR-009 §1: 워크플로우 훅 발화 실측
+  ${C.bold}forgen dev probe-workflow${C.reset} — ADR-009 §1: 워크플로우 훅 발화 실측
 
   Usage:
-    forgen probe-workflow arm       baseline 기록 + 안내 (먼저)
-    forgen probe-workflow report    워크플로우 실행 후 신호 수집 → 판정
-    forgen probe-workflow status    현재 armed 상태 확인
+    forgen dev probe-workflow arm       baseline 기록 + 안내 (먼저)
+    forgen dev probe-workflow report    워크플로우 실행 후 신호 수집 → 판정
+    forgen dev probe-workflow status    현재 armed 상태 확인
 `);
   }
 }

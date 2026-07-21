@@ -37,7 +37,7 @@ interface Command {
 const commands: Command[] = [
   {
     name: 'forge',
-    description: 'Personalization profile (--profile|--export|--reset)',
+    description: 'Personalization single entry (--onboarding|--profile|--export|--reset)',
     handler: async (args) => {
       const { handleForge } = await import('./forge/cli.js');
       await handleForge(args);
@@ -85,11 +85,11 @@ const commands: Command[] = [
     },
   },
   {
-    name: 'dashboard',
-    description: 'Compound system dashboard with rich overview',
-    handler: async (_args) => {
-      const { handleDashboard } = await import('./core/dashboard.js');
-      await handleDashboard();
+    name: 'status',
+    description: 'Unified status: forgen status [--compound|--profile|--rules|--blocks [N]|--overview|--live]',
+    handler: async (args) => {
+      const { handleStatus } = await import('./core/status-cli.js');
+      await handleStatus(args);
     },
   },
   {
@@ -98,14 +98,6 @@ const commands: Command[] = [
     handler: async (args) => {
       const { handleLearn } = await import('./engine/learn-cli.js');
       await handleLearn(args);
-    },
-  },
-  {
-    name: 'me',
-    description: 'Personal dashboard (→ inspect profile)',
-    handler: async (_args) => {
-      const { handleInspect } = await import('./core/inspect-cli.js');
-      await handleInspect(['profile']);
     },
   },
   {
@@ -146,7 +138,7 @@ const commands: Command[] = [
           const { setDefaultHost } = await import('./store/profile-store.js');
           const ok = setDefaultHost(value as DefaultHost);
           if (!ok) {
-            console.log('  ✗ Profile not found. Run `forgen onboarding` first.');
+            console.log('  ✗ Profile not found. Run `forgen forge --onboarding` first.');
             process.exit(1);
           }
           console.log(`  ✓ default_host set to: ${value}`);
@@ -195,18 +187,6 @@ const commands: Command[] = [
     },
   },
   {
-    name: 'status',
-    description: 'Observability dashboard (--watch, --json, --interval N)',
-    handler: async (args) => {
-      const { runDashboard } = await import('./core/dashboard-cli.js');
-      const watch = args.includes('--watch');
-      const json = args.includes('--json');
-      const intervalIdx = args.indexOf('--interval');
-      const intervalSec = intervalIdx !== -1 ? Number(args[intervalIdx + 1]) || 5 : 5;
-      await runDashboard({ watch, json, intervalSec });
-    },
-  },
-  {
     name: 'maintenance',
     description: 'Maintenance utilities (--backfill [--phase A|B|all] [--force] [--dry-run])',
     handler: async (args) => {
@@ -234,28 +214,11 @@ const commands: Command[] = [
     },
   },
   {
-    name: 'parity',
-    description: 'Run host parity checks. Usage: forgen parity codex [--dry-run]',
+    name: 'dev',
+    description: 'Developer/maintenance utilities: dev <probe-workflow|parity|migrate|regress-map>',
     handler: async (args) => {
-      const sub = args[0];
-      if (sub !== 'codex') {
-        console.log('Usage:\n  forgen parity codex [--dry-run]\n\nNotes:\n  - source 체크아웃에서만 작동합니다 (tests/ 디렉토리 필요).\n  - npm install 로 설치된 패키지에서는 run-parity.sh 가 없습니다.');
-        return;
-      }
-      const here = path.dirname(fileURLToPath(import.meta.url));
-      const scriptPath = path.resolve(here, '..', 'tests', 'e2e', 'codex', 'run-parity.sh');
-      if (!fs.existsSync(scriptPath)) {
-        console.error('[forgen] run-parity.sh 는 source 체크아웃에서만 작동. 직접 git clone 후 실행하세요.');
-        console.error(`  expected: ${scriptPath}`);
-        process.exit(1);
-      }
-      const { spawnSync } = await import('node:child_process');
-      const dryRun = args.includes('--dry-run');
-      const spawnArgs = dryRun ? ['--dry-run'] : [];
-      const result = spawnSync('bash', [scriptPath, ...spawnArgs], { stdio: 'inherit' });
-      if (result.status !== 0) {
-        process.exit(result.status ?? 1);
-      }
+      const { handleDev } = await import('./core/dev-cli.js');
+      await handleDev(args);
     },
   },
   {
@@ -272,14 +235,6 @@ const commands: Command[] = [
     handler: async (args) => {
       const { handleInspect } = await import('./core/inspect-cli.js');
       await handleInspect(args);
-    },
-  },
-  {
-    name: 'onboarding',
-    description: 'v1 4-question onboarding flow',
-    handler: async (_args) => {
-      const { runOnboarding } = await import('./forge/onboarding-cli.js');
-      await runOnboarding();
     },
   },
   {
@@ -342,38 +297,6 @@ const commands: Command[] = [
     },
   },
   {
-    name: 'stats',
-    description: 'One-screen dashboard: active rules, corrections, blocks/bypass/drift (7d).',
-    handler: async (args) => {
-      const { handleStats } = await import('./core/stats-cli.js');
-      await handleStats(args);
-    },
-  },
-  {
-    name: 'watch',
-    description: 'Real-time hook event stream (hook firings, blocks, solution matches)',
-    handler: async () => {
-      const { handleWatch } = await import('./core/watch-cli.js');
-      await handleWatch();
-    },
-  },
-  {
-    name: 'health',
-    description: 'Single-line health score (0-100) combining utilization, effectiveness, growth.',
-    handler: async () => {
-      const { handleHealth } = await import('./core/health-cli.js');
-      await handleHealth();
-    },
-  },
-  {
-    name: 'probe-workflow',
-    description: 'ADR-009 §1: measure whether dynamic-workflow subagents fire forgen hooks (arm|report|status).',
-    handler: async (args) => {
-      const { handleProbeWorkflow } = await import('./core/probe-workflow-cli.js');
-      await handleProbeWorkflow(args);
-    },
-  },
-  {
     name: 'workflows',
     description: 'Install/list forgen dynamic-workflow templates (install [--project] | list).',
     handler: async (args) => {
@@ -382,51 +305,11 @@ const commands: Command[] = [
     },
   },
   {
-    name: 'explain',
-    description: 'Explain the most recent block — what rule, why, and how to resolve.',
-    handler: async (args) => {
-      const { handleExplain } = await import('./core/explain-cli.js');
-      await handleExplain(args);
-    },
-  },
-  {
     name: 'changelog',
     description: 'Auto-summarize changes since last release tag (conventional commits).',
     handler: async () => {
       const { handleChangelog } = await import('./core/changelog-cli.js');
       await handleChangelog();
-    },
-  },
-  {
-    name: 'last-block',
-    description: 'Show the most recent Mech-A/B block event with rule detail (R6-UX2).',
-    handler: async (_args) => {
-      const { handleInspect } = await import('./core/inspect-cli.js');
-      await handleInspect(['violations', '--last', '1']);
-    },
-  },
-  {
-    name: 'recall',
-    description: 'Show recent compound recalls (matched solutions) with optional body preview.',
-    handler: async (args) => {
-      const { handleRecall } = await import('./core/recall-cli.js');
-      await handleRecall(args);
-    },
-  },
-  {
-    name: 'migrate',
-    description: 'One-shot schema migrations (implicit-feedback category backfill).',
-    handler: async (args) => {
-      const { handleMigrate } = await import('./core/migrate-cli.js');
-      await handleMigrate(args);
-    },
-  },
-  {
-    name: 'regress-map',
-    description: 'Top fix-touched files in the last N days (--days 30 --top 10 --json).',
-    handler: async (args) => {
-      const { handleRegressMap } = await import('./core/regress-map-cli.js');
-      await handleRegressMap(args);
     },
   },
   {
@@ -556,11 +439,23 @@ async function main() {
   // 등록되지 않은 서브커맨드는 에러 처리
   // 플래그(--resume 등), 따옴표 프롬프트, 인자 없는 실행은 하네스로 통과
   if (args[0] && !args[0].startsWith('-') && !args[0].startsWith('"') && !args[0].startsWith("'")) {
-    const suggestion = commands
-      .map(c => ({ name: c.name, dist: levenshtein(args[0], c.name) }))
-      .filter(c => c.dist <= 3)
-      .sort((a, b) => a.dist - b.dist)[0];
-    const hint = suggestion ? `\n  Did you mean: forgen ${suggestion.name}` : '';
+    // Wave 1 통합(feature-audit): 제거된 명령 → 새 위치 명시 매핑 (levenshtein 오유도 방지).
+    const RENAMED: Record<string, string> = {
+      stats: 'status', health: 'status', dashboard: 'status --overview', me: 'status --profile',
+      recall: 'status --compound', explain: 'status --blocks', 'last-block': 'status --blocks',
+      watch: 'status --live', 'probe-workflow': 'dev probe-workflow', parity: 'dev parity',
+      migrate: 'dev migrate', 'regress-map': 'dev regress-map', onboarding: 'forge --onboarding',
+    };
+    let hint: string;
+    if (RENAMED[args[0]]) {
+      hint = `\n  → moved: forgen ${RENAMED[args[0]]}`;
+    } else {
+      const suggestion = commands
+        .map(c => ({ name: c.name, dist: levenshtein(args[0], c.name) }))
+        .filter(c => c.dist <= 3)
+        .sort((a, b) => a.dist - b.dist)[0];
+      hint = suggestion ? `\n  Did you mean: forgen ${suggestion.name}` : '';
+    }
     console.error(`[forgen] Unknown command: ${args[0]}${hint}\n  Run "forgen help" for available commands.`);
     process.exit(1);
   }
@@ -643,28 +538,22 @@ function printHelp() {
     forgen --runtime claude|codex   Select launch runtime
 
   Commands:
-    forgen forge                    Personalize your coding profile
-    forgen onboarding               Run 4-question onboarding
+    forgen forge [--onboarding|--profile|--reset]
+                                    Personalization single entry (first run = 4-question onboarding)
     forgen inspect [profile|rules|corrections|session]
                                     Inspect v1 state (alias: evidence → corrections)
     forgen rule <list|suppress|activate|scan|health-scan|classify>
                                     Rule management (see: forgen rule help)
-    forgen stats                    One-screen trust-layer dashboard (+ philosophy)
-    forgen health                   Single-line health score (0-100) with grade
-    forgen probe-workflow arm|report  Measure if dynamic-workflow subagents fire hooks (ADR-009 §1)
+    forgen status [view]            Unified status — one screen; views:
+                                      --compound  compound health + recent recalls
+                                      --profile   4-axis profile + recent corrections
+                                      --rules     active rules
+                                      --blocks [N] recent block(s): rule/reason/fix
+                                      --overview  rich dashboard (hooks·history·curve)
+                                      --live      real-time hook event stream
     forgen workflows install|list   Install forgen dynamic-workflow templates to .claude/workflows/
-    forgen watch                    Real-time hook event stream (tail logs live)
-    forgen explain [N]              Explain the last N block(s) — rule, reason, resolution
     forgen changelog                Auto-summarize commits since last release tag
-    forgen last-block               Show the most recent block event
-    forgen recall [--limit N] [--show]
-                                    최근 compound 주입 이력 (solution body preview)
-    forgen migrate [implicit-feedback|evidence-host|all]
-                                    One-shot schema migration (category backfill / host backfill)
-    forgen parity codex [--dry-run] Run codex parity checks (source checkout only)
     forgen compound                 Manage accumulated knowledge
-    forgen dashboard                Compound system dashboard
-    forgen me                       Personal dashboard
     forgen init                     Initialize project (+ starter-pack solutions)
     forgen config hooks             Hook management
     forgen mcp                      MCP server management

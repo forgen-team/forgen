@@ -14,6 +14,13 @@ import { renderProfile } from '../renderer/inspect-renderer.js';
 import { runOnboarding } from './onboarding-cli.js';
 
 export async function handleForge(args: string[]): Promise<void> {
+  // W1-4 (feature-audit 2026-07-21): forge 를 개인화 단일 관문으로.
+  // --onboarding 은 프로필 유무와 무관하게 4질문 온보딩을 재실행 (구 `forgen onboarding`).
+  if (args.includes('--onboarding')) {
+    await runOnboarding();
+    return;
+  }
+
   if (args.includes('--profile')) {
     handleShowProfile();
     return;
@@ -41,7 +48,7 @@ export async function handleForge(args: string[]): Promise<void> {
 function handleShowProfile(): void {
   const profile = loadProfile();
   if (!profile) {
-    console.log('\n  No v1 profile found. Run `forgen forge` or `forgen onboarding`.\n');
+    console.log('\n  No v1 profile found. Run `forgen forge` (or `forgen forge --onboarding` to re-run).\n');
     return;
   }
   console.log(`\n${renderProfile(profile)}\n`);
@@ -100,6 +107,6 @@ async function handleReset(level: string): Promise<void> {
     console.log('  새 프로필을 생성합니다.\n');
     await runOnboarding();
   } else {
-    console.log('  forgen forge 또는 forgen onboarding 으로 새 프로필을 생성하세요.\n');
+    console.log('  forgen forge (또는 forgen forge --onboarding) 으로 새 프로필을 생성하세요.\n');
   }
 }

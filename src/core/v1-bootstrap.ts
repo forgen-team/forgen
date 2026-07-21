@@ -177,7 +177,7 @@ export function bootstrapV1Session(): V1BootstrapResult {
         // mismatch 감지 시 재추천 생성
         if (mismatchResult.quality_mismatch || mismatchResult.autonomy_mismatch) {
           session.warnings.push(
-            `Pack mismatch 감지: quality=${mismatchResult.quality_score}, autonomy=${mismatchResult.autonomy_score}. forgen forge --reset soft 로 재설정하거나 forgen onboarding 으로 재추천을 받으세요.`,
+            `Pack mismatch 감지: quality=${mismatchResult.quality_score}, autonomy=${mismatchResult.autonomy_score}. forgen forge --reset soft 로 재설정하거나 forgen forge --onboarding 으로 재추천을 받으세요.`,
           );
 
           const rec = createRecommendation({

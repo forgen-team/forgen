@@ -138,7 +138,7 @@ export async function handleWatch(): Promise<void> {
     },
   ];
 
-  console.log(`\n  ${C.cyan}forgen watch${C.reset} — real-time event stream`);
+  console.log(`\n  ${C.cyan}forgen status --live${C.reset} — real-time event stream`);
   console.log(`  ${C.dim}Watching: hook-timing, violations, match-eval-log${C.reset}`);
   console.log(`  ${C.dim}Press Ctrl+C to stop${C.reset}\n`);
 

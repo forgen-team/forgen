@@ -459,7 +459,7 @@ export async function prepareHarness(
     const v1Result = bootstrapV1Session();
 
     if (v1Result.needsOnboarding) {
-      log.debug('v1: 온보딩 필요 — forgen onboarding 실행 안내');
+      log.debug('v1: 온보딩 필요 — forgen forge --onboarding 실행 안내');
     }
 
     if (v1Result.legacyBackupPath) {

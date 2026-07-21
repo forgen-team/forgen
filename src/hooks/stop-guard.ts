@@ -602,7 +602,7 @@ export async function main(): Promise<void> {
     // pre-tool-use 와 일관된 FORGEN_USER_CONFIRMED=1 탈출구 + 영구 비활성화 CLI 노출.
     const reasonWithHint = `[forgen:stop-guard/${hit.id.slice(0, 8)}] ${reason}
 
-(Override this turn: set FORGEN_USER_CONFIRMED=1 (audited). Disable rule permanently: \`forgen suppress-rule ${hit.id}\`. See recent blocks: \`forgen last-block\`.)`;
+(Override this turn: set FORGEN_USER_CONFIRMED=1 (audited). Disable rule permanently: \`forgen suppress-rule ${hit.id}\`. See recent blocks: \`forgen status --blocks\`.)`;
 
     const count = incrementBlockCount(sessionId, hit.id);
     const threshold = getStuckLoopThreshold();
