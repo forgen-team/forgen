@@ -91,6 +91,12 @@ function bar(value: number, max: number, width = 10): string {
   return '█'.repeat(Math.max(0, filled)) + '░'.repeat(Math.max(0, width - filled));
 }
 
+/** 한 줄 health 요약 — `forgen status` 요약 헤더에서 재사용. */
+export function renderHealthLine(h: HealthScore): string {
+  const gc = gradeColor(h.grade);
+  return `\n  ${C.bold}forgen health${C.reset}  ${gc}${C.bold}${h.grade}${C.reset}  ${gc}${h.total}/100${C.reset}`;
+}
+
 export async function handleHealth(): Promise<void> {
   const h = computeHealth();
   const gc = gradeColor(h.grade);

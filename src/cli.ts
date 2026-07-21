@@ -85,11 +85,11 @@ const commands: Command[] = [
     },
   },
   {
-    name: 'dashboard',
-    description: 'Compound system dashboard with rich overview',
-    handler: async (_args) => {
-      const { handleDashboard } = await import('./core/dashboard.js');
-      await handleDashboard();
+    name: 'status',
+    description: 'Unified status: forgen status [--compound|--profile|--rules|--blocks [N]|--live]',
+    handler: async (args) => {
+      const { handleStatus } = await import('./core/status-cli.js');
+      await handleStatus(args);
     },
   },
   {
@@ -98,14 +98,6 @@ const commands: Command[] = [
     handler: async (args) => {
       const { handleLearn } = await import('./engine/learn-cli.js');
       await handleLearn(args);
-    },
-  },
-  {
-    name: 'me',
-    description: 'Personal dashboard (→ inspect profile)',
-    handler: async (_args) => {
-      const { handleInspect } = await import('./core/inspect-cli.js');
-      await handleInspect(['profile']);
     },
   },
   {
@@ -192,18 +184,6 @@ const commands: Command[] = [
         return;
       }
       console.log(renderResult(result, dryRun));
-    },
-  },
-  {
-    name: 'status',
-    description: 'Observability dashboard (--watch, --json, --interval N)',
-    handler: async (args) => {
-      const { runDashboard } = await import('./core/dashboard-cli.js');
-      const watch = args.includes('--watch');
-      const json = args.includes('--json');
-      const intervalIdx = args.indexOf('--interval');
-      const intervalSec = intervalIdx !== -1 ? Number(args[intervalIdx + 1]) || 5 : 5;
-      await runDashboard({ watch, json, intervalSec });
     },
   },
   {
@@ -342,30 +322,6 @@ const commands: Command[] = [
     },
   },
   {
-    name: 'stats',
-    description: 'One-screen dashboard: active rules, corrections, blocks/bypass/drift (7d).',
-    handler: async (args) => {
-      const { handleStats } = await import('./core/stats-cli.js');
-      await handleStats(args);
-    },
-  },
-  {
-    name: 'watch',
-    description: 'Real-time hook event stream (hook firings, blocks, solution matches)',
-    handler: async () => {
-      const { handleWatch } = await import('./core/watch-cli.js');
-      await handleWatch();
-    },
-  },
-  {
-    name: 'health',
-    description: 'Single-line health score (0-100) combining utilization, effectiveness, growth.',
-    handler: async () => {
-      const { handleHealth } = await import('./core/health-cli.js');
-      await handleHealth();
-    },
-  },
-  {
     name: 'probe-workflow',
     description: 'ADR-009 §1: measure whether dynamic-workflow subagents fire forgen hooks (arm|report|status).',
     handler: async (args) => {
@@ -382,35 +338,11 @@ const commands: Command[] = [
     },
   },
   {
-    name: 'explain',
-    description: 'Explain the most recent block — what rule, why, and how to resolve.',
-    handler: async (args) => {
-      const { handleExplain } = await import('./core/explain-cli.js');
-      await handleExplain(args);
-    },
-  },
-  {
     name: 'changelog',
     description: 'Auto-summarize changes since last release tag (conventional commits).',
     handler: async () => {
       const { handleChangelog } = await import('./core/changelog-cli.js');
       await handleChangelog();
-    },
-  },
-  {
-    name: 'last-block',
-    description: 'Show the most recent Mech-A/B block event with rule detail (R6-UX2).',
-    handler: async (_args) => {
-      const { handleInspect } = await import('./core/inspect-cli.js');
-      await handleInspect(['violations', '--last', '1']);
-    },
-  },
-  {
-    name: 'recall',
-    description: 'Show recent compound recalls (matched solutions) with optional body preview.',
-    handler: async (args) => {
-      const { handleRecall } = await import('./core/recall-cli.js');
-      await handleRecall(args);
     },
   },
   {
@@ -649,22 +581,15 @@ function printHelp() {
                                     Inspect v1 state (alias: evidence → corrections)
     forgen rule <list|suppress|activate|scan|health-scan|classify>
                                     Rule management (see: forgen rule help)
-    forgen stats                    One-screen trust-layer dashboard (+ philosophy)
-    forgen health                   Single-line health score (0-100) with grade
-    forgen probe-workflow arm|report  Measure if dynamic-workflow subagents fire hooks (ADR-009 §1)
+    forgen status [view]            Unified status — one screen; views:
+                                      --compound  compound health + recent recalls
+                                      --profile   4-axis profile + recent corrections
+                                      --rules     active rules
+                                      --blocks [N] recent block(s): rule/reason/fix
+                                      --live      real-time hook event stream
     forgen workflows install|list   Install forgen dynamic-workflow templates to .claude/workflows/
-    forgen watch                    Real-time hook event stream (tail logs live)
-    forgen explain [N]              Explain the last N block(s) — rule, reason, resolution
     forgen changelog                Auto-summarize commits since last release tag
-    forgen last-block               Show the most recent block event
-    forgen recall [--limit N] [--show]
-                                    최근 compound 주입 이력 (solution body preview)
-    forgen migrate [implicit-feedback|evidence-host|all]
-                                    One-shot schema migration (category backfill / host backfill)
-    forgen parity codex [--dry-run] Run codex parity checks (source checkout only)
     forgen compound                 Manage accumulated knowledge
-    forgen dashboard                Compound system dashboard
-    forgen me                       Personal dashboard
     forgen init                     Initialize project (+ starter-pack solutions)
     forgen config hooks             Hook management
     forgen mcp                      MCP server management
