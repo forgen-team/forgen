@@ -493,21 +493,23 @@ function renderMultiHost(data: MultiHostData): string {
 
 // ── Main Dashboard Renderer ──
 
-// ── Learning Curve: 교정 추이 + 절약 시간 추정 ──
+// ── 교정·활동 요약 (관찰 — 인과 효과 주장 아님) ──
+// honest-null (2026-07-21, positioning #74 정합): "절약 시간 추정 / 쓸수록 나아진다
+// 정량화"는 은퇴. 측정된 δ 없이 개선/절약을 수치화하지 않는다. 관찰 가능한 교정 추이·
+// 활동만 보여준다. correctionTrend 는 카운트 델타의 *관찰*이지 forgen 인과 효과가 아니다.
 
 export interface LearningCurve {
   correctionsLast7d: number;
   correctionsPrev7d: number;
-  correctionTrend: 'improving' | 'stable' | 'worsening';
+  /** 교정 카운트 델타의 관찰 (인과 효과 아님 — down=count 감소일 뿐). */
+  correctionTrend: 'down' | 'flat' | 'up';
   evidenceTotalDays: number;
   sessionsAnalyzed: number;
-  estimatedMinutesSaved: number;
   topCorrectionAxes: Array<{ axis: string; count: number }>;
 }
 
 /**
- * Learning Curve 수집.
- * evidence 파일(교정 기록)과 compound 활용률을 교차 분석하여 "쓸수록 나아진다"를 정량화.
+ * 교정·활동 요약 수집 (관찰). evidence 파일(교정 기록) 기반. 인과 효과/절약은 미주장.
  */
 export function collectLearningCurve(): LearningCurve {
   const now = Date.now();
@@ -552,12 +554,13 @@ export function collectLearningCurve(): LearningCurve {
     }
   } catch { /* fail-open */ }
 
-  // 추세 판정: 전주 대비 30% 이상 감소 = improving, 30% 이상 증가 = worsening
-  let correctionTrend: 'improving' | 'stable' | 'worsening' = 'stable';
+  // 추세: 전주 대비 카운트 델타의 *관찰* (30%↓=down, 30%↑=up). forgen 인과 효과가
+  // 아니라 단순 교정 횟수 변화 — 라벨도 개선/악화(가치 판단)가 아닌 감소/증가로 둔다.
+  let correctionTrend: 'down' | 'flat' | 'up' = 'flat';
   if (correctionsPrev7d > 0) {
     const delta = (correctionsLast7d - correctionsPrev7d) / correctionsPrev7d;
-    if (delta < -0.3) correctionTrend = 'improving';
-    else if (delta > 0.3) correctionTrend = 'worsening';
+    if (delta < -0.3) correctionTrend = 'down';
+    else if (delta > 0.3) correctionTrend = 'up';
   }
 
   // 상위 교정 축
@@ -569,17 +572,7 @@ export function collectLearningCurve(): LearningCurve {
   // 세션 수: evidence 날짜 기준 (고유 날짜 × 평균 2세션/일 가정)
   const sessionsAnalyzed = uniqueDays.size * 2;
 
-  // 추정 절약 시간: 지난 7일 compound 주입 이벤트당 평균 8분 절약 가정
-  // (경쟁자 분석에서 도출한 경험적 수치 — 카운터팩추얼의 하한 추정)
-  const injection = collectInjectionActivity();
-  let successfulInjections = 0;
-  try {
-    for (const rec of injection.recentInjections ?? []) {
-      const ts = new Date(rec.ts).getTime();
-      if (Number.isFinite(ts) && now - ts < SEVEN_DAYS_MS) successfulInjections++;
-    }
-  } catch { /* fail-open */ }
-  const estimatedMinutesSaved = Math.round(successfulInjections * 8);
+  // (은퇴) estimatedMinutesSaved: "주입당 8분 절약" 카운터팩추얼은 honest-null 로 제거.
 
   return {
     correctionsLast7d,
@@ -587,44 +580,36 @@ export function collectLearningCurve(): LearningCurve {
     correctionTrend,
     evidenceTotalDays: uniqueDays.size,
     sessionsAnalyzed,
-    estimatedMinutesSaved,
     topCorrectionAxes,
   };
 }
 
 function renderLearningCurve(data: LearningCurve): string {
-  const trendIcon = data.correctionTrend === 'improving'
-    ? green('↓ 감소')
-    : data.correctionTrend === 'worsening'
-      ? red('↑ 증가')
+  // 관찰: 교정 카운트 델타. 개선/악화 색(가치 판단) 대신 중립 감소/증가 표기.
+  const trendIcon = data.correctionTrend === 'down'
+    ? dim('↓ 감소')
+    : data.correctionTrend === 'up'
+      ? dim('↑ 증가')
       : dim('→ 유지');
 
   const axisLines = data.topCorrectionAxes.length > 0
     ? data.topCorrectionAxes.map(a => `    ${a.axis}: ${a.count}회`).join('\n')
     : `    ${dim('(아직 교정 데이터 없음)')}`;
 
-  const savedHours = Math.floor(data.estimatedMinutesSaved / 60);
-  const savedMins = data.estimatedMinutesSaved % 60;
-  const savedStr = savedHours > 0 ? `${savedHours}시간 ${savedMins}분` : `${savedMins}분`;
-
   return [
-    `  ${bold('📈 Learning Curve / 학습 곡선')}`,
+    `  ${bold('📊 교정·활동 요약')} ${dim('(관찰 — 인과 효과/절약 미주장)')}`,
     ``,
     `  교정 추이 (지난 7일):`,
     `    이번 주: ${data.correctionsLast7d}건`,
     `    지난 주: ${data.correctionsPrev7d}건`,
-    `    추세: ${trendIcon}`,
+    `    카운트 변화: ${trendIcon} ${dim('(관찰치, forgen 효과 아님)')}`,
     ``,
     `  주요 교정 축 (누적):`,
     axisLines,
     ``,
-    `  누적 사용:`,
+    `  누적 활동:`,
     `    활동한 일수: ${data.evidenceTotalDays}일`,
     `    분석된 세션: 약 ${data.sessionsAnalyzed}회`,
-    ``,
-    `  ${cyan('추정 절약 시간')} (compound 주입 성공 기반):`,
-    `    ${bold(savedStr)} ${dim('(지난 7일)')}`,
-    `    ${dim('※ compound가 힌트를 제공한 매 1회당 평균 8분 절약 가정')}`,
   ].join('\n');
 }
 

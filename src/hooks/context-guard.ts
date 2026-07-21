@@ -397,11 +397,11 @@ export async function main(): Promise<void> {
 }
 
 /**
- * 세션 종료 시 "forgen이 도움이 된 정도"를 요약.
- * solution-cache에서 이번 세션에 주입된 compound 솔루션 수를 집계하여
- * 카운터팩추얼 "forgen 없었으면 ~N분 더 걸렸을 것" 메시지 생성.
+ * 세션 종료 시 forgen *활동*을 요약 (관찰 — 인과 효과/절약 미주장).
+ * solution-cache 에서 이번 세션 주입된 compound 수·상위 솔루션·주입 대화 비율을 보여준다.
+ * honest-null (positioning #74): "forgen 없었으면 ~N분 절약" 카운터팩추얼은 은퇴.
  */
-function buildSessionSummary(sessionId: string, promptCount: number): string {
+export function buildSessionSummary(sessionId: string, promptCount: number): string {
   try {
     // P1-S3 fix (2026-04-20): sanitizeId로 path traversal 차단.
     // 다른 세션 캐시 경로는 모두 sanitizeId 사용. 여기만 누락되어 있었다.
@@ -413,22 +413,21 @@ function buildSessionSummary(sessionId: string, promptCount: number): string {
     const injected = Array.isArray(cache.injected) ? cache.injected : [];
     if (injected.length === 0) return '';
 
-    // 카운터팩추얼: 주입된 compound 1건당 평균 8분 절약 가정 (하한 추정)
-    const savedMins = injected.length * 8;
-    const savedStr = savedMins >= 60
-      ? `${Math.floor(savedMins / 60)}시간 ${savedMins % 60}분`
-      : `${savedMins}분`;
-
-    // 상위 3개 솔루션
+    // honest-null (2026-07-21, positioning #74 정합): "절약 시간(forgen 없었으면)"
+    // 카운터팩추얼은 은퇴 — 측정된 δ 없이 시간절약을 추정하는 건 날조다. *관찰 가능한*
+    // 활동만 보여준다 (무엇이 주입됐나), 인과 효과 크기는 주장하지 않는다.
     const topNames = injected.slice(0, 3).map(i => `"${i.name}"`).join(', ');
     const moreCount = injected.length - 3;
     const topStr = moreCount > 0 ? `${topNames} 외 ${moreCount}개` : topNames;
 
+    // 리뷰 SEV-3: 이전 "주입이 있던 대화 비율 = injected/promptCount × 100" 은 단위
+    // 불일치(솔루션수/프롬프트수)라 한 프롬프트 다중 주입 시 >100% 라는 불가능한 %가
+    // 났다. injected 캐시엔 프롬프트별 그룹핑이 없으므로 커버리지%를 낼 수 없다 →
+    // 오해 없는 *원시 밀도*(N건 / M프롬프트)로 관찰만 보여준다.
     return [
-      `\n📊 이번 세션 forgen 효과:`,
+      `\n📊 이번 세션 forgen 활동:`,
       `  주입된 compound: ${injected.length}건 (${topStr})`,
-      `  추정 절약 시간: ${savedStr} (forgen 없었으면 시행착오 필요)`,
-      `  프롬프트 대비 효율: ${(injected.length / promptCount * 100).toFixed(0)}% 의 대화가 축적된 지식의 도움을 받음\n`,
+      `  세션 규모: ${promptCount} 프롬프트 ${'\x1b[2m'}(주입 밀도 = 주입 ${injected.length}건 / ${promptCount} 프롬프트, 관찰 — 도움 여부는 미측정)${'\x1b[0m'}`,
     ].join('\n');
   } catch {
     return '';

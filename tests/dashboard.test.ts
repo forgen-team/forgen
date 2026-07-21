@@ -268,3 +268,30 @@ describe('dashboard', () => {
     });
   });
 });
+
+describe('honest-null 회귀: 인과 절약시간/개선 정량 미노출 (positioning #74 정합)', () => {
+  it('LearningCurve/collectLearningCurve 에 estimatedMinutesSaved 필드 없음', async () => {
+    const mod = await import('../src/core/dashboard.js');
+    const lc = mod.collectLearningCurve();
+    expect(lc).not.toHaveProperty('estimatedMinutesSaved');
+    // 관찰 필드만
+    expect(lc).toHaveProperty('correctionsLast7d');
+    expect(lc).toHaveProperty('correctionTrend');
+    expect(['down', 'flat', 'up']).toContain(lc.correctionTrend);
+  });
+
+  it('dashboard.ts / context-guard.ts 런타임 문자열에 인과 절약/카운터팩추얼 없음', async () => {
+    const { execSync } = await import('node:child_process');
+    // 은퇴 노트(주석)는 예외 — content 가 * // 로 시작하는 라인 제외.
+    // 리뷰 하드닝: 회귀 문구 목록 확장(절약/단축/덕분/효율 N%) + 인과 카운터팩추얼.
+    const out = execSync(
+      `grep -rnE "추정 절약 시간|forgen 없었으면|estimatedMinutesSaved|[0-9]+분 절약|시행착오 필요|덕분에|시간 단축|절약(했|한|된)|효율.*[0-9]+%.*도움" src/core/dashboard.ts src/hooks/context-guard.ts || true`,
+      { encoding: 'utf-8', cwd: process.cwd() },
+    );
+    const bad = out.split('\n').filter(Boolean).filter((line) => {
+      const content = line.split(':').slice(2).join(':').trimStart();
+      return !content.startsWith('*') && !content.startsWith('//') && !content.startsWith('/*');
+    });
+    expect(bad, `인과 절약/카운터팩추얼 런타임 문자열:\n${bad.join('\n')}`).toEqual([]);
+  });
+});
