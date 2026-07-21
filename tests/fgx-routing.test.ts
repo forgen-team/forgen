@@ -19,12 +19,12 @@ const FGX_BIN = path.join(PKG_ROOT, 'dist', 'fgx.js');
 
 // fgx.ts:21-28 의 인벤토리와 일치해야 함 — sync 가 무너지면 즉시 fail.
 const EXPECTED_SUBCOMMANDS = new Set([
-  'forge', 'compound', 'skill', 'dashboard', 'learn', 'me', 'statusline',
-  'config', 'mcp', 'init', 'install', 'status', 'maintenance', 'parity',
+  // Wave 1 통합: status(←9 status cmds), dev(←probe-workflow/parity/migrate/regress-map).
+  'forge', 'compound', 'skill', 'status', 'learn', 'statusline',
+  'config', 'mcp', 'init', 'install', 'maintenance', 'dev',
   'notepad', 'inspect', 'onboarding', 'doctor', 'uninstall', 'rule',
   'classify-enforce', 'rule-meta-scan', 'lifecycle-scan',
-  'stats', 'last-block', 'recall', 'migrate', 'suppress-rule', 'activate-rule',
-  'regress-map', 'watch', 'health', 'probe-workflow', 'workflows', 'explain', 'changelog',
+  'suppress-rule', 'activate-rule', 'workflows', 'changelog',
   'help', '--help', '-h', '--version', '-V',
 ]);
 

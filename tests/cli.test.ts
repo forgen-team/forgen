@@ -43,7 +43,7 @@ describe('cli - command structure', () => {
       'init',
       'install',
       'maintenance',
-      'parity',
+      'dev',
       'notepad',
       'inspect',
       'onboarding',

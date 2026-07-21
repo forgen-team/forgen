@@ -66,3 +66,17 @@ describe('명령 통합 회귀 방지 (제거된 명령은 Unknown)', () => {
     expect(`${r.stdout}${r.stderr}`).not.toContain('Unknown command');
   });
 });
+
+describe('W1-3 dev 네임스페이스', () => {
+  const DEV_MOVED = ['parity', 'probe-workflow', 'migrate', 'regress-map'];
+  for (const cmd of DEV_MOVED) {
+    it(`forgen ${cmd} (top-level) → Unknown command (dev로 이동)`, () => {
+      const r = spawnSync('node', [CLI, cmd], { encoding: 'utf-8', timeout: 30_000, env: { ...process.env } });
+      expect(`${r.stdout}${r.stderr}`).toContain('Unknown command');
+    });
+  }
+  it('forgen dev (인자 없이) → dev help', () => {
+    const r = spawnSync('node', [CLI, 'dev'], { encoding: 'utf-8', timeout: 30_000, env: { ...process.env } });
+    expect(`${r.stdout}${r.stderr}`).toContain('developer / maintenance utilities');
+  });
+});

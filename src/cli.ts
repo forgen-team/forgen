@@ -214,28 +214,11 @@ const commands: Command[] = [
     },
   },
   {
-    name: 'parity',
-    description: 'Run host parity checks. Usage: forgen parity codex [--dry-run]',
+    name: 'dev',
+    description: 'Developer/maintenance utilities: dev <probe-workflow|parity|migrate|regress-map>',
     handler: async (args) => {
-      const sub = args[0];
-      if (sub !== 'codex') {
-        console.log('Usage:\n  forgen parity codex [--dry-run]\n\nNotes:\n  - source 체크아웃에서만 작동합니다 (tests/ 디렉토리 필요).\n  - npm install 로 설치된 패키지에서는 run-parity.sh 가 없습니다.');
-        return;
-      }
-      const here = path.dirname(fileURLToPath(import.meta.url));
-      const scriptPath = path.resolve(here, '..', 'tests', 'e2e', 'codex', 'run-parity.sh');
-      if (!fs.existsSync(scriptPath)) {
-        console.error('[forgen] run-parity.sh 는 source 체크아웃에서만 작동. 직접 git clone 후 실행하세요.');
-        console.error(`  expected: ${scriptPath}`);
-        process.exit(1);
-      }
-      const { spawnSync } = await import('node:child_process');
-      const dryRun = args.includes('--dry-run');
-      const spawnArgs = dryRun ? ['--dry-run'] : [];
-      const result = spawnSync('bash', [scriptPath, ...spawnArgs], { stdio: 'inherit' });
-      if (result.status !== 0) {
-        process.exit(result.status ?? 1);
-      }
+      const { handleDev } = await import('./core/dev-cli.js');
+      await handleDev(args);
     },
   },
   {
@@ -322,14 +305,6 @@ const commands: Command[] = [
     },
   },
   {
-    name: 'probe-workflow',
-    description: 'ADR-009 §1: measure whether dynamic-workflow subagents fire forgen hooks (arm|report|status).',
-    handler: async (args) => {
-      const { handleProbeWorkflow } = await import('./core/probe-workflow-cli.js');
-      await handleProbeWorkflow(args);
-    },
-  },
-  {
     name: 'workflows',
     description: 'Install/list forgen dynamic-workflow templates (install [--project] | list).',
     handler: async (args) => {
@@ -343,22 +318,6 @@ const commands: Command[] = [
     handler: async () => {
       const { handleChangelog } = await import('./core/changelog-cli.js');
       await handleChangelog();
-    },
-  },
-  {
-    name: 'migrate',
-    description: 'One-shot schema migrations (implicit-feedback category backfill).',
-    handler: async (args) => {
-      const { handleMigrate } = await import('./core/migrate-cli.js');
-      await handleMigrate(args);
-    },
-  },
-  {
-    name: 'regress-map',
-    description: 'Top fix-touched files in the last N days (--days 30 --top 10 --json).',
-    handler: async (args) => {
-      const { handleRegressMap } = await import('./core/regress-map-cli.js');
-      await handleRegressMap(args);
     },
   },
   {
