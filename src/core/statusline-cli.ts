@@ -18,6 +18,8 @@ import { execSync } from 'node:child_process';
 import { loadActiveRules } from '../store/rule-store.js';
 import { STATE_DIR } from './paths.js';
 import { classifySolutions } from './lifecycle-classifier.js';
+import { computeStats } from './stats-cli.js';
+import { loadRoiDemotions } from '../engine/roi-demotion.js';
 
 // 0.4.6 perf #13 — statusline 출력을 5초 캐싱.
 // claude statusLine 은 짧은 간격으로 재호출되는데 매번 git/find/rule-store 를
@@ -167,6 +169,35 @@ function buildUsageLine(): string | null {
   }
 }
 
+/**
+ * W1-2 (feature-audit 2026-07-21): forgen 가치 카운터 라인 — invisible 가치 가시화.
+ * native 플랜/토큰 usage(→ /usage, W2에서 물러남)가 아니라 forgen *자체 활동량*을
+ * 노출한다: recall 주입·surfaced·교정 캡처·ROI 강등·차단. 전부 computeStats()가 이미
+ * 실측 중인 카운터라 조작 위험 0. computeStats 실패 시 라인 생략(fail-open).
+ */
+export function buildValueLine(): string | null {
+  try {
+    let roiDemoted = 0;
+    try {
+      roiDemoted = Object.keys(loadRoiDemotions()).length;
+    } catch { /* roi store 없음 → 0 */ }
+
+    const s = computeStats();
+    const a = s.assistToday;
+    const parts = [
+      `${YELLOW}✦${RESET}`,
+      `${DIM}recall${RESET} ${a.recallHits}`,
+      `${DIM}surfaced${RESET} ${a.surfaced}`,
+      `${DIM}교정${RESET} +${s.corrections7d}${DIM}(7d)${RESET}`,
+      `${DIM}ROI↓${RESET} ${roiDemoted}`,
+      `${DIM}차단${RESET} ${s.blocks7d}${DIM}(7d)${RESET}`,
+    ];
+    return parts.join(`  ${DIM}·${RESET}  `);
+  } catch {
+    return null;
+  }
+}
+
 function buildLine3(claudeDir: string, cwd: string): string {
   const settings = getSettingsJson(claudeDir);
   const claudeMdCount = countClaudeMd(cwd);
@@ -234,20 +265,19 @@ export async function handleStatusline(): Promise<void> {
   const line1 = buildLine1(payload, cwd);
   const line3 = buildLine3(claudeDir, cwd);
   const usageLine = buildUsageLine();
+  const valueLine = buildValueLine(); // W1-2: forgen 가치 카운터
   const lifecycleLine = buildLifecycleLine();
-
-  // Line 2 (context/usage): stdin JSON spec 미확인으로 생략 — TODO
-  // Line 4 (tool counts): 추적 인프라 없음 — TODO
-  // Line 5 (active task): 추적 인프라 없음 — TODO
 
   console.log(line1);
   console.log(line3);
   if (usageLine) console.log(usageLine);
+  if (valueLine) console.log(valueLine);
   if (lifecycleLine) console.log(lifecycleLine);
 
   // W2-2: 1회 공지(usageLine)는 캐시에 넣지 않는다 — 캐시 재생 시
   // "1회만" 약속이 5초 창 동안 반복 위반되는 실측 버그 방지.
   const cacheLines = [line1, line3];
+  if (valueLine) cacheLines.push(valueLine);
   if (lifecycleLine) cacheLines.push(lifecycleLine);
   const cacheBody = `${cacheLines.join('\n')}\n`;
   writeCache(cacheBody);
