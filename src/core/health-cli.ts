@@ -94,7 +94,7 @@ function bar(value: number, max: number, width = 10): string {
 /** 한 줄 health 요약 — `forgen status` 요약 헤더에서 재사용. */
 export function renderHealthLine(h: HealthScore): string {
   const gc = gradeColor(h.grade);
-  return `\n  ${C.bold}forgen health${C.reset}  ${gc}${C.bold}${h.grade}${C.reset}  ${gc}${h.total}/100${C.reset}`;
+  return `\n  ${C.bold}forgen status${C.reset}  ${gc}${C.bold}${h.grade}${C.reset}  ${gc}${h.total}/100${C.reset}`;
 }
 
 export async function handleHealth(): Promise<void> {
@@ -102,7 +102,7 @@ export async function handleHealth(): Promise<void> {
   const gc = gradeColor(h.grade);
 
   console.log('');
-  console.log(`  ${C.bold}forgen health${C.reset}  ${gc}${C.bold}${h.grade}${C.reset}  ${gc}${h.total}/100${C.reset}`);
+  console.log(`  ${C.bold}forgen status${C.reset}  ${gc}${C.bold}${h.grade}${C.reset}  ${gc}${h.total}/100${C.reset}`);
   console.log('');
   console.log(`    Utilization    ${bar(h.components.utilization, 30)}  ${h.components.utilization}/30   ${C.dim}solution match rate (7d)${C.reset}`);
   console.log(`    Effectiveness  ${bar(h.components.effectiveness, 25)}  ${h.components.effectiveness}/25   ${C.dim}block→ack ratio${C.reset}`);

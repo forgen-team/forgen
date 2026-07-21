@@ -117,7 +117,7 @@ export async function handleRecall(args: string[]): Promise<void> {
   }
 
   console.log('');
-  console.log(`  forgen recall — last ${recalls.length} surfaced solution${recalls.length === 1 ? '' : 's'}`);
+  console.log(`  forgen status --compound — last ${recalls.length} surfaced solution${recalls.length === 1 ? '' : 's'}`);
   console.log('  ─────────────────────────────────────────');
   for (const r of recalls) {
     const score = r.match_score !== undefined ? ` @${r.match_score.toFixed(2)}` : '';
