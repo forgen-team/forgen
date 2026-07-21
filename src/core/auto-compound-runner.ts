@@ -20,6 +20,7 @@ import { createRequire } from 'node:module';
 import { containsPromptInjection, filterSolutionContent } from '../hooks/prompt-injection-filter.js';
 import { isSelfReferentialEcho } from './config-injector.js';
 import { redactSecrets } from '../hooks/secret-filter.js';
+import { stripPrivate } from '../engine/private-filter.js';
 import { createEvidence, saveEvidence, promoteSessionCandidates } from '../store/evidence-store.js';
 import { loadProfile } from '../store/profile-store.js';
 import { FORGEN_HOME, ME_DIR } from './paths.js';
@@ -346,10 +347,21 @@ try {
   // R5-G2 (P0 security): transcript 를 Claude 로 송신하기 전 API key / 토큰 / 비밀번호 /
   // private key blocks 를 [REDACTED:...] 로 치환. 사용자가 채팅에 pasted 한 자격증명이
   // auto-compound 를 통해 외부 API 로 누출되는 채널 차단.
-  const { redacted: summary, hits: secretHits } = redactSecrets(rawSummary);
+  const { redacted: redactedSummary, hits: secretHits } = redactSecrets(rawSummary);
   if (secretHits.length > 0) {
     process.stderr.write(`[forgen-auto-compound] redacted ${secretHits.length} secret(s) before send: ${secretHits.map((s) => s.name).join(', ')}\n`);
   }
+
+  // W2-5 (private 태그, flow-reviewer SEV-2): redactSecrets(보안) 와 직교하는 프라이버시
+  // 축. 이 auto-compound-runner 는 학습 코퍼스의 *주 자동 캡처 경로* — 세션 종료마다
+  // 전체 트랜스크립트를 추출 LLM 으로 보내고 behavior/solution 으로 파생한다. 사용자가
+  // <private> 로 표시한 범위를 LLM 송신·behavior write 전에 제거해야 "안심하고 교정"
+  // 약속이 주 경로에서 지켜진다.
+  const { cleaned: summary, hadPrivate } = stripPrivate(redactedSummary);
+  if (hadPrivate) {
+    process.stderr.write(`[forgen-auto-compound] excluded <private> range(s) before send (privacy)\n`);
+  }
+  if (summary.length < 200) process.exit(0);
 
   // 보안: 프롬프트 인젝션이 포함된 transcript는 분석하지 않음
   if (containsPromptInjection(summary)) {

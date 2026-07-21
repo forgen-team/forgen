@@ -9,6 +9,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { CLAUDE_DIR, STATE_DIR } from '../core/paths.js';
 import { createLogger } from '../core/logger.js';
+import { stripPrivate } from './private-filter.js';
 import type { ExtractedSolution } from './extraction-gates.js';
 
 const log = createLogger('extraction-session');
@@ -132,7 +133,11 @@ function collectClaudeProjectSessionContext(
       if (entry.type === 'user') {
         const message = entry.message as { role?: string; content?: unknown } | undefined;
         if (message?.role === 'user' && typeof message.content === 'string') {
-          prompts.push(message.content);
+          // W2-5 (private 태그): 이 함수는 ~/.claude/projects/ 원시 트랜스크립트를 직접
+          // 읽는 마지막 캡처 경로다(prompt-history·session-store 와 별개 소스). <private>
+          // 범위를 제거해 학습 신호에서 배제하고, 통째 private 프롬프트는 push 하지 않는다.
+          const cleaned = stripPrivate(message.content).cleaned;
+          if (cleaned.trim()) prompts.push(cleaned);
         }
         continue;
       }
@@ -151,8 +156,9 @@ function collectClaudeProjectSessionContext(
         if (toolUse.type !== 'tool_use') continue;
         if (toolUse.name !== 'Write' && toolUse.name !== 'Edit') continue;
         const filePath = String(toolUse.input?.file_path ?? toolUse.input?.filePath ?? '');
-        const content = String(toolUse.input?.content ?? toolUse.input?.new_string ?? '');
-        if (!filePath || !content) continue;
+        // W2-5: write 스니펫도 원시 코드(<private> 가능) — 캡처 전 strip.
+        const content = stripPrivate(String(toolUse.input?.content ?? toolUse.input?.new_string ?? '')).cleaned;
+        if (!filePath || !content.trim()) continue;
         writes.push({
           filePath: filePath.slice(-100),
           contentSnippet: content.slice(0, 200),

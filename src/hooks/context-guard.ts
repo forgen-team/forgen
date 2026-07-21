@@ -23,6 +23,7 @@ import { HANDOFFS_DIR, STATE_DIR } from '../core/paths.js';
 import { recordHookTiming } from './shared/hook-timing.js';
 import { sanitizeId } from './shared/sanitize-id.js';
 import { redactSecrets } from './secret-filter.js';
+import { stripPrivate } from '../engine/private-filter.js';
 import type { HostId } from '../core/trust-layer-intent.js';
 
 const log = createLogger('context-guard');
@@ -138,9 +139,14 @@ function appendPromptHistory(sessionId: string, prompt: string): void {
     // ADR-008 critical: secret/PII redaction via secret-filter regex 재사용.
     // password/api-key 가 평문 prompt 에 들어가면 그대로 disk 에 박제되는 위험 차단.
     const safePrompt = redactSecrets(prompt).redacted;
-    const truncated = safePrompt.length > PROMPT_HISTORY_TRUNCATE
-      ? safePrompt.slice(0, PROMPT_HISTORY_TRUNCATE)
-      : safePrompt;
+    // W2-5 (private 태그, flow-reviewer SEV-2): prompt-history 는 disk 에 영속되고
+    // extraction-session.ts 가 이를 읽어 세션 컨텍스트 추출에 쓴다. 사용자가 프롬프트에
+    // 넣은 <private> 범위가 박제·추출입력이 되지 않도록 저장 전에 제거한다(보안 축인
+    // redactSecrets 와 별개인 프라이버시 축).
+    const privatelessPrompt = stripPrivate(safePrompt).cleaned;
+    const truncated = privatelessPrompt.length > PROMPT_HISTORY_TRUNCATE
+      ? privatelessPrompt.slice(0, PROMPT_HISTORY_TRUNCATE)
+      : privatelessPrompt;
     const entry = JSON.stringify({
       timestamp: new Date().toISOString(),
       sessionId,

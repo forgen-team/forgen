@@ -60,6 +60,22 @@ describe('context-guard main()', () => {
     expect(logOutput.some(l => l.includes('"continue":true'))).toBe(true);
   });
 
+  it('W2-5: 프롬프트의 <private> 범위는 prompt-history.jsonl 에 박제되지 않는다', async () => {
+    mockReadStdinJSON.mockResolvedValue({
+      prompt: 'public ask about PUBLICWORD and <private>SECRETWORD do not persist</private> tail',
+      session_id: 'test-session-private',
+    });
+    const { main } = await import('../src/hooks/context-guard.js');
+    const { STATE_DIR } = await import('../src/core/paths.js');
+    await main();
+
+    const histPath = `${STATE_DIR}/prompt-history.jsonl`;
+    expect(fs.existsSync(histPath)).toBe(true);
+    const hist = fs.readFileSync(histPath, 'utf-8');
+    expect(hist).toContain('PUBLICWORD');
+    expect(hist).not.toContain('SECRETWORD');
+  });
+
   it('stop_hook_type이 있으면 approve', async () => {
     mockReadStdinJSON.mockResolvedValue({
       stop_hook_type: 'end_turn',

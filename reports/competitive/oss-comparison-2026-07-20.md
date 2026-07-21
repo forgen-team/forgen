@@ -39,7 +39,7 @@
 ## 3. forgen이 지는 지점
 
 1. **배포/채택 규모 — 압도적 열세.** 경쟁자 23k~231k★. ECC(231k)·claude-mem(88k)는 이미 카테고리 디폴트. "쓸수록 낫다"가 사실이어도 사용자가 없으면 축적 데이터가 안 쌓임.
-2. **ECC가 forgen 학습루프를 추월.** instinct 신뢰도스코어(=forgen trust lifecycle)에 더해 **`/instinct-import/export` 크로스유저 공유**를 이미 출시. forgen의 export는 tarball 통짜이고 패턴별 신뢰도 공유는 없음. ECC는 `/evolve`(승급)+`/prune`(30d)까지 갖춰 라이프사이클도 대등. **주간 릴리스 + 997 테스트**로 실행속도도 우위.
+2. **ECC가 forgen 학습루프를 추월.** instinct 신뢰도스코어(=forgen trust lifecycle)에 더해 **`/instinct-import/export` 크로스유저 공유**를 이미 출시. ~~forgen의 export는 tarball 통짜이고 패턴별 신뢰도 공유는 없음.~~ **[정정 2026-07-21: 이 문장은 더 이상 사실이 아니다 — W2-1 `compound-share.ts`(`ShareBundlePatternV1{confidence,status,evidence,contentHash}` + import probation)로 패턴별 신뢰도 동반 export/import 구현 완료 (PR #70). 갭 아님.]** ECC는 `/evolve`(승급)+`/prune`(30d)까지 갖춰 라이프사이클도 대등. **주간 릴리스 + 997 테스트**로 실행속도도 우위.
 3. **멀티하네스 최약체.** forgen=CC+Codex(2). ECC=7, claude-mem=5, OMO=4, claude-flow=CC+Codex+5프로바이더. ADR-010이 multi-host를 moat로 잡았지만 실제 커버리지는 꼴찌.
 4. **메모리 검색 성숙도.** claude-mem 3층 토큰효율 검색(~10x)·Chroma 벡터, claude-flow HNSW가 forgen TF-IDF/BM25/bigram보다 코퍼스 성장 시 recall 우위.
 5. **오케스트레이션.** OMC/OMO/claude-flow 멀티에이전트가 forgen `/forge-loop`(기본형)보다 월등. OMO Todo Enforcer는 idle→강제복귀까지.
@@ -55,10 +55,13 @@
 
 ## 5. 채택 후보 갭 Top 5
 
+> **정정 (2026-07-21, Wave 1·2 실측 후)**: 1·2는 이미 구현됨(W2-1/W2-2, PR #70) → 갭 아님.
+> 남은 진짜 갭은 3·4·5. 상세는 `feature-audit/competitor-adoption-2026-07-21.md §B/C`.
+
 | # | 기능 | 배울 곳 | 예상 난이도 | 근거 |
 |---|---|---|---|---|
-| 1 | **패턴별 신뢰도 동반 크로스유저/팀 공유** (통짜 tarball → `import/export` 단위 + confidence) | **ECC** `/instinct-import/export` | 중 | 팀 셀링(secondary 오디언스)에 직결 |
-| 2 | **토큰효율 3층 검색** (search→timeline→full, ~10x) | **claude-mem** | 중 | forgen은 매칭 솔루션 full 주입 → budget 압박. ROI 루프와 시너지 |
+| ~~1~~ | ~~**패턴별 신뢰도 동반 크로스유저/팀 공유**~~ ✅ **완료 (W2-1 compound-share, PR #70)** | ECC | — | 갭 아님 |
+| ~~2~~ | ~~**토큰효율 3층 검색** (search→timeline→full)~~ ✅ **완료 (W2-2 tiered injection, PR #70)** | claude-mem | — | 갭 아님 |
 | 3 | **벡터/의미 메모리** (Chroma/HNSW) TF-IDF 보완 | **claude-mem / claude-flow** | 중상 | 코퍼스 성장 시 recall. 단 로컬·$0 제약 유지 필요 |
 | 4 | **멀티하네스 확장** 최소 opencode + Cursor 어댑터 | **ECC** DRY 어댑터 패턴 / **claude-mem** `--ide` 플래그 | 상 | moat로 선언했으나 실측 꼴찌 |
 | 5 | **forge-loop 견고화** idle/todo enforcer로 완료가드 | **OMO** Todo Enforcer / **OMC** Ralph | 중 | Stop훅 자산과 결합 용이 |
