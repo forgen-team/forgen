@@ -401,7 +401,7 @@ export async function main(): Promise<void> {
  * solution-cache 에서 이번 세션 주입된 compound 수·상위 솔루션·주입 대화 비율을 보여준다.
  * honest-null (positioning #74): "forgen 없었으면 ~N분 절약" 카운터팩추얼은 은퇴.
  */
-function buildSessionSummary(sessionId: string, promptCount: number): string {
+export function buildSessionSummary(sessionId: string, promptCount: number): string {
   try {
     // P1-S3 fix (2026-04-20): sanitizeId로 path traversal 차단.
     // 다른 세션 캐시 경로는 모두 sanitizeId 사용. 여기만 누락되어 있었다.
@@ -419,12 +419,15 @@ function buildSessionSummary(sessionId: string, promptCount: number): string {
     const topNames = injected.slice(0, 3).map(i => `"${i.name}"`).join(', ');
     const moreCount = injected.length - 3;
     const topStr = moreCount > 0 ? `${topNames} 외 ${moreCount}개` : topNames;
-    const injectedPromptPct = Math.round((injected.length / promptCount) * 100);
 
+    // 리뷰 SEV-3: 이전 "주입이 있던 대화 비율 = injected/promptCount × 100" 은 단위
+    // 불일치(솔루션수/프롬프트수)라 한 프롬프트 다중 주입 시 >100% 라는 불가능한 %가
+    // 났다. injected 캐시엔 프롬프트별 그룹핑이 없으므로 커버리지%를 낼 수 없다 →
+    // 오해 없는 *원시 밀도*(N건 / M프롬프트)로 관찰만 보여준다.
     return [
       `\n📊 이번 세션 forgen 활동:`,
       `  주입된 compound: ${injected.length}건 (${topStr})`,
-      `  주입이 있던 대화 비율: ${injectedPromptPct}% ${'\x1b[2m'}(관찰 — 도움 여부는 미측정)${'\x1b[0m'}`,
+      `  세션 규모: ${promptCount} 프롬프트 ${'\x1b[2m'}(주입 밀도 = 주입 ${injected.length}건 / ${promptCount} 프롬프트, 관찰 — 도움 여부는 미측정)${'\x1b[0m'}`,
     ].join('\n');
   } catch {
     return '';
