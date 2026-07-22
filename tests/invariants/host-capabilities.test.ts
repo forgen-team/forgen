@@ -24,6 +24,7 @@ import {
   getHostCapabilities,
   listRegisteredHosts,
   intentSupported,
+  intentEnforced,
 } from '../../src/host/capabilities-registry.js';
 
 describe('Invariant: HostCapabilities 완전성', () => {
@@ -94,6 +95,21 @@ describe('Invariant: HostCapabilities 완전성', () => {
     expect(intentSupported('opencode', 'block-tool-use')).toBe(true);
     expect(intentSupported('opencode', 'secret-filter')).toBe(true);
     expect(intentSupported('opencode', 'block-completion')).toBe(false); // unsupported → false
+  });
+
+  it('verificationLevel (SEV-3 #1): claude=runtime, codex=source, opencode=docs', () => {
+    expect(claudeCapabilities.verificationLevel).toBe('runtime');
+    expect(codexCapabilities.verificationLevel).toBe('source');
+    expect(opencodeCapabilities.verificationLevel).toBe('docs');
+  });
+
+  it('intentEnforced 는 docs-level(opencode)를 게이트 — supported 여도 forgen 미배선이면 false', () => {
+    // opencode block-tool-use 는 status=supported 이나 verificationLevel=docs → 강제 아님
+    expect(intentSupported('opencode', 'block-tool-use')).toBe(true);
+    expect(intentEnforced('opencode', 'block-tool-use')).toBe(false);
+    // claude/codex 의 supported 는 실배선이라 enforced=true
+    expect(intentEnforced('claude', 'block-tool-use')).toBe(true);
+    expect(intentEnforced('codex', 'block-tool-use')).toBe(true);
   });
 
   it('getHostCapabilities 가 잘못된 host 에 대해 throw', () => {

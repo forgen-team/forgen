@@ -9,6 +9,7 @@ import type { HostCapabilities } from '../core/trust-layer-intent.js';
 
 export const claudeCapabilities: HostCapabilities = {
   hostId: 'claude',
+  verificationLevel: 'runtime', // 레퍼런스 host — forgen 이 실제로 강제/실행.
   intents: {
     'block-completion': {
       status: 'supported',

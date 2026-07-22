@@ -32,10 +32,32 @@ export interface CapabilityDeclaration {
   readonly source?: string;
 }
 
-export type HostId = 'claude' | 'codex' | 'opencode';
+/**
+ * 지원 host 의 정준 런타임 목록(단일 소스). `HostId` 는 여기서 파생되므로 새 host 추가 시
+ * 이 배열만 넓히면 타입·런타임이 함께 확장된다. 자유형 `host === 'claude'` 이진 비교 대신
+ * `(HOST_IDS as readonly string[]).includes(host)` 로 "유효 host 인지" 를 판정하라
+ * (W3-3 리뷰 SEV-3 #5: Record<HostId> 는 Record 리터럴만 강제, 자유비교는 미포착).
+ */
+export const HOST_IDS = ['claude', 'codex', 'opencode'] as const;
+
+export type HostId = (typeof HOST_IDS)[number];
+
+/**
+ * 능력 선언의 검증 수준 (W3-3 리뷰 SEV-3 #1).
+ *   - 'runtime': forgen 이 이 host 에서 실제로 강제/실행함(레퍼런스 host — claude).
+ *   - 'source' : host 의 hook schema 소스로 검증했고 forgen 배선 완료(codex).
+ *   - 'docs'   : host 문서 기반 선언이나 **forgen 배선 미완**(opencode P1 — plugin 슬림 전).
+ *
+ * status='supported' 의 의미가 host 마다 다른 문제를 구조화한다: 'runtime'/'source' 의
+ * supported 는 "forgen 이 강제함", 'docs' 의 supported 는 "플랫폼이 가능하나 forgen 미배선".
+ * 프로그램 소비자는 verificationLevel 로 둘을 게이트해야 한다(intentEnforced 참조).
+ */
+export type CapabilityVerificationLevel = 'runtime' | 'source' | 'docs';
 
 export interface HostCapabilities {
   readonly hostId: HostId;
+  /** 이 host 선언 전체의 검증 수준. 'docs' 면 아래 status 는 "플랫폼-가능"이지 "forgen-배선"이 아니다. */
+  readonly verificationLevel: CapabilityVerificationLevel;
   /**
    * 모든 TrustLayerIntent 에 대한 선언. `Record<TrustLayerIntent, _>` 타입이
    * 컴파일 타임에 누락을 차단한다.

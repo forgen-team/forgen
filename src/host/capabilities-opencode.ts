@@ -23,6 +23,9 @@ import type { HostCapabilities } from '../core/trust-layer-intent.js';
 
 export const opencodeCapabilities: HostCapabilities = {
   hostId: 'opencode',
+  // docs-level: OpenCode 문서 기반 선언, forgen 배선 미완(plugin 슬림 전). 아래 status 의
+  // supported 는 "플랫폼 가능"이지 "forgen 강제"가 아니다 — intentEnforced 로 게이트할 것.
+  verificationLevel: 'docs',
   intents: {
     'block-completion': {
       // session.idle 는 발화하나 "완료 강제 차단/재-turn" 계약이 문서에 없다.

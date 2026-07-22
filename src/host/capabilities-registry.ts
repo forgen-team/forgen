@@ -40,3 +40,15 @@ export function listRegisteredHosts(): readonly HostId[] {
 export function intentSupported(host: HostId, intent: TrustLayerIntent): boolean {
   return getHostCapabilities(host).intents[intent].status === 'supported';
 }
+
+/**
+ * "forgen 이 이 host 에서 이 의도를 *실제로 강제/실행* 하는가" (W3-3 리뷰 SEV-3 #1).
+ * intentSupported 와 달리 verificationLevel 을 게이트한다 — 'docs'(플랫폼-가능하나 미배선,
+ * 예: opencode P1)는 supported 여도 false. 프로그램 소비자가 "선언"과 "실배선"을 혼동하지
+ * 않도록 하는 정직 게이트.
+ */
+export function intentEnforced(host: HostId, intent: TrustLayerIntent): boolean {
+  const caps = getHostCapabilities(host);
+  if (caps.verificationLevel === 'docs') return false;
+  return caps.intents[intent].status === 'supported';
+}

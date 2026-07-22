@@ -12,6 +12,7 @@ import type { HostCapabilities } from '../core/trust-layer-intent.js';
 
 export const codexCapabilities: HostCapabilities = {
   hostId: 'codex',
+  verificationLevel: 'source', // hook schema 소스 검증 + forgen 배선 완료.
   intents: {
     'block-completion': {
       status: 'supported',

@@ -164,6 +164,32 @@ describe('loadEvidence backfill', () => {
     expect(stats.claude).toBe(1);
     expect(stats.codex).toBe(0);
   });
+
+  it('W3-3 SEV-3 #5: 유효한 opencode 태그는 claude 로 clobber 되지 않고 보존된다', async () => {
+    const behaviorDir = path.join(isolatedHome, 'me', 'behavior');
+    fs.mkdirSync(behaviorDir, { recursive: true });
+    const oc = {
+      evidence_id: 'oc-1',
+      type: 'behavior_observation',
+      session_id: 's-oc',
+      timestamp: '2026-07-22T00:00:00Z',
+      source_component: 'test',
+      summary: 'opencode-tagged evidence must be preserved (self-evidence-record 일관)',
+      axis_refs: [],
+      candidate_rule_refs: [],
+      confidence: 0.5,
+      raw_payload: {},
+      host: 'opencode',
+    };
+    fs.writeFileSync(path.join(behaviorDir, 'oc-1.json'), JSON.stringify(oc));
+
+    const { ev: store, hm } = await reloadStore();
+    // backfill 은 opencode 를 보존 (claude 로 재태깅 금지)
+    expect(store.loadEvidence('oc-1')?.host).toBe('opencode');
+    const stats = hm.summarizeAllByHost();
+    expect(stats.opencode).toBe(1);
+    expect(stats.claude).toBe(0);
+  });
 });
 
 describe('summarizeNegativeSignalsForRef — demote 신호', () => {
