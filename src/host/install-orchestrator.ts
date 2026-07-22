@@ -66,6 +66,11 @@ async function chooseTargetInteractively(detection: ReturnType<typeof detectAvai
   console.log('  Detected hosts:');
   console.log(renderHostStatus(detection.claude));
   console.log(renderHostStatus(detection.codex));
+  // W3-3 P1: OpenCode 는 감지만 하고 설치 대상엔 아직 안 넣는다(plugin 슬림 미구현).
+  // 감지됐을 때만 정직하게 "detected, install pending" 안내.
+  if (detection.opencode.available) {
+    console.log(`  ⋯ opencode (detected — 설치는 P1 plugin 슬림 착지 후 지원 예정, 현재 미지원)`);
+  }
   console.log('');
 
   if (detection.noneAvailable) {

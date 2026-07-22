@@ -414,6 +414,18 @@ async function prepareCodexSession(ctx: HarnessSessionContext): Promise<void> {
 }
 
 /**
+ * OpenCode 세션 준비 — P1 파운데이션 스텁. OpenCode 는 in-process plugin 형태라 세션 준비 =
+ * `.opencode/plugins/forgen.ts` 슬림 설치(install-opencode, P1 미구현). 슬림 착지 전까지
+ * fail-loud — 조용히 준비 안 된 채 진행하지 않는다. (opencode 는 detection/install 이
+ * 미배선이라 현재 runtime 으로 선택될 수 없어 도달 불가.)
+ */
+async function prepareOpencodeSession(_ctx: HarnessSessionContext): Promise<void> {
+  throw new Error(
+    '[forgen] OpenCode 세션 준비 미구현 — P1 plugin 슬림(install-opencode) 착지 필요.',
+  );
+}
+
+/**
  * capabilities 선언 + projection 함수 + 세션 준비(hook-surface wiring)를 host 별로
  * 묶은 registry. `Record<HostId, HostBinding>` 이 완전성을 강제하므로 새 host 추가 시
  * (예: OpenCode, P1) 엔트리 누락은 컴파일 타임에 걸린다.
@@ -435,6 +447,12 @@ const HOST_BINDINGS: Record<HostId, HostBinding> = {
     capabilities: getHostCapabilities('codex'),
     projection: getProjection('codex'),
     prepareSession: prepareCodexSession,
+  },
+  opencode: {
+    id: 'opencode',
+    capabilities: getHostCapabilities('opencode'),
+    projection: getProjection('opencode'),
+    prepareSession: prepareOpencodeSession,
   },
 };
 

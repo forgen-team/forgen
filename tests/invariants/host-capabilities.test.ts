@@ -19,6 +19,7 @@ import {
 } from '../../src/core/trust-layer-intent.js';
 import { claudeCapabilities } from '../../src/host/capabilities-claude.js';
 import { codexCapabilities } from '../../src/host/capabilities-codex.js';
+import { opencodeCapabilities } from '../../src/host/capabilities-opencode.js';
 import {
   getHostCapabilities,
   listRegisteredHosts,
@@ -72,8 +73,27 @@ describe('Invariant: HostCapabilities 완전성', () => {
     expect(unsupported).toEqual([]);
   });
 
-  it('registry 는 claude + codex 두 host 등록', () => {
-    expect(listRegisteredHosts().sort()).toEqual(['claude', 'codex']);
+  it('registry 는 claude + codex + opencode 세 host 등록', () => {
+    expect(listRegisteredHosts().sort()).toEqual(['claude', 'codex', 'opencode']);
+  });
+
+  it('OpenCode 정직 매트릭스 (W3-3 P1 docs-level 선언): block-completion 만 unsupported, inject/forge-loop partial', () => {
+    const unsupported = TRUST_LAYER_INTENTS.filter(
+      (i) => opencodeCapabilities.intents[i].status === 'unsupported',
+    );
+    // 완료 강제 차단 표면 부재 → advise-only (Cursor 와 동일 한계)
+    expect(unsupported).toEqual(['block-completion']);
+
+    const partials = TRUST_LAYER_INTENTS.filter(
+      (i) => opencodeCapabilities.intents[i].status === 'partial',
+    ).sort();
+    // experimental 주입 표면 → inject-context / forge-loop-state-inject 는 partial
+    expect(partials).toEqual(['forge-loop-state-inject', 'inject-context']);
+
+    // block-tool-use(throw)·secret-filter·observe-only·self-evidence-record 는 supported
+    expect(intentSupported('opencode', 'block-tool-use')).toBe(true);
+    expect(intentSupported('opencode', 'secret-filter')).toBe(true);
+    expect(intentSupported('opencode', 'block-completion')).toBe(false); // unsupported → false
   });
 
   it('getHostCapabilities 가 잘못된 host 에 대해 throw', () => {

@@ -40,6 +40,8 @@ export interface ExecHostOptions {
 export const DEFAULT_TIMEOUT_BY_HOST: Record<HostId, number> = {
   claude: 30_000,
   codex: 90_000,
+  // opencode headless CLI: reasoning-mode 응답이 codex 처럼 길 수 있어 넉넉히(P1 실측 후 조정).
+  opencode: 90_000,
 };
 
 export interface ExecHostResult {

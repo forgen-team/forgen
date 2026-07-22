@@ -14,10 +14,12 @@ import {
 } from '../core/trust-layer-intent.js';
 import { claudeCapabilities } from './capabilities-claude.js';
 import { codexCapabilities } from './capabilities-codex.js';
+import { opencodeCapabilities } from './capabilities-opencode.js';
 
 const REGISTRY: ReadonlyMap<HostId, HostCapabilities> = new Map([
   [claudeCapabilities.hostId, claudeCapabilities],
   [codexCapabilities.hostId, codexCapabilities],
+  [opencodeCapabilities.hostId, opencodeCapabilities],
 ]);
 
 // 모듈 로드 시점 자기 검증 — 하나라도 미선언이면 즉시 throw.

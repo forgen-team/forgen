@@ -32,7 +32,7 @@ export interface CapabilityDeclaration {
   readonly source?: string;
 }
 
-export type HostId = 'claude' | 'codex';
+export type HostId = 'claude' | 'codex' | 'opencode';
 
 export interface HostCapabilities {
   readonly hostId: HostId;

@@ -17,6 +17,14 @@
 import { equal as deepEqual } from 'node:assert/strict';
 import type { HookEventInput, HookEventOutput } from '../core/types.js';
 import type { HostId, TrustLayerIntent } from '../core/trust-layer-intent.js';
+
+/**
+ * Parity 는 *subprocess-hook* 형태 호스트(Claude/Codex) 간 projection 등가성만 검증한다.
+ * OpenCode(P1)는 in-process plugin 형태라 projection 이 아직 미구현(fail-loud 스텁)이므로
+ * parity corpus 범위에서 **명시적으로 제외** — 플러그인 슬림 착지 후 별도 parity 바인딩으로
+ * 편입한다(plan §4.3). 여기에 opencode 를 넣어 가짜 등가 주장을 만들지 않는다.
+ */
+type ParityHost = Extract<HostId, 'claude' | 'codex'>;
 import { getProjection } from './projection.js';
 
 export interface BehavioralParityScenario {
@@ -30,7 +38,7 @@ export interface BehavioralParityScenario {
    * 각 host 가 *내보낼 것으로 가정* 하는 raw 출력. P4 단계에서는 spec §18 source schema
    * 기반 직접 작성. P6 단계에서는 실 Codex CLI 출력으로 대체.
    */
-  readonly hostRaw: Record<HostId, unknown>;
+  readonly hostRaw: Record<ParityHost, unknown>;
   /**
    * 사영 후 의미 동치성을 검증할 키들.
    * 예: ['continue', 'hookSpecificOutput.permissionDecision'].
@@ -45,7 +53,7 @@ export interface ParityCheckResult {
   readonly passed: boolean;
   readonly diffs: ReadonlyArray<{ key: string; claude: unknown; codex: unknown }>;
   /** 사영 결과 자체 (디버깅용). */
-  readonly projected: Readonly<Record<HostId, HookEventOutput>>;
+  readonly projected: Readonly<Record<ParityHost, HookEventOutput>>;
 }
 
 function pickPath(obj: unknown, dotted: string): unknown {
@@ -71,7 +79,7 @@ function valuesSemanticEqual(a: unknown, b: unknown): boolean {
 }
 
 export function runScenario(scenario: BehavioralParityScenario): ParityCheckResult {
-  const projected: Record<HostId, HookEventOutput> = {
+  const projected: Record<ParityHost, HookEventOutput> = {
     claude: getProjection('claude')(scenario.hostRaw.claude, scenario.input),
     codex: getProjection('codex')(scenario.hostRaw.codex, scenario.input),
   };
