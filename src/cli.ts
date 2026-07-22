@@ -453,6 +453,12 @@ async function main() {
     await runOpencodeGuard();
     return;
   }
+  // W3-3: OpenCode plugin 이 compaction 시 주입할 forgen context (forge-loop 상태) 출력.
+  if (args[0] === 'opencode-context') {
+    const { runOpencodeContext } = await import('./host/opencode/context-cli.js');
+    runOpencodeContext();
+    return;
+  }
 
   const cmd = findCommand(args[0]);
   if (cmd) {

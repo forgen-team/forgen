@@ -67,3 +67,37 @@ describe('forgen opencode-guard CLI (실 배포 플러그인이 호출하는 브
     expect(guard({}).block).toBe(false);
   });
 });
+
+describe('forgen opencode-context CLI (compaction 시 forge-loop 상태 주입)', () => {
+  const home = path.join(repoRoot, 'node_modules', '.tmp-oc-ctx-home');
+  function ctx(): string {
+    return execFileSync('node', [distCli, 'opencode-context'], {
+      encoding: 'utf-8',
+      env: { ...process.env, FORGEN_HOME: home },
+    });
+  }
+  beforeAll(() => {
+    fs.rmSync(home, { recursive: true, force: true });
+    fs.mkdirSync(path.join(home, 'state'), { recursive: true });
+  });
+
+  it('활성 forge-loop → <forge-loop-state> 블록 출력', () => {
+    fs.writeFileSync(
+      path.join(home, 'state', 'forge-loop.json'),
+      JSON.stringify({
+        active: true,
+        task: 'W3-3 슬림',
+        startedAt: new Date().toISOString(),
+        stories: [{ id: 'S1', title: 'context 증분', passes: false }],
+      }),
+    );
+    const out = ctx();
+    expect(out).toContain('<forge-loop-state>');
+    expect(out).toContain('S1');
+  });
+
+  it('활성 forge-loop 없음 → 빈 출력(주입 안 함)', () => {
+    fs.rmSync(path.join(home, 'state', 'forge-loop.json'), { force: true });
+    expect(ctx().trim()).toBe('');
+  });
+});

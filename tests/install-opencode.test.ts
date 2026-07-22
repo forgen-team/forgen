@@ -89,11 +89,20 @@ describe('install-opencode (W3-3 P1)', () => {
     expect(fs.readFileSync(path.join(CFG, 'opencode.json'), 'utf-8')).toBe(broken); // 미변경
   });
 
-  it('MED4: 배포 plugin 이 절대 CLI 경로 임베드 (런타임 PATH 비의존)', () => {
+  it('MED4: 배포 plugin 이 절대 CLI 경로 임베드 (guard+context, 런타임 PATH 비의존)', () => {
     const r = planOpencodeInstall(opts());
     const plugin = fs.readFileSync(r.pluginPath, 'utf-8');
     expect(plugin).toMatch(/\["node", ".*dist\/cli\.js", "opencode-guard"\]/);
+    expect(plugin).toMatch(/\["node", ".*dist\/cli\.js", "opencode-context"\]/);
     expect(plugin).not.toContain('["forgen", "opencode-guard"]');
+    expect(plugin).not.toContain('["forgen", "opencode-context"]');
+  });
+
+  it('배포 plugin 에 tool.execute.before + compaction 훅 둘 다 포함', () => {
+    const r = planOpencodeInstall(opts());
+    const plugin = fs.readFileSync(r.pluginPath, 'utf-8');
+    expect(plugin).toContain('tool.execute.before');
+    expect(plugin).toContain('experimental.session.compacting');
   });
 
   it('MED3: 사용자 소유 plugin(비-managed) 은 덮어쓰기 전 백업', () => {

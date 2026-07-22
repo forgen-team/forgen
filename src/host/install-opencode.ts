@@ -110,11 +110,10 @@ function loadPluginSource(pkgRoot: string): string | null {
     return null;
   }
   const cliPath = path.join(pkgRoot, 'dist', 'cli.js');
-  // ["forgen", "opencode-guard"] → ["node", "<abs cli>", "opencode-guard"] (PATH 비의존, 리뷰 MED4)
-  const replaced = src.replace(
-    /\["forgen",\s*"opencode-guard"\]/,
-    `["node", ${JSON.stringify(cliPath)}, "opencode-guard"]`,
-  );
+  // ["forgen", "<sub>"] → ["node", "<abs cli>", "<sub>"] (PATH 비의존, 리뷰 MED4).
+  const replaced = src
+    .replace(/\["forgen",\s*"opencode-guard"\]/, `["node", ${JSON.stringify(cliPath)}, "opencode-guard"]`)
+    .replace(/\["forgen",\s*"opencode-context"\]/, `["node", ${JSON.stringify(cliPath)}, "opencode-context"]`);
   return replaced;
 }
 
