@@ -323,6 +323,25 @@ export async function runDoctor(opts: DoctorOptions = {}): Promise<void> {
     return;
   }
 
+  // 리뷰 SEV-3 (c): critic-review 룰의 트리거가 stale(skip-review 시그널 미포함)이면 발견 nudge.
+  // "고쳤는데 기존 유저에겐 안 닿는" 상태 방지 — 재-bake 명령을 안내한다.
+  section('Rules');
+  try {
+    const [{ loadActiveRules }, { needsCriticTriggerMigration }] = await Promise.all([
+      import('../store/rule-store.js'),
+      import('../engine/enforce-classifier.js'),
+    ]);
+    const outdated = loadActiveRules().filter(needsCriticTriggerMigration);
+    check(
+      'critic-review 룰 트리거 최신',
+      outdated.length === 0,
+      `${outdated.length}개 critic 룰이 구 트리거(skip-review 미포함) — \`forgen rule classify --apply --force\` 로 갱신 권장`,
+    );
+  } catch {
+    /* rule-store 로드 실패는 무해 — 스킵 */
+  }
+  console.log();
+
   section('Environment');
   check('Inside tmux session', !!process.env.TMUX,
     'FORGEN auto-compound relies on tmux. Launch: tmux new -s forgen');
