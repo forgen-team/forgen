@@ -676,6 +676,22 @@ ${sanitizedSummary.slice(0, 4000)}
     process.stderr.write(`[forgen-auto-compound] rule promotion: ${e instanceof Error ? e.message : String(e)}\n`);
   }
 
+  // Step 4b (W3-2): 교정 클러스터링 — 같은 원칙을 N회 교정해 흩어진 룰을 1개 명명 룰로
+  // 통합하고 강도를 반복 신호(Laplace)로 승급. 승급 직후 같은 패스에서 실행. fail-open.
+  try {
+    const { runCorrectionClustering } = await import('../engine/correction-cluster-runner.js');
+    const merges = await runCorrectionClustering();
+    for (const m of merges) {
+      process.stderr.write(
+        `[forgen-auto-compound] clustered ${m.memberIds.length} correction(s) → 1 rule ` +
+        `[${m.category}, strength=${m.strength}, conf=${m.confidence.toFixed(2)}] — ` +
+        `undo: forgen rule unmerge-cluster ${m.mergedRuleId}\n`,
+      );
+    }
+  } catch (e) {
+    process.stderr.write(`[forgen-auto-compound] correction clustering: ${e instanceof Error ? e.message : String(e)}\n`);
+  }
+
   // H2: count newly extracted solutions (post-quality-gate) for Stop hook 알림.
   // solutionsBefore 스냅샷 vs 현재 디스크 상태 차분 → "N개 패턴 학습됨" 1줄.
   let extractedSolutionsCount = 0;
