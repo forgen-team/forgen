@@ -40,6 +40,57 @@ describe('enforce-classifier.classify', () => {
     expect(p.reasoning.join(' ')).toMatch(/rm/);
   });
 
+  it('critic-review 룰 → CRITIC trigger (skip-review 시그널 포함) — 리뷰 SEV-2 #3/#4', () => {
+    const r = ruleOf({
+      trigger: '작업-완료-후',
+      policy: '매 작업 청크 완료 시마다 공격적 비판 리뷰(fresh-context critic)를 돌리고 다음 작업으로 넘어갈 것.',
+    });
+    const p = classify(r);
+    const stop = p.proposed.find((s) => s.hook === 'Stop');
+    expect(stop).toBeDefined();
+    // critic 룰은 "리뷰 생략하고 넘어감" 시그널을 트리거에 포함해야 한다.
+    expect(String(stop?.trigger_keywords_regex)).toMatch(/생략|넘어가/);
+  });
+
+  it('검토 동사 대칭 (SEV-3 b): "검토를 진행하라" critic-review 룰도 CRITIC 트리거', () => {
+    const r = ruleOf({ policy: '완료 전 검토를 진행하고 다음 작업으로 넘어갈 것.' });
+    const p = classify(r);
+    const stop = p.proposed.find((s) => s.hook === 'Stop');
+    expect(stop).toBeDefined();
+    expect(String(stop?.trigger_keywords_regex)).toMatch(/생략|넘어가/);
+  });
+
+  it('needsCriticTriggerMigration (SEV-3 c): stale critic 룰 감지, fresh/비-critic 은 false', async () => {
+    const { needsCriticTriggerMigration } = await import('../src/engine/enforce-classifier.js');
+    // stale: critic 정책 + 구 완료-전용 baked 트리거
+    const stale = ruleOf({
+      policy: '청크 완료마다 비판 리뷰(critic) 돌리고 다음으로 넘어갈 것.',
+      enforce_via: [{ mech: 'B', hook: 'Stop', trigger_keywords_regex: '(완료했|done\\.)' }],
+    });
+    expect(needsCriticTriggerMigration(stale)).toBe(true);
+    // fresh: 이미 skip-signal 포함
+    const fresh = { ...stale, enforce_via: [{ mech: 'B' as const, hook: 'Stop' as const, trigger_keywords_regex: '(완료했|생략|넘어가)' }] };
+    expect(needsCriticTriggerMigration(fresh)).toBe(false);
+    // 비-critic: mock 룰은 대상 아님
+    const nonCritic = ruleOf({ policy: 'mock 으로 완료 선언 금지', enforce_via: [{ mech: 'B', hook: 'Stop', trigger_keywords_regex: '(mock|stub)' }] });
+    expect(needsCriticTriggerMigration(nonCritic)).toBe(false);
+  });
+
+  it('mock-as-proof 완료룰 → skip-review 시그널 미포함 (semantic 비오염) — 리뷰 SEV-2 #3', () => {
+    const r = ruleOf({ policy: 'mock/stub/fake 기반 검증으로 완료 선언 금지. 실제 실행 증거만 유효.' });
+    const p = classify(r);
+    const stop = p.proposed.find((s) => s.hook === 'Stop');
+    expect(stop).toBeDefined();
+    expect(String(stop?.trigger_keywords_regex)).not.toMatch(/생략|넘어가/);
+  });
+
+  it('e2e 완료룰 → skip-review 시그널 미포함 (semantic 비오염)', () => {
+    const r = ruleOf({ policy: '기능 구현 완료 선언 전 반드시 검증하라.' });
+    const p = classify(r);
+    const stop = p.proposed.find((s) => s.hook === 'Stop');
+    if (stop) expect(String(stop.trigger_keywords_regex)).not.toMatch(/생략|넘어가/);
+  });
+
   it('destructive: .env credentials rule → pattern matches literal, not "credentials" as alt-first', () => {
     const r = ruleOf({ trigger: 'secret-commit', policy: 'do not commit .env files with credentials' });
     const p = classify(r);

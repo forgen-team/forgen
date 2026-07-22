@@ -56,7 +56,17 @@ import {
   DEFAULT_STOP_EXCLUDE_RE as STOP_COMPLETION_EXCLUDE,
   MOCK_TRIGGER_RE as STOP_MOCK_TRIGGER,
   MOCK_EXCLUDE_RE as STOP_MOCK_EXCLUDE,
+  CRITIC_STOP_TRIGGER_RE,
+  CRITIC_STOP_EXCLUDE_RE,
 } from '../hooks/shared/stop-triggers.js';
+
+/**
+ * critic-review 룰 감지 (2026-07-22, 리뷰 SEV-2 #3): "비판 리뷰/critic 을 돌리고 다음으로
+ * 넘어감" 정책만 skip-review 트리거를 받는다. e2e·mock 등 다른 완료룰은 DEFAULT(완료 전용)
+ * 유지 → semantic 오염 방지.
+ */
+// 검토 동사목록을 리뷰와 대칭화(진행|수행|돌리 추가) — 리뷰 SEV-3 (b): "검토를 진행하라" 미탐 수정.
+const CRITIC_REVIEW_PATTERN = /(비판\s*리뷰|fresh-context|critic|리뷰를?\s*(돌리|수행|진행|후)|검토를?\s*(하고|후|없이|생략|진행|수행|돌리))/i;
 
 export function classify(rule: Rule): EnforceProposal {
   const reasoning: string[] = [];
@@ -105,6 +115,10 @@ export function classify(rule: Rule): EnforceProposal {
   }
   if (isCompletion && !isRepeal) {
     const mockAsProof = /mock|stub|fake/i.test(text);
+    const criticReview = CRITIC_REVIEW_PATTERN.test(text);
+    // 트리거 선택: mock > critic-review > 완료-전용. critic 만 skip-review 시그널 포함.
+    const stopTrigger = mockAsProof ? STOP_MOCK_TRIGGER : criticReview ? CRITIC_STOP_TRIGGER_RE : STOP_COMPLETION_TRIGGER;
+    const stopExclude = mockAsProof ? STOP_MOCK_EXCLUDE : criticReview ? CRITIC_STOP_EXCLUDE_RE : STOP_COMPLETION_EXCLUDE;
     const pathMatch = text.match(ARTIFACT_PATH_PATTERN)?.[0];
     // 증거로 보이는 경로만 게이트화: .forgen/ 하위이거나 텍스트에 증거 맥락어가 있을 때.
     const explicitArtifact = pathMatch && (pathMatch.includes('.forgen/') || EVIDENCE_CONTEXT_PATTERN.test(text))
@@ -119,8 +133,8 @@ export function classify(rule: Rule): EnforceProposal {
           params: { path: explicitArtifact.replace(/^~\//, ''), max_age_s: 3600 },
         },
         block_message: `${rule.rule_id.slice(0, 8)}: ${rule.policy.slice(0, 120)}`,
-        trigger_keywords_regex: mockAsProof ? STOP_MOCK_TRIGGER : STOP_COMPLETION_TRIGGER,
-        trigger_exclude_regex: mockAsProof ? STOP_MOCK_EXCLUDE : STOP_COMPLETION_EXCLUDE,
+        trigger_keywords_regex: stopTrigger,
+        trigger_exclude_regex: stopExclude,
         system_tag: `rule:${rule.rule_id.slice(0, 8)} — ${mockAsProof ? 'no-mock-as-proof' : 'evidence-before-done'}`,
       });
       reasoning.push(`completion + explicit artifact "${explicitArtifact}" → Mech-A Stop+artifact_check`);
@@ -135,8 +149,8 @@ export function classify(rule: Rule): EnforceProposal {
             question: `직전 응답이 다음 규칙을 위반했는지 자가점검하라: "${rule.policy.slice(0, 120)}". 위반 시 구체적 근거와 함께 수정해 재응답하라.`,
           },
         },
-        trigger_keywords_regex: mockAsProof ? STOP_MOCK_TRIGGER : STOP_COMPLETION_TRIGGER,
-        trigger_exclude_regex: mockAsProof ? STOP_MOCK_EXCLUDE : STOP_COMPLETION_EXCLUDE,
+        trigger_keywords_regex: stopTrigger,
+        trigger_exclude_regex: stopExclude,
         system_tag: `rule:${rule.rule_id.slice(0, 8)} — completion-self-check`,
       });
       reasoning.push('completion keyword, no explicit artifact path → Mech-B Stop+self_check_prompt (dead e2e default removed)');
@@ -185,6 +199,19 @@ export function classify(rule: Rule): EnforceProposal {
 
 export function classifyAll(rules: Rule[]): EnforceProposal[] {
   return rules.map(classify);
+}
+
+/**
+ * critic-review 룰인데 baked Stop 트리거가 skip-review 시그널을 안 가지는지 (리뷰 SEV-3 (c)).
+ * true 면 `forgen rule classify --apply --force` 재-bake 로 갱신해야 갭이 닫힌다.
+ * doctor nudge 용 — "고쳤는데 기존 유저에겐 안 닿는" 상태를 발견 가능하게 한다.
+ */
+export function needsCriticTriggerMigration(rule: Rule): boolean {
+  const text = `${rule.trigger}\n${rule.policy}`;
+  if (!CRITIC_REVIEW_PATTERN.test(text)) return false;
+  const stopSpec = rule.enforce_via?.find((s) => s.hook === 'Stop');
+  if (!stopSpec) return false;
+  return !/생략|넘어가|스킵|패스/.test(stopSpec.trigger_keywords_regex ?? '');
 }
 
 /** 제안을 적용해 새 Rule 을 반환 (pure). 이미 enforce_via 가 있으면 force=false 에서 건너뜀. */

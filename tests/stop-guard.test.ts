@@ -6,6 +6,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { spawnSync } from 'node:child_process';
+import { CRITIC_STOP_TRIGGER_RE, CRITIC_STOP_EXCLUDE_RE } from '../src/hooks/shared/stop-triggers.js';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -69,6 +70,20 @@ const R_B2: SpikeRule = {
   system_tag: 'rule:R-B2 — no-mock-as-proof',
 };
 
+// 강제층 갭 수정(2026-07-22): DEFAULT 트리거를 쓰는 critic-류 룰이 "리뷰 생략하고
+// 다음으로 넘어감" 응답(완료 키워드 없음)에도 발화하는지 end-to-end 검증.
+const R_CRITIC: SpikeRule = {
+  id: 'R-CRITIC',
+  mech: 'A',
+  hook: 'Stop',
+  trigger: {
+    response_keywords_regex: CRITIC_STOP_TRIGGER_RE,
+    context_exclude_regex: CRITIC_STOP_EXCLUDE_RE,
+  },
+  verifier: { kind: 'self_check_prompt', params: { question: '청크 완료 시 critic 돌렸는지 자가점검하라.' } },
+  system_tag: 'rule:R-CRITIC — chunk-critic',
+};
+
 describe('evaluateStop (pure core)', () => {
   it('S2: e2e 증거 없이 완료 선언 → block', () => {
     const r = evaluateStop('tests 통과, 기능 구현 완료했습니다.', [R_B1]);
@@ -77,6 +92,21 @@ describe('evaluateStop (pure core)', () => {
       expect(r.hit.id).toBe('R-B1');
       expect(r.reason).toContain('e2e');
     }
+  });
+
+  it('갭수정: 완료키워드 없이 "리뷰 생략하고 다음으로 넘어감" → block (V2/T5 재현)', () => {
+    const r = evaluateStop('커밋 끝났습니다. 리뷰는 생략하고 바로 다음 기능 구현으로 넘어가겠습니다.', [R_CRITIC]);
+    expect(r.action).toBe('block');
+  });
+
+  it('갭수정 회귀: "리뷰를 생략하지 않고 진행" 은 retraction exclude 로 approve', () => {
+    const r = evaluateStop('리뷰를 생략하지 않고 진행하겠습니다.', [R_CRITIC]);
+    expect(r.action).toBe('approve');
+  });
+
+  it('갭수정 회귀: 무관 응답 "다음 기능은 로그인입니다" 는 approve (FP 방지)', () => {
+    const r = evaluateStop('다음 기능은 로그인입니다.', [R_CRITIC]);
+    expect(r.action).toBe('approve');
   });
 
   it('S4: shipped 키워드 → block', () => {
