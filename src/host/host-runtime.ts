@@ -75,9 +75,30 @@ const codexRuntime: HostRuntime = {
   dangerousSkipFlag: '--dangerously-bypass-approvals-and-sandbox',
 };
 
+/**
+ * OpenCode runtime — P1 파운데이션 스텁. OpenCode 는 subprocess-hook 이 아니라 in-process
+ * plugin 형태라(plan §2.2), hook wrapping 은 plugin 슬림(`install-opencode` 미구현)이 담당한다.
+ * launcher(headless `opencode` CLI)와 라벨만 실값; wrapHookCommand 는 슬림 착지 전까지 fail-loud.
+ */
+const opencodeRuntime: HostRuntime = {
+  id: 'opencode',
+  displayName: 'OpenCode',
+  launcher: 'opencode',
+  missingInstallMessage: 'OpenCode is not installed.',
+  wrapHookCommand() {
+    throw new Error(
+      '[forgen] OpenCode hook wrapping은 in-process plugin 슬림(install-opencode)이 담당합니다 — P1 미구현.',
+    );
+  },
+  // in-process plugin 이라 subprocess hook 생성 전략과 무관. 슬림 착지 시 재정의.
+  hookInjectionStrategy: 'generate',
+  dangerousSkipFlag: '',
+};
+
 const RUNTIMES: Record<RuntimeHost, HostRuntime> = {
   claude: claudeRuntime,
   codex: codexRuntime,
+  opencode: opencodeRuntime,
 };
 
 export function getHostRuntime(runtime: RuntimeHost): HostRuntime {

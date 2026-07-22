@@ -31,19 +31,19 @@ const DOMINANCE_THRESHOLD = 0.8; // 80% 이상이 한 host 에서 발생하면 d
 const MIN_TOTAL_FOR_DEMOTE = 5; // 너무 적은 표본은 무시.
 
 function summarize(events: ReadonlyArray<Evidence>): HostMismatchSummary {
-  const byHost: Record<HostId, number> = { claude: 0, codex: 0 };
+  const byHost: Record<HostId, number> = { claude: 0, codex: 0, opencode: 0 };
   for (const e of events) {
     const h = (e.host ?? 'claude') as HostId;
     byHost[h] += 1;
   }
-  const total = byHost.claude + byHost.codex;
+  // host-agnostic 집계 — 새 host 추가 시 이 로직은 수정 불필요.
+  const entries = Object.entries(byHost) as Array<[HostId, number]>;
+  const total = entries.reduce((s, [, n]) => s + n, 0);
   if (total === 0) {
     return { byHost, total, skew: 0, dominantHost: null, demoteRecommended: false };
   }
-  const claudeShare = byHost.claude / total;
-  const codexShare = byHost.codex / total;
-  const dominant: HostId = claudeShare >= codexShare ? 'claude' : 'codex';
-  const skew = Math.max(claudeShare, codexShare);
+  const [dominant, dominantCount] = entries.reduce((max, cur) => (cur[1] > max[1] ? cur : max));
+  const skew = dominantCount / total;
   const demoteRecommended = total >= MIN_TOTAL_FOR_DEMOTE && skew >= DOMINANCE_THRESHOLD;
   return { byHost, total, skew, dominantHost: dominant, demoteRecommended };
 }
@@ -68,11 +68,11 @@ export function summarizeNegativeSignalsForRef(refId: string): HostMismatchSumma
   return summarize(matched);
 }
 
-export function summarizeAllByHost(): { claude: number; codex: number; total: number } {
+export function summarizeAllByHost(): { claude: number; codex: number; opencode: number; total: number } {
   const all = loadAllEvidence();
-  const r: Record<HostId, number> = { claude: 0, codex: 0 };
+  const r: Record<HostId, number> = { claude: 0, codex: 0, opencode: 0 };
   for (const e of all) r[(e.host ?? 'claude') as HostId] += 1;
-  return { ...r, total: r.claude + r.codex };
+  return { ...r, total: r.claude + r.codex + r.opencode };
 }
 
 /** 테스트 노출용 — 임계값이 변경되면 회귀 즉시 감지. */

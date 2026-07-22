@@ -1,5 +1,17 @@
 # Multi-Harness Adapter Architecture Plan — OSS Gap #4
 
+> **P1 진행 상태 (2026-07-22, W3-3 착수)**: **P1 파운데이션 착지.** `HostId += 'opencode'` +
+> `capabilities-opencode.ts`(정직 매트릭스, **docs-level** — codex 의 source-level 과 구분) +
+> registry 등록 + 17 컴파일 사이트 정직 충전(projection/binding 은 **fail-loud 스텁**,
+> host-runtime/mismatch 는 실값·host-agnostic) + host-detect(XDG `~/.config/opencode`) +
+> install-orchestrator "detected, install pending" 안내. **OpenCode = 선언·감지되나 아직
+> 설치·실행 불가.** 전체 vitest green + 신규 capability-matrix 불변 테스트.
+> **남은 P1 (후속 세션)**: (1) in-process plugin 슬림 `.opencode/plugins/forgen.ts`(§5 blocker 1,
+> 최대 델타), (2) `install-opencode`, (3) opencode projection 실구현(스텁 대체), (4) plugin-return
+> parity 바인딩(parity corpus 편입), (5) headless `opencode` CLI δ smoke(§4.3). 매트릭스 status 는
+> 슬림 착지 시 docs-level→source-level 로 승격.
+
+
 > Author: design-probe (team research). Date: 2026-07-20.
 > Scope: `reports/competitive/oss-comparison-2026-07-20.md` §5 row 4 — multi-harness expansion (forgen 2 → target 4).
 > Method: read-only source audit of `src/host/`, `src/core/`, `src/hooks/`, `packages/forgen-eval/` + primary-source web probes of OpenCode plugin docs, Cursor v3.11 hooks docs, ECC cross-harness architecture doc, claude-mem `--ide`. No product code changed.

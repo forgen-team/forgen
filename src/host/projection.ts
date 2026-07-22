@@ -138,9 +138,23 @@ export const projectCodexToClaude: ProjectToClaudeEvent = (raw, input) => {
 export const projectClaudeToClaude: ProjectToClaudeEvent = (raw, input) =>
   projectCodexToClaude(raw, input);
 
+/**
+ * OpenCode projection — P1 파운데이션 fail-loud 스텁.
+ * OpenCode 는 in-process plugin(throw/return)이라 subprocess stdout projection 과 형태가
+ * 다르다(plan §5 blocker 1). 실제 translation 은 plugin 슬림이 착지할 때 구현한다. 그 전까지
+ * 이 함수는 도달 불가(install-opencode 미구현 → getProjection('opencode') 미호출)이며,
+ * 혹시 호출되면 조용히 잘못된 결과를 내는 대신 명시적으로 실패한다.
+ */
+const projectOpencodeToClaude: ProjectToClaudeEvent = () => {
+  throw new Error(
+    '[forgen] OpenCode projection 미구현 — P1 plugin 슬림 착지 후 구현 예정 (plan §4.1 in-process-plugin binding).',
+  );
+};
+
 const PROJECTIONS: Record<HostId, ProjectToClaudeEvent> = {
   claude: projectClaudeToClaude,
   codex: projectCodexToClaude,
+  opencode: projectOpencodeToClaude,
 };
 
 export function getProjection(host: HostId): ProjectToClaudeEvent {

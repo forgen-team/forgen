@@ -42,7 +42,9 @@ export interface HostAvailability {
 export interface HostDetectionResult {
   readonly claude: HostAvailability;
   readonly codex: HostAvailability;
-  /** 둘 다 사용 가능. */
+  /** OpenCode (W3-3 P1) — 감지 전용. 설치는 plugin 슬림 착지 후. */
+  readonly opencode: HostAvailability;
+  /** claude+codex 둘 다 사용 가능 (기존 primary-pair 계약). */
   readonly bothAvailable: boolean;
   /** 하나도 사용 가능하지 않음 (warn). */
   readonly noneAvailable: boolean;
@@ -91,13 +93,39 @@ function detectCodex(): HostAvailability {
   };
 }
 
+/**
+ * OpenCode 감지 (W3-3 P1 파운데이션). OpenCode 는 XDG 관습을 따라 `~/.config/opencode/`
+ * 를 쓴다(`~/.opencode` 아님). binary 는 `opencode`. auth 패턴은 별도 확인 안 함.
+ * 감지만 — 설치(plugin 슬림)는 P1 후속이라 install-orchestrator 에서 "detected, install pending"
+ * 로만 표기한다.
+ */
+function detectOpencode(): HostAvailability {
+  const binaryPath = which('opencode');
+  const homePath = path.join(os.homedir(), '.config', 'opencode');
+  const homeExists = fs.existsSync(homePath);
+  const binaryFound = binaryPath !== null;
+  return {
+    host: 'opencode',
+    binaryFound,
+    binaryPath,
+    homeExists,
+    homePath,
+    authPresent: null,
+    available: binaryFound || homeExists,
+  };
+}
+
 export function detectAvailableHosts(): HostDetectionResult {
   const claude = detectClaude();
   const codex = detectCodex();
+  const opencode = detectOpencode();
   return {
     claude,
     codex,
+    opencode,
+    // bothAvailable 는 기존 계약(claude+codex primary pair) 유지. noneAvailable 은
+    // opencode 까지 포함해 "어떤 host 도 없음" 을 정확히 반영.
     bothAvailable: claude.available && codex.available,
-    noneAvailable: !claude.available && !codex.available,
+    noneAvailable: !claude.available && !codex.available && !opencode.available,
   };
 }

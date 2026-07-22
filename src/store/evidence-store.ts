@@ -11,7 +11,7 @@ import * as crypto from 'node:crypto';
 import { ME_BEHAVIOR } from '../core/paths.js';
 import { atomicWriteJSON, safeReadJSON } from '../hooks/shared/atomic-write.js';
 import type { Evidence, EvidenceType, RuleCategory } from './types.js';
-import type { HostId } from '../core/trust-layer-intent.js';
+import { HOST_IDS, type HostId } from '../core/trust-layer-intent.js';
 import { createRule, saveRule, loadActiveRules } from './rule-store.js';
 import { classify, applyProposal } from '../engine/enforce-classifier.js';
 import { detect as detectT1 } from '../engine/lifecycle/trigger-t1-correction.js';
@@ -36,10 +36,12 @@ function evidencePath(evidenceId: string): string {
  */
 function detectHost(explicit?: HostId): HostId {
   if (explicit) return explicit;
+  // W3-3 리뷰 SEV-3 #5: 이진비교(=== 'claude' || === 'codex') 대신 HOST_IDS 정준목록으로
+  // 유효 host 를 해소해 FORGEN_HOST/FORGEN_RUNTIME='opencode' 도 보존(self-evidence-record 일관).
   const fromEnv = process.env.FORGEN_HOST;
-  if (fromEnv === 'claude' || fromEnv === 'codex') return fromEnv;
+  if (fromEnv && (HOST_IDS as readonly string[]).includes(fromEnv)) return fromEnv as HostId;
   const fromRuntime = process.env.FORGEN_RUNTIME;
-  if (fromRuntime === 'claude' || fromRuntime === 'codex') return fromRuntime;
+  if (fromRuntime && (HOST_IDS as readonly string[]).includes(fromRuntime)) return fromRuntime as HostId;
   if (process.env.CODEX_HOME || process.env.CODEX_SANDBOX_NETWORK_DISABLED) return 'codex';
   return 'claude';
 }
@@ -124,12 +126,16 @@ export function appendEvidence(evidence: Evidence): { saved: true; t1_events: nu
 }
 
 /**
- * 기존 evidence 에 host 필드가 없으면 'claude' 로 backfill (Multi-Host §4.2 마이그레이션 정책).
- * 새 multi-host 도입 이전 데이터는 모두 Claude 에서 발생했음 — 이 backfill 은 무손실.
+ * 기존 evidence 에 host 필드가 없거나 유효하지 않으면 'claude' 로 backfill
+ * (Multi-Host §4.2 마이그레이션 정책). 새 multi-host 도입 이전 데이터는 모두 Claude 발생.
+ *
+ * W3-3 리뷰 SEV-3 #5: 이전엔 `!== 'claude' && !== 'codex'` 라 **유효한 'opencode' 태그도
+ * claude 로 clobber** → self-evidence-record='supported'(host:"opencode") 선언과 정면 모순.
+ * 이제 HOST_IDS 정준 목록으로 "유효 host" 를 판정해 opencode 등 모든 유효 태그를 보존한다.
  */
 function backfillHost(ev: Evidence | null): Evidence | null {
   if (!ev) return ev;
-  if (ev.host === 'claude' || ev.host === 'codex') return ev;
+  if (ev.host && (HOST_IDS as readonly string[]).includes(ev.host)) return ev;
   return { ...ev, host: 'claude' };
 }
 

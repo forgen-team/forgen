@@ -68,9 +68,9 @@ describe('collectMultiHostData', () => {
     fs.rmSync(TEST_HOME, { recursive: true, force: true });
   });
 
-  it('evidence 없으면 { claude:0, codex:0, total:0 } 반환', () => {
+  it('evidence 없으면 { claude:0, codex:0, opencode:0, total:0 } 반환', () => {
     const data = collectMultiHostData();
-    expect(data).toEqual({ claude: 0, codex: 0, total: 0 });
+    expect(data).toEqual({ claude: 0, codex: 0, opencode: 0, total: 0 });
   });
 
   it('claude 3개 + codex 2개 → 합산 정확', () => {
