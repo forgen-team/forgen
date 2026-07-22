@@ -20,6 +20,7 @@ import { withFileLockSync, FileLockError } from './shared/file-lock.js';
 import { sanitizeId } from './shared/sanitize-id.js';
 import { incrementEvidence } from '../engine/solution-writer.js';
 import { isReflectionCandidate } from './compound-reflection.js';
+import { stripPrivate } from '../engine/private-filter.js';
 import { isHookEnabled } from './hook-config.js';
 import { approve, approveWithWarning, denyOrObserve, failOpenWithTracking } from './shared/hook-response.js';
 import { FORGEN_HOME, STATE_DIR } from '../core/paths.js';
@@ -260,7 +261,10 @@ function resetFailCount(): void {
 function checkCompoundReflection(toolName: string, toolInput: Record<string, unknown>, sessionId: string): void {
   if (toolName !== 'Edit' && toolName !== 'Write') return;
 
-  const code = String(toolInput.new_string ?? toolInput.content ?? '');
+  // W2-5 (private 태그): 사용자가 <private> 로 표시한 코드 범위는 reflection 관측
+  // 대상에서 제외한다. isReflectionCandidate 내부에서도 strip 하지만, 아래 태그
+  // fallback 매칭은 이 code 를 직접 쓰므로 여기서 한 번 스트립해 두 경로를 일치시킨다.
+  const code = stripPrivate(String(toolInput.new_string ?? toolInput.content ?? '')).cleaned;
   if (!code || code.length < 10) return;
 
   const cachePath = path.join(STATE_DIR, `injection-cache-${sanitizeId(sessionId)}.json`);

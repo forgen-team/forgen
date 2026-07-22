@@ -24,6 +24,7 @@ import { gate0, evaluateExtractedSolution } from './extraction-gates.js';
 import type { ExtractedSolution } from './extraction-gates.js';
 import { extractFromDiff } from './extraction-diff.js';
 import { extractFromSessionContext } from './extraction-session.js';
+import { stripPrivate, isFullyPrivate } from './private-filter.js';
 import {
   loadLastExtraction, saveLastExtraction,
   saveExtractedSolution, updateReExtractedCounter,
@@ -236,6 +237,15 @@ export function processExtractionResults(
   }
 
   for (const sol of solutions.slice(0, 3)) {
+    // W2-5 (private 태그): <private> 범위를 솔루션 content/context 에서 제거 후 저장.
+    // 통째로 private 이면 저장 skip (학습 코퍼스에 남기지 않음).
+    if (isFullyPrivate(sol.content) || isFullyPrivate(sol.context ?? '')) {
+      skipped.push(`${sol.name}: <private> (제외)`);
+      continue;
+    }
+    sol.content = stripPrivate(sol.content).cleaned;
+    if (sol.context) sol.context = stripPrivate(sol.context).cleaned;
+
     const evaluation = evaluateExtractedSolution(sol);
     if (evaluation.action === 'skip' || evaluation.action === 'duplicate') {
       skipped.push(evaluation.message ?? `${sol.name}: skipped`);

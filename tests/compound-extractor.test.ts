@@ -59,6 +59,36 @@ describe('processExtractionResults', () => {
     expect(result.skipped[0]).toContain('Gate 2');
   });
 
+  it('W2-5: skips a solution whose content is fully <private>', () => {
+    const json = JSON.stringify([{
+      name: 'secret-pattern',
+      type: 'pattern',
+      tags: ['tag1', 'tag2'],
+      identifiers: ['SomeIdentifier'],
+      context: 'ctx',
+      content: '<private>internal-only playbook, do not learn from this</private>',
+    }]);
+    const result = processExtractionResults(json, 'test');
+    expect(result.saved).toEqual([]);
+    expect(result.skipped.length).toBe(1);
+    expect(result.skipped[0]).toContain('private');
+  });
+
+  it('W2-5: strips <private> ranges but keeps the rest of the content', () => {
+    const json = JSON.stringify([{
+      name: 'partly-hidden-pattern',
+      type: 'pattern',
+      tags: ['tag1', 'tag2', 'tag3'],
+      identifiers: ['PublicIdentifierLong'],
+      context: 'when applying the public technique in a reusable way',
+      content: 'Public reusable technique that is safe to learn and worth keeping around for future reference. <private>SECRET_TOKEN=abc123</private> The rest is public and detailed enough to pass the gates.',
+    }]);
+    const result = processExtractionResults(json, 'test');
+    // Not skipped by the fully-private gate (partial strip keeps the public remainder).
+    const privateSkip = result.skipped.find(s => s.includes('(제외)'));
+    expect(privateSkip).toBeUndefined();
+  });
+
   it('limits to max 3 extractions', () => {
     const solutions = Array.from({ length: 5 }, (_, i) => ({
       name: `pattern-${i}`,

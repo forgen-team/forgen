@@ -342,11 +342,26 @@ export function registerTools(server: McpServer): void {
       try {
         // v1 session_id를 환경변수에서 가져옴 (하네스가 설정)
         const effectiveSessionId = session_id || process.env.FORGEN_SESSION_ID || 'unknown';
+
+        // W2-5 (private 태그): 교정 텍스트에서 <private>…</private>/forgen:private 범위
+        // 제거 후 저장. 교정 message 가 통째로 private 이면 저장 자체를 skip (학습
+        // 코퍼스에 남기지 않겠다는 사용자 의도). 조용히 하지 않고 공지한다.
+        const { stripPrivate, isFullyPrivate } = await import('../engine/private-filter.js');
+        if (isFullyPrivate(message)) {
+          return { content: [{ type: 'text' as const, text: '✓ [forgen] correction skipped — message was fully <private> (not stored).' }] };
+        }
+        const cleanMessage = stripPrivate(message).cleaned;
+        const strippedTarget = stripPrivate(target);
+        const cleanTarget = strippedTarget.cleaned;
+        const privateNote = (strippedTarget.hadPrivate || cleanMessage !== message)
+          ? '\n(참고: <private> 범위는 기록에서 제외됨)'
+          : '';
+
         const result = processCorrection({
           session_id: effectiveSessionId,
           kind: kind as CorrectionKind,
-          message,
-          target,
+          message: cleanMessage,
+          target: cleanTarget,
           axis_hint: axis_hint as 'quality_safety' | 'autonomy' | 'judgment_philosophy' | 'communication_style' | null,
         });
 
@@ -389,7 +404,7 @@ export function registerTools(server: McpServer): void {
         return {
           content: [{
             type: 'text' as const,
-            text: lines.join('\n'),
+            text: lines.join('\n') + privateNote,
           }],
         };
       } catch (e) {

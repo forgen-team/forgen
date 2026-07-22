@@ -132,5 +132,26 @@ describe('compound-reflection', () => {
       expect(result.reflected).toBe(false);
       expect(result.reason).toBe('invalid-injection-time');
     });
+
+    it('W2-5: <private> 로 감싼 코드 안의 식별자 출현은 reflection으로 세지 않는다', () => {
+      const result = isReflectionCandidate({
+        identifiers: ['parseUserConfig', 'validateSchema'],
+        code: '<private>const r = parseUserConfig(d); validateSchema(r);</private>',
+        injectedAt: '2026-03-31T11:50:00Z',
+        now,
+      });
+      // private 범위가 스트립되면 코드가 비어 code-too-short 로 떨어진다.
+      expect(result.reflected).toBe(false);
+    });
+
+    it('W2-5: private 범위 밖 매칭은 정상적으로 reflection 인정', () => {
+      const result = isReflectionCandidate({
+        identifiers: ['parseUserConfig', 'validateSchema'],
+        code: 'const r = parseUserConfig(d); validateSchema(r); <private>SECRET=xyz</private>',
+        injectedAt: '2026-03-31T11:50:00Z',
+        now,
+      });
+      expect(result.reflected).toBe(true);
+    });
   });
 });

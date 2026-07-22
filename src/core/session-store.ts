@@ -12,6 +12,7 @@ import * as path from 'node:path';
 import { createLogger } from './logger.js';
 import { FORGEN_HOME } from './paths.js';
 import { ensureObservabilitySchema } from './observability-store.js';
+import { stripPrivate } from '../engine/private-filter.js';
 
 const require = createRequire(import.meta.url);
 
@@ -147,8 +148,13 @@ export async function indexCodexSession(cwd: string, transcriptPath: string, ses
         if (entry.type !== 'response_item' || !entry.payload) continue;
         const role = entry.payload.role;
         if (role !== 'user' && role !== 'assistant') continue;
-        const text = extractCodexText(entry.payload.content);
-        if (!text) continue;
+        const rawText = extractCodexText(entry.payload.content);
+        if (!rawText) continue;
+
+        // W2-5 (private 태그): FTS 인덱스는 session-search 로 재노출되므로 <private>
+        // 범위를 인덱싱 전에 제거한다. 통째 private 메시지는 인덱싱하지 않는다.
+        const text = stripPrivate(rawText).cleaned;
+        if (!text.trim()) continue;
 
         const truncated = text.slice(0, 10000);
         const ts = typeof entry.timestamp === 'string' ? entry.timestamp : '';
@@ -213,7 +219,11 @@ export async function indexSession(cwd: string, transcriptPath: string, sessionI
         }
 
         if (role && text) {
-          const truncated = text.slice(0, 10000);
+          // W2-5 (private 태그): FTS 인덱스가 session-search 로 재노출되므로 <private>
+          // 범위를 제거 후 인덱싱. 통째 private 메시지는 스킵.
+          const cleanText = stripPrivate(text).cleaned;
+          if (!cleanText.trim()) continue;
+          const truncated = cleanText.slice(0, 10000);
           const result = insertMsg.run(sessionId, role, truncated, entry.timestamp ?? '');
           // FTS5 인덱스 동기화
           if (fts5Available) {

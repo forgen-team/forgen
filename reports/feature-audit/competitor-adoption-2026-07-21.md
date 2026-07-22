@@ -48,37 +48,44 @@
 
 ## B. 기능 갭 매트릭스 (★=채택가치 높음)
 
+> **정정 (2026-07-21, Wave 2 실측 대조 후)**: 아래 매트릭스의 초판(2026-07-21 오전)은
+> forgen을 `⚠️tarball / ❌full주입 / ⚠️budget`으로 표기했으나, 코드 대조 결과 이 3셀은
+> **이미 구현돼 있었다** (W2-1 compound-share, W2-2 tiered injection, W2-4 scope 필터).
+> honest-measurement 원칙을 로드맵 자체에 적용 — 없는 갭을 갭이라 하지 않는다. 셀을
+> ✅로 정정하고 원표기는 취소선으로 남긴다(분석 이력 보존). 근거는 `wave2-design-2026-07-21.md §0`.
+
 | 능력 | forgen | OMC | OMO | ECC | 가치 |
 |---|---|---|---|---|---|
 | 교정→개인화 학습 | ✅4축 | ❌ | ❌ | ✅instinct | 유지(강점) |
 | 신뢰도 라이프사이클 | ✅ | ❌ | ❌ | ✅0.3~0.9 | 대등 |
-| **패턴단위 팀 공유** | ⚠️tarball | ❌ | ❌ | ✅import/export | **★높음** |
-| **토큰효율 3층 회상** | ❌full주입 | ⚠️ | ⚠️Skill-MCP | ⚠️8000캡 | **★높음** |
+| **패턴단위 팀 공유** | ✅ (~~⚠️tarball~~ → compound-share, W2-1) | ❌ | ❌ | ✅import/export | 완료 |
+| **토큰효율 3층 회상** | ✅ (~~❌full주입~~ → tiered injection, W2-2) | ⚠️ | ⚠️Skill-MCP | ⚠️8000캡 | 완료 |
 | 벡터/의미 메모리 | ❌TF-IDF | ❌ | ❌ | ❌ | 중($0 제약) |
 | 결정적 secret/db 가드 | ✅2층 | ⚠️ | ⚠️ | ✅ | 유지 |
 | **효과측정 δ/honest-null** | ✅유일 | ❌ | ❌ | ⚠️사용자코드용 | 유지(유일 wedge) |
+| **캡처 제외(`<private>`)** | ✅ (W2-5) | ✅claude-mem | ❌ | ❌ | 완료(프라이버시) |
 | **completion/idle 완료가드** | ⚠️frontier미발화 | ✅Ralph | ✅Todo/`/goal` | ⚠️ | **★중~높음(재포지셔닝)** |
 | 멀티에이전트 오케스트레이션 | ⚠️기본형 | ✅Team | ✅11 | ✅multi-* | 낮음(중복회피) |
-| **HUD/status/friction DX** | ❌ | ✅ | ⚠️ | ❌ | **★높음** |
-| 프로젝트 스코핑 | ⚠️budget | ⚠️ | ✅AGENTS | ✅scope | 중 |
+| **HUD/status/friction DX** | ✅ (W1-2 statusline value counters) | ✅ | ⚠️ | ❌ | 완료 |
+| 프로젝트 스코핑 | ✅ (~~⚠️budget~~ → resolveScope, W2-4) | ⚠️ | ✅AGENTS | ✅scope | 완료 |
 | instinct→skill 승급 | ⚠️solution | ✅skillify | ❌ | ✅evolve | 중 |
 | 멀티하네스 | ⚠️2 | ❌ | ✅4 | ✅7 | 중(실측 꼴찌) |
 
 ## C. 채택 후보 Top 8 (정직-개인화+회상 기준)
 
-1. **패턴단위 신뢰도-동반 export/import** (ECC) — tarball→패턴별 신뢰도 단위. 팀 셀링 직결.
-   신뢰도는 이미 실측치 → 조작위험 0. **난이도 S~M.** ★
-2. **토큰효율 3층 회상** (claude-mem) — full 주입→압축인덱스 먼저, full은 선택분만.
-   ROI 루프와 시너지, context-diet 정합. **난이도 M.** ★
-3. **HUD/status line + friction report** (OMC) — 회상건수·교정건수·ROI강등을 실측 카운터로
-   상태줄 노출 → invisible 가치 가시화. 전부 비조작. **난이도 S~M.** ★
+> **정정 (2026-07-21)**: 아래 Top 8 초판은 1·2·3·6·8을 미구현 갭으로 올렸으나 실측 결과
+> 1(W2-1)·2(W2-2)·3(W1-2)·6(W2-4)·8(W2-5)은 **완료**. 남은 진짜 후보는 4·5·7. (~~취소선~~=완료)
+
+1. ~~**패턴단위 신뢰도-동반 export/import** (ECC) — tarball→패턴별 신뢰도 단위.~~ ✅ **완료 (W2-1 compound-share, PR #70)**.
+2. ~~**토큰효율 3층 회상** (claude-mem) — full 주입→압축인덱스 먼저.~~ ✅ **완료 (W2-2 tiered injection, PR #70)**.
+3. ~~**HUD/status line + friction report** (OMC) — 실측 카운터 상태줄 노출.~~ ✅ **완료 (W1-2 statusline value counters, PR #75)**.
 4. **완료가드 재포지셔닝: idle→goal 재주입** (OMO/OMC) — blocks=0 Stop훅을 "차단"에서
-   "audit 통과까지 목표 재주입"으로 피벗 → 약해지는 자산 살림. **난이도 M.**
-5. **TTL 프루닝 + 신뢰도 감쇠** (ECC) — 시간기반 감쇠+pending TTL. 오래된 룰 위생. **난이도 S.**
-6. **프로젝트 스코핑 + 세션 주입 상한** (ECC) — project/global 태그 + 상한. budget 안정. **난이도 S.**
+   "audit 통과까지 목표 재주입"으로 피벗 → 약해지는 자산 살림. **난이도 M.** ← **남은 후보 (Wave 3)**
+5. **TTL 프루닝 + 신뢰도 감쇠** (ECC) — 시간기반 감쇠+pending TTL. 오래된 룰 위생. **난이도 S.** ← **남은 후보 (W2-3 얇은 델타)**
+6. ~~**프로젝트 스코핑 + 세션 주입 상한** (ECC) — project/global 태그 + 상한.~~ ✅ **완료 (W2-4 resolveScope + INJECTION_HARD_CAP, PR #70)**.
 7. **교정 클러스터링→룰 승급 제안** (ECC evolve/OMC skillify) — 반복 교정을 명명 룰로 클러스터.
-   **반드시 human-confirm.** **난이도 M~L.**
-8. **`<private>` 캡처 제외 태그** (claude-mem) — 민감내용 캡처 제외. **난이도 S.**
+   **반드시 human-confirm.** **난이도 M~L.** ← **남은 후보 (Wave 3)**
+8. ~~**`<private>` 캡처 제외 태그** (claude-mem) — 민감내용 캡처 제외.~~ ✅ **완료 (W2-5, 이번 브랜치)**.
 
 ## D. Anti-adopt (포지셔닝 위반 — 금지)
 

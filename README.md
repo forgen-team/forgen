@@ -415,6 +415,28 @@ Each solution starts as an `experiment`. As it gets reflected in your code acros
 | **Behavioral patterns** | Auto-detected at 3+ observations | Applied to `forge-behavioral.md` |
 | **Evidence** | Corrections + observations | Drives facet adjustments + rule creation |
 
+### Keeping things out of the corpus (`<private>`)
+
+Wrap anything you don't want learned in a `<private>…</private>` block, or end a
+line with a `// forgen:private` marker (`#` and `/*` comment styles also work):
+
+```
+Here's the approach — <private>internal API key rotation playbook</private> — use it.
+const token = "…";  // forgen:private
+```
+
+Those ranges are stripped before every learning-corpus capture path: correction
+records, solution extraction, the automatic session-end compound runner,
+prompt-history, and session-search indexing. Unclosed or malformed tags **fail
+closed** (treated as private to end-of-text) so a forgotten `</private>` never
+leaks.
+
+> **Scope:** `<private>` controls **what forgen learns from**, not what the model
+> sees. The text was already sent to Claude as part of your conversation — the tag
+> excludes it from persistent capture (compound solutions, evidence, search index),
+> it does not make the current turn private. This is a separate axis from the
+> secret-filter, which blocks credentials from being committed.
+
 ### Solution auto-injection
 
 Every prompt you type is matched against your accumulated solutions. Relevant ones are automatically injected into Claude's context — no manual lookup needed.

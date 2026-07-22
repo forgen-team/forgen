@@ -11,6 +11,8 @@
  * positive 문제(action-plan §2.1)의 근본 수정에 명확한 책임 경계 필요.
  */
 
+import { stripPrivate } from '../engine/private-filter.js';
+
 /** 주입 후 이 시간 내에 코드에 식별자가 출현해야 reflection으로 인정 */
 export const REFLECTION_WINDOW_MS = 15 * 60 * 1000; // 15분
 
@@ -69,8 +71,13 @@ export interface ReflectionResult {
  *   4. 매칭 비율 (유효 식별자의 50% 이상, 최소 1개)
  */
 export function isReflectionCandidate(input: ReflectionInput): ReflectionResult {
-  const { identifiers, code, injectedAt } = input;
+  const { identifiers, injectedAt } = input;
   const now = input.now ?? new Date();
+
+  // W2-5 (private 태그): 사용자가 <private> 로 표시한 코드 범위는 reflection 관측에서
+  // 제외한다. private 범위 안의 식별자 출현을 "솔루션이 반영됐다"는 신호로 세면
+  // 사용자가 학습 제외를 의도한 코드를 관측하는 셈이 되므로, 매칭 전에 스트립한다.
+  const code = stripPrivate(input.code ?? '').cleaned;
 
   // Gate 1: 코드 최소 길이
   if (!code || code.length < 10) {
