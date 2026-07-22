@@ -19,11 +19,16 @@
  */
 
 import type { RuleStrength } from '../store/types.js';
+import { statusConfidence } from './compound-lifecycle.js';
+import { RELEVANCE_MATCH_GATE } from './relevance-gate.js';
 import { calculateRelevance } from './relevance-scorer.js';
 import { extractTags } from './solution-format.js';
 
-/** τ — 클러스터 편입 유사도 임계. MIN_INJECT_RELEVANCE(0.3) 상속. */
-export const CLUSTER_SIMILARITY_TAU = 0.3;
+/** τ — 클러스터 편입 유사도 임계. 정준 게이트(RELEVANCE_MATCH_GATE=0.3)를 코드로 상속. */
+export const CLUSTER_SIMILARITY_TAU = RELEVANCE_MATCH_GATE;
+
+/** 강도 승급 컷오프 — statusConfidence('verified')=0.75 를 코드로 상속(리터럴 복제 아님). */
+const STRONG_CONFIDENCE_CUTOFF = statusConfidence('verified');
 
 /** 클러스터 대상이 되는 최소 정책 텍스트 길이(너무 짧으면 tag 신호 부족). */
 const MIN_POLICY_LEN = 10;
@@ -79,7 +84,7 @@ export function laplaceConfidence(successes: number, failures = 0): number {
  * hard 는 confidence 로 자동 도달하지 않는다 — L1 안전룰 전용(오탐 시 세션 차단 위험).
  */
 export function strengthForConfidence(confidence: number): RuleStrength {
-  return confidence >= 0.75 ? 'strong' : 'default';
+  return confidence >= STRONG_CONFIDENCE_CUTOFF ? 'strong' : 'default';
 }
 
 /**
@@ -144,8 +149,10 @@ export function clusterCorrectionRules(
 
     for (const members of components.values()) {
       if (members.length < 2) continue;
-      // 억제된 조합이면 스킵(정확히 이 멤버 집합이 unmerge 된 경우).
-      if (suppressed.has(clusterKey(members))) continue;
+      // 억제된 조합이면 스킵. 정확 일치뿐 아니라 *부분집합/상위집합*도 억제 —
+      // {a,b,c} 를 unmerge 했는데 유사교정 d 도착으로 {a,b,c,d} 가 재통합되는
+      // whack-a-mole 방지 (리뷰 SEV-3 #3).
+      if (isSuppressedCluster(members, suppressed)) continue;
 
       const representativePolicy = members
         .map((m) => m.policy)
@@ -177,4 +184,28 @@ export function clusterKey(members: Array<{ rule_id: string }>): string {
     .map((m) => m.rule_id)
     .sort()
     .join('|');
+}
+
+function isSubset(a: Set<string>, b: Set<string>): boolean {
+  for (const x of a) if (!b.has(x)) return false;
+  return true;
+}
+
+/**
+ * 이 클러스터가 억제 대상인지 — 정확 일치뿐 아니라 부분집합/상위집합 관계도 억제한다.
+ * 사용자가 거부한 조합(억제키)이 현재 클러스터에 포함(S⊆cur)되거나 현재 클러스터가
+ * 거부 조합의 일부(cur⊆S)면 재통합하지 않는다. 데이터 손실 없음(안 묶으면 흩어진 채 유지).
+ */
+export function isSuppressedCluster(
+  members: Array<{ rule_id: string }>,
+  suppressed: ReadonlySet<string>,
+): boolean {
+  if (suppressed.size === 0) return false;
+  const cur = new Set(members.map((m) => m.rule_id));
+  for (const key of suppressed) {
+    if (!key) continue;
+    const s = new Set(key.split('|'));
+    if (isSubset(s, cur) || isSubset(cur, s)) return true;
+  }
+  return false;
 }

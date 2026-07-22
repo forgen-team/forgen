@@ -111,6 +111,37 @@ describe('correction-cluster-runner (W3-2 integration)', () => {
     expect(merges2.length).toBe(0);
   });
 
+  it('SEV-3 #2: absorbs into existing merged rule instead of chaining (no M1→M2)', async () => {
+    writeRule('a', 'quality', '완료 선언 전에 실제 동작을 검증하라 프로덕션 환경 확인');
+    writeRule('b', 'quality', '완료 선언 전 실제 검증 필수 라우트 존재만으로 완성 판단 금지');
+
+    const { runCorrectionClustering } = await import('../src/engine/correction-cluster-runner.js');
+    const first = await runCorrectionClustering();
+    expect(first.length).toBe(1);
+    const mergedId = first[0].mergedRuleId;
+
+    // a new similar correction arrives in a later session
+    writeRule('c', 'quality', '실제 동작 검증 후에만 완료 선언 프로덕션 확인 필수');
+    const second = await runCorrectionClustering();
+
+    // absorbed into the SAME merged rule — no new merged rule (no chain)
+    expect(second.length).toBe(1);
+    expect(second[0].mergedRuleId).toBe(mergedId);
+    expect(second[0].memberIds).toEqual(['c']); // only the new member superseded this round
+
+    // merged rule now covers all 3 evidence, still active, confidence reflects 3 observations
+    const merged = readRule(mergedId);
+    expect(merged.status).toBe('active');
+    expect((merged.evidence_refs as string[]).sort()).toEqual(['ev-a', 'ev-b', 'ev-c']);
+    expect(readRule('c').clustered_into).toBe(mergedId);
+
+    // no orphan second merged rule: exactly one .cluster. rule exists
+    const clusterRules = fs.readdirSync(RULES_DIR)
+      .map((f) => JSON.parse(fs.readFileSync(path.join(RULES_DIR, f), 'utf-8')))
+      .filter((r) => String(r.render_key).includes('.cluster.') && r.status === 'active');
+    expect(clusterRules.length).toBe(1);
+  });
+
   it('no-op when fewer than 2 candidates', async () => {
     writeRule('only', 'quality', '완료 선언 전 실제 검증 프로덕션 확인 필수');
     const { runCorrectionClustering } = await import('../src/engine/correction-cluster-runner.js');

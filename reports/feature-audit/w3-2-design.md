@@ -103,6 +103,21 @@ human-confirm 없이 자동** 실행 중(stderr "promoted N correction(s)"). 클
 - 클러스터 오판(엉뚱한 묶음) 대비: unmerge 시 해당 조합 억제 목록 → 재통합 안 함.
 - **모순 우선**: 클러스터 내부에 T5 conflict 가 있으면 통합 스킵, conflict 해소 먼저.
 - 소규모 정직 고지: 클러스터 후보 0건이면 조용히 no-op, 억지 통합 안 함.
+- **역량 한계 명시(정직)**: `policySimilarity` 는 토큰(태그) 오버랩 기반이라 **어휘가 유사한
+  교정만** 묶는다. 같은 원칙이라도 다른 단어로 쓴 패러프레이즈("변경 최소화" vs "최소 변경만
+  적용"=sim 0.000)는 under-cluster 된다. 이는 안전결함이 아니라 역량 한계 — 의미기반(임베딩)
+  유사도는 별개 스코프. 현 기능은 "어휘 재사용 교정" 한정으로 정직하게 스코프한다.
+
+## 5b. 리뷰 반영 (flow-reviewer, 2026-07-22 — APPROVE + SEV-3 하드닝 5건)
+- **#1 τ/컷오프 코드-상속**: `CLUSTER_SIMILARITY_TAU = RELEVANCE_MATCH_GATE`(신규 leaf `relevance-gate.ts`),
+  `STRONG_CONFIDENCE_CUTOFF = statusConfidence('verified')`. 리터럴 복제 제거 → 드리프트 방지.
+- **#2 재귀 흡수**: 통합룰이 재클러스터 후보에 재진입 시 새 M2 생성 대신 **기존 통합룰에 흡수**
+  (evidence/강도 갱신, 신규만 superseded) → supersession 체인 방지, unmerge 1회로 복원.
+- **#3 부분집합-인지 억제**: unmerge 된 조합의 상위/하위집합도 재통합 스킵 → 교정 하나 추가로
+  거부한 통합이 되살아나는 whack-a-mole 차단.
+- **#4 동시실행 락**: 세션종료 병렬 진입을 `withFileLock(cluster-run)` 로 직렬화.
+- **#5 render_key 해시접미**: `category.cluster.<slug>-<hash>` — slug 충돌로 dedupeByRenderKey 가
+  통합룰을 조용히 드롭(교정 소실)하는 near-theoretical 경로 원천봉쇄.
 
 ## 6. 테스트 계획
 

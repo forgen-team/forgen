@@ -124,6 +124,18 @@ describe('correction-clustering (W3-2)', () => {
       expect(clusterCorrectionRules(rules).length).toBe(1);
     });
 
+    it('subset-aware suppression: rejected {a,b} blocks superset {a,b,c} (whack-a-mole)', () => {
+      const rules = [
+        rule('a', 'quality', '완료 선언 전에 실제 동작을 검증하라 프로덕션 환경 확인'),
+        rule('b', 'quality', '완료 선언 전 실제 검증 필수 라우트 존재만으로 완성 판단 금지'),
+        rule('c', 'quality', '실제 동작 검증 후에만 완료 선언 프로덕션 확인 필수'),
+      ];
+      // user previously unmerged {a,b}
+      const suppressed = new Set(['a|b']);
+      // now a new similar correction c arrives → {a,b,c} must NOT re-form
+      expect(clusterCorrectionRules(rules, suppressed).length).toBe(0);
+    });
+
     it('skips too-short policies (insufficient tag signal)', () => {
       const rules = [
         rule('a', 'quality', 'x'),
