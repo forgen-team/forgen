@@ -1,20 +1,23 @@
 /**
- * forgen OpenCode plugin 슬림 (W3-3 P1, adapter-plan §4.1 in-process-plugin binding).
+ * forgen OpenCode 가드 러너 (W3-3 P1, adapter-plan §4.1 in-process-plugin binding).
  *
- * OpenCode 는 in-process TS plugin 을 로드한다(`.opencode/plugins/` 또는
- * `~/.config/opencode/plugins/`). 이 슬림은 OpenCode 의 `tool.execute.before` 이벤트를
- * forgen 의 *기존* subprocess hook(pre-tool-use / db-guard, Claude PreToolUse schema)으로
- * 브릿지한다 — deny → throw(도구 차단). 번역은 순수 모듈 translate.ts 재사용.
+ * OpenCode `tool.execute.before` → forgen 기존 PreToolUse 가드(pre-tool-use/db-guard) 브릿지의
+ * *핵심 로직*. `forgen opencode-guard` CLI(guard-cli.ts)가 이 함수를 호출한다. 실 배포되는
+ * 플러그인(assets/opencode/forgen.ts)은 이 CLI 를 async 로 부르는 얇은 shim 이라, OpenCode
+ * 이벤트루프를 막지 않는다.
  *
- * 정직성: block-tool-use 는 capabilities-opencode 에서 supported(throw). 이 슬림이 그
- * 계약의 실제 배선이다. (secret-filter=PostToolUse·inject-context 는 후속 증분.)
+ * 리뷰 MED (a): spawnSync 는 in-process 플러그인에서 이벤트루프를 막으므로 **async spawn**
+ * (execFile+await)으로 구현. (b): spawn 실패는 fail-open 하되 **로그**를 남겨 systematically
+ * -broken 가드를 관찰 가능하게 한다.
  *
- * fail-open 정책: hook 해소/spawn 실패는 도구를 막지 않는다(forgen hook 실패 정책과 동일).
+ * fail-open 정책: 가드 해소/spawn 실패는 도구를 막지 않는다(forgen hook 실패 정책과 동일).
  */
 
-import { spawnSync } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { promisify } from 'node:util';
+import { createLogger } from '../../../core/logger.js';
 import {
   type ClaudePreToolInput,
   type OpencodeToolDecision,
@@ -22,20 +25,14 @@ import {
   toolBeforeToClaudeInput,
 } from '../translate.js';
 
-/** OpenCode plugin 계약의 최소 타입 (외부 @opencode-ai/plugin 하드의존 회피). */
-type OpencodeHooks = {
-  'tool.execute.before'?: (
-    input: { tool?: string },
-    output: { args?: Record<string, unknown> },
-  ) => Promise<void> | void;
-};
-type OpencodePluginFn = (ctx: unknown) => Promise<OpencodeHooks> | OpencodeHooks;
+const execFileAsync = promisify(execFile);
+const log = createLogger('opencode-guard');
 
 /** PreToolUse 가드 순서: pre-tool-use(룰+위험명령 디스패처) → db-guard(rm -rf/위험 SQL). */
 export const PRE_TOOL_GUARDS = ['pre-tool-use.js', 'db-guard.js'] as const;
 
 export interface GuardRunOptions {
-  /** forgen hook 바이너리 디렉터리. install-opencode 가 FORGEN_HOOK_DIR 로 주입. */
+  /** forgen hook 바이너리 디렉터리. guard-cli 가 forgen dist/hooks 를 주입. */
   hookDir?: string;
   /** spawn 타임아웃(ms). */
   timeoutMs?: number;
@@ -48,39 +45,33 @@ export function resolveHookDir(explicit?: string): string {
 
 /**
  * Claude PreToolUse 입력을 forgen 가드 체인에 흘려 첫 deny 를 반환(테스트 가능한 핵심).
- * 어느 가드든 deny 하면 즉시 block. 전부 통과/실패(fail-open)면 block=false.
+ * **async** — execFile 로 비동기 spawn (이벤트루프 비차단). 어느 가드든 deny 하면 즉시 block.
+ * 전부 통과/실패(fail-open)면 block=false. spawn 실패는 로그 후 계속(fail-open).
  */
-export function runPreToolGuards(claudeInput: ClaudePreToolInput, opts: GuardRunOptions = {}): OpencodeToolDecision {
+export async function runPreToolGuards(
+  claudeInput: ClaudePreToolInput,
+  opts: GuardRunOptions = {},
+): Promise<OpencodeToolDecision> {
   const dir = resolveHookDir(opts.hookDir);
   const stdin = JSON.stringify(claudeInput);
+  const timeout = opts.timeoutMs ?? 5000;
   for (const guard of PRE_TOOL_GUARDS) {
     try {
-      const res = spawnSync('node', [path.join(dir, guard)], {
-        input: stdin,
-        encoding: 'utf-8',
-        timeout: opts.timeoutMs ?? 5000,
-      });
-      const decision = decisionFromForgenOutput(res.stdout ?? '');
+      const child = execFileAsync('node', [path.join(dir, guard)], { timeout, encoding: 'utf-8' });
+      child.child.stdin?.end(stdin);
+      const { stdout } = await child;
+      const decision = decisionFromForgenOutput(stdout ?? '');
       if (decision.block) return decision;
-    } catch {
-      /* fail-open — 이 가드 실패는 도구를 막지 않는다 */
+    } catch (e) {
+      // fail-open, 그러나 관찰 가능하게 — systematically-broken 가드 발견용 (리뷰 MED b).
+      // execFile 은 non-zero exit(가드가 정상 deny 로 종료해도)에서 throw 할 수 있어 stdout 을 확인.
+      const stdout = (e as { stdout?: string })?.stdout;
+      if (typeof stdout === 'string') {
+        const decision = decisionFromForgenOutput(stdout);
+        if (decision.block) return decision;
+      }
+      log.debug(`opencode 가드 spawn 실패(fail-open): ${guard}`, e);
     }
   }
   return { block: false };
 }
-
-/**
- * OpenCode plugin 엔트리. OpenCode 가 이 함수를 호출해 hooks 객체를 얻는다.
- * `tool.execute.before` 에서 forgen 가드가 deny 하면 throw → OpenCode 가 도구 실행을 차단.
- */
-export const forgen: OpencodePluginFn = async () => ({
-  'tool.execute.before': async (input, output) => {
-    const claudeInput = toolBeforeToClaudeInput(input?.tool ?? '', output?.args);
-    const decision = runPreToolGuards(claudeInput);
-    if (decision.block) {
-      throw new Error(decision.reason ?? '[forgen] blocked by guard');
-    }
-  },
-});
-
-export default forgen;

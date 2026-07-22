@@ -166,12 +166,12 @@ const commands: Command[] = [
   },
   {
     name: 'install',
-    description: 'Install forgen into a host. Usage: forgen install [claude|codex|both] [--dry-run] [--no-mcp]',
+    description: 'Install forgen into a host. Usage: forgen install [claude|codex|opencode|both] [--dry-run] [--no-mcp]',
     handler: async (args) => {
-      const knownSubs = new Set(['claude', 'codex', 'both']);
+      const knownSubs = new Set(['claude', 'codex', 'opencode', 'both']);
       const target = args[0] && knownSubs.has(args[0]) ? args[0] : args[0]?.startsWith('--') ? undefined : args[0];
       if (target !== undefined && !knownSubs.has(target)) {
-        console.log('Usage:\n  forgen install [claude|codex|both] [--dry-run] [--no-mcp]\n\n  No arg → interactive 3-choice (Claude/Codex/Both).');
+        console.log('Usage:\n  forgen install [claude|codex|opencode|both] [--dry-run] [--no-mcp]\n\n  No arg → interactive 3-choice (Claude/Codex/Both). opencode: 명시 타겟(P1 실험적).');
         return;
       }
       const dryRun = args.includes('--dry-run');
@@ -445,6 +445,12 @@ async function main() {
   }
   if (args[0] === '--version' || args[0] === '-V') {
     console.log(PKG_VERSION);
+    return;
+  }
+  // W3-3: OpenCode plugin 슬림이 per-tool-call 로 호출하는 경량 브릿지 (heavy init 우회).
+  if (args[0] === 'opencode-guard') {
+    const { runOpencodeGuard } = await import('./host/opencode/guard-cli.js');
+    await runOpencodeGuard();
     return;
   }
 

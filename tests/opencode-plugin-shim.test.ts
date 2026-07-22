@@ -1,6 +1,6 @@
 /**
- * OpenCode plugin 슬림 통합 테스트 — 슬림이 실제 forgen 가드 바이너리(dist)로
- * tool.execute.before 를 브릿지해 위험 명령을 block 하는지 실측 (W3-3 P1).
+ * OpenCode plugin 슬림 통합 테스트 — 가드 러너/브릿지 CLI 가 실제 forgen 가드 바이너리
+ * (dist)로 tool.execute.before 를 브릿지해 위험 명령을 block 하는지 실측 (W3-3 P1).
  * 실 spawn 이라 dist 빌드 선행 필요.
  */
 import { describe, it, expect, beforeAll } from 'vitest';
@@ -11,20 +11,20 @@ import { fileURLToPath } from 'node:url';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const distHooks = path.join(repoRoot, 'dist', 'hooks');
+const distCli = path.join(repoRoot, 'dist', 'cli.js');
 
-// dist 가 없으면 빌드 (CI 는 build 후 test 라 보통 존재)
 beforeAll(() => {
-  if (!fs.existsSync(path.join(distHooks, 'db-guard.js'))) {
+  if (!fs.existsSync(path.join(distHooks, 'db-guard.js')) || !fs.existsSync(distCli)) {
     execFileSync('npm', ['run', 'build'], { cwd: repoRoot, stdio: 'ignore' });
   }
 });
 
-describe('opencode plugin 슬림 (실 forgen 가드 브릿지)', () => {
-  it('rm -rf bash 명령 → db-guard 가 block (throw 신호)', async () => {
+describe('opencode 가드 러너 (async, 실 forgen 가드 브릿지)', () => {
+  it('rm -rf → db-guard block (async runPreToolGuards)', async () => {
     const { runPreToolGuards } = await import('../src/host/opencode/plugin/forgen.js');
     const { toolBeforeToClaudeInput } = await import('../src/host/opencode/translate.js');
     const input = toolBeforeToClaudeInput('bash', { command: 'rm -rf /tmp/important-data' });
-    const decision = runPreToolGuards(input, { hookDir: distHooks });
+    const decision = await runPreToolGuards(input, { hookDir: distHooks });
     expect(decision.block).toBe(true);
     expect(decision.reason).toMatch(/rm -rf|confirm/i);
   });
@@ -33,34 +33,37 @@ describe('opencode plugin 슬림 (실 forgen 가드 브릿지)', () => {
     const { runPreToolGuards } = await import('../src/host/opencode/plugin/forgen.js');
     const { toolBeforeToClaudeInput } = await import('../src/host/opencode/translate.js');
     const input = toolBeforeToClaudeInput('bash', { command: 'ls -la' });
-    expect(runPreToolGuards(input, { hookDir: distHooks }).block).toBe(false);
+    expect((await runPreToolGuards(input, { hookDir: distHooks })).block).toBe(false);
   });
 
-  it('plugin 팩토리가 tool.execute.before 훅을 노출하고, 위험 tool 에 throw', async () => {
-    const { forgen } = await import('../src/host/opencode/plugin/forgen.js');
-    const hooks = await forgen({});
-    expect(typeof hooks['tool.execute.before']).toBe('function');
-    // FORGEN_HOOK_DIR 로 실 가드 지정
-    const prev = process.env.FORGEN_HOOK_DIR;
-    process.env.FORGEN_HOOK_DIR = distHooks;
-    try {
-      await expect(
-        hooks['tool.execute.before']!({ tool: 'bash' }, { args: { command: 'rm -rf /tmp/x' } }),
-      ).rejects.toThrow(/rm -rf|confirm|forgen/i);
-      // 안전 명령은 throw 안 함
-      await expect(
-        hooks['tool.execute.before']!({ tool: 'bash' }, { args: { command: 'echo hi' } }),
-      ).resolves.toBeUndefined();
-    } finally {
-      if (prev === undefined) delete process.env.FORGEN_HOOK_DIR;
-      else process.env.FORGEN_HOOK_DIR = prev;
-    }
-  });
-
-  it('fail-open: 존재하지 않는 hookDir → block 없음(가드 부재가 도구를 막지 않음)', async () => {
+  it('fail-open: 미존재 hookDir → block 없음 (로그 남기고 계속)', async () => {
     const { runPreToolGuards } = await import('../src/host/opencode/plugin/forgen.js');
     const { toolBeforeToClaudeInput } = await import('../src/host/opencode/translate.js');
     const input = toolBeforeToClaudeInput('bash', { command: 'rm -rf /' });
-    expect(runPreToolGuards(input, { hookDir: '/nonexistent/hooks' }).block).toBe(false);
+    expect((await runPreToolGuards(input, { hookDir: '/nonexistent/hooks' })).block).toBe(false);
+  });
+});
+
+describe('forgen opencode-guard CLI (실 배포 플러그인이 호출하는 브릿지)', () => {
+  function guard(payload: unknown): { block?: boolean; reason?: string } {
+    const out = execFileSync('node', [distCli, 'opencode-guard'], {
+      input: JSON.stringify(payload),
+      encoding: 'utf-8',
+    });
+    return JSON.parse(out);
+  }
+
+  it('rm -rf → block + reason', () => {
+    const d = guard({ tool: 'bash', args: { command: 'rm -rf /tmp/x' } });
+    expect(d.block).toBe(true);
+    expect(d.reason).toMatch(/rm -rf|confirm/i);
+  });
+
+  it('안전 명령 → block 없음', () => {
+    expect(guard({ tool: 'bash', args: { command: 'echo hi' } }).block).toBe(false);
+  });
+
+  it('빈/깨진 입력 → fail-open', () => {
+    expect(guard({}).block).toBe(false);
   });
 });

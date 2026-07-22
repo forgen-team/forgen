@@ -414,15 +414,13 @@ async function prepareCodexSession(ctx: HarnessSessionContext): Promise<void> {
 }
 
 /**
- * OpenCode 세션 준비 — P1 파운데이션 스텁. OpenCode 는 in-process plugin 형태라 세션 준비 =
- * `.opencode/plugins/forgen.ts` 슬림 설치(install-opencode, P1 미구현). 슬림 착지 전까지
- * fail-loud — 조용히 준비 안 된 채 진행하지 않는다. (opencode 는 detection/install 이
- * 미배선이라 현재 runtime 으로 선택될 수 없어 도달 불가.)
+ * OpenCode 세션 준비. OpenCode 는 in-process plugin 형태라, 세션 준비 시점의 host-specific
+ * artifact wiring 이 없다 — plugin 배포는 `forgen install opencode`(install-opencode)가
+ * 수행하고, OpenCode 가 세션마다 plugin 을 자동 로드한다. 따라서 여기선 no-op.
+ * (subprocess projection 은 OpenCode 의 plugin 모델과 무관 — projection.ts 스텁 유지.)
  */
 async function prepareOpencodeSession(_ctx: HarnessSessionContext): Promise<void> {
-  throw new Error(
-    '[forgen] OpenCode 세션 준비 미구현 — P1 plugin 슬림(install-opencode) 착지 필요.',
-  );
+  // no-op: plugin 은 install-opencode 가 배포, OpenCode 가 자동 로드.
 }
 
 /**

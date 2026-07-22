@@ -17,6 +17,7 @@ import { fileURLToPath } from 'node:url';
 import { detectAvailableHosts, type HostAvailability } from '../core/host-detect.js';
 import { planClaudeInstall, type ClaudeInstallResult } from './install-claude.js';
 import { planCodexInstall, type CodexInstallResult } from './install-codex.js';
+import { planOpencodeInstall, type OpencodeInstallResult } from './install-opencode.js';
 import type { HostId } from '../core/trust-layer-intent.js';
 
 export type InstallTarget = HostId | 'both';
@@ -33,6 +34,7 @@ export interface OrchestratorResult {
   target: InstallTarget;
   claude?: ClaudeInstallResult;
   codex?: CodexInstallResult;
+  opencode?: OpencodeInstallResult;
   detection: ReturnType<typeof detectAvailableHosts>;
 }
 
@@ -100,7 +102,7 @@ export async function runInstall(opts: OrchestratorOptions): Promise<Orchestrato
   const detection = detectAvailableHosts();
 
   let target: InstallTarget;
-  if (opts.target === 'claude' || opts.target === 'codex' || opts.target === 'both') {
+  if (opts.target === 'claude' || opts.target === 'codex' || opts.target === 'opencode' || opts.target === 'both') {
     target = opts.target;
   } else if (opts.target === undefined) {
     const interactive = await chooseTargetInteractively(detection);
@@ -119,6 +121,10 @@ export async function runInstall(opts: OrchestratorOptions): Promise<Orchestrato
   }
   if (target === 'codex' || target === 'both') {
     result.codex = planCodexInstall({ pkgRoot: opts.pkgRoot, dryRun, registerMcp });
+  }
+  // W3-3: opencode 는 명시 타겟일 때만 설치('both' 는 claude+codex primary-pair 유지).
+  if (target === 'opencode') {
+    result.opencode = planOpencodeInstall({ pkgRoot: opts.pkgRoot, dryRun, registerMcp });
   }
 
   return result;
@@ -143,6 +149,15 @@ export function renderResult(result: OrchestratorResult, dryRun: boolean): strin
     lines.push(`    CODEX_HOME: ${result.codex.codexHome}`);
     lines.push(`    hooks.json: ${result.codex.hooksCount} forgen hooks (preserved user: ${result.codex.preservedUserHookCount})`);
     lines.push(`    MCP: ${result.codex.mcpAlreadyPresent ? 'already present' : (result.codex.mcpRegistered ? 'registered' : 'skipped')}`);
+  }
+  if (result.opencode) {
+    lines.push('');
+    lines.push('  OpenCode (P1 — block-tool-use + MCP, 실험적):');
+    lines.push(`    config dir: ${result.opencode.configDir}`);
+    lines.push(`    plugin: ${result.opencode.pluginInstalled ? 'installed' : 'skipped'} → ${result.opencode.pluginPath}`);
+    lines.push(`    MCP: ${result.opencode.mcpAlreadyPresent ? 'already present' : (result.opencode.mcpRegistered ? 'registered' : 'skipped')}`);
+    lines.push(`    AGENTS.md rules: ${result.opencode.agentsMdInjected ? 'injected' : 'skipped'}`);
+    lines.push('    note: 완료가드/context 주입은 후속 증분 (projection/inject 미완).');
   }
   lines.push('');
   return lines.join('\n');
