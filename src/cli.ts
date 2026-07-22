@@ -352,6 +352,7 @@ async function handleRuleNamespace(args: string[]): Promise<void> {
     forgen rule health-scan [--apply]      Scan drift → Mech downgrade candidates
     forgen rule classify [--apply] [--force]
                                            Propose enforce_via for legacy rules
+    forgen rule unmerge-cluster <id>       Undo a W3-2 correction-cluster merge (restore originals)
 `);
     return;
   }
@@ -385,6 +386,23 @@ async function handleRuleNamespace(args: string[]): Promise<void> {
     case 'classify': {
       const { handleClassifyEnforce } = await import('./engine/classify-enforce-cli.js');
       await handleClassifyEnforce(rest);
+      return;
+    }
+    case 'unmerge-cluster': {
+      // W3-2: 교정 클러스터 통합 취소 — 원본 룰 복원 + 재통합 억제.
+      const mergedId = rest[0];
+      if (!mergedId) {
+        console.error('[forgen] usage: forgen rule unmerge-cluster <merged-rule-id>');
+        process.exit(1);
+      }
+      const { unmergeCluster } = await import('./engine/correction-cluster-runner.js');
+      const res = unmergeCluster(mergedId);
+      if (res.ok) {
+        console.log(`✓ [forgen] 클러스터 통합 취소 — 원본 ${res.restored.length}룰 복원 (재통합 억제됨)`);
+      } else {
+        console.error(`[forgen] unmerge 실패: ${res.reason}`);
+        process.exit(1);
+      }
       return;
     }
     default: {

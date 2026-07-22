@@ -156,6 +156,12 @@ export interface Rule {
    * ADR-002 §Data Model.
    */
   lifecycle?: LifecycleState;
+  /**
+   * W3-2 (교정 클러스터링): 이 rule 이 클러스터 통합으로 superseded 되었다면, 통합 결과
+   * rule 의 rule_id. `forgen rules --unmerge-cluster` 로 복원 시 이 링크로 원본을 되살린다.
+   * 통합 rule 쪽에는 설정되지 않는다(원본에만). ADR-010 W3-2.
+   */
+  clustered_into?: string;
 }
 
 // ── Evidence ──

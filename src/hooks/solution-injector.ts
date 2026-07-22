@@ -13,6 +13,7 @@ import * as path from 'node:path';
 import { readStdinJSON } from './shared/read-stdin.js';
 import { isHookEnabled } from './hook-config.js';
 import { matchSolutions } from '../engine/solution-matcher.js';
+import { RELEVANCE_MATCH_GATE } from '../engine/relevance-gate.js';
 import { extractTags } from '../engine/solution-format.js';
 import { defaultNormalizer } from '../engine/term-normalizer.js';
 import { logMatchDecision } from '../engine/match-eval-log.js';
@@ -61,8 +62,11 @@ const MAX_SOLUTIONS_PER_SESSION = 10;
  * If fitness data is unavailable (fresh install, empty outcomes/),
  * every solution falls into the default 0.3 bucket — identical to the
  * pre-0.3.2 gate. No cold-start regression.
+ *
+ * W3-2 리뷰(SEV-3 #1): 0.3 리터럴을 relevance-gate.RELEVANCE_MATCH_GATE 로 단일화 —
+ * 교정 클러스터링 τ 와 같은 소스를 공유해 근거-정직성 드리프트를 코드로 방지.
  */
-export const MIN_INJECT_RELEVANCE = 0.3;
+export const MIN_INJECT_RELEVANCE = RELEVANCE_MATCH_GATE;
 export const MIN_INJECT_RELEVANCE_TRUSTED = 0.25;
 /**
  * v0.4.1 — cold-start 사용자 threshold. outcomes 이벤트가 거의 없는 신규 사용자
