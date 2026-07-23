@@ -20,13 +20,18 @@ beforeAll(() => {
 });
 
 describe('opencode 가드 러너 (async, 실 forgen 가드 브릿지)', () => {
-  it('rm -rf → db-guard block (async runPreToolGuards)', async () => {
+  // 위험 SQL(DROP TABLE)은 db-guard 의 **built-in** 패턴(dangerous-patterns.json, dist 동봉)
+  // 으로 차단 — ~/.forgen 룰 상태와 무관(환경 독립). (rm -rf 는 L1 룰 기반이라 fresh home
+  // 인 CI 에선 미차단 → 환경 의존이라 브릿지 테스트엔 부적합.)
+  const DANGER_SQL = "psql -c 'DROP TABLE users'";
+
+  it('위험 SQL(DROP TABLE) → db-guard block (async runPreToolGuards)', async () => {
     const { runPreToolGuards } = await import('../src/host/opencode/plugin/forgen.js');
     const { toolBeforeToClaudeInput } = await import('../src/host/opencode/translate.js');
-    const input = toolBeforeToClaudeInput('bash', { command: 'rm -rf /tmp/important-data' });
+    const input = toolBeforeToClaudeInput('bash', { command: DANGER_SQL });
     const decision = await runPreToolGuards(input, { hookDir: distHooks });
     expect(decision.block).toBe(true);
-    expect(decision.reason).toMatch(/rm -rf|confirm/i);
+    expect(decision.reason).toMatch(/DROP TABLE|Dangerous SQL/i);
   });
 
   it('안전 명령(ls) → block 없음', async () => {
@@ -53,10 +58,10 @@ describe('forgen opencode-guard CLI (실 배포 플러그인이 호출하는 브
     return JSON.parse(out);
   }
 
-  it('rm -rf → block + reason', () => {
-    const d = guard({ tool: 'bash', args: { command: 'rm -rf /tmp/x' } });
+  it('위험 SQL(DROP TABLE) → block + reason (built-in, 환경 독립)', () => {
+    const d = guard({ tool: 'bash', args: { command: "psql -c 'DROP TABLE users'" } });
     expect(d.block).toBe(true);
-    expect(d.reason).toMatch(/rm -rf|confirm/i);
+    expect(d.reason).toMatch(/DROP TABLE|Dangerous SQL/i);
   });
 
   it('안전 명령 → block 없음', () => {
