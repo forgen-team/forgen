@@ -54,8 +54,8 @@ export function resolveOpencodeConfigDir(opts: OpencodeInstallOptions): string {
   if (opts.opencodeConfigDir) return opts.opencodeConfigDir;
   // OpenCode 는 XDG_CONFIG_HOME 을 존중한다(config docs). forgen 도 동일 해석해야 실제 로드
   // 위치에 배포된다 — hardcode ~/.config 이면 XDG override 사용자에게 미도달.
-  const xdg = process.env.XDG_CONFIG_HOME;
-  const base = xdg && xdg.trim().length > 0 ? xdg : path.join(os.homedir(), '.config');
+  const xdg = process.env.XDG_CONFIG_HOME?.trim();
+  const base = xdg && xdg.length > 0 ? xdg : path.join(os.homedir(), '.config');
   return path.join(base, 'opencode');
 }
 
