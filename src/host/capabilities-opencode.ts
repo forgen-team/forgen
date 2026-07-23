@@ -2,12 +2,16 @@
  * OpenCode HostCapabilities — Multi-Harness Adapter Plan P1
  * (`reports/harness-probe/adapter-plan-2026-07-20.md` §2.2 / §3.1).
  *
- * ⚠️ 검증 수준(정직): 이 선언은 **docs-level** 이다 — OpenCode plugin 문서 + 2차 소스
- * web probe(2026-07-20) 기반. codex(`capabilities-codex.ts`)가 로컬 schema 파일로
- * source-level 검증된 것과 달리, OpenCode 는 아직 **plugin 슬림/parity 미구현**이라
- * 런타임 검증 전이다. 각 status 는 "문서상 이렇게 될 것"이며, P1 슬림+parity 가 착지하면
- * 실측으로 갱신한다. (projection/binding 은 현재 fail-loud 스텁 — install-opencode 전까지
- * 도달 불가.)
+ * ⚠️ 검증 수준(정직): verificationLevel='docs' 유지. OpenCode plugin 문서 + context7
+ * 실소스 대조(`/anomalyco/opencode`: tool.execute.before(input.tool, output.args), throw=block
+ * 확인). codex 의 로컬-schema source-level 과는 다른 축.
+ *
+ * 2026-07-22 **런타임 부분 검증(opencode v1.1.8, 격리 XDG)**: `forgen install opencode` 배포 후
+ *   - plugin(`plugins/forgen.ts`) **로드 성공**(service=plugin loading plugin, 에러 없음),
+ *   - MCP(`mcp.forgen-compound`) **등록 + 9 tools** 로드 성공(toolCount=9).
+ *   미검증: tool.execute.before 발화(guard block) end-to-end 는 model API 필요(격리 세션에서
+ *   401 Missing API key 로 model 단계 미도달) → verificationLevel='docs' 유지가 정직.
+ *   plugin-load + MCP 는 runtime-confirmed, guard-firing 은 model-backed 세션 테스트 대기.
  *
  * OpenCode 통합 형태는 Claude/Codex 와 다르다: subprocess-stdin hook 이 아니라
  * **in-process TypeScript plugin**(`.opencode/plugins/`, 25+ 이벤트, tool.execute.before

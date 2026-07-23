@@ -346,7 +346,7 @@ function installCodexSkills(opts: { sourceDir: string; targetDir: string; dryRun
 
 // ── P3-3: AGENTS.md inject ────────────────────────────────────────────
 
-function resolveAgentsMdPath(_pkgRoot: string): string {
+export function resolveAgentsMdPath(_pkgRoot: string): string {
   // Phase 3 critic fix: pkgRoot 기반 walk-up 은 `npm install -g` 시 시스템 디렉토리
   // (예: /usr/local/lib/node_modules/forgen) 에 fallback AGENTS.md 작성 위험.
   // *cwd 기반* 으로 변경 — 사용자 작업 디렉토리의 git root, 없으면 cwd 자체.
@@ -386,7 +386,7 @@ function buildForgenRulesBlock(pkgRoot: string): string {
   return lines.join('\n');
 }
 
-function upsertForgenRulesInAgentsMd(opts: { agentsMdPath: string; pkgRoot: string; dryRun: boolean }): { injected: boolean } {
+export function upsertForgenRulesInAgentsMd(opts: { agentsMdPath: string; pkgRoot: string; dryRun: boolean }): { injected: boolean } {
   const { agentsMdPath, pkgRoot, dryRun } = opts;
   const block = buildForgenRulesBlock(pkgRoot);
   let current = '';
