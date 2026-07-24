@@ -22,6 +22,7 @@ import type { ArmResponse, Track } from '../types.js';
 import type { JudgeAxis, JudgeClient } from '../judges/index.js';
 import { ClaudeCliClient, CodexCliClient, OllamaClient, SonnetClient } from '../judges/index.js';
 import { kappaGate, cohensKappa } from '../judges/kappa.js';
+import { resetJudgeParseTelemetry, judgeParseTelemetry } from '../judges/judge-types.js';
 import { summarizeBehavioral, type BehavioralArmSummary } from '../metrics/behavioral.js';
 
 /** Load persona spec JSON for β-axis judging. Cached per personaId. */
@@ -43,6 +44,25 @@ function loadPersonaSpec(rootDir: string, personaId: string): string {
 const DATA_DIR = process.env.FORGEN_EVAL_DATA_DIR ?? '/tmp/forgen-eval-data';
 const N = Number(process.env.PSI_STAT_N ?? 10);
 const JUDGE_TRACK = (process.env.JUDGE_TRACK ?? 'API_DEV') as Track;
+/**
+ * Arm subset (R2 honest-N): claude-mem 이 없는/부적격인 환경에선 mem arm 2개가
+ * 케이스 전체 skip 을 유발한다(N_eff=0). ψ_synergy 는 ADR-010 에서 이미 연기됨
+ * (claude-mem 갓 설치 → ≥2주 공동사용 필요). 릴리스 핵심 지표는 δ = forgenOnly−vanilla
+ * 이므로 `PSI_ARMS=vanilla,forgenOnly` 로 2-arm δ 측정을 지원한다. 기본은 4-arm.
+ */
+const ALL_ARM_IDS = ['vanilla', 'forgenOnly', 'memOnly', 'full'] as const;
+type ArmKey = (typeof ALL_ARM_IDS)[number];
+const ENABLED_ARMS = (process.env.PSI_ARMS ?? ALL_ARM_IDS.join(','))
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean) as ArmKey[];
+for (const a of ENABLED_ARMS) {
+  if (!ALL_ARM_IDS.includes(a)) throw new Error(`Unknown arm in PSI_ARMS: ${a} (valid: ${ALL_ARM_IDS.join(',')})`);
+}
+if (!ENABLED_ARMS.includes('vanilla') || !ENABLED_ARMS.includes('forgenOnly')) {
+  throw new Error('PSI_ARMS must include at least vanilla,forgenOnly (δ baseline)');
+}
+const SYNERGY = ENABLED_ARMS.includes('memOnly') && ENABLED_ARMS.includes('full');
 
 interface PerArmScore {
   gamma: number;
@@ -59,7 +79,10 @@ interface PerArmScore {
 interface ScoredCase {
   caseId: string;
   arms: Record<string, PerArmScore>;
+  /** ψ_synergy = full − max(forgenOnly, memOnly). NaN when mem arms disabled. */
   psi: number;
+  /** δ = forgenOnly − vanilla (release-primary injection effect). */
+  delta: number;
 }
 
 function w(s: { gamma: number; beta: number; blocks: number; injects: number }): number {
@@ -149,6 +172,7 @@ async function main() {
   const cases = loadTestCases({ rootDir: DATA_DIR, realRetroMinRatio: 0, limit: N });
   console.log(`ψ statistical run (track=${JUDGE_TRACK}) × N=${cases.length} cases`);
 
+  resetJudgeParseTelemetry(); // 리뷰 SEV-2: regex fallback 규모를 본런에서 관측
   const judges = buildPanel(JUDGE_TRACK);
   console.log(`Judge panel: ${judges.map((j) => j.id).join(' + ')}`);
   const intraFamily = judges.every((j) => j.id.startsWith('claude'));
@@ -168,12 +192,14 @@ async function main() {
     }
   }
 
-  const arms = {
-    vanilla: new VanillaArm(),
-    forgenOnly: new ForgenOnlyArm(),
-    memOnly: new ClaudeMemOnlyArm(),
-    full: new ForgenPlusMemArm(),
+  const armFactory: Record<ArmKey, () => import('../arms/types.js').Arm> = {
+    vanilla: () => new VanillaArm(),
+    forgenOnly: () => new ForgenOnlyArm(),
+    memOnly: () => new ClaudeMemOnlyArm(),
+    full: () => new ForgenPlusMemArm(),
   };
+  const arms = Object.fromEntries(ENABLED_ARMS.map((k) => [k, armFactory[k]()])) as Record<string, import('../arms/types.js').Arm>;
+  console.log(`Arms: ${ENABLED_ARMS.join(' + ')}${SYNERGY ? ' (ψ_synergy enabled)' : ' (δ-only, ψ_synergy skipped)'}`);
   const ctx: ArmContext = { armId: 'vanilla', workdir: '/tmp/psi-stat-judged', turnDepth: 1 };
 
   for (const a of Object.values(arms)) {
@@ -207,7 +233,7 @@ async function main() {
         console.error(`  ${k}: ${(e as Error).message}`);
       }
     }
-    if (!armResp.vanilla || !armResp.forgenOnly || !armResp.memOnly || !armResp.full) continue;
+    if (ENABLED_ARMS.some((k) => !armResp[k])) continue;
     // 1차(behavioral) 지표는 저지 호출 전에 arm 응답에서 결정론적으로 수집.
     // 케이스 gold 를 같은 순서로 누적 — summary 에서 gold 채점에 쓴다.
     caseGolds.push(c.gold);
@@ -240,9 +266,10 @@ async function main() {
         `  ${k}: judge ${((Date.now() - tj) / 1000).toFixed(1)}s γ=${gamma.mean.toFixed(2)} β=${beta.mean.toFixed(2)} W=${W.toFixed(3)}`,
       );
     }
-    const psi = armScores.full.W - Math.max(armScores.forgenOnly.W, armScores.memOnly.W);
-    results.push({ caseId: c.id, arms: armScores, psi });
-    console.log(`  → ψ = ${psi.toFixed(3)}`);
+    const psi = SYNERGY ? armScores.full.W - Math.max(armScores.forgenOnly.W, armScores.memOnly.W) : NaN;
+    const delta = armScores.forgenOnly.W - armScores.vanilla.W;
+    results.push({ caseId: c.id, arms: armScores, psi, delta });
+    console.log(SYNERGY ? `  → ψ = ${psi.toFixed(3)}  δ = ${delta.toFixed(3)}` : `  → δ = ${delta.toFixed(3)}`);
   }
   for (const a of Object.values(arms)) await a.afterAll(ctx).catch(() => {});
 
@@ -273,14 +300,34 @@ async function main() {
         ' no measurable behavioral δ here. Effect judgment: judge panel + human spot-check.',
   );
 
-  console.log('\n=== ψ STATISTICAL SUMMARY (judge-based, SECONDARY) ===');
-  const psis = results.map((r) => r.psi);
-  const ci = bootstrapMean95CI(psis);
+  // δ = forgenOnly − vanilla (release-primary injection effect; judge-based, SECONDARY to behavioral).
+  const deltas = results.map((r) => r.delta);
+  const dci = bootstrapMean95CI(deltas);
+  console.log('\n=== δ STATISTICAL SUMMARY (forgenOnly − vanilla, judge-based) ===');
   console.log(`N (effective)        = ${results.length}`);
-  console.log(`mean ψ               = ${ci.mean.toFixed(3)}`);
-  console.log(`95% bootstrap CI     = [${ci.lo.toFixed(3)}, ${ci.hi.toFixed(3)}]`);
-  console.log(`> 0 with 95% conf    = ${ci.lo > 0}`);
-  console.log(`Master gate (ψ > 0)  = ${ci.lo > 0 ? 'PASS' : 'FAIL (CI crosses zero)'}`);
+  console.log(`mean δ               = ${dci.mean.toFixed(3)}`);
+  console.log(`95% bootstrap CI     = [${dci.lo.toFixed(3)}, ${dci.hi.toFixed(3)}]`);
+  console.log(`δ > 0 with 95% conf  = ${dci.lo > 0}`);
+  // 리뷰 SEV-2: fallback 표결 비율. 0 에 가까워야 δ/κ 가 순수 JSON 표결 위에 선다.
+  const pt = judgeParseTelemetry();
+  const fbRate = pt.total ? (pt.fallback / pt.total) : 0;
+  console.log(`judge-parse fallback = ${pt.fallback}/${pt.total} (${(fbRate * 100).toFixed(1)}%)${fbRate > 0.05 ? '  ⚠ >5% — δ 표결 신뢰도 저하, 원인 조사 필요' : ''}`);
+
+  // ψ_synergy only meaningful with mem arms; NaN-guarded when 2-arm δ-only run.
+  const psis = results.map((r) => r.psi).filter((v) => Number.isFinite(v));
+  const ci = SYNERGY && psis.length ? bootstrapMean95CI(psis) : { mean: NaN, lo: NaN, hi: NaN };
+  if (SYNERGY) {
+    console.log('\n=== ψ STATISTICAL SUMMARY (judge-based, SECONDARY) ===');
+    console.log(`mean ψ               = ${ci.mean.toFixed(3)}`);
+    console.log(`95% bootstrap CI     = [${ci.lo.toFixed(3)}, ${ci.hi.toFixed(3)}]`);
+    console.log(`Master gate (ψ > 0)  = ${ci.lo > 0 ? 'PASS' : 'FAIL (CI crosses zero)'}`);
+  } else {
+    console.log('\nψ_synergy: SKIPPED (mem arms disabled — δ-only run, ADR-010 ψ deferral)');
+  }
+  // Primary gate: ψ when synergy arms present, else δ.
+  const primaryLo = SYNERGY ? ci.lo : dci.lo;
+  const primaryName = SYNERGY ? 'ψ' : 'δ';
+  console.log(`\nPrimary gate (${primaryName} > 0) = ${primaryLo > 0 ? 'PASS' : 'FAIL (CI crosses zero / null effect)'}`);
 
   // κ between judges, per axis. For ≥3 judges → pairwise mean Cohen's across all pairs.
   const kappaPerAxis: Record<string, number> = {};
@@ -326,15 +373,22 @@ async function main() {
     }
   }
 
-  console.log('\nPer-case ψ (judge-based):');
-  for (const r of results) console.log(`  ${r.caseId}: ψ=${r.psi.toFixed(3)}`);
+  console.log(`\nPer-case (judge-based):`);
+  for (const r of results) {
+    console.log(SYNERGY ? `  ${r.caseId}: ψ=${r.psi.toFixed(3)} δ=${r.delta.toFixed(3)}` : `  ${r.caseId}: δ=${r.delta.toFixed(3)}`);
+  }
 
   const out = {
     track: JUDGE_TRACK,
+    arms: ENABLED_ARMS,
+    synergy: SYNERGY,
+    driverModel: process.env.CLAUDE_CLI_DRIVER_MODEL ?? 'sonnet',
     judges: judges.map((j) => j.id),
     intraFamilyPanel: intraFamily, // true면 κ는 계열-내 일치도(편향 가능) — 1차는 behavioral
     N: results.length,
-    mean: ci.mean,
+    delta: { mean: dci.mean, ci: [dci.lo, dci.hi] }, // δ = forgenOnly−vanilla (release-primary)
+    judgeParseFallback: judgeParseTelemetry(), // fallback 표결 규모(측정 신뢰성)
+    mean: ci.mean, // ψ (NaN when δ-only)
     ci: [ci.lo, ci.hi],
     behavioral, // 저지-독립 이진 sanity-floor (등급 δ 아님)
     kappaPerAxis,
@@ -348,7 +402,7 @@ async function main() {
   const fp = `./reports/psi-stat/psi-stat-judged-${JUDGE_TRACK}-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
   writeFileSync(fp, JSON.stringify(out, null, 2));
   console.log(`\nReport saved: ${fp}`);
-  process.exit(ci.lo > 0 ? 0 : 1);
+  process.exit(primaryLo > 0 ? 0 : 1);
 }
 
 main().catch((e) => {
