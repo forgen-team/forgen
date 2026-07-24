@@ -133,13 +133,63 @@ export function buildJudgePrompt(input: JudgePromptInput): string {
 }
 
 /** Parse 1-4 + rationale from judge raw output. Robust to JSON noise. */
+/**
+ * Judge 출력 → {score, rationale}. 견고화(R2 measurement integrity):
+ *  - 예전 non-greedy `/\{[\s\S]*?\}/` 는 rationale 에 `}` 가 있거나 출력이 잘리면
+ *    부분매칭→score NaN, 또는 닫는 `}` 부재→"missing JSON" 으로 던져 safeJudge 가
+ *    2.5 fallback 을 채워 β 축을 오염(κ 붕괴)시켰다. 실측 로그에서 sonnet judge 가
+ *    이 경로로 절반 fallback → κ_β=0.
+ *  - 수정: (1) 코드펜스 제거, (2) **greedy** 최외곽 객체 파싱 시도(중괄호 포함 rationale
+ *    허용), (3) 실패해도 `"score": N` 을 직접 regex 추출(잘린 출력에서도 score 복구).
+ *    score 가 지표의 본질이므로 rationale 손실은 허용하되 score 는 최대한 살린다.
+ */
+/**
+ * regex score-복구가 몇 번 쓰였는지 관측 (측정 신뢰성). 본런에서 이 카운트가
+ * ~0 이어야 δ/κ 가 순수 JSON 표결 위에 선다. 리뷰 SEV-2: fallback 표결은
+ * clean-JSON 표결보다 신뢰도가 낮으니 규모를 반드시 리포트한다.
+ */
+const parseTelemetry = { fallback: 0, total: 0 };
+export function resetJudgeParseTelemetry(): void {
+  parseTelemetry.fallback = 0;
+  parseTelemetry.total = 0;
+}
+export function judgeParseTelemetry(): { fallback: number; total: number } {
+  return { ...parseTelemetry };
+}
+
 export function parseJudgeOutput(raw: string): { score: 1 | 2 | 3 | 4; rationale: string } {
-  const jsonMatch = raw.match(/\{[\s\S]*?\}/);
-  if (!jsonMatch) throw new Error(`Judge output missing JSON: ${raw.slice(0, 100)}`);
-  const obj = JSON.parse(jsonMatch[0]);
-  const score = Number(obj.score);
-  if (![1, 2, 3, 4].includes(score)) {
-    throw new Error(`Judge score out of range [1-4]: ${score}`);
+  parseTelemetry.total += 1;
+  const cleaned = raw.replace(/```(?:json)?/gi, '').trim();
+  let obj: { score?: unknown; rationale?: unknown } | null = null;
+  const greedy = cleaned.match(/\{[\s\S]*\}/); // 최외곽까지 — rationale 내 중괄호 흡수
+  if (greedy) {
+    try {
+      obj = JSON.parse(greedy[0]);
+    } catch {
+      /* fall through to regex score recovery */
+    }
   }
-  return { score: score as 1 | 2 | 3 | 4, rationale: String(obj.rationale ?? '') };
+  let score = obj ? Number((obj as { score?: unknown }).score) : Number.NaN;
+  if (![1, 2, 3, 4].includes(score)) {
+    // 잘린/비정형 출력에서 score 복구. 리뷰 SEV-2 대응:
+    //  (1) **마지막** 매칭을 취한다 — 판정(verdict)은 대개 말미 JSON 에 있고,
+    //      앞쪽 rubric/prose 의 "score: 2 앵커 설명" 같은 토큰을 잘못 집지 않는다.
+    //  (2) `1-4`(rubric 템플릿 범위)·`3.5`(소수) 같은 형태는 lookahead 로 거부 —
+    //      뒤에 `-`/`.`/숫자가 붙으면 판정 숫자가 아니다.
+    const re = /["']?score["']?\s*[:=]\s*([1-4])(?![-.\d])/gi;
+    let last: RegExpExecArray | null = null;
+    for (let m = re.exec(cleaned); m !== null; m = re.exec(cleaned)) last = m;
+    if (last) {
+      score = Number(last[1]);
+      parseTelemetry.fallback += 1;
+    }
+  }
+  if (![1, 2, 3, 4].includes(score)) {
+    throw new Error(`Judge score unparseable: ${raw.slice(0, 120)}`);
+  }
+  const rationale =
+    obj && (obj as { rationale?: unknown }).rationale != null
+      ? String((obj as { rationale?: unknown }).rationale)
+      : (cleaned.match(/["']?rationale["']?\s*[:=]\s*["']([^"']*)/i)?.[1] ?? '');
+  return { score: score as 1 | 2 | 3 | 4, rationale };
 }
