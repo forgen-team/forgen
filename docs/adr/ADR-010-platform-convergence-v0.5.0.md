@@ -99,3 +99,22 @@ M6 데이터-게이트 기능 + 릴리스     F3 (R2 필요), F4 (여유 시), R
 1. SubagentStop이 신형 5-level nested/background-default 서브에이전트에도 발화하며 depth>1에서 `agent_id`가 유지되는가? — ADR-009 probe가 구식일 수 있음. v0.5.0 검증 커버리지 주장 전 `forgen probe-workflow` 재실행 필요.
 2. Sonnet 5 adaptive thinking이 트랜스크립트 파싱(claim-detector)과 SubagentStop transcript 폴백에 미치는 영향 — R1 smoke에서 함께 확인.
 3. 캐시 dir 버전 불일치(0.4.12 vs 0.4.13)의 근본 원인 — postinstall의 버전 소스 확인 (§3d에서 함께).
+
+### 답변 (2026-07-24 검증)
+
+1. **OQ1 — 미해결(harness-ready, 비블로킹)**: `forgen dev probe-workflow`(arm→실 nested 워크플로우
+   실행→report)가 존재하나, depth>1 SubagentStop 발화·`agent_id` 유지 확인은 **실제 다단
+   nested/background 워크플로우 라이브 실행**이 필요(quota). honest-fail 릴리스는 검증-커버리지를
+   *주장하지 않으므로* 릴리스 블로커 아님. 다음 nested 워크플로우 실행 시 `arm`→`report`로 실측 예정.
+   숫자/verdict 를 실행 없이 채우지 않는다.
+2. **OQ2 — 해결(버그 없음)**: `src/hooks/stop-guard.ts` 트랜스크립트 파서가 assistant content
+   배열에서 **`text` 필드 보유 파트만** 추출(`'text' in p`, L189). Sonnet 5 `thinking` 블록은
+   `text` 필드가 없어 **자연 제외** → adaptive thinking 이 완료-주장 탐지/폴백을 오염시키지 않음.
+   (harness 가 `last_assistant_message` 를 줄 땐 그 값이 최종 text-only 라는 CC 계약에 의존 —
+   forgen 자체 파싱 경로는 정확.)
+3. **OQ3 — 근본원인 확정(엔드유저 비영향)**: 단일 install 경로(postinstall.js·writePluginCache)는
+   둘 다 `rmSync(cacheParent)` 로 전 버전 정리 후 현재 버전만 기록 → 자기정리. 0.4.12/0.4.13
+   공존은 **서로 다른 pkgRoot(글로벌 published vs dev checkout / npx 캐시)에서 각기 install 실행 시
+   충돌**(마지막 실행이 이김)이며, 단일 설치 소스인 엔드유저에겐 발생하지 않는 dev-환경 아티팩트.
+   doctor 는 version-drift 를 미검출(옵션 폴리시 — `installed_plugins.json.version` vs 실행 패키지
+   버전 비교 추가 가능하나 릴리스 비블로커).
