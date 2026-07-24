@@ -24,7 +24,7 @@ jobs:
           - os: ubuntu-24.04-arm
             node-version: 22
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0  # tests/git-stats.test.ts 가 실 git log 30 일 윈도우를 분석
       - uses: actions/setup-node@v6
@@ -61,7 +61,7 @@ jobs:
           - os: windows-latest
             node-version: '22.x'
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
         with:
           node-version: ${{ matrix.node-version }}

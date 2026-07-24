@@ -18,7 +18,7 @@ jobs:
     name: Type-check + unit tests (free tier)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
         with:
           node-version: 20
@@ -35,7 +35,7 @@ jobs:
     name: Verify dataset pin resolves
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Read pinned commit
         id: pin
         run: |
@@ -67,7 +67,7 @@ jobs:
     name: Baseline regression check (no API keys)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Run baseline regression check
         run: node packages/forgen-eval/scripts/check-baseline.cjs
       - name: Run phi gate
@@ -80,7 +80,7 @@ jobs:
   #   runs-on: [self-hosted, gpu, ollama]
   #   if: github.event_name == 'pull_request'
   #   steps:
-  #     - uses: actions/checkout@v6
+  #     - uses: actions/checkout@v7
   #     - uses: actions/setup-node@v6
   #     - run: npm ci
   #     - name: Verify Ollama models present
