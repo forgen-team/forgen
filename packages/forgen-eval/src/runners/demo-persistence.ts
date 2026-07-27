@@ -46,8 +46,12 @@ function loadCases(path: string): TestCase[] {
     .split('\n')
     .filter((l) => l.trim())
     .map((l) => JSON.parse(l) as TestCase)
-    .filter((c) => c.policyGold);
+    // policy 케이스 = policyGold(regex screen) 또는 priorSession 교정(judge 채점) 보유.
+    // judge 가 primary 라 신규 케이스는 policyGold 없이 priorSession 만으로 충분.
+    .filter((c) => c.policyGold || c.correctionSequence.some((t) => t.priorSession));
 }
+
+const EMPTY_SCORE: PolicyScore = { compliant: false, matchedComply: [], matchedViolate: [] };
 
 function bootstrapDiff95CI(
   forgen: number[],
@@ -121,8 +125,8 @@ async function main() {
       console.error('  → skip (arm failure)');
       continue;
     }
-    const vs = scorePolicyCompliance(vr, c.policyGold!);
-    const fs2 = scorePolicyCompliance(fr, c.policyGold!);
+    const vs = c.policyGold ? scorePolicyCompliance(vr, c.policyGold) : EMPTY_SCORE;
+    const fs2 = c.policyGold ? scorePolicyCompliance(fr, c.policyGold) : EMPTY_SCORE;
     const vCell: ArmCell = { ...vs, blocks: vr.blockEvents.length, injects: vr.injectEvents.length };
     const fCell: ArmCell = { ...fs2, blocks: fr.blockEvents.length, injects: fr.injectEvents.length };
     if (JUDGE) {
