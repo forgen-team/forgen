@@ -15,6 +15,22 @@ import { VanillaArm, ForgenOnlyArm } from '../arms/real-arms.js';
 import type { ArmContext } from '../arms/types.js';
 import type { TestCase, ArmResponse, TurnDepth } from '../types.js';
 import { scorePolicyCompliance, summarizePolicy, type PolicyScore } from '../metrics/policy.js';
+import { PolicyJudge, type PolicyVerdict } from '../judges/policy-judge.js';
+
+// judge 채점 on/off (기본 on). regex 는 secondary screen 으로만 병기.
+const JUDGE = process.env.PERSISTENCE_JUDGE !== '0';
+
+/** 정책 텍스트 = 이전 세션 교정(priorSession) 또는 첫 correction 턴. */
+function policyText(c: TestCase): string {
+  const t = c.correctionSequence.find((x) => x.priorSession) ?? c.correctionSequence[0];
+  return t?.userMsg ?? '';
+}
+
+/** 2-judge 합의: 둘 다 compliant → true. 불일치 기록. */
+function judgeCompliance(verdicts: PolicyVerdict[]): { compliant: boolean; agree: boolean } {
+  const yes = verdicts.filter((v) => v.compliant).length;
+  return { compliant: yes === verdicts.length, agree: yes === 0 || yes === verdicts.length };
+}
 
 const CASES_PATH = process.env.PERSISTENCE_CASES ?? './datasets/persistence-ab/cases.jsonl';
 // TurnDepth ∈ {1,5,10,50}. 케이스가 정책+distractor 로 4~ 턴이므로 10 이면 전 턴 재생.
@@ -59,10 +75,27 @@ async function main() {
 
   const vanilla = new VanillaArm();
   const forgen = new ForgenOnlyArm();
+  const judges = JUDGE ? [new PolicyJudge({ model: 'sonnet' }), new PolicyJudge({ model: 'haiku' })] : [];
+  if (JUDGE) {
+    for (const j of judges) {
+      const ok = await j.ping();
+      console.log(`  policy-judge ${j.id} ping: ${ok}`);
+      if (!ok) {
+        console.error(`judge ${j.id} unavailable — abort (set PERSISTENCE_JUDGE=0 to skip)`);
+        process.exit(1);
+      }
+    }
+    console.log('  ⚠ judges 는 Claude 계열(intra-family) — 자기선호 편향 가능, 사람 스팟체크 병행.');
+  }
+  type ArmCell = PolicyScore & {
+    blocks: number;
+    injects: number;
+    judge?: { compliant: boolean; agree: boolean; verdicts: PolicyVerdict[] };
+  };
   const perCase: Array<{
     id: string;
-    vanilla: PolicyScore & { blocks: number; injects: number };
-    forgen: PolicyScore & { blocks: number; injects: number };
+    vanilla: ArmCell;
+    forgen: ArmCell;
     vanillaResp: string;
     forgenResp: string;
   }> = [];
@@ -90,16 +123,26 @@ async function main() {
     }
     const vs = scorePolicyCompliance(vr, c.policyGold!);
     const fs2 = scorePolicyCompliance(fr, c.policyGold!);
+    const vCell: ArmCell = { ...vs, blocks: vr.blockEvents.length, injects: vr.injectEvents.length };
+    const fCell: ArmCell = { ...fs2, blocks: fr.blockEvents.length, injects: fr.injectEvents.length };
+    if (JUDGE) {
+      const pol = policyText(c);
+      // arm-blind: judge 는 policy/request/response 만 받음(어느 arm 인지 모름).
+      const vV = await Promise.all(judges.map((j) => j.judge(pol, c.trigger.prompt, vr!.finalResponse).catch((e) => ({ compliant: false, rationale: `err:${(e as Error).message}`, judgeId: j.id }))));
+      const fV = await Promise.all(judges.map((j) => j.judge(pol, c.trigger.prompt, fr!.finalResponse).catch((e) => ({ compliant: false, rationale: `err:${(e as Error).message}`, judgeId: j.id }))));
+      vCell.judge = { ...judgeCompliance(vV), verdicts: vV };
+      fCell.judge = { ...judgeCompliance(fV), verdicts: fV };
+    }
     perCase.push({
       id: c.id,
-      vanilla: { ...vs, blocks: vr.blockEvents.length, injects: vr.injectEvents.length },
-      forgen: { ...fs2, blocks: fr.blockEvents.length, injects: fr.injectEvents.length },
-      vanillaResp: vr.finalResponse.slice(0, 600),
-      forgenResp: fr.finalResponse.slice(0, 600),
+      vanilla: vCell,
+      forgen: fCell,
+      vanillaResp: vr.finalResponse.slice(0, 900),
+      forgenResp: fr.finalResponse.slice(0, 900),
     });
     console.log(
-      `  vanilla comply=${vs.compliant} (v:${vs.matchedViolate.length} c:${vs.matchedComply.length}) | ` +
-      `forgen comply=${fs2.compliant} (inj=${fr.injectEvents.length})`,
+      `  vanilla: regex=${vs.compliant}${vCell.judge ? ` judge=${vCell.judge.compliant}(agree=${vCell.judge.agree})` : ''} | ` +
+      `forgen: regex=${fs2.compliant}${fCell.judge ? ` judge=${fCell.judge.compliant}(agree=${fCell.judge.agree})` : ''} (inj=${fr.injectEvents.length})`,
     );
   }
 
@@ -111,12 +154,31 @@ async function main() {
   const fArr = fScores.map((s) => (s.compliant ? 1 : 0));
   const ci = bootstrapDiff95CI(fArr, vArr);
 
-  console.log('\n=== PERSISTENCE δ SUMMARY (deterministic policy compliance) ===');
-  console.log(`N (effective)         = ${perCase.length}`);
+  // ── judge-based δ (PRIMARY when JUDGE on) ──────────────────────────────────
+  let judgeSummary: Record<string, unknown> | null = null;
+  if (JUDGE) {
+    const vJ: number[] = perCase.map((p) => (p.vanilla.judge?.compliant ? 1 : 0));
+    const fJ: number[] = perCase.map((p) => (p.forgen.judge?.compliant ? 1 : 0));
+    const vRate = vJ.reduce((a, b) => a + b, 0) / (vJ.length || 1);
+    const fRate = fJ.reduce((a, b) => a + b, 0) / (fJ.length || 1);
+    const jci = bootstrapDiff95CI(fJ, vJ);
+    // inter-judge 합의율(2-judge): 각 응답에서 두 judge 가 일치한 비율.
+    const cells = perCase.flatMap((p) => [p.vanilla.judge, p.forgen.judge]).filter(Boolean) as { agree: boolean }[];
+    const agreeRate = cells.length ? cells.filter((c) => c.agree).length / cells.length : 0;
+    console.log('\n=== PERSISTENCE δ SUMMARY (judge-based, PRIMARY) ===');
+    console.log(`N (effective)         = ${perCase.length}  (judges: ${judges.map((j) => j.id).join('+')}, intra-family)`);
+    console.log(`vanilla    complyRate = ${vRate.toFixed(3)}`);
+    console.log(`forgenOnly complyRate = ${fRate.toFixed(3)}`);
+    console.log(`δ_persistence (paired)= ${jci.mean.toFixed(3)}  95% CI [${jci.lo.toFixed(3)}, ${jci.hi.toFixed(3)}]`);
+    console.log(`δ > 0 (CI 하한>0)     = ${jci.lo > 0 ? 'YES — forgen 이 cross-session 정책 준수를 높임' : 'NO (CI가 0을 지남 / null)'}`);
+    console.log(`inter-judge 합의율     = ${agreeRate.toFixed(3)} (낮으면 사람 스팟체크 가중)`);
+    judgeSummary = { vanillaComplyRate: vRate, forgenComplyRate: fRate, delta: { mean: jci.mean, ci: [jci.lo, jci.hi] }, interJudgeAgreement: agreeRate };
+  }
+
+  console.log('\n=== PERSISTENCE δ (deterministic regex, SECONDARY screen — 한국어 stance 과소집계 주의) ===');
   console.log(`vanilla    complyRate = ${vSum.complyRate.toFixed(3)} (${vSum.compliantCount}/${vSum.n})`);
   console.log(`forgenOnly complyRate = ${fSum.complyRate.toFixed(3)} (${fSum.compliantCount}/${fSum.n})`);
-  console.log(`δ_persistence (paired)= ${ci.mean.toFixed(3)}  95% CI [${ci.lo.toFixed(3)}, ${ci.hi.toFixed(3)}]`);
-  console.log(`δ > 0 (CI 하한>0)     = ${ci.lo > 0 ? 'YES — forgen 이 거리에서 정책 준수를 높임' : 'NO (CI가 0을 지남 / null)'}`);
+  console.log(`δ_regex (paired)      = ${ci.mean.toFixed(3)}  95% CI [${ci.lo.toFixed(3)}, ${ci.hi.toFixed(3)}]`);
   console.log('\n⚠ deterministic 판정 — 준수/위반 샘플 사람 스팟체크 필수(문구 아티팩트 방지).');
 
   const out = {
@@ -124,9 +186,13 @@ async function main() {
     driverModel: driver,
     depth: DEPTH,
     N: perCase.length,
-    vanillaComplyRate: vSum.complyRate,
-    forgenComplyRate: fSum.complyRate,
-    deltaPersistence: { mean: ci.mean, ci: [ci.lo, ci.hi] },
+    primary: JUDGE ? 'judge' : 'regex',
+    judge: judgeSummary, // judge-based δ (PRIMARY)
+    regexScreen: {
+      vanillaComplyRate: vSum.complyRate,
+      forgenComplyRate: fSum.complyRate,
+      delta: { mean: ci.mean, ci: [ci.lo, ci.hi] },
+    },
     perCase,
     generatedAt: new Date().toISOString(),
   };
@@ -134,7 +200,9 @@ async function main() {
   const fp = `./reports/persistence/persistence-${driver}-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
   writeFileSync(fp, JSON.stringify(out, null, 2));
   console.log(`\nReport saved: ${fp}`);
-  process.exit(ci.lo > 0 ? 0 : 1);
+  // exit 0 = primary δ CI 하한 > 0. JUDGE on 이면 judge δ, 아니면 regex.
+  const primaryLo = JUDGE && judgeSummary ? (judgeSummary.delta as { ci: number[] }).ci[0] : ci.lo;
+  process.exit(primaryLo > 0 ? 0 : 1);
 }
 
 main().catch((e) => {
