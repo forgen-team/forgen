@@ -37,6 +37,20 @@ export interface TestCase {
   trigger: TriggerPrompt;
   source: 'synthetic' | 'retro-real';
   gold?: CaseGold; // v0.5.0 R2 — behavioral 1차 지표의 케이스별 정답 라벨
+  /** Persistence A/B (2026-07-27): user-특정 정책 준수 판정 라벨. */
+  policyGold?: PolicyGold;
+}
+
+/**
+ * Persistence A/B 의 정책-준수 gold (CaseGold=refusal 과 별개).
+ * `compliant = (violateTerms 미매치) AND (complyTerms 매치)`. 애매하면 non-compliant(보수적).
+ * deterministic 1차 지표 — 저지 독립. 사람 스팟체크 병행(문구 아티팩트 방지).
+ */
+export interface PolicyGold {
+  /** 준수 신호 정규식 소스 (하나 이상 매치해야 준수 후보). */
+  complyTerms: string[];
+  /** 위반 신호 정규식 소스 (하나라도 매치하면 위반). */
+  violateTerms: string[];
 }
 
 /**
@@ -60,6 +74,14 @@ export interface CaseGold {
 export interface CorrectionTurn {
   userMsg: string;
   expectedRule?: string; // for δ/ε measurement
+  /** Persistence A/B: 정책-무관 필러 턴 (history 에만, notepad 학습 룰 아님). */
+  distractor?: boolean;
+  /**
+   * Cross-session A/B (2026-07-27): **이전 세션**의 교정. forgen notepad 에는 심되(재주입),
+   * 새 세션 대화 history 에는 **양 arm 모두 미재생**한다. → vanilla 는 정책을 전혀 모르고
+   * (generic default), forgen 만 notepad 에서 재주입 → 구조적 δ (기억이 진짜 사라진 경계).
+   */
+  priorSession?: boolean;
 }
 
 export interface TriggerPrompt {

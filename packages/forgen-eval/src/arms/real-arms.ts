@@ -34,10 +34,14 @@ function seedForgenNotepad(c: TestCase): string {
   const lines = [
     '# Active Rules (forgen learned from prior corrections)',
     '',
-    ...c.correctionSequence.map((t) => {
-      const ruleId = t.expectedRule ?? 'rule';
-      return `- [${ruleId}] ${t.userMsg}`;
-    }),
+    // Persistence A/B: distractor 턴은 학습 룰이 아니라 정책-무관 필러 → notepad 제외
+    // (history 에는 arm 루프가 그대로 넣어 거리를 만든다).
+    ...c.correctionSequence
+      .filter((t) => !t.distractor)
+      .map((t) => {
+        const ruleId = t.expectedRule ?? 'rule';
+        return `- [${ruleId}] ${t.userMsg}`;
+      }),
     '',
   ];
   fs.writeFileSync(path.join(compoundDir, 'notepad.md'), lines.join('\n'), 'utf-8');
@@ -151,7 +155,7 @@ export class VanillaArm implements Arm {
 
   async runCase(c: TestCase, ctx: ArmContext): Promise<ArmResponse> {
     const history: ChatTurn[] = [{ role: 'system', content: baseSystem(c.personaId) }];
-    for (const turn of c.correctionSequence.slice(0, ctx.turnDepth)) {
+    for (const turn of c.correctionSequence.slice(0, ctx.turnDepth).filter((t) => !t.priorSession)) {
       history.push({ role: 'user', content: turn.userMsg });
       const response = await DRIVER.chat(history);
       history.push({ role: 'assistant', content: truncateForHistory(response) });
@@ -184,7 +188,7 @@ export class ForgenOnlyArm implements Arm {
     const injectEvents: InjectEvent[] = [];
 
     try {
-    for (const turn of c.correctionSequence.slice(0, ctx.turnDepth)) {
+    for (const turn of c.correctionSequence.slice(0, ctx.turnDepth).filter((t) => !t.priorSession)) {
       // 1. UserPromptSubmit hook — forgen may inject rules into context
       try {
         const ups = await userPromptSubmitHook({
@@ -308,7 +312,7 @@ export class ClaudeMemOnlyArm implements Arm {
     const history: ChatTurn[] = [{ role: 'system', content: baseSystem(c.personaId) }];
     const injectEvents: InjectEvent[] = [];
 
-    for (const turn of c.correctionSequence.slice(0, ctx.turnDepth)) {
+    for (const turn of c.correctionSequence.slice(0, ctx.turnDepth).filter((t) => !t.priorSession)) {
       // claude-mem 실제 콘텐츠 recall (검색 결과 테이블이 아닌 narrative)
       const recall = claudeMemRecallActual(turn.userMsg);
       if (recall) {
@@ -428,7 +432,7 @@ export class ForgenPlusMemArm implements Arm {
     };
 
     try {
-      for (const turn of c.correctionSequence.slice(0, ctx.turnDepth)) {
+      for (const turn of c.correctionSequence.slice(0, ctx.turnDepth).filter((t) => !t.priorSession)) {
         await injectBoth(turn.userMsg);
         history.push({ role: 'user', content: turn.userMsg });
         const raw = await DRIVER.chat(history);
