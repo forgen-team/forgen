@@ -53,6 +53,24 @@ const commands: Command[] = [
         compoundSweepCli(args.slice(1));
         return;
       }
+      // ADR-012: Haiku 추출 동의 토글. `forgen compound consent on|off|status`
+      if (args[0] === 'consent') {
+        const { getHaikuConsentState, setHaikuCompoundConsent } = await import('./core/compound-consent.js');
+        const sub = args[1];
+        if (sub === 'on' || sub === 'off') {
+          setHaikuCompoundConsent(sub === 'on');
+          console.log(`[forgen] auto-compound Haiku 추출: ${sub === 'on' ? '활성(ON)' : '비활성(OFF)'}. (결정론 룰 승급은 항상 동작)`);
+        } else {
+          const s = getHaikuConsentState();
+          console.log(
+            `[forgen] auto-compound Haiku 추출: ${s.enabled ? 'ON' : 'OFF'} (source: ${s.source})\n` +
+            '  ON  = 세션 요약을 Haiku 로 전송해 행동패턴 추론 (본인 쿼터, redaction 적용)\n' +
+            '  OFF = 결정론 교정→룰 승급만 (egress 0, 입증된 δ 경로는 유지)\n' +
+            '  변경: forgen compound consent on|off  (env: FORGEN_AUTO_COMPOUND=1 / FORGEN_NO_AUTO_COMPOUND=1)',
+          );
+        }
+        return;
+      }
       const { handleCompound } = await import('./engine/compound-loop.js');
       await handleCompound(args);
     },

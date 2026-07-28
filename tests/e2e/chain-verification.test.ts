@@ -165,7 +165,8 @@ describe('Chain 3: auto-compound quality gate', () => {
     // multiple lines, so we match it via regex rather than a literal
     // substring that had no newline between `(` and `[`.
     const beforeIdx = src.indexOf('solutionsBefore');
-    const claudeMatch = src.match(/execClaudeRetry\s*\(\s*\[\s*'-p'\s*,\s*solutionPrompt/);
+    // ADR-012: solution 추출 호출이 execClaudeRetry → extractViaHaiku(opt-in 게이트 래퍼)로 변경.
+    const claudeMatch = src.match(/(?:execClaudeRetry|extractViaHaiku)\s*\(\s*\[\s*'-p'\s*,\s*solutionPrompt/);
     const claudeIdx = claudeMatch ? claudeMatch.index ?? -1 : -1;
     const validateIdx = src.indexOf('validateSolutionFiles(solutionsBefore)');
     expect(beforeIdx).toBeGreaterThan(-1);
