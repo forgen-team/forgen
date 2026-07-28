@@ -74,9 +74,20 @@ function claudeProjectsDir(): string {
   return path.join(base, 'projects');
 }
 
-/** transcript 에서 cwd + user 프롬프트 수 추출. cwd 는 라인의 cwd 필드 우선, 없으면 dir 명 역산. */
+/** user 턴 판정 — tool_result 캐리어(type:'user'지만 content 가 tool_result)는 제외.
+ *  (리뷰 SEV-2: tool_result 가 promptCount 를 3~5배 부풀려 ≥10 게이트를 무력화). */
+function isRealUserTurn(e: { type?: string; role?: string; message?: { role?: string; content?: unknown } }): boolean {
+  if (e.type !== 'user' && e.role !== 'user' && e.message?.role !== 'user') return false;
+  const content = e.message?.content;
+  if (Array.isArray(content) && content.some((c) => (c as { type?: string })?.type === 'tool_result')) {
+    return false; // 도구 결과 반환 — 실제 사용자 프롬프트 아님
+  }
+  return true;
+}
+
+/** transcript 에서 cwd + 실제 user 프롬프트 수 추출. cwd 는 라인의 cwd 필드 우선, 없으면 dir 명 역산. */
 function readTranscriptMeta(transcriptPath: string, projectDirName: string): { cwd: string; promptCount: number } {
-  let cwd = projectDirName.replace(/-/g, '/'); // fallback: sanitized dir → cwd (lossy)
+  let cwd = projectDirName.replace(/-/g, '/'); // fallback: sanitized dir → cwd (lossy, cwd 필드 없을 때만)
   let promptCount = 0;
   try {
     const lines = fs.readFileSync(transcriptPath, 'utf-8').split('\n');
@@ -84,12 +95,12 @@ function readTranscriptMeta(transcriptPath: string, projectDirName: string): { c
     for (const line of lines) {
       if (!line.trim()) continue;
       try {
-        const e = JSON.parse(line) as { type?: string; role?: string; cwd?: string };
+        const e = JSON.parse(line) as { type?: string; role?: string; cwd?: string; message?: { role?: string; content?: unknown } };
         if (!cwdFound && typeof e.cwd === 'string' && e.cwd) {
           cwd = e.cwd;
           cwdFound = true;
         }
-        if (e.type === 'user' || e.role === 'user') promptCount += 1;
+        if (isRealUserTurn(e)) promptCount += 1;
       } catch {
         /* skip malformed line */
       }
@@ -103,9 +114,14 @@ function readTranscriptMeta(transcriptPath: string, projectDirName: string): { c
 /** Claude projects 하위의 최근 transcript 를 열거해 메타 구성. */
 export function enumerateTranscripts(windowMs: number, nowMs: number): TranscriptMeta[] {
   const root = claudeProjectsDir();
-  if (!fs.existsSync(root)) return [];
+  let projDirs: string[];
+  try {
+    projDirs = fs.readdirSync(root);
+  } catch {
+    return []; // root 없음/접근불가 — fail-open
+  }
   const out: TranscriptMeta[] = [];
-  for (const projDir of fs.readdirSync(root)) {
+  for (const projDir of projDirs) {
     const abs = path.join(root, projDir);
     let files: string[];
     try {
@@ -138,12 +154,22 @@ function loadSweepState(): SweepState {
   }
 }
 
-function saveSweepState(state: SweepState): void {
+/** sweep-state 저장. 실패 시 true 반환(호출측이 무인 재과금 위험을 경고). */
+function saveSweepState(state: SweepState): boolean {
   try {
     fs.mkdirSync(STATE_DIR, { recursive: true });
     fs.writeFileSync(path.join(STATE_DIR, 'compound-sweep-state.json'), JSON.stringify(state, null, 2));
+    return true;
   } catch (e) {
     log.debug('sweep-state 저장 실패', e);
+    return false;
+  }
+}
+
+/** window 밖으로 사라진 세션 엔트리 정리 (무한 증가 방지, 리뷰 SEV-3). */
+function pruneSweepState(state: SweepState, liveSessionIds: Set<string>, nowMs: number, windowMs: number): void {
+  for (const sid of Object.keys(state)) {
+    if (!liveSessionIds.has(sid) && nowMs - state[sid].sweptAt > windowMs) delete state[sid];
   }
 }
 
@@ -151,32 +177,68 @@ export interface SweepResult {
   scanned: number;
   eligible: number;
   swept: string[];
+  stateSaveFailed?: boolean;
 }
 
-/** cron/CLI 진입점. dryRun 이면 실행 없이 후보만 보고. */
+/**
+ * cron/CLI 진입점. dryRun 이면 실행 없이 후보만 보고.
+ * 무인 실행 안전장치: (1) 동시 실행 lock, (2) 실제 spawn('spawned') 만 sweptAt 기록,
+ * (3) state 저장 실패 시 경고 플래그.
+ */
 export function runCompoundSweep(opts: { dryRun?: boolean } & Partial<Omit<SweepOpts, 'nowMs'>> = {}): SweepResult {
   const nowMs = Date.now();
   const full: SweepOpts = { nowMs, ...DEFAULT_SWEEP_OPTS, ...opts };
-  const transcripts = enumerateTranscripts(full.windowMs, nowMs);
-  const state = loadSweepState();
-  const candidates = selectSweepCandidates(transcripts, state, full);
 
-  const swept: string[] = [];
-  for (const c of candidates) {
-    if (opts.dryRun) {
-      swept.push(c.sessionId);
-      continue;
+  // 동시 cron fire 겹침 방지 (리뷰 SEV-3): stale(>1h) lock 은 무시.
+  const lockPath = path.join(STATE_DIR, 'compound-sweep.lock');
+  if (!opts.dryRun) {
+    try {
+      const raw = fs.readFileSync(lockPath, 'utf-8');
+      const { at } = JSON.parse(raw) as { at?: number };
+      if (Number.isFinite(at) && nowMs - (at as number) < 60 * 60 * 1000) {
+        return { scanned: 0, eligible: 0, swept: [] }; // 다른 sweep 진행 중
+      }
+    } catch {
+      /* lock 없음/손상 — 진행 */
     }
     try {
-      runAutoCompound(c.cwd, c.transcriptPath, c.sessionId);
-      state[c.sessionId] = { sweptAt: nowMs };
-      swept.push(c.sessionId);
-    } catch (e) {
-      log.debug(`sweep 실행 실패: ${c.sessionId}`, e);
+      fs.mkdirSync(STATE_DIR, { recursive: true });
+      fs.writeFileSync(lockPath, JSON.stringify({ at: nowMs, pid: process.pid }));
+    } catch {
+      /* lock 기록 실패 — 진행(단일 실행 가정) */
     }
   }
-  if (!opts.dryRun && swept.length) saveSweepState(state);
-  return { scanned: transcripts.length, eligible: candidates.length, swept };
+
+  try {
+    const transcripts = enumerateTranscripts(full.windowMs, nowMs);
+    const state = loadSweepState();
+    const candidates = selectSweepCandidates(transcripts, state, full);
+
+    const swept: string[] = [];
+    for (const c of candidates) {
+      if (opts.dryRun) {
+        swept.push(c.sessionId);
+        continue;
+      }
+      // 실제 spawn 된 경우만 sweptAt 기록 (리뷰 SEV-2: dedup-skip/실패를 완료로 오기록 금지).
+      const status = runAutoCompound(c.cwd, c.transcriptPath, c.sessionId);
+      if (status === 'spawned') {
+        state[c.sessionId] = { sweptAt: nowMs };
+        swept.push(c.sessionId);
+      }
+    }
+    let stateSaveFailed = false;
+    if (!opts.dryRun) {
+      pruneSweepState(state, new Set(transcripts.map((t) => t.sessionId)), nowMs, full.windowMs);
+      stateSaveFailed = !saveSweepState(state);
+    }
+    return { scanned: transcripts.length, eligible: candidates.length, swept, stateSaveFailed };
+  } catch (e) {
+    log.debug('compound-sweep 실행 실패 (fail-open)', e);
+    return { scanned: 0, eligible: 0, swept: [] };
+  } finally {
+    if (!opts.dryRun) fs.rmSync(lockPath, { force: true });
+  }
 }
 
 /** CLI: forgen compound sweep [--dry-run] [--window-hours N] [--stale-hours M] */
@@ -194,7 +256,13 @@ export function compoundSweepCli(args: string[]): void {
     ...(sh ? { staleMs: sh * 3600_000 } : {}),
   });
   console.log(
-    `[forgen compound-sweep] scanned=${r.scanned} eligible=${r.eligible} ` +
+    `[forgen compound sweep] scanned=${r.scanned} eligible=${r.eligible} ` +
     `${dryRun ? 'dry-run' : 'swept'}=${r.swept.length}${r.swept.length ? ` (${r.swept.map((s) => s.slice(0, 8)).join(', ')})` : ''}`,
   );
+  if (r.stateSaveFailed) {
+    console.error(
+      '  ⚠ sweep-state 저장 실패 — 다음 cron 이 동일 세션을 재-compound 할 수 있음(Haiku 재과금). ' +
+      '~/.forgen/state 쓰기 권한을 확인하세요.',
+    );
+  }
 }
