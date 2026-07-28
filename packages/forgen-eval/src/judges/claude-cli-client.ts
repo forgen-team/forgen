@@ -61,7 +61,19 @@ export class ClaudeCliClient implements JudgeClient {
       async () => {
         const res = await execFileAsync(
           'claude',
-          ['-p', prompt, '--model', this.model, '--system-prompt', JUDGE_SYSTEM_PROMPT],
+          [
+            '-p',
+            prompt,
+            '--model',
+            this.model,
+            '--system-prompt',
+            JUDGE_SYSTEM_PROMPT,
+            // 격리(2026-07-27): host forgen 훅이 judge 세션에 주입돼 채점을 오염시키지
+            // 않도록 user 설정 소스 미로드 + 세션 비영속. auth 는 유지.
+            '--setting-sources',
+            'project',
+            '--no-session-persistence',
+          ],
           {
             encoding: 'utf-8',
             timeout: this.timeoutMs,
@@ -90,7 +102,17 @@ export class ClaudeCliClient implements JudgeClient {
     try {
       const { stdout } = await execFileAsync(
         'claude',
-        ['-p', 'Reply with just: ok', '--model', this.model, '--system-prompt', JUDGE_SYSTEM_PROMPT],
+        [
+          '-p',
+          'Reply with just: ok',
+          '--model',
+          this.model,
+          '--system-prompt',
+          JUDGE_SYSTEM_PROMPT,
+          '--setting-sources',
+          'project',
+          '--no-session-persistence',
+        ],
         { encoding: 'utf-8', timeout: 30_000, cwd: this.cwd, maxBuffer: 1024 * 1024 },
       );
       return { ok: /ok/i.test(stdout), latencyMs: Date.now() - start, modelInfo: `claude --model ${this.model}` };

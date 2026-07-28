@@ -119,7 +119,23 @@ export class ClaudeCliDriver implements Driver {
       async () => {
         const { stdout } = await execFileAsync(
           'claude',
-          ['-p', prompt, '--model', this.model, '--system-prompt', CLAUDE_DRIVER_SYSTEM_PROMPT],
+          [
+            '-p',
+            prompt,
+            '--model',
+            this.model,
+            '--system-prompt',
+            CLAUDE_DRIVER_SYSTEM_PROMPT,
+            // 환경 격리(2026-07-27): host 의 forgen 훅/CLAUDE.md/세션 체크포인트가
+            // driver 세션에 새어들어 vanilla arm 을 오염시키던 문제를 차단.
+            // `--setting-sources project` = user(=forgen 훅) 소스 미로드, temp cwd 라
+            // project 설정도 없음 → 훅 0. auth 는 setting source 가 아니라 유지됨.
+            // `--no-session-persistence` = 이전 세션 컨텍스트(체크포인트) 누출 차단.
+            // forgen 처리는 arm 이 명시적 hook 호출로만 주입(ambient 아님).
+            '--setting-sources',
+            'project',
+            '--no-session-persistence',
+          ],
           {
             encoding: 'utf-8',
             timeout: this.timeoutMs,
