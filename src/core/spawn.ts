@@ -264,23 +264,48 @@ function cleanupStaleInflight(dir: string, now: number): void {
  * dedup: last-auto-compound.json 을 Stop 훅과 공유 — 같은 세션의 최근 run 이 있으면
  * skip 하여 detached spawn 의 double-run 을 방지한다.
  */
-export function runAutoCompound(cwd: string, transcriptPath: string, sessionId: string): AutoCompoundStatus {
-  const now = Date.now();
+/**
+ * per-session in-flight 슬롯 확보 (spawn *전* 표식). 이미 in-flight(TTL 내)면 false 반환 → skip.
+ * runAutoCompound 와 context-guard.maybeSpawnAutoCompound 가 **공유**해 이중 spawn(중복 Haiku
+ * 과금)을 막는다 (리뷰 SEV-2 #3: 완료-게이트 단일슬롯만으로는 부족).
+ */
+export function claimAutoCompoundInflight(sessionId: string, now: number = Date.now()): boolean {
   const inflightPath = inflightPathFor(sessionId);
-
-  // 1. per-session in-flight start-gate — spawn *전에* 표식된 세션은 skip (SEV-1 근본수정:
-  //    완료-게이트 window + 단일슬롯 문제를 제거. sweep 과 Stop 훅이 이 마커를 공유).
   try {
     const { startedAt } = JSON.parse(fs.readFileSync(inflightPath, 'utf-8')) as { startedAt?: number };
-    if (Number.isFinite(startedAt) && now - (startedAt as number) < AUTO_COMPOUND_INFLIGHT_TTL_MS) {
-      log.debug('auto-compound skip: 세션 in-flight (start-gate)');
-      return 'skipped-inflight';
-    }
+    if (Number.isFinite(startedAt) && now - (startedAt as number) < AUTO_COMPOUND_INFLIGHT_TTL_MS) return false;
   } catch {
     /* 마커 없음/손상 — 진행 */
   }
+  const dir = path.dirname(inflightPath);
+  cleanupStaleInflight(dir, now);
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(inflightPath, JSON.stringify({ startedAt: now, sessionId }));
+  } catch (e) {
+    log.debug('in-flight 마커 기록 실패 (계속)', e);
+  }
+  return true;
+}
 
-  // 2. 완료 마커 cooldown (secondary, 단일슬롯이라 마지막 세션만 보호 — 보조 게이트로 유지)
+/** in-flight 슬롯 해제 (spawn 실패 시 재시도 가능하도록). */
+export function releaseAutoCompoundInflight(sessionId: string): void {
+  try {
+    fs.rmSync(inflightPathFor(sessionId), { force: true });
+  } catch {
+    /* noop */
+  }
+}
+
+export function runAutoCompound(
+  cwd: string,
+  transcriptPath: string,
+  sessionId: string,
+  promptCount = 0,
+): AutoCompoundStatus {
+  const now = Date.now();
+
+  // 1. 완료 마커 cooldown (secondary, 단일슬롯 — 값싼 read 먼저).
   try {
     const parsed = JSON.parse(fs.readFileSync(path.join(STATE_DIR, 'last-auto-compound.json'), 'utf-8')) as {
       sessionId?: string;
@@ -297,19 +322,15 @@ export function runAutoCompound(cwd: string, transcriptPath: string, sessionId: 
     /* 마커 없음(최초)/손상 — 진행 (fail-open). */
   }
 
-  const inflightDir = path.dirname(inflightPath);
-  cleanupStaleInflight(inflightDir, now);
-  // 3. in-flight 표식을 spawn *전에* 기록 (start-gate)
-  try {
-    fs.mkdirSync(inflightDir, { recursive: true });
-    fs.writeFileSync(inflightPath, JSON.stringify({ startedAt: now, sessionId }));
-  } catch (e) {
-    log.debug('in-flight 마커 기록 실패 (계속)', e);
+  // 2. per-session in-flight start-gate (공유 헬퍼).
+  if (!claimAutoCompoundInflight(sessionId, now)) {
+    log.debug('auto-compound skip: 세션 in-flight (start-gate)');
+    return 'skipped-inflight';
   }
 
   const runnerPath = path.join(path.dirname(fileURLToPath(import.meta.url)), 'auto-compound-runner.js');
   try {
-    const child = spawn('node', [runnerPath, cwd, transcriptPath, sessionId], {
+    const child = spawn('node', [runnerPath, cwd, transcriptPath, sessionId, String(promptCount)], {
       cwd,
       detached: true,
       stdio: 'ignore',
@@ -319,7 +340,7 @@ export function runAutoCompound(cwd: string, transcriptPath: string, sessionId: 
     return 'spawned';
   } catch (e) {
     log.debug('auto-compound 시작 실패', e);
-    fs.rmSync(inflightPath, { force: true }); // spawn 실패 시 표식 제거 → 재시도 가능
+    releaseAutoCompoundInflight(sessionId); // spawn 실패 시 표식 제거 → 재시도 가능
     return 'failed';
   }
 }
