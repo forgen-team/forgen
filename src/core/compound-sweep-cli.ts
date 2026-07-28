@@ -9,9 +9,11 @@
  * 순수 선택 로직(selectSweepCandidates)과 IO(runCompoundSweep) 분리 — 전자는 테스트 가능.
  * 멱등·fail-open: 실패해도 세션은 다음 sweep 에서 재시도.
  */
+import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { STATE_DIR } from './paths.js';
 import { runAutoCompound } from './spawn.js';
 import { createLogger } from './logger.js';
@@ -221,7 +223,7 @@ export function runCompoundSweep(opts: { dryRun?: boolean } & Partial<Omit<Sweep
         continue;
       }
       // 실제 spawn 된 경우만 sweptAt 기록 (리뷰 SEV-2: dedup-skip/실패를 완료로 오기록 금지).
-      const status = runAutoCompound(c.cwd, c.transcriptPath, c.sessionId);
+      const status = runAutoCompound(c.cwd, c.transcriptPath, c.sessionId, c.promptCount);
       if (status === 'spawned') {
         state[c.sessionId] = { sweptAt: nowMs };
         swept.push(c.sessionId);
@@ -241,8 +243,101 @@ export function runCompoundSweep(opts: { dryRun?: boolean } & Partial<Omit<Sweep
   }
 }
 
-/** CLI: forgen compound sweep [--dry-run] [--window-hours N] [--stale-hours M] */
+// ── cron 자동설치 (ADR-011 §Consequences) ────────────────────────────────────
+const CRON_MARKER = '# forgen-compound-sweep (ADR-011)';
+const CRON_SCHEDULE = '17 * * * *'; // 매시 17분 — 정각 몰림 회피
+
+/** crontab 라인 구성 (순수 — 테스트 가능). */
+export function buildCronLine(nodePath: string, cliPath: string, logPath: string, schedule = CRON_SCHEDULE): string {
+  return `${schedule} ${nodePath} ${cliPath} compound sweep >> ${logPath} 2>&1 ${CRON_MARKER}`;
+}
+
+/** 기존 crontab 에서 forgen 라인을 upsert/제거 (순수 — 테스트 가능). */
+export function upsertCronText(existing: string, line: string | null): string {
+  const kept = existing
+    .split('\n')
+    .filter((l) => l.trim() && !l.includes(CRON_MARKER));
+  if (line) kept.push(line);
+  return `${kept.join('\n')}\n`;
+}
+
+function readCrontab(): string {
+  try {
+    return execFileSync('crontab', ['-l'], { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] });
+  } catch {
+    return ''; // crontab 없음(최초) 또는 crontab 미설치
+  }
+}
+
+function distCliPath(): string {
+  // 이 파일 = dist/core/compound-sweep-cli.js → dist/cli.js
+  return path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'cli.js');
+}
+
+export interface CronOpResult {
+  ok: boolean;
+  message: string;
+}
+
+export function installCron(): CronOpResult {
+  const nodePath = process.execPath;
+  const cliPath = distCliPath();
+  const logPath = path.join(STATE_DIR, 'compound-sweep.log');
+  const line = buildCronLine(nodePath, cliPath, logPath);
+  if (process.platform === 'win32') {
+    return {
+      ok: false,
+      message:
+        'Windows 는 crontab 미지원 — Task Scheduler 에 시간당 작업을 수동 등록하세요:\n' +
+        `  프로그램: ${nodePath}\n  인수: "${cliPath}" compound sweep`,
+    };
+  }
+  try {
+    execFileSync('crontab', ['-'], { input: upsertCronText(readCrontab(), line), encoding: 'utf-8' });
+    return { ok: true, message: `compound sweep cron 설치됨 (매시 17분):\n  ${line}` };
+  } catch (e) {
+    return {
+      ok: false,
+      message: `crontab 쓰기 실패: ${(e as Error).message}\n수동 등록: crontab -e 에 아래 추가:\n  ${line}`,
+    };
+  }
+}
+
+export function uninstallCron(): CronOpResult {
+  if (process.platform === 'win32') return { ok: false, message: 'Windows: Task Scheduler 에서 수동 제거하세요.' };
+  const existing = readCrontab();
+  if (!existing.includes(CRON_MARKER)) return { ok: true, message: 'compound sweep cron 없음 (이미 미설치).' };
+  try {
+    execFileSync('crontab', ['-'], { input: upsertCronText(existing, null), encoding: 'utf-8' });
+    return { ok: true, message: 'compound sweep cron 제거됨.' };
+  } catch (e) {
+    return { ok: false, message: `crontab 쓰기 실패: ${(e as Error).message}` };
+  }
+}
+
+export function cronStatus(): CronOpResult {
+  if (process.platform === 'win32') return { ok: false, message: 'Windows: Task Scheduler 확인.' };
+  return readCrontab().includes(CRON_MARKER)
+    ? { ok: true, message: '설치됨 (매시 17분).' }
+    : { ok: false, message: '미설치. `forgen compound sweep --install-cron` 로 설치.' };
+}
+
+/** CLI: forgen compound sweep [--dry-run|--install-cron|--uninstall-cron|--cron-status] [--window-hours N] [--stale-hours M] */
 export function compoundSweepCli(args: string[]): void {
+  // cron 관리 플래그 (상호배타 — 우선 처리)
+  if (args.includes('--install-cron')) {
+    const r = installCron();
+    console.log(`[forgen compound sweep] ${r.message}`);
+    return;
+  }
+  if (args.includes('--uninstall-cron')) {
+    console.log(`[forgen compound sweep] ${uninstallCron().message}`);
+    return;
+  }
+  if (args.includes('--cron-status')) {
+    console.log(`[forgen compound sweep] cron: ${cronStatus().message}`);
+    return;
+  }
   const dryRun = args.includes('--dry-run');
   const num = (flag: string): number | undefined => {
     const i = args.indexOf(flag);

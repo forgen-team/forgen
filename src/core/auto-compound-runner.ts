@@ -786,6 +786,9 @@ ${sanitizedSummary.slice(0, 4000)}
       extractedSolutions: extractedSolutionsCount,
       promotedRules: promotedCount,
       userPatternFound, // 0.4.6 perf #12 — adaptive cooldown 시그널
+      // ADR-011 B수정: 이 run 시점의 프롬프트 수 기록 → 이후 barren backoff 결정 시
+      // 세션이 자라났으면(promptCount 증가) barren 을 무시하고 재추출하기 위함.
+      promptCount: Number(process.argv[5] ?? 0) || 0,
       noticeShown: false,
     }),
   );

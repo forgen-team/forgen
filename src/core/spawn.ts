@@ -264,7 +264,12 @@ function cleanupStaleInflight(dir: string, now: number): void {
  * dedup: last-auto-compound.json 을 Stop 훅과 공유 — 같은 세션의 최근 run 이 있으면
  * skip 하여 detached spawn 의 double-run 을 방지한다.
  */
-export function runAutoCompound(cwd: string, transcriptPath: string, sessionId: string): AutoCompoundStatus {
+export function runAutoCompound(
+  cwd: string,
+  transcriptPath: string,
+  sessionId: string,
+  promptCount = 0,
+): AutoCompoundStatus {
   const now = Date.now();
   const inflightPath = inflightPathFor(sessionId);
 
@@ -309,7 +314,7 @@ export function runAutoCompound(cwd: string, transcriptPath: string, sessionId: 
 
   const runnerPath = path.join(path.dirname(fileURLToPath(import.meta.url)), 'auto-compound-runner.js');
   try {
-    const child = spawn('node', [runnerPath, cwd, transcriptPath, sessionId], {
+    const child = spawn('node', [runnerPath, cwd, transcriptPath, sessionId, String(promptCount)], {
       cwd,
       detached: true,
       stdio: 'ignore',

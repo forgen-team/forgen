@@ -468,14 +468,26 @@ const AUTO_COMPOUND_BARREN_COOLDOWN_MS = 30 * 60 * 1000; // 30 min if last run e
  * 일반 case (추출 있음) 은 5분 cooldown 유지 — adaptive 가 sparsity 시그널을
  * 강화할 뿐 정상 동작 차단 안 함.
  */
-function effectiveCooldownMs(parsed: {
-  extractedSolutions?: number;
-  promotedRules?: number;
-  userPatternFound?: boolean;
-}): number {
+// ADR-011 B수정: barren backoff 는 "지난번 0건 추출" 세션의 재추출을 30분 미룬다.
+// 하지만 세션이 그동안 자라났으면(새 프롬프트 ≥ 이 값) 새 학습거리가 생긴 것이므로
+// barren 을 무시하고 정상 쿨다운(5분)으로 재추출한다 — 긴 활성 세션이 굶지 않도록.
+const AUTO_COMPOUND_GROWTH_THRESHOLD = 5;
+
+export function effectiveCooldownMs(
+  parsed: {
+    extractedSolutions?: number;
+    promotedRules?: number;
+    userPatternFound?: boolean;
+    promptCount?: number;
+  },
+  currentPromptCount = 0,
+): number {
   const total = (parsed.extractedSolutions ?? 0) + (parsed.promotedRules ?? 0)
     + (parsed.userPatternFound ? 1 : 0);
-  return total === 0 ? AUTO_COMPOUND_BARREN_COOLDOWN_MS : AUTO_COMPOUND_COOLDOWN_MS;
+  if (total !== 0) return AUTO_COMPOUND_COOLDOWN_MS;
+  // barren: 세션 성장 시 backoff 무시(재추출), 아니면 barren 유지.
+  const grew = currentPromptCount - (parsed.promptCount ?? 0) >= AUTO_COMPOUND_GROWTH_THRESHOLD;
+  return grew ? AUTO_COMPOUND_COOLDOWN_MS : AUTO_COMPOUND_BARREN_COOLDOWN_MS;
 }
 
 async function maybeSpawnAutoCompound(
@@ -494,10 +506,11 @@ async function maybeSpawnAutoCompound(
       extractedSolutions?: number;
       promotedRules?: number;
       userPatternFound?: boolean;
+      promptCount?: number;
     };
     if (parsed.sessionId === sessionId) {
       const last = parsed.completedAt ? Date.parse(parsed.completedAt) : 0;
-      const cooldown = effectiveCooldownMs(parsed);
+      const cooldown = effectiveCooldownMs(parsed, promptCount);
       if (Number.isFinite(last) && Date.now() - last < cooldown) return;
     }
   } catch { /* first time or corrupt — proceed */ }
@@ -529,7 +542,7 @@ async function maybeSpawnAutoCompound(
   } else if (override) {
     log.debug('FORGEN_AUTO_COMPOUND_RUNNER_PATH 무시 — FORGEN_TEST=1 가 필요');
   }
-  const child = spawnProcess('node', [runnerPath, cwd, transcriptPath, sessionId], {
+  const child = spawnProcess('node', [runnerPath, cwd, transcriptPath, sessionId, String(promptCount)], {
     detached: true,
     stdio: 'ignore',
   });

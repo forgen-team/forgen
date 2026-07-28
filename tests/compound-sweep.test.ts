@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { selectSweepCandidates, DEFAULT_SWEEP_OPTS, type TranscriptMeta } from '../src/core/compound-sweep-cli.js';
+import { selectSweepCandidates, DEFAULT_SWEEP_OPTS, buildCronLine, upsertCronText, type TranscriptMeta } from '../src/core/compound-sweep-cli.js';
+import { effectiveCooldownMs } from '../src/hooks/context-guard.js';
 
 const NOW = 1_700_000_000_000;
 const H = 3600_000;
@@ -46,5 +47,49 @@ describe('selectSweepCandidates (ADR-011 compound backstop)', () => {
 
   it('maxPerRun 0 이면 빈 결과', () => {
     expect(selectSweepCandidates([meta('x', 1, 20)], {}, { ...opts, maxPerRun: 0 })).toHaveLength(0);
+  });
+});
+
+describe('cron 헬퍼 (ADR-011 자동설치)', () => {
+  it('buildCronLine: 스케줄 + node + cli + sweep + 로그 + 마커', () => {
+    const line = buildCronLine('/usr/bin/node', '/pkg/dist/cli.js', '/log/sweep.log');
+    expect(line).toContain('/usr/bin/node /pkg/dist/cli.js compound sweep');
+    expect(line).toContain('>> /log/sweep.log 2>&1');
+    expect(line).toContain('# forgen-compound-sweep');
+    expect(line.startsWith('17 * * * *')).toBe(true);
+  });
+
+  it('upsertCronText: 신규 추가', () => {
+    const out = upsertCronText('0 6 * * * other-job\n', 'LINE # forgen-compound-sweep (ADR-011)');
+    expect(out).toContain('other-job');
+    expect(out).toContain('LINE # forgen-compound-sweep');
+  });
+
+  it('upsertCronText: 멱등 — 기존 forgen 라인 교체(중복 안 함)', () => {
+    const existing = 'other\nOLD # forgen-compound-sweep (ADR-011)\n';
+    const out = upsertCronText(existing, 'NEW # forgen-compound-sweep (ADR-011)');
+    expect(out).not.toContain('OLD');
+    expect(out.match(/forgen-compound-sweep/g)).toHaveLength(1);
+    expect(out).toContain('other');
+  });
+
+  it('upsertCronText: 제거(line=null) — forgen 라인만 삭제, 타 job 보존', () => {
+    const out = upsertCronText('keep-me\nX # forgen-compound-sweep (ADR-011)\n', null);
+    expect(out).toContain('keep-me');
+    expect(out).not.toContain('forgen-compound-sweep');
+  });
+});
+
+describe('barren backoff 성장 예외 (ADR-011 B수정)', () => {
+  const BARREN = 30 * 60 * 1000;
+  const NORMAL = 5 * 60 * 1000;
+  it('barren(0건) + 세션 미성장 → barren cooldown 유지', () => {
+    expect(effectiveCooldownMs({ extractedSolutions: 0, promptCount: 20 }, 22)).toBe(BARREN);
+  });
+  it('barren(0건) + 세션 성장(≥5) → 정상 cooldown(재추출 허용)', () => {
+    expect(effectiveCooldownMs({ extractedSolutions: 0, promptCount: 20 }, 26)).toBe(NORMAL);
+  });
+  it('추출 성과 있으면 성장과 무관하게 정상 cooldown', () => {
+    expect(effectiveCooldownMs({ extractedSolutions: 2, promptCount: 20 }, 20)).toBe(NORMAL);
   });
 });

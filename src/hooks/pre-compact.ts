@@ -191,6 +191,20 @@ async function main(): Promise<void> {
 
   const sessionId = (data.session_id as string) ?? 'default';
 
+  // ADR-011 B수정: 프롬프트 주입(모델이 추출)에 더해, **러너도 spawn** 해서 컴팩션으로
+  // 컨텍스트가 사라지기 직전에 확실히 추출한다. runAutoCompound 의 in-flight/cooldown
+  // dedup 이 Stop 훅과의 이중실행을 막는다(최근에 이미 돌았으면 skip).
+  const transcriptPath = data.transcript_path as string | undefined;
+  if (transcriptPath) {
+    try {
+      const { runAutoCompound } = await import('../core/spawn.js');
+      const cwd = (data.cwd as string) ?? process.cwd();
+      runAutoCompound(cwd, transcriptPath, sessionId);
+    } catch (e) {
+      log.debug('PreCompact auto-compound spawn 실패 (프롬프트 주입은 계속)', e);
+    }
+  }
+
   // 오래된 handoff 정리
   cleanOldHandoffs();
 
