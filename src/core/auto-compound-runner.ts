@@ -22,6 +22,7 @@ import { isSelfReferentialEcho } from './config-injector.js';
 import { redactSecrets } from '../hooks/secret-filter.js';
 import { stripPrivate } from '../engine/private-filter.js';
 import { createEvidence, saveEvidence, promoteSessionCandidates } from '../store/evidence-store.js';
+import { isHaikuCompoundEnabled } from './compound-consent.js';
 import { loadProfile } from '../store/profile-store.js';
 import { FORGEN_HOME, ME_DIR } from './paths.js';
 import { classifyBehaviorKind, mapKindToAxisRefs } from './behavior-classifier.js';
@@ -104,6 +105,26 @@ function execClaudeRetry(args: string[], opts: ExecFileSyncOptions): string {
  * 본 함수는 0.4.7 작업의 foundation 으로 박제 — export 하여 unused warning 회피.
  * 동작은 sync 버전과 동일: Claude/Codex 분기 + retry on transient.
  */
+/**
+ * ADR-012 D: Haiku transcript-요약 추출은 **opt-in**. 동의 없으면 '' 반환 → 각 추출 phase 는
+ * fail-open(try/catch)이라 아무것도 쓰지 않고, 뒤의 `promoteSessionCandidates`(결정론·egress 0)
+ * 만 남는다. "우리는 당신 몰래 API 로 보내지 않는다".
+ */
+let haikuOptOutNoticeShown = false;
+function extractViaHaiku(args: string[], opts: ExecFileSyncOptions): string {
+  if (!isHaikuCompoundEnabled()) {
+    if (!haikuOptOutNoticeShown) {
+      process.stderr.write(
+        '[forgen-auto-compound] Haiku 추출 opt-in 비활성 — 결정론 룰 승급만 수행 ' +
+        '(활성: `forgen compound consent on`)\n',
+      );
+      haikuOptOutNoticeShown = true;
+    }
+    return '';
+  }
+  return execClaudeRetry(args, opts);
+}
+
 export async function execClaudeRetryAsync(args: string[], opts: ExecFileOptions): Promise<string> {
   const mod = createRequire(import.meta.url)('../host/exec-host.js') as typeof import('../host/exec-host.js');
   const profileMod = createRequire(import.meta.url)('../store/profile-store.js') as typeof import('../store/profile-store.js');
@@ -431,7 +452,7 @@ ${sanitizedSummary.slice(0, 6000)}
   // 가 compound 추출용 forgen CLI 호출만 가능하게 한다. filter-bypass 시에도 임의
   // 명령 실행 차단.
   try {
-    execClaudeRetry(
+    extractViaHaiku(
       ['-p', solutionPrompt, '--allowedTools', 'Bash(forgen compound:*)', '--model', COMPOUND_MODEL],
       { cwd, timeout: 90_000, stdio: ['pipe', 'ignore', 'pipe'] },
     );
@@ -468,7 +489,7 @@ ${sanitizedSummary.slice(0, 4000)}
 ---`;
 
   try {
-    const userResult = execClaudeRetry(['-p', userPrompt, '--model', COMPOUND_MODEL], {
+    const userResult = extractViaHaiku(['-p', userPrompt, '--model', COMPOUND_MODEL], {
       cwd, timeout: 60_000, encoding: 'utf-8',
     });
 
@@ -574,7 +595,7 @@ ${profileContext}
 ${sanitizedSummary.slice(0, 4000)}
 ---`;
 
-      const learningResult = execClaudeRetry(['-p', learningSummaryPrompt, '--model', COMPOUND_MODEL], {
+      const learningResult = extractViaHaiku(['-p', learningSummaryPrompt, '--model', COMPOUND_MODEL], {
         cwd, timeout: 60_000, encoding: 'utf-8',
       });
 

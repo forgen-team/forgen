@@ -347,6 +347,15 @@ export async function runDoctor(opts: DoctorOptions = {}): Promise<void> {
     'FORGEN auto-compound relies on tmux. Launch: tmux new -s forgen');
   check('FORGEN_HARNESS env var', (process.env.FORGEN_HARNESS ?? process.env.COMPOUND_HARNESS) === '1',
     'Set by `forgen` / `fgx` launcher. Hooks assume harness mode is active.');
+  // ADR-012: auto-compound Haiku 추출 동의 상태 고지 (transcript 요약 API 전송 여부).
+  try {
+    const { getHaikuConsentState } = await import('./compound-consent.js');
+    const s = getHaikuConsentState();
+    console.log(
+      `  auto-compound Haiku 추출: ${s.enabled ? 'ON' : 'OFF'} (${s.source}) — ` +
+      `${s.enabled ? '세션 요약이 Haiku 로 전송됨' : '결정론 룰 승급만(egress 0)'}. 변경: forgen compound consent on|off`,
+    );
+  } catch { /* noop */ }
   console.log();
 
   // v0.4.1 파일 확장자 버그 수정: rules 는 .json, behavior 도 대부분 .json 포맷.
