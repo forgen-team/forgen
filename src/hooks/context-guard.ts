@@ -542,12 +542,24 @@ async function maybeSpawnAutoCompound(
   } else if (override) {
     log.debug('FORGEN_AUTO_COMPOUND_RUNNER_PATH 무시 — FORGEN_TEST=1 가 필요');
   }
-  const child = spawnProcess('node', [runnerPath, cwd, transcriptPath, sessionId, String(promptCount)], {
-    detached: true,
-    stdio: 'ignore',
-  });
-  child.unref();
-  log.debug(`Stop-triggered auto-compound 시작: ${sessionId} (${promptCount} prompts)`);
+  // 리뷰 SEV-2 #3: runAutoCompound 와 공유하는 in-flight start-gate 로 이중 spawn 방지.
+  // (이 경로는 test-override 러너를 쓰므로 runAutoCompound 를 직접 호출하지 않고 게이트만 공유.)
+  const { claimAutoCompoundInflight, releaseAutoCompoundInflight } = await import('../core/spawn.js');
+  if (!claimAutoCompoundInflight(sessionId)) {
+    log.debug('Stop-triggered auto-compound skip: 세션 in-flight');
+    return;
+  }
+  try {
+    const child = spawnProcess('node', [runnerPath, cwd, transcriptPath, sessionId, String(promptCount)], {
+      detached: true,
+      stdio: 'ignore',
+    });
+    child.unref();
+    log.debug(`Stop-triggered auto-compound 시작: ${sessionId} (${promptCount} prompts)`);
+  } catch (e) {
+    releaseAutoCompoundInflight(sessionId); // spawn 실패 → 재시도 가능
+    log.debug('Stop-triggered auto-compound spawn 실패', e);
+  }
 }
 
 // forge-loop 차단 안전 상한 (무한 루프 방지)

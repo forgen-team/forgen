@@ -247,9 +247,14 @@ export function runCompoundSweep(opts: { dryRun?: boolean } & Partial<Omit<Sweep
 const CRON_MARKER = '# forgen-compound-sweep (ADR-011)';
 const CRON_SCHEDULE = '17 * * * *'; // 매시 17분 — 정각 몰림 회피
 
-/** crontab 라인 구성 (순수 — 테스트 가능). */
+/** cron 은 각 라인을 /bin/sh 로 실행 → 공백/메타문자 경로가 word-split/injection 되지 않게 single-quote. */
+function shq(s: string): string {
+  return `'${s.replace(/'/g, "'\\''")}'`;
+}
+
+/** crontab 라인 구성 (순수 — 테스트 가능). 경로는 shell-quote(리뷰 SEV-2). */
 export function buildCronLine(nodePath: string, cliPath: string, logPath: string, schedule = CRON_SCHEDULE): string {
-  return `${schedule} ${nodePath} ${cliPath} compound sweep >> ${logPath} 2>&1 ${CRON_MARKER}`;
+  return `${schedule} ${shq(nodePath)} ${shq(cliPath)} compound sweep >> ${shq(logPath)} 2>&1 ${CRON_MARKER}`;
 }
 
 /** 기존 crontab 에서 forgen 라인을 upsert/제거 (순수 — 테스트 가능). */
@@ -261,11 +266,21 @@ export function upsertCronText(existing: string, line: string | null): string {
   return `${kept.join('\n')}\n`;
 }
 
+/**
+ * 현재 crontab 읽기. 리뷰 SEV-1: `crontab -l` 실패를 무조건 ''(빈 crontab)로 취급하면
+ * 일시적 read 실패 시 기존 사용자 job 전체를 덮어써 파괴한다. "no crontab" 만 ''로 보고,
+ * 그 외 실 오류는 throw 하여 install/uninstall 이 **쓰지 않고 중단**하게 한다.
+ */
 function readCrontab(): string {
   try {
-    return execFileSync('crontab', ['-l'], { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] });
-  } catch {
-    return ''; // crontab 없음(최초) 또는 crontab 미설치
+    return execFileSync('crontab', ['-l'], { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'] });
+  } catch (e) {
+    const err = e as { status?: number; stderr?: string | Buffer };
+    const stderr = String(err.stderr ?? '');
+    // "no crontab for <user>" = 정상적으로 비어있음 → '' (생성 안전).
+    if (/no crontab for/i.test(stderr)) return '';
+    // 그 외(권한/일시장애 등)는 알 수 없음 → 파괴적 쓰기 방지 위해 throw.
+    throw new Error(`crontab -l 실패 (기존 job 보호 위해 중단): ${stderr.trim() || (e as Error).message}`);
   }
 }
 
@@ -292,8 +307,14 @@ export function installCron(): CronOpResult {
         `  프로그램: ${nodePath}\n  인수: "${cliPath}" compound sweep`,
     };
   }
+  let existing: string;
   try {
-    execFileSync('crontab', ['-'], { input: upsertCronText(readCrontab(), line), encoding: 'utf-8' });
+    existing = readCrontab(); // read 실패(‘no crontab’ 제외) 시 throw → 아래서 중단
+  } catch (e) {
+    return { ok: false, message: `${(e as Error).message}\n수동 등록: crontab -e 에 아래 추가:\n  ${line}` };
+  }
+  try {
+    execFileSync('crontab', ['-'], { input: upsertCronText(existing, line), encoding: 'utf-8' });
     return { ok: true, message: `compound sweep cron 설치됨 (매시 17분):\n  ${line}` };
   } catch (e) {
     return {
@@ -305,7 +326,12 @@ export function installCron(): CronOpResult {
 
 export function uninstallCron(): CronOpResult {
   if (process.platform === 'win32') return { ok: false, message: 'Windows: Task Scheduler 에서 수동 제거하세요.' };
-  const existing = readCrontab();
+  let existing: string;
+  try {
+    existing = readCrontab();
+  } catch (e) {
+    return { ok: false, message: `${(e as Error).message} (제거 중단 — 기존 crontab 보호)` };
+  }
   if (!existing.includes(CRON_MARKER)) return { ok: true, message: 'compound sweep cron 없음 (이미 미설치).' };
   try {
     execFileSync('crontab', ['-'], { input: upsertCronText(existing, null), encoding: 'utf-8' });
@@ -317,9 +343,13 @@ export function uninstallCron(): CronOpResult {
 
 export function cronStatus(): CronOpResult {
   if (process.platform === 'win32') return { ok: false, message: 'Windows: Task Scheduler 확인.' };
-  return readCrontab().includes(CRON_MARKER)
-    ? { ok: true, message: '설치됨 (매시 17분).' }
-    : { ok: false, message: '미설치. `forgen compound sweep --install-cron` 로 설치.' };
+  try {
+    return readCrontab().includes(CRON_MARKER)
+      ? { ok: true, message: '설치됨 (매시 17분).' }
+      : { ok: false, message: '미설치. `forgen compound sweep --install-cron` 로 설치.' };
+  } catch (e) {
+    return { ok: false, message: (e as Error).message };
+  }
 }
 
 /** CLI: forgen compound sweep [--dry-run|--install-cron|--uninstall-cron|--cron-status] [--window-hours N] [--stale-hours M] */

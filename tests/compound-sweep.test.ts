@@ -51,12 +51,21 @@ describe('selectSweepCandidates (ADR-011 compound backstop)', () => {
 });
 
 describe('cron 헬퍼 (ADR-011 자동설치)', () => {
-  it('buildCronLine: 스케줄 + node + cli + sweep + 로그 + 마커', () => {
+  it('buildCronLine: 스케줄 + node + cli + sweep + 로그 + 마커 (경로 shell-quote)', () => {
     const line = buildCronLine('/usr/bin/node', '/pkg/dist/cli.js', '/log/sweep.log');
-    expect(line).toContain('/usr/bin/node /pkg/dist/cli.js compound sweep');
-    expect(line).toContain('>> /log/sweep.log 2>&1');
+    expect(line).toContain("'/usr/bin/node' '/pkg/dist/cli.js' compound sweep");
+    expect(line).toContain(">> '/log/sweep.log' 2>&1");
     expect(line).toContain('# forgen-compound-sweep');
     expect(line.startsWith('17 * * * *')).toBe(true);
+  });
+
+  it('buildCronLine: 공백/메타문자 경로 안전 quote (injection 방지)', () => {
+    const line = buildCronLine('/opt/my node/bin/node', "/x/a'b/cli.js", '/l/s p.log');
+    // 공백 경로가 quote 안에 → word-split 안 됨
+    expect(line).toContain("'/opt/my node/bin/node'");
+    // single-quote 이스케이프
+    expect(line).toContain("'/x/a'\\''b/cli.js'");
+    expect(line).toContain("'/l/s p.log'");
   });
 
   it('upsertCronText: 신규 추가', () => {
