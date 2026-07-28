@@ -220,6 +220,37 @@ async function scanCommitDiffForActedOn(sessionId: string, cwd: string, sessionS
  */
 // Stop 훅(maybeSpawnAutoCompound)/session-recovery 와 공유하는 dedup cooldown.
 const AUTO_COMPOUND_DEDUP_COOLDOWN_MS = 5 * 60 * 1000; // 5min
+// per-session in-flight start-gate TTL — 러너 최대 실행(~210s)+마진. ADR-011 리뷰 SEV-1:
+// 완료-게이트 단일슬롯 마커는 sweep↔Stop 훅 / 다중세션 double-spawn 을 못 막는다.
+// 세션별 start-gate 로 spawn 전에 표식해 이중실행(중복 Haiku 과금)을 차단.
+const AUTO_COMPOUND_INFLIGHT_TTL_MS = 10 * 60 * 1000; // 10min
+
+/** runAutoCompound 결과 — sweep(무인 cron)이 실제 spawn 만 기록하도록 상태 반환. */
+export type AutoCompoundStatus = 'spawned' | 'skipped-inflight' | 'skipped-dedup' | 'failed';
+
+/** 세션별 in-flight 마커 경로 (파일명 안전화). */
+function inflightPathFor(sessionId: string): string {
+  return path.join(STATE_DIR, 'compound-inflight', `${sessionId.replace(/[^a-zA-Z0-9_-]/g, '_')}.json`);
+}
+
+/** TTL 지난 in-flight 마커 정리 (무한 증가 방지). */
+function cleanupStaleInflight(dir: string, now: number): void {
+  try {
+    for (const f of fs.readdirSync(dir)) {
+      const fp = path.join(dir, f);
+      try {
+        const { startedAt } = JSON.parse(fs.readFileSync(fp, 'utf-8')) as { startedAt?: number };
+        if (!Number.isFinite(startedAt) || now - (startedAt as number) >= AUTO_COMPOUND_INFLIGHT_TTL_MS) {
+          fs.rmSync(fp, { force: true });
+        }
+      } catch {
+        fs.rmSync(fp, { force: true }); // 손상 마커 제거
+      }
+    }
+  } catch {
+    /* dir 없음 — noop */
+  }
+}
 
 /**
  * 세션 종료 후 자동 compound 추출을 백그라운드(detached)로 시작.
@@ -233,22 +264,47 @@ const AUTO_COMPOUND_DEDUP_COOLDOWN_MS = 5 * 60 * 1000; // 5min
  * dedup: last-auto-compound.json 을 Stop 훅과 공유 — 같은 세션의 최근 run 이 있으면
  * skip 하여 detached spawn 의 double-run 을 방지한다.
  */
-export function runAutoCompound(cwd: string, transcriptPath: string, sessionId: string): void {
-  const markerPath = path.join(STATE_DIR, 'last-auto-compound.json');
+export function runAutoCompound(cwd: string, transcriptPath: string, sessionId: string): AutoCompoundStatus {
+  const now = Date.now();
+  const inflightPath = inflightPathFor(sessionId);
+
+  // 1. per-session in-flight start-gate — spawn *전에* 표식된 세션은 skip (SEV-1 근본수정:
+  //    완료-게이트 window + 단일슬롯 문제를 제거. sweep 과 Stop 훅이 이 마커를 공유).
   try {
-    const parsed = JSON.parse(fs.readFileSync(markerPath, 'utf-8')) as {
+    const { startedAt } = JSON.parse(fs.readFileSync(inflightPath, 'utf-8')) as { startedAt?: number };
+    if (Number.isFinite(startedAt) && now - (startedAt as number) < AUTO_COMPOUND_INFLIGHT_TTL_MS) {
+      log.debug('auto-compound skip: 세션 in-flight (start-gate)');
+      return 'skipped-inflight';
+    }
+  } catch {
+    /* 마커 없음/손상 — 진행 */
+  }
+
+  // 2. 완료 마커 cooldown (secondary, 단일슬롯이라 마지막 세션만 보호 — 보조 게이트로 유지)
+  try {
+    const parsed = JSON.parse(fs.readFileSync(path.join(STATE_DIR, 'last-auto-compound.json'), 'utf-8')) as {
       sessionId?: string;
       completedAt?: string;
     };
     if (parsed.sessionId === sessionId) {
       const last = parsed.completedAt ? Date.parse(parsed.completedAt) : 0;
-      if (Number.isFinite(last) && Date.now() - last < AUTO_COMPOUND_DEDUP_COOLDOWN_MS) {
+      if (Number.isFinite(last) && now - last < AUTO_COMPOUND_DEDUP_COOLDOWN_MS) {
         log.debug('auto-compound skip: 최근 동일 세션 run 존재 (dedup)');
-        return;
+        return 'skipped-dedup';
       }
     }
   } catch {
-    // 마커 없음(최초)/손상 — 진행 (fail-open).
+    /* 마커 없음(최초)/손상 — 진행 (fail-open). */
+  }
+
+  const inflightDir = path.dirname(inflightPath);
+  cleanupStaleInflight(inflightDir, now);
+  // 3. in-flight 표식을 spawn *전에* 기록 (start-gate)
+  try {
+    fs.mkdirSync(inflightDir, { recursive: true });
+    fs.writeFileSync(inflightPath, JSON.stringify({ startedAt: now, sessionId }));
+  } catch (e) {
+    log.debug('in-flight 마커 기록 실패 (계속)', e);
   }
 
   const runnerPath = path.join(path.dirname(fileURLToPath(import.meta.url)), 'auto-compound-runner.js');
@@ -260,8 +316,11 @@ export function runAutoCompound(cwd: string, transcriptPath: string, sessionId: 
     });
     child.unref();
     console.log('\n[forgen] 세션 분석을 백그라운드로 시작했습니다 (자동 compound) — 결과는 다음 세션 시작 시 반영됩니다.\n');
+    return 'spawned';
   } catch (e) {
     log.debug('auto-compound 시작 실패', e);
+    fs.rmSync(inflightPath, { force: true }); // spawn 실패 시 표식 제거 → 재시도 가능
+    return 'failed';
   }
 }
 

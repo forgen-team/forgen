@@ -57,8 +57,10 @@ describe('runAutoCompound — detached, non-blocking', () => {
   it('마커 없으면 detached+unref 로 spawn 하고 동기 반환', async () => {
     const { runAutoCompound } = await import('../src/core/spawn.js');
     const ret = runAutoCompound('/tmp/cwd', '/tmp/transcript.jsonl', 's-new');
-    // 동기 void 반환 (Promise 아님) — 세션 종료를 await 로 막지 않는다.
-    expect(ret).toBeUndefined();
+    // 동기 상태 반환 (Promise 아님) — 세션 종료를 await 로 막지 않는다. (ADR-011: sweep 이
+    // 실제 spawn 만 기록하도록 status 반환. 여기선 spawn 성공 = 'spawned'.)
+    expect(ret).toBe('spawned');
+    expect(ret).not.toBeInstanceOf(Promise);
     expect(mockSpawn).toHaveBeenCalledTimes(1);
     const opts = mockSpawn.mock.calls[0][2];
     expect(opts.detached).toBe(true);

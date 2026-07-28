@@ -45,8 +45,14 @@ const commands: Command[] = [
   },
   {
     name: 'compound',
-    description: 'Preview/save compound insights and manage accumulated knowledge',
+    description: 'Preview/save compound insights and manage accumulated knowledge (subcmd: sweep)',
     handler: async (args) => {
+      // ADR-011: 시간-기반 compound backstop. cron 에서 `forgen compound sweep` 호출.
+      if (args[0] === 'sweep') {
+        const { compoundSweepCli } = await import('./core/compound-sweep-cli.js');
+        compoundSweepCli(args.slice(1));
+        return;
+      }
       const { handleCompound } = await import('./engine/compound-loop.js');
       await handleCompound(args);
     },
