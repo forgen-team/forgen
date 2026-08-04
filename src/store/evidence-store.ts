@@ -216,10 +216,13 @@ function retireStaleAutoMinedRules(now: number): void {
 }
 
 export function promoteSessionCandidates(sessionId: string): number {
+  // 채굴 룰 TTL 은퇴는 **early-return 앞에서** 실행 (critic 재검증 #1): 승급 후보가 없는
+  // 조용한 세션에서도 wall-clock TTL 이 실제로 강제되도록. (auto-compound-runner 는 매
+  // 세션 종료 시 promoteSessionCandidates 를 호출하므로 이 경로가 세션당 1회 보장된다.)
+  retireStaleAutoMinedRules(Date.now());
+
   const candidates = loadPromotionCandidates().filter(e => e.session_id === sessionId);
   if (candidates.length === 0) return 0;
-
-  retireStaleAutoMinedRules(Date.now()); // 승급 전 오래된 채굴 룰 정리 (SEV-1 #1)
 
   const activeRules = loadActiveRules();
   const existingRenderKeys = new Set(

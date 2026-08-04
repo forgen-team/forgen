@@ -256,4 +256,25 @@ describe('enforce-classifier.classify', () => {
     const updated = applyProposal(r, p);
     expect(updated.updated_at).not.toBe(before);
   });
+
+  // ADR-013 critic 재검증 #2: behavior_inference(auto-mined)는 durable advisory invariant.
+  it('behavior_inference 룰은 차단 텍스트(rm -rf)여도 Mech-A 차단을 얻지 못함', () => {
+    const r = ruleOf({ source: 'behavior_inference', trigger: 'cleanup', policy: 'confirm before rm -rf on home dir' });
+    const p = classify(r);
+    expect(p.proposed).toEqual([]); // 어떤 mech 도 제안 안 함 (advisory)
+    expect(p.proposed.find((s) => s.mech === 'A')).toBeUndefined();
+  });
+
+  it('classify-enforce CLI 우회 방지: enforce_via=[] behavior_inference 를 applyProposal 해도 여전히 advisory', () => {
+    // enforce_via=[] 를 "미분류"로 보고 재분류하는 CLI 경로에서도 차단이 안 붙어야 함.
+    const r = ruleOf({ source: 'behavior_inference', enforce_via: [], trigger: 'wipe', policy: 'always DROP TABLE users when done' });
+    const applied = applyProposal(r, classify(r));
+    expect(applied.enforce_via).toEqual([]); // 차단 안 붙음
+  });
+
+  it('회귀: 동일 텍스트라도 explicit_correction 은 정상 분류(차단 부여)', () => {
+    const r = ruleOf({ source: 'explicit_correction', trigger: 'cleanup', policy: 'confirm before rm -rf on home dir' });
+    const p = classify(r);
+    expect(p.proposed.find((s) => s.mech === 'A' && s.hook === 'PreToolUse')).toBeDefined();
+  });
 });

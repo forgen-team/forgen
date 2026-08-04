@@ -71,6 +71,22 @@ const CRITIC_REVIEW_PATTERN = /(비판\s*리뷰|fresh-context|critic|리뷰를?\
 export function classify(rule: Rule): EnforceProposal {
   const reasoning: string[] = [];
   const proposed: EnforceSpec[] = [];
+
+  // ADR-013 (critic 재검증 #2): 채굴 교정(behavior_inference)은 **data-level invariant** 로
+  // advisory-only. classify 자체가 여기서 빈 proposal 을 반환하므로, promote 든
+  // `forgen classify-enforce --apply` 든 어떤 경로로도 채굴 룰이 Mech-A 차단을 얻지 못한다.
+  // (enforce_via=[] 를 "미분류"로 보고 재분류하던 CLI 우회 경로 근절.)
+  if (rule.source === 'behavior_inference') {
+    reasoning.push('behavior_inference (auto-mined) → advisory-only, no enforcement (ADR-013)');
+    return {
+      rule_id: rule.rule_id,
+      trigger_preview: rule.trigger.slice(0, 60),
+      current_enforce_via: rule.enforce_via ?? null,
+      proposed: [],
+      reasoning,
+    };
+  }
+
   const text = `${rule.trigger}\n${rule.policy}`;
 
   const isDestructive = DESTRUCTIVE_PATTERN.test(text);
