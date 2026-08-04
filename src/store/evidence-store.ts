@@ -12,7 +12,7 @@ import { ME_BEHAVIOR } from '../core/paths.js';
 import { atomicWriteJSON, safeReadJSON } from '../hooks/shared/atomic-write.js';
 import type { Evidence, EvidenceType, RuleCategory } from './types.js';
 import { HOST_IDS, type HostId } from '../core/trust-layer-intent.js';
-import { createRule, saveRule, loadActiveRules } from './rule-store.js';
+import { createRule, saveRule, loadActiveRules, updateRuleStatus } from './rule-store.js';
 import { classify, applyProposal } from '../engine/enforce-classifier.js';
 import { detect as detectT1 } from '../engine/lifecycle/trigger-t1-correction.js';
 import { foldEvents } from '../engine/lifecycle/orchestrator.js';
@@ -183,9 +183,43 @@ export function loadPromotionCandidates(): Evidence[] {
  * 동일 render_key를 가진 scope:'me' 규칙이 이미 있으면 건너뜀.
  * @returns 승격된 규칙 수
  */
+/**
+ * ADR-013 채굴 교정 안전 파라미터 (리뷰 SEV-1 대응):
+ * - 채굴 룰은 "auto:" render_key 네임스페이스로 분리 → 실시간 명시 교정과 절대 충돌/억제 안 함.
+ * - advisory-only: enforce_via=[] (차단 메커니즘 미부여). 환각 교정이 차단 룰이 되는 것 근절.
+ * - 생성나이 은퇴: TTL 지난 미확인 채굴 룰 retire (me-scope 룰이 매 세션 주입돼 ROI/T4 로는
+ *   은퇴 안 되던 문제의 실제 해소). + 라이브 채굴 룰 총량 상한.
+ */
+const AUTO_MINED_PREFIX = 'auto:';
+const AUTO_MINED_TTL_MS = 21 * 24 * 60 * 60 * 1000; // 21일
+const AUTO_MINED_MAX_LIVE = 30;
+
+/** 채굴(behavior_inference) 룰 은퇴: TTL 초과 + 총량 상한 초과분(오래된 순). */
+function retireStaleAutoMinedRules(now: number): void {
+  const auto = loadActiveRules().filter(
+    (r) => r.scope === 'me' && r.source === 'behavior_inference' && r.render_key?.startsWith(AUTO_MINED_PREFIX),
+  );
+  const byAge = auto
+    .map((r) => ({ r, age: now - Date.parse(r.created_at) }))
+    .sort((a, b) => b.age - a.age); // 오래된 순
+  const keep: typeof byAge = [];
+  for (const item of byAge) {
+    if (item.age >= AUTO_MINED_TTL_MS) {
+      updateRuleStatus(item.r.rule_id, 'removed'); // TTL 초과 → 은퇴
+    } else {
+      keep.push(item);
+    }
+  }
+  // 총량 상한 초과분(가장 오래된 것부터) 은퇴.
+  const excess = keep.length - AUTO_MINED_MAX_LIVE;
+  for (let i = 0; i < excess; i++) updateRuleStatus(keep[i].r.rule_id, 'removed');
+}
+
 export function promoteSessionCandidates(sessionId: string): number {
   const candidates = loadPromotionCandidates().filter(e => e.session_id === sessionId);
   if (candidates.length === 0) return 0;
+
+  retireStaleAutoMinedRules(Date.now()); // 승급 전 오래된 채굴 룰 정리 (SEV-1 #1)
 
   const activeRules = loadActiveRules();
   const existingRenderKeys = new Set(
@@ -198,10 +232,13 @@ export function promoteSessionCandidates(sessionId: string): number {
     const axisHint = payload?.axis_hint as string | null | undefined;
     const target = payload?.target as string | undefined;
     const kind = payload?.kind as string | undefined;
+    const autoMined = payload?.auto_mined === true;
 
     if (!target) continue;
 
-    const renderKey = `${axisHint ?? 'workflow'}.${target.toLowerCase().replace(/\s+/g, '-').slice(0, 30)}`;
+    // 채굴 룰은 "auto:" 네임스페이스 — 실시간 교정 render_key 와 절대 충돌 안 함 (SEV-2 #4).
+    const baseKey = `${axisHint ?? 'workflow'}.${target.toLowerCase().replace(/\s+/g, '-').slice(0, 30)}`;
+    const renderKey = autoMined ? `${AUTO_MINED_PREFIX}${baseKey}` : baseKey;
     if (existingRenderKeys.has(renderKey)) continue;
 
     const category: RuleCategory =
@@ -209,9 +246,8 @@ export function promoteSessionCandidates(sessionId: string): number {
       : axisHint === 'autonomy' ? 'autonomy'
       : 'workflow';
 
-    // ADR-013: 채굴 교정(auto_mined)은 실시간 명시 교정과 차등 — provenance=behavior_inference,
-    // strength 는 절대 strong 아님(default). 이후 ROI 강등이 미사용 시 정정. ①은 기존대로.
-    const autoMined = payload?.auto_mined === true;
+    // ADR-013: 채굴 교정(auto_mined)은 실시간 명시 교정과 엄격 차등 — provenance
+    // =behavior_inference, strength 절대 strong 아님(default).
     let rule = createRule({
       category,
       scope: 'me',
@@ -222,11 +258,18 @@ export function promoteSessionCandidates(sessionId: string): number {
       evidence_refs: [candidate.evidence_id],
       render_key: renderKey,
     });
-    // ADR-001 auto-classify — 승격되는 rule 에도 enforce_via 자동 주입.
-    try {
-      const proposal = classify(rule);
-      rule = applyProposal(rule, proposal);
-    } catch { /* fail-open */ }
+    if (autoMined) {
+      // advisory-only (SEV-1 #2): classify() 를 돌리지 않고 enforce_via 를 비워, 채굴 룰이
+      // 절대 Mech-A 차단(PreToolUse/Stop block)을 얻지 못하게 한다. 컨텍스트 주입만 되고
+      // 어떤 훅도 강제하지 않음 — 환각 교정이 영구 차단 룰이 되는 위험 근절.
+      rule.enforce_via = [];
+    } else {
+      // ADR-001 auto-classify — 실시간 승격 rule 에만 enforce_via 자동 주입.
+      try {
+        const proposal = classify(rule);
+        rule = applyProposal(rule, proposal);
+      } catch { /* fail-open */ }
+    }
     saveRule(rule);
     existingRenderKeys.add(renderKey);
     promoted++;

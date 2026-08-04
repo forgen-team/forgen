@@ -70,7 +70,7 @@ describe('ADR-013: auto_mined 교정 승급은 실시간 교정과 차등', () =
     }));
   }
 
-  it('auto_mined avoid-this 는 strong 이 아니라 default strength + behavior_inference source', () => {
+  it('auto_mined avoid-this: default strength + behavior_inference + advisory-only + auto: 네임스페이스', () => {
     const sessionId = 'session-mined-avoid';
     saveMined(sessionId, 'avoid-this', '프로덕션 환경 확인 없이 미연동으로 단정하지 말 것', 'prod-env-verify');
     expect(promoteSessionCandidates(sessionId)).toBe(1);
@@ -79,6 +79,24 @@ describe('ADR-013: auto_mined 교정 승급은 실시간 교정과 차등', () =
     // 실시간 avoid-this 였다면 strong 이지만, 채굴이므로 default.
     expect(rule!.strength).toBe('default');
     expect(rule!.source).toBe('behavior_inference');
+    // SEV-1 #2: advisory-only — 어떤 차단 메커니즘도 없음.
+    expect(rule!.enforce_via).toEqual([]);
+    // SEV-2 #4: auto: 네임스페이스 — 실시간 교정과 분리.
+    expect(rule!.render_key?.startsWith('auto:')).toBe(true);
+  });
+
+  it('SEV-2 #4: 선행 채굴 룰이 같은 target 실시간 교정 승급을 억제하지 않음', () => {
+    // 채굴 먼저 승급(auto: 네임스페이스).
+    saveMined('s-mined', 'prefer-from-now', '프로덕션 배포 전 반드시 실환경 설정을 확인할 것', 'deploy-verify');
+    promoteSessionCandidates('s-mined');
+    // 같은 target 실시간 교정 → 별도 render_key(prefix 없음)라 억제되지 않고 승급되어야 함.
+    processCorrection({ session_id: 's-real', kind: 'avoid-this', message: '배포 전 실환경 미확인 금지', target: 'deploy-verify', axis_hint: 'quality_safety' });
+    promoteSessionCandidates('s-real');
+    // 실시간 교정이 살아있고 full strength(strong) — 채굴 룰에 막히지 않았음이 핵심.
+    const real = loadActiveRules().find(r => r.scope === 'me' && r.source === 'explicit_correction' && r.trigger === 'deploy-verify');
+    expect(real).toBeDefined();
+    expect(real!.strength).toBe('strong');
+    expect(real!.render_key?.startsWith('auto:')).toBe(false); // 실시간은 auto 네임스페이스 아님
   });
 
   it('실시간 avoid-this 는 여전히 strong + explicit_correction (회귀 방지)', () => {

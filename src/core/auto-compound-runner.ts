@@ -638,18 +638,27 @@ ${sanitizedSummary.slice(0, 4000)}
         }
 
         // ADR-013: 채굴된 교정을 **승급 가능 Evidence** 로 emit (기존엔 session_summary 로
-        // 죽던 데드엔드). provenance=auto_mined(낮은 confidence) → promoteSessionCandidates 가
-        // behavior_inference source + default strength 로 승급, 이후 ROI 강등이 노이즈 정정.
-        // ①(실시간 명시 교정)과 차등. 구조화된 corrections(policy/target/kind/axis)만 대상.
+        // 죽던 데드엔드). auto_mined → promoteSessionCandidates 가 **advisory-only**(차단 불가) +
+        // "auto:" 네임스페이스 + 생성나이 은퇴로 승급. ①(실시간 명시 교정)과 엄격 차등.
+        // 안전(리뷰 SEV-1/2): (a) run 당 최대 MAX_MINED_PER_RUN 개만(무한 룰 주입 방지),
+        // (b) policy 를 injection 필터 통과(환각 payload 가 영구 룰이 되는 것 차단),
+        // (c) policy≥20 + target 필수.
+        const MAX_MINED_PER_RUN = 3;
         let minedCorrections = 0;
         for (const c of (parsed.corrections ?? []) as Array<Record<string, unknown>>) {
+          if (minedCorrections >= MAX_MINED_PER_RUN) break; // 캡 (SEV-1 #3)
           if (!c || typeof c !== 'object') continue;
           const policy = typeof c.policy === 'string' ? c.policy.trim() : '';
           const target = typeof c.target === 'string' ? c.target.trim() : '';
           const kind = c.kind === 'avoid-this' ? 'avoid-this' : 'prefer-from-now';
           const axis = typeof c.axis === 'string' ? c.axis : null;
-          // saveEvidence 게이트와 승급 요건: policy≥20자 + target 필수.
           if (policy.length < 20 || !target) continue;
+          // 출력 sanitize (SEV-2 #5): 채굴 policy 는 미래 세션 프롬프트에 룰로 주입되므로,
+          // injection payload 를 룰화하지 않도록 입력과 동일한 필터를 출력에도 적용.
+          if (containsPromptInjection(policy) || containsPromptInjection(target)) {
+            process.stderr.write('[forgen-auto-compound] skipped mined correction (injection filter)\n');
+            continue;
+          }
           const ev = createEvidence({
             type: 'explicit_correction',
             session_id: sessionId,
@@ -663,7 +672,7 @@ ${sanitizedSummary.slice(0, 4000)}
           minedCorrections++;
         }
         if (minedCorrections > 0) {
-          process.stderr.write(`[forgen-auto-compound] mined ${minedCorrections} correction(s) from session (auto_mined, ROI-gated)\n`);
+          process.stderr.write(`[forgen-auto-compound] mined ${minedCorrections} correction(s) (advisory-only, capped, age-retired)\n`);
         }
 
         // facet delta 적용
