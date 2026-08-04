@@ -1,6 +1,6 @@
 # ADR-013: 교정 포착 개선 — correction-aware retroactive mining
 
-**Status**: Proposed (2026-08-04)
+**Status**: Accepted (2026-08-04) — 구현 완료, adversarial critic 2라운드 통과.
 **Reversibility**: Type 2 (가역 — 프롬프트/배선/게이트, 롤백 용이)
 **관련**: ADR-012(auto-compound 동의), [[forgen-cross-session-delta]]
 **근거**: 3-에이전트 병렬 조사(signal/convo/assets) 실측 종합, 2026-08-04.
@@ -58,10 +58,16 @@ forgen 학습의 입력 = "사용자 교정 포착". 포착 채널 ①(실시간
 2. **승급 배선** (crux 수정): 뽑힌 교정을 `type:'session_summary'`(데드엔드) 대신
    **`type:'explicit_correction'` 승급가능 Evidence**로 emit(agent-assets 스키마) →
    기존 promoteSessionCandidates → correction-clustering → enforce-classifier 자동 인계.
-3. **노이즈 필터** (precision 방어): 자동채굴 교정은 **provenance 구분**(source:'auto-mined',
-   낮은 confidence/strength)해서, roi-demotion 상태머신으로 **사용자가 재트리거/acted 안 하면
-   demote→quarantine**. LLM 채굴의 FP를 실사용으로 사후 정정. 사용자의 실시간 명시 교정(①)은
-   기존대로 full strength — 채굴분과 차등.
+3. **노이즈/안전 방어** (adversarial critic 2라운드로 강화 — data-level invariant):
+   - **advisory-only**: 채굴 룰은 `classify()`가 `source==='behavior_inference'`면 빈
+     enforce_via 반환 → promote·`classify-enforce --apply`·applyProposal 어느 경로로도
+     **Mech-A 차단을 얻지 못함**(환각 교정이 영구 차단 룰 되는 위험 근절).
+   - **provenance 차등**: source=behavior_inference, strength 절대 strong 아님, confidence 0.55.
+   - **캡**: run 당 최대 3개 채굴, 라이브 총량 상한 30.
+   - **네임스페이스 분리**: render_key "auto:" prefix → 실시간 교정과 절대 충돌/억제 안 함.
+   - **출력 sanitize**: 채굴 policy/target 을 containsPromptInjection 통과.
+   - **은퇴**: 생성나이 TTL(21일) 초과 시 removed(early-return 앞에서 실행 → 조용한 세션도
+     강제). roi-demotion 은 solution 전용이라 룰엔 미적용임을 실측 확인 → 자체 은퇴 신설.
 
 **독립 후속(별 PR)**: drift-score.ts:101 hardcap cooldown 게이트 추가(신호 오염 버그 수정).
 
