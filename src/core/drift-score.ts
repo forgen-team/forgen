@@ -21,6 +21,8 @@ export interface DriftState {
   lastWarningAt: number;
   lastCriticalAt: number;
   hardCapReached: boolean;
+  /** 최근 hardcap 발화 timestamp (쿨다운용, ADR-013). */
+  lastHardcapAt?: number;
 }
 
 export interface DriftResult {
@@ -98,9 +100,17 @@ export function evaluateDrift(
   const rawScore = (state.ewmaEditRate * 65) + (state.ewmaRevertRate * 35);
   const score = Math.min(100, Math.max(0, Math.round(rawScore)));
 
-  // Hard cap
+  // Hard cap — ADR-013 버그수정: 이전엔 cooldown 이 없어 50편집 넘으면 **매 편집마다**
+  // hardcap(=drift_critical) 을 발화 → drift_critical 이 세션길이 카운터로 전락(2067/2100
+  // 이벤트가 score100). critical 처럼 cooldown 게이트를 둬 반복 발화를 억제. 상태
+  // (hardCapReached)는 항상 갱신하되, message 는 쿨다운 밖에서만 낸다(null=emitter skip).
   if (state.totalEdits >= t.hardCapEdits) {
     state.hardCapReached = true;
+    const withinCooldown = now - (state.lastHardcapAt ?? 0) <= t.criticalCooldownMs;
+    if (withinCooldown) {
+      return { level: 'hardcap', score: 100, message: null };
+    }
+    state.lastHardcapAt = now;
     return {
       level: 'hardcap',
       score: 100,

@@ -209,13 +209,16 @@ export function promoteSessionCandidates(sessionId: string): number {
       : axisHint === 'autonomy' ? 'autonomy'
       : 'workflow';
 
+    // ADR-013: 채굴 교정(auto_mined)은 실시간 명시 교정과 차등 — provenance=behavior_inference,
+    // strength 는 절대 strong 아님(default). 이후 ROI 강등이 미사용 시 정정. ①은 기존대로.
+    const autoMined = payload?.auto_mined === true;
     let rule = createRule({
       category,
       scope: 'me',
       trigger: target,
       policy: candidate.summary,
-      strength: kind === 'avoid-this' ? 'strong' : 'default',
-      source: 'explicit_correction',
+      strength: autoMined ? 'default' : kind === 'avoid-this' ? 'strong' : 'default',
+      source: autoMined ? 'behavior_inference' : 'explicit_correction',
       evidence_refs: [candidate.evidence_id],
       render_key: renderKey,
     });

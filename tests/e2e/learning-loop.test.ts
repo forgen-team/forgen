@@ -30,7 +30,7 @@ vi.mock('node:os', async (importOriginal) => {
 
 // ── Source imports (paths.ts는 이 시점에 TEST_HOME을 HOME으로 인식) ──
 import { processCorrection } from '../../src/forge/evidence-processor.js';
-import { loadEvidenceBySession, promoteSessionCandidates } from '../../src/store/evidence-store.js';
+import { loadEvidenceBySession, promoteSessionCandidates, createEvidence, saveEvidence } from '../../src/store/evidence-store.js';
 import { loadActiveRules, cleanupStaleSessionRules } from '../../src/store/rule-store.js';
 import { computeSessionSignals, detectMismatch } from '../../src/forge/mismatch-detector.js';
 import { createProfile, saveProfile } from '../../src/store/profile-store.js';
@@ -51,6 +51,50 @@ beforeEach(() => {
 
 afterEach(() => {
   fs.rmSync(TEST_HOME, { recursive: true, force: true });
+});
+
+// ════════════════════════════════════════════════════════
+// ADR-013: 채굴 교정(auto_mined) provenance 차등
+// ════════════════════════════════════════════════════════
+
+describe('ADR-013: auto_mined 교정 승급은 실시간 교정과 차등', () => {
+  function saveMined(sessionId: string, kind: 'prefer-from-now' | 'avoid-this', policy: string, target: string) {
+    saveEvidence(createEvidence({
+      type: 'explicit_correction',
+      session_id: sessionId,
+      source_component: 'auto-compound-miner',
+      summary: policy,
+      axis_refs: ['quality_safety'],
+      confidence: 0.55,
+      raw_payload: { kind, target, axis_hint: 'quality_safety', auto_mined: true },
+    }));
+  }
+
+  it('auto_mined avoid-this 는 strong 이 아니라 default strength + behavior_inference source', () => {
+    const sessionId = 'session-mined-avoid';
+    saveMined(sessionId, 'avoid-this', '프로덕션 환경 확인 없이 미연동으로 단정하지 말 것', 'prod-env-verify');
+    expect(promoteSessionCandidates(sessionId)).toBe(1);
+    const rule = loadActiveRules().find(r => r.scope === 'me');
+    expect(rule).toBeDefined();
+    // 실시간 avoid-this 였다면 strong 이지만, 채굴이므로 default.
+    expect(rule!.strength).toBe('default');
+    expect(rule!.source).toBe('behavior_inference');
+  });
+
+  it('실시간 avoid-this 는 여전히 strong + explicit_correction (회귀 방지)', () => {
+    const sessionId = 'session-realtime-avoid';
+    processCorrection({
+      session_id: sessionId,
+      kind: 'avoid-this',
+      message: 'rm -rf 를 확인 없이 실행하지 말 것',
+      target: 'destructive-rm',
+      axis_hint: 'quality_safety',
+    });
+    promoteSessionCandidates(sessionId);
+    const rule = loadActiveRules().find(r => r.scope === 'me');
+    expect(rule!.strength).toBe('strong');
+    expect(rule!.source).toBe('explicit_correction');
+  });
 });
 
 // ════════════════════════════════════════════════════════
