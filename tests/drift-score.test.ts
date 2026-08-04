@@ -71,6 +71,23 @@ describe('drift-score', () => {
       expect(state.hardCapReached).toBe(true);
     });
 
+    it('ADR-013: hardcap 이후 쿨다운 내에는 message 억제 (매 편집 발화 버그 수정)', () => {
+      const state = createDriftState('test');
+      state.totalEdits = 49;
+      const first = evaluateDrift(state, true, false); // 50번째 → 최초 발화
+      expect(first.level).toBe('hardcap');
+      expect(first.message).not.toBeNull();
+      // 이어지는 편집들: level 은 hardcap 유지하되 message=null (emitter skip → drift_critical 미발화)
+      let silent = 0;
+      for (let i = 0; i < 10; i++) {
+        const r = evaluateDrift(state, true, false);
+        expect(r.level).toBe('hardcap');
+        if (r.message === null) silent++;
+      }
+      expect(silent).toBe(10); // 예전엔 10회 다 message 발화 → 노이즈
+      expect(state.hardCapReached).toBe(true);
+    });
+
     it('쿨다운 기간 내에는 경고 억제', () => {
       const state = createDriftState('test');
       for (let i = 0; i < 15; i++) evaluateDrift(state, true, false);

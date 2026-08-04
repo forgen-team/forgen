@@ -573,7 +573,9 @@ ${sanitizedSummary.slice(0, 4000)}
 ${profileContext}
 출력 형식 (JSON만, 설명 없이):
 {
-  "corrections": ["사용자가 명시적으로 교정한 내용 목록"],
+  "corrections": [
+    { "policy": "이런 상황에서는 이렇게 하라(구체·행동가능)", "target": "무엇에 대한 교정인가(짧은 명사구)", "kind": "prefer-from-now" 또는 "avoid-this", "axis": "quality_safety" 또는 "autonomy" 또는 "judgment_philosophy" 또는 "communication_style" }
+  ],
   "observations": ["사용자의 반복 행동 패턴 목록"],
   "pack_direction": null 또는 "opposite_quality" 또는 "opposite_autonomy",
   "profile_delta": {
@@ -585,7 +587,15 @@ ${profileContext}
 }
 
 규칙:
-- corrections: "하지마", "그렇게 말고", "앞으로는" 같은 명시 교정만. 없으면 빈 배열.
+- corrections: 사용자가 어시스턴트의 행동/접근/출력을 **교정한 지점**을 찾아라. 명시 마커
+  ("하지마", "그렇게 말고", "앞으로는")뿐 아니라, **직전 [Assistant] 행동 대비 [User]가
+  방향을 튼 경우**도 포함:
+    · 긍정 지시형("~해줘", "~돌려봐" — 어시스턴트가 안 하던 걸 요구)
+    · 반사실형("~했어야 했다", "~에서 했어야 하는 거 아니야?")
+    · 완곡형("~안 해도 될 것 같아", "굳이 ~해야 할까?")
+    · 부정/반박형("아니", "그게 아니라", "틀렸어")
+  단순 진행 지시("다음 거 하자", "옵션 A로")나 질문은 제외. 없으면 빈 배열.
+  각 교정은 policy(재사용 가능한 규칙문, 20자 이상)·target·kind·axis 로 구조화.
 - observations: 3회 이상 반복된 행동만. 없으면 빈 배열.
 - pack_direction: 사용자가 현재 pack과 반대 방향으로 일관되게 행동했으면 opposite_quality 또는 opposite_autonomy. 아니면 null.
 - profile_delta: facet 조정 제안. -0.1~+0.1 범위. 변화 없으면 0.0.
@@ -625,6 +635,44 @@ ${sanitizedSummary.slice(0, 4000)}
           };
           fs.mkdirSync(V1_EVIDENCE_DIR, { recursive: true });
           fs.writeFileSync(path.join(V1_EVIDENCE_DIR, `${evidenceId}.json`), JSON.stringify(evidence, null, 2));
+        }
+
+        // ADR-013: 채굴된 교정을 **승급 가능 Evidence** 로 emit (기존엔 session_summary 로
+        // 죽던 데드엔드). auto_mined → promoteSessionCandidates 가 **advisory-only**(차단 불가) +
+        // "auto:" 네임스페이스 + 생성나이 은퇴로 승급. ①(실시간 명시 교정)과 엄격 차등.
+        // 안전(리뷰 SEV-1/2): (a) run 당 최대 MAX_MINED_PER_RUN 개만(무한 룰 주입 방지),
+        // (b) policy 를 injection 필터 통과(환각 payload 가 영구 룰이 되는 것 차단),
+        // (c) policy≥20 + target 필수.
+        const MAX_MINED_PER_RUN = 3;
+        let minedCorrections = 0;
+        for (const c of (parsed.corrections ?? []) as Array<Record<string, unknown>>) {
+          if (minedCorrections >= MAX_MINED_PER_RUN) break; // 캡 (SEV-1 #3)
+          if (!c || typeof c !== 'object') continue;
+          const policy = typeof c.policy === 'string' ? c.policy.trim() : '';
+          const target = typeof c.target === 'string' ? c.target.trim() : '';
+          const kind = c.kind === 'avoid-this' ? 'avoid-this' : 'prefer-from-now';
+          const axis = typeof c.axis === 'string' ? c.axis : null;
+          if (policy.length < 20 || !target) continue;
+          // 출력 sanitize (SEV-2 #5): 채굴 policy 는 미래 세션 프롬프트에 룰로 주입되므로,
+          // injection payload 를 룰화하지 않도록 입력과 동일한 필터를 출력에도 적용.
+          if (containsPromptInjection(policy) || containsPromptInjection(target)) {
+            process.stderr.write('[forgen-auto-compound] skipped mined correction (injection filter)\n');
+            continue;
+          }
+          const ev = createEvidence({
+            type: 'explicit_correction',
+            session_id: sessionId,
+            source_component: 'auto-compound-miner',
+            summary: policy,
+            axis_refs: axis ? [axis] : [],
+            confidence: 0.55, // ①(실시간)보다 낮게 — 채굴 불확실성 반영
+            raw_payload: { kind, target, axis_hint: axis, auto_mined: true },
+          });
+          saveEvidence(ev);
+          minedCorrections++;
+        }
+        if (minedCorrections > 0) {
+          process.stderr.write(`[forgen-auto-compound] mined ${minedCorrections} correction(s) (advisory-only, capped, age-retired)\n`);
         }
 
         // facet delta 적용
