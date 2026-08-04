@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### 측정 — cross-session δ 실증 (핵심)
+- **forgen 효과(δ)를 처음으로 유의하게 실증** — cross-session 정책 준수. forgen 이
+  이전 세션의 user-특정 정책을 재주입해, 그 정책을 모르는 vanilla 대비 준수율을 올린다:
+  Sonnet 5 **δ = 0.714, 95% CI [0.429, 0.929]** (vanilla 4/14 → forgen 14/14),
+  Opus 4.8 **δ = 0.500, 95% CI [0.214, 0.786]** (vanilla 7/14 → forgen 14/14).
+  블라인드 human rater 확증(Cohen's κ = 0.748). **"내부 측정" 등급** (메인테이너 유래
+  데이터셋 + intra-family judge + rater 1인) — 외부 주장은 독립 rater 패널·외부 리뷰어·
+  cross-family judge 재현 후. `docs/release/v0.5.0-persistence-delta.md`.
+- **δ 는 모델 역량과 직교**: 강한 모델일수록 일반 good-practice 는 스스로 따라 δ 가
+  작아지나, user-특정(추론 불가) 정책은 forgen 만 맞힘. within-session 은 구조적 null
+  (프론티어 컨텍스트 보유) — δ 는 cross-session 에서만 산다.
+
+### Added
+- **auto-compound 백그라운드 방법론 (ADR-011)**: `forgen compound sweep` 시간-기반
+  backstop + cron 자동설치(`--install-cron`), barren backoff 성장예외, PreCompact 러너.
+  긴 컴팩션/차단 세션에서 학습이 유실되던 갭 해소.
+- **auto-compound 동의 모델 (ADR-012)**: transcript 요약을 Haiku 로 전송하는 추출을
+  **opt-in** 화(`forgen compound consent on|off`). 결정론 교정→룰 승급(egress 0)은 기본
+  유지 — "당신 몰래 API 로 보내지 않는다".
+- **correction-aware 채굴 (ADR-013)**: 명시 마커 없는 완곡·반사실 교정을 사후 회수해
+  학습에 반영. 채굴 룰은 **advisory-only invariant**(차단 불가) + 캡 + auto: 네임스페이스
+  + 생성나이 은퇴 — LLM 채굴이 위험한 영구 차단 룰을 만들지 못하게 data-level 로 보장.
+
+### Fixed
+- drift-score hardcap cooldown 부재 수정 — 50편집 초과 후 매 편집마다 drift_critical
+  이 발화하던(세션길이 카운터로 전락) 문제.
+
 ## [0.5.0] — 2026-07-16 — 플랫폼 수렴 대응: 경계 재정의 · 컨텍스트 다이어트 · ROI 루프 (ADR-010)
 
 Claude Code 가 forgen 영역을 native 로 흡수하기 시작한 것(`/doctor`, `/usage`,

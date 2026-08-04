@@ -23,6 +23,7 @@ import { redactSecrets } from '../hooks/secret-filter.js';
 import { stripPrivate } from '../engine/private-filter.js';
 import { createEvidence, saveEvidence, promoteSessionCandidates } from '../store/evidence-store.js';
 import { isHaikuCompoundEnabled } from './compound-consent.js';
+import { summarizeTranscript } from './transcript-summary.js';
 import { loadProfile } from '../store/profile-store.js';
 import { FORGEN_HOME, ME_DIR } from './paths.js';
 import { classifyBehaviorKind, mapKindToAxisRefs } from './behavior-classifier.js';
@@ -253,66 +254,9 @@ function validateSolutionFiles(dirBefore: Set<string>): number {
   return removed;
 }
 
-function extractText(c: unknown): string {
-  if (typeof c === 'string') return c;
-  if (Array.isArray(c)) {
-    return c
-      .filter((x): x is { type: 'text'; text?: unknown } =>
-        typeof x === 'object' && x !== null && (x as { type?: unknown }).type === 'text')
-      .map((x) => (typeof x.text === 'string' ? x.text : ''))
-      .join('\n');
-  }
-  return '';
-}
-
-/**
- * 0.4.6 — claude/codex JSONL 양 schema 호환.
- *
- * Claude: {type: 'user'|'assistant', content: ...}
- * Codex: {type: 'response_item', payload: {type: 'message', role: 'user'|'assistant', content: [{type: 'input_text', text: ...}]}}
- */
+/** 파일 → 요약. 순수 로직은 transcript-summary 모듈(테스트 가능). */
 function extractSummary(filePath: string, maxChars = 8000): string {
-  const content = fs.readFileSync(filePath, 'utf-8');
-  const lines = content.split('\n').filter(Boolean);
-  const messages: string[] = [];
-  let totalChars = 0;
-
-  for (const line of lines) {
-    try {
-      const entry = JSON.parse(line);
-      // Claude schema
-      if (entry.type === 'user' || entry.type === 'queue-operation') {
-        const text = extractText(entry.content);
-        if (text) { messages.push(`[User] ${text.slice(0, 500)}`); totalChars += text.length; }
-      } else if (entry.type === 'assistant') {
-        const text = extractText(entry.content);
-        if (text) { messages.push(`[Assistant] ${text.slice(0, 500)}`); totalChars += text.length; }
-      }
-      // Codex schema
-      else if (entry.type === 'response_item' && entry.payload?.role === 'user') {
-        const text = extractCodexText(entry.payload.content);
-        if (text) { messages.push(`[User] ${text.slice(0, 500)}`); totalChars += text.length; }
-      } else if (entry.type === 'response_item' && entry.payload?.role === 'assistant') {
-        const text = extractCodexText(entry.payload.content);
-        if (text) { messages.push(`[Assistant] ${text.slice(0, 500)}`); totalChars += text.length; }
-      }
-    } catch { /* skip */ }
-    if (totalChars > maxChars) break;
-  }
-
-  return messages.join('\n\n');
-}
-
-/** Codex content array → flat string. content: [{type: 'input_text', text: ...}] */
-function extractCodexText(content: unknown): string {
-  if (!Array.isArray(content)) return '';
-  const parts: string[] = [];
-  for (const item of content) {
-    if (item && typeof item === 'object' && 'text' in item && typeof (item as { text: unknown }).text === 'string') {
-      parts.push((item as { text: string }).text);
-    }
-  }
-  return parts.join('\n').trim();
+  return summarizeTranscript(fs.readFileSync(filePath, 'utf-8'), maxChars);
 }
 
 /**
