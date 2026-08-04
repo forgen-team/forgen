@@ -78,18 +78,38 @@ This is **Mech-B self-check prompt-inject**. It works because Claude Code's Stop
 > **Scope caveat (v0.5.0, ADR-010 + 2026-07-20 honest null):** the δ numbers
 > above were measured on the **models of their era** (Claude Sonnet 4.x-class,
 > Codex) and we do **not** carry them forward as a claim about current frontier
-> models. On **Opus 4.8** and **Sonnet 5** we measured completion-guard
-> **blocks = 0** — frontier models got honest on their own. Our v0.5.0 judge
-> redesign then re-scored the hard "false-completion pressure" cases and found
-> **no measurable behavioral δ** there (all arms avoid blatant false completion;
+> models. Two separate current-model findings, kept distinct:
+>
+> 1. **Completion-guard / false-completion pressure → null (honest).** On
+> **Opus 4.8** and **Sonnet 5** we measured completion-guard **blocks = 0** —
+> frontier models got honest on their own. Our v0.5.0 judge redesign re-scored the
+> hard "false-completion pressure" cases and found **no measurable behavioral δ
+> on that dataset** (all arms avoid blatant false completion;
 > [`docs/release/v0.5.0-recalibration.md`](docs/release/v0.5.0-recalibration.md)).
-> So for current frontier models we make **no effect-size claim** — and we
-> publish that null rather than bury it. What forgen reliably provides is
-> **personalization** (corrections → persistent rules), **recall** (past
-> solutions injected when relevant), **ROI demotion** of stale knowledge, and
-> **deterministic guards** (secrets, destructive commands) that fire regardless
-> of model honesty. Per-model guard behavior: measured-honest models get
-> advisory mode instead of blocking.
+> We publish that null rather than bury it.
+>
+> 2. **Cross-session user-specific policy adherence → δ > 0 (measured).** forgen's
+> real mechanism is not blocking but *re-injecting your corrections in a later
+> session where a vanilla model has no memory of them*. On that — the honest place
+> the effect lives — we measured a **significant δ**: forgen makes the model follow
+> the user's prior-session policies **14/14**, vanilla **4/14 (Sonnet 5)** / **7/14
+> (Opus 4.8)** → **δ = 0.714, 95% CI [0.429, 0.929]** (Sonnet 5) and **δ = 0.500,
+> 95% CI [0.214, 0.786]** (Opus 4.8), confirmed by a blind human rater (Cohen's
+> κ = 0.748 vs the LLM judge)
+> ([`docs/release/v0.5.0-persistence-delta.md`](docs/release/v0.5.0-persistence-delta.md)).
+> **δ is orthogonal to model capability** — the stronger model (Opus) follows more
+> general good-practice on its own, so δ shrinks there, but on *user-specific*
+> policies neither model guesses right and only forgen does. This is
+> **"internal measurement" grade**: the dataset is maintainer-authored (bootstrap),
+> the judge is intra-family (Claude), and only one human rater has confirmed it. We
+> do **not** make external effect claims until an independent rater panel + external
+> reviewer + a cross-family judge reproduce it.
+>
+> What forgen reliably provides: **personalization** (corrections → persistent
+> rules, cross-session δ above), **recall** (past solutions injected when relevant),
+> **ROI demotion** of stale knowledge, and **deterministic guards** (secrets,
+> destructive commands) that fire regardless of model honesty. Per-model guard
+> behavior: measured-honest models get advisory mode instead of blocking.
 
 🎬 **See it happen** — try the guard live on your own install:
 
