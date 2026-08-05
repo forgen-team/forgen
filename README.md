@@ -215,16 +215,17 @@ Behind the scenes:
 
 You say: "Don't refactor files I didn't ask you to touch."
 
-Claude calls the `correction-record` MCP tool. The correction is stored as structured evidence with axis classification (`judgment_philosophy`), kind (`avoid-this`), and confidence score. A temporary rule is created for immediate effect in the current session.
+Claude calls the `correction-record` MCP tool. The correction is stored as structured evidence with axis classification (`judgment_philosophy`), kind (`avoid-this`), and confidence score. A temporary rule is created for immediate effect in the current session. At session end it promotes to a **permanent rule** — this deterministic corrections → rules path runs with **zero network egress** and is what our measured cross-session δ rides on.
+
+Softer corrections you never explicitly flag ("음… 이렇게 최소로만 짜면 나중에 다 다시 해야 하는 거 아니야?") are harder to catch in real time. If you opt into transcript extraction (below), forgen also **retroactively mines** those from the conversation — but such auto-mined rules are **advisory-only** (they surface as context, never block or enforce) and age out if you never act on them.
 
 ### Between sessions (automatic)
 
-When a session ends, auto-compound extracts:
-- Solutions (reusable patterns with context)
-- Behavioral observations (how you work)
-- A session learning summary
+**Always on (deterministic, zero egress):** your explicit corrections promote to permanent rules; near-duplicate corrections cluster and strengthen; facets micro-adjust from accumulated evidence; a time-based `compound sweep` backstop (optionally on cron) makes sure long or interrupted sessions don't lose that learning.
 
-Facets are micro-adjusted based on accumulated evidence. If your corrections consistently point away from your current pack, mismatch detection triggers after 3 sessions and recommends a pack change.
+**Opt-in (`forgen compound consent on`):** a background Haiku pass reads a *redacted summary* of the session transcript to extract reusable solutions, behavioral observations, and the softer corrections above. This is **off by default** — forgen does not send your conversations anywhere unless you turn it on, and secrets / `<private>` ranges are stripped before anything is sent. `forgen doctor` always shows the current state.
+
+If your corrections consistently point away from your current pack, mismatch detection triggers after 3 sessions and recommends a pack change.
 
 ### Next session
 
@@ -385,8 +386,8 @@ entries in `~/.forgen/state/implicit-feedback.jsonl`. Idempotent — safe to re-
            |                                                |
            v                                                |
   +------------------+                                      |
-  | Session Ends     |   auto-compound extracts:            |
-  |                  |   solutions + observations + summary  |
+  | Session Ends     |   corrections -> rules (always, egress 0) |
+  |                  |   transcript extract: opt-in (Haiku)     |
   +--------+---------+                                      |
            |                                                |
            v                                                |
@@ -434,6 +435,8 @@ Each solution starts as an `experiment`. As it gets reflected in your code acros
 | **Skills** | 10 built-in + promoted from verified solutions | Activated by keyword (`deep-interview`, `forge-loop`, `ship`, etc.) |
 | **Behavioral patterns** | Auto-detected at 3+ observations | Applied to `forge-behavioral.md` |
 | **Evidence** | Corrections + observations | Drives facet adjustments + rule creation |
+
+*Solutions and behavioral patterns come from the **opt-in** transcript-extraction pass (`forgen compound consent on`, off by default). Corrections → rules and facet adjustments are always-on and never leave your machine.*
 
 ### Keeping things out of the corpus (`<private>`)
 
