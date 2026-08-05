@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-08-05 — cross-session δ 실증 · 학습 아키텍처 완성 (ADR-010~013)
+
+forgen 의 첫 npm 릴리스(이전 발행은 0.4.x). 헤드라인: **forgen 효과(δ)를 프론티어
+모델에서 처음으로 유의하게 실증**했고, 그 학습을 안전·정직하게 돌리는 백그라운드
+아키텍처(ADR-011~013)를 완성했다. 아래 플랫폼-수렴 재정렬(ADR-010)이 이 릴리스의 토대다.
+
 ### 측정 — cross-session δ 실증 (핵심)
 - **forgen 효과(δ)를 처음으로 유의하게 실증** — cross-session 정책 준수. forgen 이
   이전 세션의 user-특정 정책을 재주입해, 그 정책을 모르는 vanilla 대비 준수율을 올린다:
@@ -19,7 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   작아지나, user-특정(추론 불가) 정책은 forgen 만 맞힘. within-session 은 구조적 null
   (프론티어 컨텍스트 보유) — δ 는 cross-session 에서만 산다.
 
-### Added
+### Added — 학습 백그라운드 아키텍처
 - **auto-compound 백그라운드 방법론 (ADR-011)**: `forgen compound sweep` 시간-기반
   backstop + cron 자동설치(`--install-cron`), barren backoff 성장예외, PreCompact 러너.
   긴 컴팩션/차단 세션에서 학습이 유실되던 갭 해소.
@@ -30,11 +36,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   학습에 반영. 채굴 룰은 **advisory-only invariant**(차단 불가) + 캡 + auto: 네임스페이스
   + 생성나이 은퇴 — LLM 채굴이 위험한 영구 차단 룰을 만들지 못하게 data-level 로 보장.
 
-### Fixed
-- drift-score hardcap cooldown 부재 수정 — 50편집 초과 후 매 편집마다 drift_critical
-  이 발화하던(세션길이 카운터로 전락) 문제.
+### Fixed — 학습 파이프라인 실버그
+- **실 transcript 스키마 버그**: auto-compound-runner 가 text 를 top-level `entry.content`
+  로 읽었으나 실제 Claude 스키마는 `entry.message.content` 중첩 → 전 user/assistant 턴
+  누락으로 auto-compound(채굴 포함)가 **실데이터에서 dead** 였다. message.content 우선 +
+  fallback, 순수 파싱 모듈 분리 + real-schema 회귀.
+- **settings-injection 마커 버그**: `permissions.deny` JSON 배열에 `# forgen-managed`
+  주석을 데이터로 주입 → Claude Code 가 malformed 룰로 매 세션 경고. 주입 중단 +
+  기존 오염 self-heal.
+- **drift-score hardcap cooldown 부재**: 50편집 초과 후 매 편집마다 drift_critical 이
+  발화하던(세션길이 카운터로 전락) 문제.
 
-## [0.5.0] — 2026-07-16 — 플랫폼 수렴 대응: 경계 재정의 · 컨텍스트 다이어트 · ROI 루프 (ADR-010)
+---
+
+### 플랫폼 수렴 대응 (ADR-010, 이 릴리스의 토대 — 2026-07-16)
 
 Claude Code 가 forgen 영역을 native 로 흡수하기 시작한 것(`/doctor`, `/usage`,
 Auto mode)과 Sonnet 5 기본 모델 전환에 대한 전략 릴리스. 방향: native 와 겹치는
@@ -43,13 +58,13 @@ multi-host)에 재집중. 상세 결정 기록: `docs/adr/ADR-010`, 실행 스�
 `docs/plans/2026-07-16-v0.5.0-execution-plan.md`. 전 작업 청크가 적대적 리뷰
 6회전을 거침 (SEV-1 3건 포함 전 발견 반영).
 
-### 측정 기반 재정렬 (핵심 배경)
+#### 측정 기반 재정렬 (핵심 배경)
 - **v0.4.11 실측: opus-4.8 에서 완료 가드 blocks=0** (easy/hard 양쪽) — δ 효과는
   100% injection 에서 나온다. enforcement 는 프론티어 모델이 흡수했고, forgen 의
   가치는 injection 품질·메모리·개인화·측정으로 이동했다. 효과 수치는 Sonnet 5
   재측정(R2) 전까지 주장하지 않는다 (Honest Fail Path).
 
-### Added
+#### Added
 - **`forgen migrate tenetx`** (+ `doctor --reclaim`): tenetx(레거시 정체성)/구버전
   forgen 이 `~/.claude/rules/` 등에 남긴 규칙 스프롤을 provenance 기반으로 회수.
   manifest content-hash 일치 = 무프롬프트, 마커만 = `--yes` 필요, 그 외 불간섭.
@@ -66,7 +81,7 @@ multi-host)에 재집중. 상세 결정 기록: `docs/adr/ADR-010`, 실행 스�
   원칙 유지).
 - retro-real 평가 데이터셋 15엔트리 (실세션 anonymized, 완화 역방향 케이스 포함).
 
-### Changed
+#### Changed
 - **경계 재정의**: `forgen doctor` 는 forgen 자체 기계+효과-측정 게이트만
   (환경 건강 → native `/doctor` 안내, Maturity/QuickWins 제거, hook timing →
   `--verbose`); 사용량 표시 → native `/usage` 이관(1회 공지, dashboard 는
@@ -78,12 +93,12 @@ multi-host)에 재집중. 상세 결정 기록: `docs/adr/ADR-010`, 실행 스�
   1회 관찰) + 캡처 사이드 차단 + 앵커드 패턴 보강. Claude-voice 에코가 규칙으로
   재주입되던 오염 경로 차단.
 
-### Fixed
+#### Fixed
 - `doctor --repair` 가 글로벌 설치에서 실제로 복구하지 못하던 버그 (devDeps 부재로
   build 실패 → postinstall 미도달) — dist 존재 시 build 생략 + 결과 재검증 보고.
 - statusline 1회 공지가 5초 캐시에 섞여 반복되던 버그.
 
-### Deprecated
+#### Deprecated
 - `usage-telemetry` 기록 (no-op shim, v0.6.0 모듈 삭제 예정) — native `/usage`.
 
 ## [0.4.13] — 2026-06-02 — Hotfix: fgx 세션 종료 시 터미널 물림 방지
