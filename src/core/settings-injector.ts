@@ -26,14 +26,21 @@ import type { V1BootstrapResult } from './v1-bootstrap.js';
 
 const log = createLogger('settings-injector');
 
+// 주의(2026-08-04 버그수정): '# forgen-managed' 는 **더 이상 주입하지 않는다** — JSON
+// permissions 배열엔 주석이 데이터 원소가 되어 Claude Code 가 malformed deny 룰로 경고했다.
+// strip-set 에는 남겨둬, 이전 버그로 오염된 사용자 settings 가 재주입 시 self-heal 되게 한다.
+// 멱등성은 마커가 아니라 아래 실제 룰 문자열의 정확일치 제거로 이미 보장된다.
 const FORGEN_PERMISSION_RULES = new Set([
-  '# forgen-managed',
+  '# forgen-managed', // legacy 오염 정리용 (신규 주입 안 함)
   'Bash(rm -rf *)',
   'Bash(git push --force*)',
   'Bash(git reset --hard*)',
 ]);
+/** 신규 주입할 forgen deny 룰 (마커 없음). */
+const FORGEN_DENY_RULES = ['Bash(rm -rf *)', 'Bash(git push --force*)', 'Bash(git reset --hard*)'];
+const FORGEN_ASK_RULES = ['Bash(rm -rf *)', 'Bash(git push --force*)'];
 
-function stripForgenManagedRules(rules: string[]): string[] {
+export function stripForgenManagedRules(rules: string[]): string[] {
   return rules.filter((r) => !FORGEN_PERMISSION_RULES.has(r));
 }
 
@@ -145,7 +152,7 @@ function mergeHooksIntoSettings(
 }
 
 /** Apply v1 trust policy → permissions (deny/ask lists). */
-function applyTrustPolicyPermissions(
+export function applyTrustPolicyPermissions(
   settings: Record<string, unknown>,
   v1Result: V1BootstrapResult,
 ): void {
@@ -155,21 +162,10 @@ function applyTrustPolicyPermissions(
   const existingDeny = stripForgenManagedRules(permissions.deny ?? []);
 
   if (trust === '가드레일 우선') {
-    permissions.deny = [
-      ...existingDeny,
-      '# forgen-managed',
-      'Bash(rm -rf *)',
-      'Bash(git push --force*)',
-      'Bash(git reset --hard*)',
-    ];
+    permissions.deny = [...existingDeny, ...FORGEN_DENY_RULES];
   } else if (trust === '승인 완화') {
     const existingAsk = stripForgenManagedRules(permissions.ask ?? []);
-    permissions.ask = [
-      ...existingAsk,
-      '# forgen-managed',
-      'Bash(rm -rf *)',
-      'Bash(git push --force*)',
-    ];
+    permissions.ask = [...existingAsk, ...FORGEN_ASK_RULES];
     permissions.deny = existingDeny.length > 0 ? existingDeny : (undefined as unknown as string[]);
   }
   // '완전 신뢰 실행': 추가 제한 없음
