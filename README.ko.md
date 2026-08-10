@@ -122,16 +122,17 @@ forgen                    # `claude` 대신 사용
 
 당신이 말합니다: "내가 요청하지 않은 파일은 리팩토링하지 마."
 
-Claude가 `correction-record` MCP 도구를 호출합니다. 교정은 축 분류(`judgment_philosophy`), 종류(`avoid-this`), 신뢰도 점수가 포함된 구조화된 evidence로 저장됩니다. 현재 세션에 즉시 효과를 주는 임시 규칙이 생성됩니다.
+Claude가 `correction-record` MCP 도구를 호출합니다. 교정은 축 분류(`judgment_philosophy`), 종류(`avoid-this`), 신뢰도 점수가 포함된 구조화된 evidence로 저장됩니다. 현재 세션에 즉시 효과를 주는 임시 규칙이 생성됩니다. 세션이 끝나면 이 규칙은 **영구 규칙**으로 승급됩니다 — 이 결정론적 corrections → rules 경로는 **네트워크 egress 0** 으로 동작하며, 우리가 측정한 cross-session δ가 바로 이 경로에 실립니다.
+
+당신이 명시적으로 짚지 않은 완곡한 교정("음… 이렇게 최소로만 짜면 나중에 다 다시 해야 하는 거 아니야?")은 실시간으로 잡기 어렵습니다. transcript 추출(아래)에 opt-in 하면 forgen이 대화에서 그런 교정도 **retroactive하게 채굴**합니다 — 단, 이렇게 자동 채굴된 규칙은 **advisory-only**(컨텍스트로 표시될 뿐 절대 차단·강제하지 않음)이며, 당신이 반응하지 않으면 시간이 지나 age-out 됩니다.
 
 ### 세션 사이 (자동)
 
-세션이 끝나면 auto-compound가 추출합니다:
-- 솔루션 (맥락이 포함된 재사용 가능한 패턴)
-- 행동 관찰 (당신의 작업 방식)
-- 세션 학습 요약
+**Always on (결정론적, egress 0):** 명시적 교정은 영구 규칙으로 승급되고, 거의 중복인 교정은 클러스터링되어 강화되며, 축적된 evidence로 facet이 미세 조정됩니다. 시간 기반 `compound sweep` backstop(선택적으로 cron)이 길거나 중단된 세션에서도 그 학습이 유실되지 않게 보장합니다.
 
-축적된 evidence를 기반으로 facet이 미세 조정됩니다. 교정이 지속적으로 현재 팩과 다른 방향을 가리키면, 3세션 후 mismatch 감지가 트리거되어 팩 변경을 추천합니다.
+**Opt-in (`forgen compound consent on`):** 백그라운드 Haiku 패스가 세션 transcript의 *redaction된 요약*을 읽어 재사용 가능한 솔루션, 행동 관찰, 그리고 위의 완곡한 교정을 추출합니다. 이것은 **기본 off** 입니다 — 당신이 켜지 않는 한 forgen은 당신의 대화를 어디로도 보내지 않으며, 전송 전에 secret / `<private>` 범위는 제거됩니다. `forgen doctor` 가 항상 현재 상태를 보여줍니다.
+
+교정이 지속적으로 현재 팩과 다른 방향을 가리키면, 3세션 후 mismatch 감지가 트리거되어 팩 변경을 추천합니다.
 
 ### 다음 세션
 
@@ -260,8 +261,8 @@ Linux 컨테이너에서 `~/.claude.json` 만 마운트하면 refresh 토큰이 
            |                                                |
            v                                                |
   +------------------+                                      |
-  |  세션 종료        |   auto-compound 추출:                 |
-  |                  |   솔루션 + 관찰 + 요약                  |
+  |  세션 종료        |   corrections -> rules (항상, egress 0)  |
+  |                  |   transcript 추출: opt-in (Haiku)        |
   +--------+---------+                                      |
            |                                                |
            v                                                |
@@ -304,6 +305,8 @@ experiment (0.30) → candidate (0.55) → verified (0.75) → mature (0.90)
 | **스킬** | 10개 내장 + 검증된 솔루션에서 승격 | 키워드로 활성화 (`deep-interview`, `forge-loop`, `ship` 등) |
 | **행동 패턴** | 3회 이상 관찰 시 자동 감지 | `forge-behavioral.md`에 적용 |
 | **Evidence** | 교정 + 관찰 | facet 조정 및 규칙 생성의 근거 |
+
+*솔루션과 행동 패턴은 **opt-in** transcript 추출 패스(`forgen compound consent on`, 기본 off)에서 나옵니다. corrections → rules 와 facet 조정은 always-on 이며 절대 당신의 머신을 떠나지 않습니다.*
 
 ### Solution 자동 주입
 

@@ -162,16 +162,17 @@ forgen                    # 用它代替 `claude`
 
 你说: "不要重构我没要求你动的文件。"
 
-Claude 调用 `correction-record` MCP 工具。纠正作为结构化证据存储，包含轴分类（`judgment_philosophy`）、种类（`avoid-this`）和置信度分数。为当前会话创建一条临时规则以立即生效。
+Claude 调用 `correction-record` MCP 工具。纠正作为结构化证据存储，包含轴分类（`judgment_philosophy`）、种类（`avoid-this`）和置信度分数。为当前会话创建一条临时规则以立即生效。会话结束时，该规则会晋升为**永久规则** —— 这条确定性的 corrections → rules 路径以**零网络 egress** 运行，我们测得的 cross-session δ 正是建立在这条路径上。
+
+那些你从未明确指出的柔性纠正（"嗯…只写这么点最小实现，以后不会全部返工吗?"）在实时中更难捕捉。如果你 opt-in 启用 transcript 提取（见下文），forgen 还会从对话中**回溯挖掘（retroactively mine）**这类纠正 —— 但这样自动挖掘出的规则是 **advisory-only**（仅作为上下文呈现，绝不阻断或强制），若你始终不采纳，它们会随时间 age-out。
 
 ### 会话之间（自动）
 
-会话结束时，auto-compound 提取:
-- 解决方案（带上下文的可复用模式）
-- 行为观察（你的工作方式）
-- 会话学习摘要
+**Always on（确定性，egress 0）:** 你的明确纠正晋升为永久规则; 近乎重复的纠正被聚类并强化; facet 基于累积证据微调; 一个基于时间的 `compound sweep` 兜底机制（可选择挂到 cron）确保漫长或被中断的会话不会丢失这些学习。
 
-基于累积的证据对 facet 进行微调。如果你的纠正持续指向与当前 pack 不同的方向，3个会话后触发不匹配检测，推荐更换 pack。
+**Opt-in（`forgen compound consent on`）:** 后台的 Haiku 通道读取会话 transcript 的*脱敏（redacted）摘要*，提取可复用的解决方案、行为观察，以及上述柔性纠正。它**默认关闭** —— 除非你开启，否则 forgen 不会把你的对话发送到任何地方，且在发送前会剥离 secret / `<private>` 区间。`forgen doctor` 始终显示当前状态。
+
+如果你的纠正持续指向与当前 pack 不同的方向，3个会话后触发不匹配检测，推荐更换 pack。
 
 ### 下一个会话
 
@@ -269,8 +270,8 @@ forgen config default-host codex   # 设置持久默认主机
            |                                                |
            v                                                |
   +------------------+                                      |
-  |   会话结束        |   auto-compound 提取:                 |
-  |                  |   解决方案 + 观察 + 摘要                |
+  |   会话结束        |   corrections -> rules (始终, egress 0)  |
+  |                  |   transcript 提取: opt-in (Haiku)        |
   +--------+---------+                                      |
            |                                                |
            v                                                |
@@ -299,6 +300,8 @@ experiment (0.30) → candidate (0.55) → verified (0.75) → mature (0.90)
 | **技能** | 21个内置 + 从已验证解决方案晋升 | 关键词激活（`specify`、`deep-interview`、`tdd` 等） |
 | **行为模式** | 3次以上观察时自动检测 | 应用到 `forge-behavioral.md` |
 | **证据** | 纠正 + 观察 | 驱动 facet 调整 + 规则创建 |
+
+*解决方案与行为模式来自 **opt-in** 的 transcript 提取通道（`forgen compound consent on`，默认关闭）。corrections → rules 与 facet 调整则始终在线（always-on），绝不离开你的机器。*
 
 ### 解决方案自动注入
 
