@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.2] — 2026-08-18 — 학습 파이프라인 무결성: 실운영 데이터 진단으로 3대 결함 수정
+
+설치 후 실제 축적 데이터를 감사한 결과, 학습 파이프라인이 "우리 생각대로" 돌지
+않는 지점 3개를 발견·근본원인 규명·수정. npm publish 는 규칙대로 보류.
+
+### Fixed — 결함1: advisory 룰 폭주 (retire→재생성 churn)
+- `compound sweep` 가 behavior_inference advisory 룰을 매 실행마다 새 UUID 로
+  재생성해 6,701 파일(distinct render_key 172, 97% 중복)까지 폭증(1,046/일). 원인:
+  `render_key` 가 영구 upsert 정체성이 아닌 "현재 active" 임시 dedup 키로만 쓰이고,
+  채굴된 Evidence 가 consumed 표시되지 않아 retire 로 풀린 render_key 를 stale
+  evidence 가 즉시 재승격(시계만 리셋).
+- 수정: `findRuleByRenderKey()`(모든 status, scope 필터) 로 기존 룰 제자리 재활성
+  (`created_at`/`rule_id` 보존, TTL=첫 채굴 이후 총수명 캡), `Evidence.candidate_rule_refs`
+  재사용한 consumed 마킹(동일 evidence replay 억제, 진짜 cross-session 반복은 Laplace
+  강화 유지), 하드닝된 `withFileLockSync` 로 retire→lookup→create 크로스-프로세스 락,
+  `forgen compound sweep --prune-removed [--apply] [--retention-days N]`(dry-run 기본).
+
+### Fixed — 결함2: solution 추출 무음 실패 (생애 최초 산출 0건)
+- opt-in(`autoCompoundHaiku`) 켜짐에도 `me/solutions/` 신규 산출이 forgen 생애 통틀어
+  0건. 원인: solution 추출이 중첩 `claude` 서브프로세스로 도는데 sparse(cron) 환경에서
+  Haiku 가 `forgen compound` 를 실행 안 하고 산문("승인 필요")으로 exit 0; 게다가 러너가
+  `stdio:'ignore'` 라 무음.
+- 수정: 러너 stdout/stderr 를 세션별 로그(`state/auto-compound/<sessionId>.log`)로 캡처
+  (열기 실패 시 fail-open), 중첩 호출에 `--permission-mode dontAsk` 추가(이미 consent 로
+  게이트된 narrow `Bash(forgen compound:*)` 스코프 그대로 — deny-by-default 라 스코프
+  확대·injection 경계 변화 없음; security 리뷰 LOW 확인).
+
+### Fixed — 결함3: 전역 CLI 버전 드리프트
+- 대화형 `forgen`/`fgx` 가 0.4.12(설치 후 미갱신)로 러닝 파이프라인(dist 0.5.x)과 불일치.
+  전역 CLI 를 npm latest 로 최신화.
+
 ## [0.5.1] — 2026-08-18 — docs 정직화 i18n 동기화 + consent-sync CI 가드
 
 문서/CI 전용 패치. 사용자 노출 코드·런타임 동작 변경 없음. npm publish 는 규칙대로
