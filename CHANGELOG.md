@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] — 2026-08-18 — docs 정직화 i18n 동기화 + consent-sync CI 가드
+
+문서/CI 전용 패치. 사용자 노출 코드·런타임 동작 변경 없음. npm publish 는 규칙대로
+보류(품질 우선 — sellable/paper grade 도달 시).
+
+### Docs
+- **ko/ja/zh README 학습-루프 정직화 동기화**: EN(0.5.0)이 "session ends → auto-compound
+  extracts" 무조건-추출 프레이밍을 opt-in consent 모델(ADR-012)로 고쳤으나 세 번역본이
+  미반영이던 갭 해소(ko 는 v0.4.4 기준까지 뒤처짐). always-on(egress 0) vs
+  opt-in(`forgen compound consent on`, 기본 off, redaction, `forgen doctor`) 이분,
+  advisory-only 채굴(ADR-013), `compound sweep` backstop(ADR-011), ASCII 다이어그램·각주까지
+  EN 과 일치화. fresh-context critic 으로 21개 검증점(7 claim × 3 언어) 전수 확인.
+
+### CI
+- **4 로케일 README consent 동기화 invariant** (`tests/readme-i18n-consent-sync.test.ts`):
+  4 로케일 모두 consent load-bearing 토큰 포함(POSITIVE: `forgen compound consent on` /
+  `opt-in` / `egress 0` / `advisory-only` / `compound sweep` / `<private>`) + 무조건-추출
+  프레이밍(`auto-compound`) 미포함(NEGATIVE) 강제. EN 정직화가 번역에 다시 누락되거나 옛
+  프레이밍이 부활하면 PR 에서 RED. vitest.config include('tests/**') → ci.yml 자동 실행.
+
 ## [0.5.0] — 2026-08-05 — cross-session δ 실증 · 학습 아키텍처 완성 (ADR-010~013)
 
 forgen 의 첫 npm 릴리스(이전 발행은 0.4.x). 헤드라인: **forgen 효과(δ)를 프론티어
