@@ -3,15 +3,19 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 
-const { tmpDir, tmpEvDir } = vi.hoisted(() => {
+const { tmpDir, tmpEvDir, tmpRulesDir } = vi.hoisted(() => {
   const p = require('node:path');
   const o = require('node:os');
   const tmpDir = p.join(o.tmpdir(), `forgen-ev-test-${process.pid}`);
-  return { tmpDir, tmpEvDir: p.join(tmpDir, 'me', 'behavior') };
+  return { tmpDir, tmpEvDir: p.join(tmpDir, 'me', 'behavior'), tmpRulesDir: p.join(tmpDir, 'me', 'rules') };
 });
 
 vi.mock('../../src/core/paths.js', () => ({
   ME_BEHAVIOR: tmpEvDir,
+  // promoteSessionCandidates 의 cross-process lock 타깃 (결함1 A/B/C 수정) — 이 파일의
+  // 테스트는 promoteSessionCandidates 를 직접 호출하지 않지만, 모듈 로드 시점에
+  // path.join(ME_RULES, ...) 가 평가되므로 export 자체는 있어야 한다.
+  ME_RULES: tmpRulesDir,
   STATE_DIR: '/__test_no_state_dir__',
 }));
 

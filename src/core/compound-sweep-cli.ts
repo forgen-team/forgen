@@ -17,6 +17,7 @@ import { fileURLToPath } from 'node:url';
 import { STATE_DIR } from './paths.js';
 import { runAutoCompound } from './spawn.js';
 import { createLogger } from './logger.js';
+import { pruneRemovedRules } from '../store/rule-store.js';
 
 const log = createLogger('compound-sweep');
 
@@ -352,8 +353,16 @@ export function cronStatus(): CronOpResult {
   }
 }
 
-/** CLI: forgen compound sweep [--dry-run|--install-cron|--uninstall-cron|--cron-status] [--window-hours N] [--stale-hours M] */
+/**
+ * CLI: forgen compound sweep [--dry-run|--install-cron|--uninstall-cron|--cron-status]
+ *   [--window-hours N] [--stale-hours M] [--prune-removed [--apply] [--retention-days N]]
+ */
 export function compoundSweepCli(args: string[]): void {
+  const num = (flag: string): number | undefined => {
+    const i = args.indexOf(flag);
+    return i >= 0 && args[i + 1] ? Number(args[i + 1]) : undefined;
+  };
+
   // cron 관리 플래그 (상호배타 — 우선 처리)
   if (args.includes('--install-cron')) {
     const r = installCron();
@@ -368,11 +377,25 @@ export function compoundSweepCli(args: string[]): void {
     console.log(`[forgen compound sweep] cron: ${cronStatus().message}`);
     return;
   }
+  // (D) removed 상태 rule 파일 정리. `forgen compound prune` 전용 top-level 커맨드
+  // 대신 sweep 을 확장한 형태로 노출 — cli.ts 라우팅(현재 `compound sweep`만 위임)을
+  // 건드리지 않기 위한 선택. 기본 dry-run — 실제 삭제는 --apply 명시 시에만.
+  if (args.includes('--prune-removed')) {
+    const apply = args.includes('--apply');
+    const retentionDays = num('--retention-days');
+    const r = pruneRemovedRules({
+      apply,
+      ...(retentionDays ? { retentionMs: retentionDays * 24 * 3600_000 } : {}),
+    });
+    console.log(
+      `[forgen compound sweep --prune-removed] candidates=${r.candidates.length} ` +
+      (apply
+        ? `deleted=${r.deleted.length}`
+        : `(dry-run — add --apply to delete)${r.candidates.length ? ` [${r.candidates.map((id) => id.slice(0, 8)).join(', ')}]` : ''}`),
+    );
+    return;
+  }
   const dryRun = args.includes('--dry-run');
-  const num = (flag: string): number | undefined => {
-    const i = args.indexOf(flag);
-    return i >= 0 && args[i + 1] ? Number(args[i + 1]) : undefined;
-  };
   const wh = num('--window-hours');
   const sh = num('--stale-hours');
   const r = runCompoundSweep({

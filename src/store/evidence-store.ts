@@ -8,15 +8,17 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as crypto from 'node:crypto';
-import { ME_BEHAVIOR } from '../core/paths.js';
+import { ME_BEHAVIOR, ME_RULES } from '../core/paths.js';
 import { atomicWriteJSON, safeReadJSON } from '../hooks/shared/atomic-write.js';
-import type { Evidence, EvidenceType, RuleCategory } from './types.js';
+import type { Evidence, EvidenceType, RuleCategory, RuleSource } from './types.js';
 import { HOST_IDS, type HostId } from '../core/trust-layer-intent.js';
-import { createRule, saveRule, loadActiveRules, updateRuleStatus } from './rule-store.js';
+import { createRule, saveRule, loadActiveRules, updateRuleStatus, findRuleByRenderKey } from './rule-store.js';
 import { classify, applyProposal } from '../engine/enforce-classifier.js';
 import { detect as detectT1 } from '../engine/lifecycle/trigger-t1-correction.js';
 import { foldEvents } from '../engine/lifecycle/orchestrator.js';
 import { appendLifecycleEvents } from '../engine/lifecycle/meta-reclassifier.js';
+import { laplaceConfidence, strengthForConfidence } from '../engine/correction-clustering.js';
+import { withFileLockSync } from '../hooks/shared/file-lock.js';
 
 function evidencePath(evidenceId: string): string {
   return path.join(ME_BEHAVIOR, `${evidenceId}.json`);
@@ -215,68 +217,134 @@ function retireStaleAutoMinedRules(now: number): void {
   for (let i = 0; i < excess; i++) updateRuleStatus(keep[i].r.rule_id, 'removed');
 }
 
+/**
+ * retire+dedupe+create 시퀀스 전체를 잠그는 lock 타깃. 실제 파일은 만들지 않고
+ * (`${target}.lock`) 파생 lock 파일만 생성 — withFileLockSync 관례.
+ * RCA (C): 여러 detached auto-compound-runner 가 동시에 이 함수를 돌리면 각자
+ * "render_key 없음" 스냅샷을 보고 중복 rule 을 만들 수 있었다(TOCTOU). retire ~
+ * create 를 하나의 critical section 으로 묶어 그 창을 없앤다.
+ */
+const RULE_STORE_MUTATE_LOCK = path.join(ME_RULES, '.rule-store-mutate');
+
 export function promoteSessionCandidates(sessionId: string): number {
-  // 채굴 룰 TTL 은퇴는 **early-return 앞에서** 실행 (critic 재검증 #1): 승급 후보가 없는
-  // 조용한 세션에서도 wall-clock TTL 이 실제로 강제되도록. (auto-compound-runner 는 매
-  // 세션 종료 시 promoteSessionCandidates 를 호출하므로 이 경로가 세션당 1회 보장된다.)
-  retireStaleAutoMinedRules(Date.now());
+  // withFileLockSync 는 O_CREAT 로 lock 파일을 만들 뿐 부모 디렉터리는 만들지 않는다 —
+  // 첫 rule 승급 이전(=아직 ME_RULES 없음)에도 락을 잡을 수 있어야 하므로 선행 mkdir.
+  fs.mkdirSync(ME_RULES, { recursive: true });
+  // 락 타임아웃/보수 시간은 이 critical section 이 짧다는 전제(디렉터리 스캔 + 파일
+  // 몇 개 쓰기, 초 단위 아님) 로 file-lock.ts 기본값(2s/30s)보다 넉넉히 잡되, 죽은
+  // holder 를 오래 방치하지 않도록 stale 은 짧게 유지한다.
+  return withFileLockSync(RULE_STORE_MUTATE_LOCK, () => {
+    // 채굴 룰 TTL 은퇴는 **early-return 앞에서** 실행 (critic 재검증 #1): 승급 후보가 없는
+    // 조용한 세션에서도 wall-clock TTL 이 실제로 강제되도록. (auto-compound-runner 는 매
+    // 세션 종료 시 promoteSessionCandidates 를 호출하므로 이 경로가 세션당 1회 보장된다.)
+    retireStaleAutoMinedRules(Date.now());
 
-  const candidates = loadPromotionCandidates().filter(e => e.session_id === sessionId);
-  if (candidates.length === 0) return 0;
+    const candidates = loadPromotionCandidates().filter(e => e.session_id === sessionId);
+    if (candidates.length === 0) return 0;
 
-  const activeRules = loadActiveRules();
-  const existingRenderKeys = new Set(
-    activeRules.filter(r => r.scope === 'me').map(r => r.render_key),
-  );
+    let promoted = 0;
+    for (const candidate of candidates) {
+      const payload = candidate.raw_payload as Record<string, unknown>;
+      const axisHint = payload?.axis_hint as string | null | undefined;
+      const target = payload?.target as string | undefined;
+      const kind = payload?.kind as string | undefined;
+      const autoMined = payload?.auto_mined === true;
 
-  let promoted = 0;
-  for (const candidate of candidates) {
-    const payload = candidate.raw_payload as Record<string, unknown>;
-    const axisHint = payload?.axis_hint as string | null | undefined;
-    const target = payload?.target as string | undefined;
-    const kind = payload?.kind as string | undefined;
-    const autoMined = payload?.auto_mined === true;
+      if (!target) continue;
 
-    if (!target) continue;
+      // 채굴 룰은 "auto:" 네임스페이스 — 실시간 교정 render_key 와 절대 충돌 안 함 (SEV-2 #4).
+      const baseKey = `${axisHint ?? 'workflow'}.${target.toLowerCase().replace(/\s+/g, '-').slice(0, 30)}`;
+      const renderKey = autoMined ? `${AUTO_MINED_PREFIX}${baseKey}` : baseKey;
+      const source: RuleSource = autoMined ? 'behavior_inference' : 'explicit_correction';
 
-    // 채굴 룰은 "auto:" 네임스페이스 — 실시간 교정 render_key 와 절대 충돌 안 함 (SEV-2 #4).
-    const baseKey = `${axisHint ?? 'workflow'}.${target.toLowerCase().replace(/\s+/g, '-').slice(0, 30)}`;
-    const renderKey = autoMined ? `${AUTO_MINED_PREFIX}${baseKey}` : baseKey;
-    if (existingRenderKeys.has(renderKey)) continue;
+      // (B) 이 evidence 가 과거 어떤 rule 로든 이미 소비됐는가 — candidate_rule_refs 를
+      // "승급 완료" 마커로 재사용한다(T1 이 rule_id 매칭에 쓰는 필드와 동일 필드,
+      // 의미상 호환: "이 evidence 가 가리키는 rule"). loadPromotionCandidates() 는
+      // evidence 를 영구히 반환하므로, 이 마커가 없으면 재-sweep 마다 같은 evidence 가
+      // 무한 재처리된다.
+      const alreadyConsumed = (candidate.candidate_rule_refs ?? []).length > 0;
 
-    const category: RuleCategory =
-      axisHint === 'quality_safety' ? 'quality'
-      : axisHint === 'autonomy' ? 'autonomy'
-      : 'workflow';
+      // (A) render_key upsert identity — status 무관 기존 rule 조회. TTL/cap 로
+      // retire(status='removed')된 render_key 도 여기서 발견되어 "재생성"이 아니라
+      // "재활성화"된다 — 새 rule_id/created_at 을 절대 새로 만들지 않는다.
+      // scope:'me' 로 한정 — processCorrection() 이 fix-now/avoid-this 에 대해 만드는
+      // scope:'session' 임시 rule 은 같은 render_key 공식을 쓰지만 별개 개체다(승격 대상 아님).
+      const existingRule = findRuleByRenderKey(renderKey, source, 'me');
 
-    // ADR-013: 채굴 교정(auto_mined)은 실시간 명시 교정과 엄격 차등 — provenance
-    // =behavior_inference, strength 절대 strong 아님(default).
-    let rule = createRule({
-      category,
-      scope: 'me',
-      trigger: target,
-      policy: candidate.summary,
-      strength: autoMined ? 'default' : kind === 'avoid-this' ? 'strong' : 'default',
-      source: autoMined ? 'behavior_inference' : 'explicit_correction',
-      evidence_refs: [candidate.evidence_id],
-      render_key: renderKey,
-    });
-    if (autoMined) {
-      // advisory-only (SEV-1 #2): classify() 를 돌리지 않고 enforce_via 를 비워, 채굴 룰이
-      // 절대 Mech-A 차단(PreToolUse/Stop block)을 얻지 못하게 한다. 컨텍스트 주입만 되고
-      // 어떤 훅도 강제하지 않음 — 환각 교정이 영구 차단 룰이 되는 위험 근절.
-      rule.enforce_via = [];
-    } else {
-      // ADR-001 auto-classify — 실시간 승격 rule 에만 enforce_via 자동 주입.
-      try {
-        const proposal = classify(rule);
-        rule = applyProposal(rule, proposal);
-      } catch { /* fail-open */ }
+      if (existingRule) {
+        if (alreadyConsumed) continue; // 같은 evidence 의 sweep 재관측 — no-op.
+
+        const evidenceRefs = existingRule.evidence_refs.includes(candidate.evidence_id)
+          ? existingRule.evidence_refs
+          : [...existingRule.evidence_refs, candidate.evidence_id];
+
+        // (D1) confidence 재계산 — correction-clustering.ts 의 Laplace 계승법칙을 그대로
+        // 상속(리터럴 복제 아님). N=evidence_refs.length(=관측 반복 횟수). auto_mined 은
+        // ADR-013 불변식(advisory-only, strong 절대 자동 도달 금지)을 유지하기 위해
+        // 몇 번을 재확인해도 'default' 를 벗어나지 않는다. hard 는 confidence 로 낮추지
+        // 않는다(안전 룰은 강도 하락이 없어야 함).
+        const strength = autoMined
+          ? 'default'
+          : existingRule.strength === 'hard'
+          ? 'hard'
+          : strengthForConfidence(laplaceConfidence(evidenceRefs.length));
+
+        // TTL-on-reactivation 결정: created_at 은 절대 now 로 리셋하지 않는다(carry-forward).
+        // 이유 — AUTO_MINED_TTL_MS 는 "이 개념이 처음 채굴된 이후 최대 수명"을 뜻하는
+        // 하드 상한이지, "마지막으로 확인된 이후 경과 시간"이 아니다. created_at 을
+        // 리셋하면 반복 채굴(같은 세션이 오래 지속되며 매 sweep 마다 재-mine)로 TTL 을
+        // 무한 연장할 수 있어 은퇴 메커니즘 자체가 무력화된다(원 결함의 재발). 대신
+        // rule_id/created_at 은 그대로 두고 status 만 'active' 로 되돌린다 — 재활성화된
+        // rule 은 다음 retireStaleAutoMinedRules() 호출 때 기존 나이 기준으로 다시
+        // 은퇴 여부가 평가된다(의도된 동작, thrash 아님: 최소 1세션은 유효하게 주입됨).
+        saveRule({ ...existingRule, status: 'active', evidence_refs: evidenceRefs, strength });
+        saveEvidence({
+          ...candidate,
+          candidate_rule_refs: [...(candidate.candidate_rule_refs ?? []), existingRule.rule_id],
+        });
+        promoted++;
+        continue;
+      }
+
+      if (alreadyConsumed) continue; // 소비 마킹된 evidence 인데 매칭 rule 없음(이례) — 재생성 금지.
+
+      const category: RuleCategory =
+        axisHint === 'quality_safety' ? 'quality'
+        : axisHint === 'autonomy' ? 'autonomy'
+        : 'workflow';
+
+      // ADR-013: 채굴 교정(auto_mined)은 실시간 명시 교정과 엄격 차등 — provenance
+      // =behavior_inference, strength 절대 strong 아님(default).
+      let rule = createRule({
+        category,
+        scope: 'me',
+        trigger: target,
+        policy: candidate.summary,
+        strength: autoMined ? 'default' : kind === 'avoid-this' ? 'strong' : 'default',
+        source,
+        evidence_refs: [candidate.evidence_id],
+        render_key: renderKey,
+      });
+      if (autoMined) {
+        // advisory-only (SEV-1 #2): classify() 를 돌리지 않고 enforce_via 를 비워, 채굴 룰이
+        // 절대 Mech-A 차단(PreToolUse/Stop block)을 얻지 못하게 한다. 컨텍스트 주입만 되고
+        // 어떤 훅도 강제하지 않음 — 환각 교정이 영구 차단 룰이 되는 위험 근절.
+        rule.enforce_via = [];
+      } else {
+        // ADR-001 auto-classify — 실시간 승격 rule 에만 enforce_via 자동 주입.
+        try {
+          const proposal = classify(rule);
+          rule = applyProposal(rule, proposal);
+        } catch { /* fail-open */ }
+      }
+      saveRule(rule);
+      saveEvidence({
+        ...candidate,
+        candidate_rule_refs: [...(candidate.candidate_rule_refs ?? []), rule.rule_id],
+      });
+      promoted++;
     }
-    saveRule(rule);
-    existingRenderKeys.add(renderKey);
-    promoted++;
-  }
 
-  return promoted;
+    return promoted;
+  }, { timeoutMs: 8000, staleMs: 15000 });
 }

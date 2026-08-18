@@ -297,6 +297,19 @@ export function releaseAutoCompoundInflight(sessionId: string): void {
   }
 }
 
+/**
+ * ~/.forgen/state/auto-compound/<sessionId>.log — 세션별 러너 로그 경로.
+ *
+ * 결함2 관측성 fix (2026-08-18): 이전엔 detached spawn 을 `stdio: 'ignore'` 로
+ * 실행해 러너의 stdout/stderr(진단 메시지 포함)를 통째로 버렸다. 그 결과 solution
+ * extraction 이 98/98 sweep 에서 `extractedSolutions=0` 을 기록해도 원인을 알 방법이
+ * 없었다(완전 무음 실패). 이제 fd 를 파일로 열어 넘겨 러너의 모든 출력을 세션별
+ * 로그로 남긴다 — 다음 실패 모드를 디버그 가능하게 만드는 전제 조건.
+ */
+export function autoCompoundLogPath(sessionId: string): string {
+  return path.join(STATE_DIR, 'auto-compound', `${sessionId.replace(/[^a-zA-Z0-9_-]/g, '_')}.log`);
+}
+
 export function runAutoCompound(
   cwd: string,
   transcriptPath: string,
@@ -329,16 +342,31 @@ export function runAutoCompound(
   }
 
   const runnerPath = path.join(path.dirname(fileURLToPath(import.meta.url)), 'auto-compound-runner.js');
+
+  // 로그 파일 fd 열기 — 실패(디스크 문제 등)해도 fail-open 으로 'ignore' 폴백.
+  const logPath = autoCompoundLogPath(sessionId);
+  let logFd: number | undefined;
+  try {
+    fs.mkdirSync(path.dirname(logPath), { recursive: true });
+    logFd = fs.openSync(logPath, 'a');
+  } catch (e) {
+    log.debug('auto-compound 로그 파일 열기 실패 — stdio ignore로 폴백', e);
+  }
+
   try {
     const child = spawn('node', [runnerPath, cwd, transcriptPath, sessionId, String(promptCount)], {
       cwd,
       detached: true,
-      stdio: 'ignore',
+      stdio: logFd !== undefined ? ['ignore', logFd, logFd] : 'ignore',
     });
     child.unref();
+    if (logFd !== undefined) fs.closeSync(logFd); // child가 dup — 부모 측 fd는 닫아도 안전
     console.log('\n[forgen] 세션 분석을 백그라운드로 시작했습니다 (자동 compound) — 결과는 다음 세션 시작 시 반영됩니다.\n');
     return 'spawned';
   } catch (e) {
+    if (logFd !== undefined) {
+      try { fs.closeSync(logFd); } catch { /* noop */ }
+    }
     log.debug('auto-compound 시작 실패', e);
     releaseAutoCompoundInflight(sessionId); // spawn 실패 시 표식 제거 → 재시도 가능
     return 'failed';
