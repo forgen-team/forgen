@@ -6,7 +6,8 @@
  * 반환하며, last-auto-compound.json 마커를 Stop 훅과 공유해 double-run 을 막는다.
  *
  * 본 테스트는 node:child_process.spawn 을 mock 하여:
- *   - detached:true + stdio:'ignore' + unref() 로 spawn 되는지 (비차단)
+ *   - detached:true + stdio(stdin='ignore', stdout/stderr=로그 파일 fd) + unref() 로
+ *     spawn 되는지 (비차단, 관측성)
  *   - dedup (최근 동일 세션 마커) 시 spawn 을 건너뛰는지
  * 를 검증한다. FORGEN_HOME 을 임시 디렉토리로 격리한다.
  */
@@ -64,7 +65,13 @@ describe('runAutoCompound — detached, non-blocking', () => {
     expect(mockSpawn).toHaveBeenCalledTimes(1);
     const opts = mockSpawn.mock.calls[0][2];
     expect(opts.detached).toBe(true);
-    expect(opts.stdio).toBe('ignore');
+    // 결함2 관측성 fix (2026-08-18): stdin은 여전히 'ignore'이지만 stdout/stderr는
+    // 세션별 로그 파일 fd로 리다이렉트된다(더 이상 stdio:'ignore' 통짜가 아님) —
+    // tests/auto-compound-extraction.test.ts가 로그 파일 내용까지 검증한다.
+    expect(Array.isArray(opts.stdio)).toBe(true);
+    expect(opts.stdio[0]).toBe('ignore');
+    expect(typeof opts.stdio[1]).toBe('number');
+    expect(typeof opts.stdio[2]).toBe('number');
     expect(mockUnref).toHaveBeenCalledTimes(1);
   });
 

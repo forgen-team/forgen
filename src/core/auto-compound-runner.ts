@@ -395,9 +395,27 @@ ${sanitizedSummary.slice(0, 6000)}
   // 피해자 권한으로 실행시킬 수 있었다. 이제 `Bash(forgen compound:*)`로 좁혀 Claude
   // 가 compound 추출용 forgen CLI 호출만 가능하게 한다. filter-bypass 시에도 임의
   // 명령 실행 차단.
+  //
+  // 결함2 fix (2026-08-18): sparse env(cron/비로그인 셸 — 이 러너 자체가 항상
+  // detached·headless 로 실행되는 환경)에서 위 스코프만으로는 haiku 가 "승인이
+  // 필요하다"고 오판해 forgen compound 를 실제 실행하지 않고 산문으로 응답 →
+  // 결과적으로 extraction 이 항상 0건이었다(RCA: sparse 3/3 실패, interactive
+  // 4/4 성공 — PATH 문제 아님). `--permission-mode dontAsk` 는 승인 프롬프트를
+  // 아예 띄우지 않고 "사전 승인(allowedTools)되지 않은 건 그냥 거부"하는 모드다
+  // (`bypassPermissions`와 달리 `--dangerously-skip-permissions` 를 요구하지 않고,
+  // 전체 권한검사를 끄지도 않는다 — 위 `Bash(forgen compound:*)` 밖의 어떤 명령도
+  // 여전히 거부됨). 이미 `autoCompoundHaiku` opt-in 동의로 이 경로 전체가
+  // 게이트되어 있고, 그 안에서도 forgen-compound 커맨드 스코프로만 자동 실행을
+  // 허용하는 것이므로 안전 — 이 스코프를 절대 넓히지 말 것(전체 Bash 나
+  // `--dangerously-skip-permissions`/`bypassPermissions` 로 교체 금지).
   try {
     extractViaHaiku(
-      ['-p', solutionPrompt, '--allowedTools', 'Bash(forgen compound:*)', '--model', COMPOUND_MODEL],
+      [
+        '-p', solutionPrompt,
+        '--allowedTools', 'Bash(forgen compound:*)',
+        '--permission-mode', 'dontAsk',
+        '--model', COMPOUND_MODEL,
+      ],
       { cwd, timeout: 90_000, stdio: ['pipe', 'ignore', 'pipe'] },
     );
   } catch (e) {
