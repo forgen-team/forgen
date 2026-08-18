@@ -178,6 +178,37 @@ export function loadActiveRules(): Rule[] {
 }
 
 /**
+ * render_key(+source, +scope)로 기존 rule을 찾는다 — status 무관(active/suppressed/removed/
+ * superseded 전부 포함). ADR-013 채굴 룰 재생성 결함 수정(RCA): promoteSessionCandidates가
+ * loadActiveRules() 로만 dedup 하다 보니 TTL/cap 로 은퇴(removed)된 render_key가 재차 채굴되면
+ * "없음" 으로 오판해 매번 새 rule_id + created_at=now 로 재생성 — 이게 6,701개 파일 중
+ * 6,525개가 removed 로 죽어 쌓인 근본 원인. 이 함수로 upsert identity 를 render_key 로
+ * 고정한다: 있으면 재활성화, 없을 때만 신규 생성.
+ *
+ * scope 필터가 필요한 이유: processCorrection()(evidence-processor.ts)이 fix-now/avoid-this
+ * 에 대해 scope:'session' 임시 rule 을 만들 때 *같은 render_key 공식*(`${axis}.${target-slug}`)
+ * 을 쓴다. scope 를 안 걸면 promoteSessionCandidates 가 그 임시 rule 을 "기존 me rule" 로
+ * 오인해 재활성화해버려 영구 승격이 아예 안 되는 회귀가 생긴다(실측: 회귀 테스트로 발견).
+ *
+ * 동일 render_key 매칭이 여럿(레거시 데이터 등 이례적 상황)이면 active 우선, 그다음
+ * updated_at 최신순으로 하나만 반환.
+ */
+export function findRuleByRenderKey(renderKey: string, source?: RuleSource, scope?: RuleScope): Rule | null {
+  const matches = loadAllRules().filter(
+    (r) => r.render_key === renderKey
+      && (source === undefined || r.source === source)
+      && (scope === undefined || r.scope === scope),
+  );
+  if (matches.length === 0) return null;
+  matches.sort((a, b) => {
+    if (a.status === 'active' && b.status !== 'active') return -1;
+    if (b.status === 'active' && a.status !== 'active') return 1;
+    return b.updated_at.localeCompare(a.updated_at);
+  });
+  return matches[0];
+}
+
+/**
  * ADR-002 Meta signal — rule 들이 프롬프트에 inject 되었음을 기록.
  * rule.lifecycle.inject_count +1, last_inject_at = now.
  * lifecycle 없던 rule 은 auto-init 하고 phase='active'.
@@ -209,6 +240,57 @@ export function updateRuleStatus(ruleId: string, status: RuleStatus): boolean {
  * 현재 세션 ID와 다른 scope:'session' 규칙을 비활성화.
  * 이전 세션의 임시 규칙이 새 세션에서 영향을 미치지 않도록 정리.
  */
+/** status:'removed' rule 파일 정리 결과. */
+export interface PruneResult {
+  /** retention 기간을 지나 삭제 대상인 rule_id (dry-run/apply 공통). */
+  candidates: string[];
+  /** apply=true 일 때 실제 unlink 된 rule_id (dry-run 이면 항상 빈 배열). */
+  deleted: string[];
+}
+
+/** removed 룰 보관 기간 기본값 — 7일. TTL 로 은퇴된 지 이만큼 지나면 prune 대상. */
+export const DEFAULT_PRUNE_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * status:'removed' 파일을 retention 기간이 지난 것만 실제 unlink.
+ * RCA: retire(updateRuleStatus)는 status flip만 하고 파일을 지우지 않아 6,525개 죽은
+ * 파일이 ~/.forgen/me/rules 에 쌓여 loadAllRules() linear scan 비용을 키우고
+ * cross-process race 창을 넓혔다. status 전이 시각(updated_at) 기준으로 retention을
+ * 재는 이유: removed 직후 즉시 지우면 (a) findRuleByRenderKey 가 재활성화할 기회를
+ * 없애고 (b) 오탐 은퇴를 되돌릴 유예가 사라진다.
+ *
+ * 기본 dry-run(apply=false) — 프로덕션 데이터 삭제는 호출측이 명시적으로 apply:true
+ * 를 넘길 때만. (compound-sweep-cli 의 `--prune-removed`는 `--apply` 없으면 dry-run.)
+ */
+export function pruneRemovedRules(opts: { retentionMs?: number; apply?: boolean } = {}): PruneResult {
+  const retentionMs = opts.retentionMs ?? DEFAULT_PRUNE_RETENTION_MS;
+  const apply = opts.apply ?? false;
+  const now = Date.now();
+  const candidates: string[] = [];
+  const deleted: string[] = [];
+
+  if (!fs.existsSync(ME_RULES)) return { candidates, deleted };
+
+  for (const file of fs.readdirSync(ME_RULES)) {
+    if (!file.endsWith('.json')) continue;
+    const filePath = path.join(ME_RULES, file);
+    const rule = safeReadJSON<Rule | null>(filePath, null);
+    if (rule?.status !== 'removed') continue;
+    const age = now - Date.parse(rule.updated_at);
+    if (!Number.isFinite(age) || age < retentionMs) continue;
+
+    candidates.push(rule.rule_id);
+    if (apply) {
+      try {
+        fs.unlinkSync(filePath);
+        deleted.push(rule.rule_id);
+      } catch { /* best-effort — 다음 prune 에서 재시도 */ }
+    }
+  }
+
+  return { candidates, deleted };
+}
+
 export function cleanupStaleSessionRules(_currentSessionId: string): number {
   if (!fs.existsSync(ME_RULES)) return 0;
   let cleaned = 0;
