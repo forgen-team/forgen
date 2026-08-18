@@ -254,4 +254,26 @@ describe('pruneRemovedRules (D)', () => {
     expect(r.candidates).toEqual(['old-removed']);
     expect(fs.existsSync(path.join(ME_RULES, '.rule-store-mutate.lock'))).toBe(true);
   });
+
+  it('안전 불변식: removed 여도 영구/명시 룰(L1, explicit_correction)은 prune 하지 않는다', () => {
+    fs.mkdirSync(ME_RULES, { recursive: true });
+    const old = new Date(Date.now() - 30 * 24 * 3600_000).toISOString(); // 충분히 오래됨
+    // 영구 L1 하드룰 — status:'removed' 여도 삭제 금지 (source explicit + render_key 비-auto)
+    fs.writeFileSync(
+      path.join(ME_RULES, 'L1-e2e-before-done.json'),
+      JSON.stringify({
+        rule_id: 'L1-e2e-before-done', category: 'quality', scope: 'me',
+        trigger: 't', policy: 'p', strength: 'hard', source: 'explicit_correction',
+        status: 'removed', evidence_refs: [], render_key: 'quality_safety.l1-e2e-before-done',
+        created_at: old, updated_at: old,
+      }, null, 2),
+    );
+    // auto-mined churn — 삭제 대상
+    writeRuleFile('auto-churn', 'removed', old);
+
+    const r = pruneRemovedRules({ retentionMs: 7 * 24 * 3600_000, apply: true });
+    expect(r.deleted).toEqual(['auto-churn']);
+    expect(r.candidates).not.toContain('L1-e2e-before-done');
+    expect(fs.existsSync(path.join(ME_RULES, 'L1-e2e-before-done.json'))).toBe(true);
+  });
 });

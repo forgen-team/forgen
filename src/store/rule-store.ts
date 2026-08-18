@@ -276,6 +276,12 @@ export function pruneRemovedRules(opts: { retentionMs?: number; apply?: boolean 
     const filePath = path.join(ME_RULES, file);
     const rule = safeReadJSON<Rule | null>(filePath, null);
     if (rule?.status !== 'removed') continue;
+    // 안전 불변식: prune 은 auto-mined advisory churn(결함1의 폭주 산출물)만 삭제한다.
+    // 영구·명시 룰(L1 하드룰, source:'explicit_correction')은 status:'removed' 여도
+    // 파일을 지우지 않는다 — 회귀 시 이력/복구 근거가 되고, 애초에 이 함수의 대상이 아니다.
+    const isAutoMinedChurn =
+      rule.source === 'behavior_inference' || rule.render_key?.startsWith('auto:');
+    if (!isAutoMinedChurn) continue;
     const age = now - Date.parse(rule.updated_at);
     if (!Number.isFinite(age) || age < retentionMs) continue;
 
