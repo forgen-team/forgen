@@ -33,44 +33,49 @@ const RUNNER_SRC = fs.readFileSync(
   'utf-8',
 );
 
-/**
- * 솔루션 추출 호출부만 잘라낸다. `'Bash(forgen compound:*)'` 리터럴은 파일 전체에서
- * 이 호출부(실제 args 배열 원소)에만 등장한다 — 주석에서는 백틱으로 감싸 표기하므로
- * 겹치지 않는다.
- */
-function extractSolutionCallBlock(src: string): string {
-  const anchor = "'Bash(forgen compound:*)'";
-  const idx = src.indexOf(anchor);
-  expect(idx, 'solution extraction call site를 찾지 못함 — 호출부가 이동/리팩터됐는지 확인').toBeGreaterThan(-1);
-  return src.slice(Math.max(0, idx - 80), idx + 260);
-}
+describe('Part B — solution extraction 계약 (source guard, corrected fix v2)', () => {
+  // 결함2 corrected fix (라이브 확증 후): headless haiku 의 Bash 도구 호출이 불안정해
+  // 산출 0건이었다. 이제 모델에 Bash 도구를 주지 않고, 모델은 텍스트만 출력 →
+  // 러너가 파싱해 forgen 을 execFileSync 인자로 직접 실행(셸 미경유)한다.
 
-describe('Part B — solution extraction argv 계약 (source guard)', () => {
-  it('Bash(forgen compound:*) 스코프를 그대로 유지한다', () => {
-    const block = extractSolutionCallBlock(RUNNER_SRC);
-    expect(block).toContain("'--allowedTools'");
-    expect(block).toContain("'Bash(forgen compound:*)'");
+  it('모델에 Bash 도구를 주지 않는다 (P1-S1 인젝션 표면 제거)', () => {
+    // solution 추출이 모델에게 어떤 Bash 툴/권한도 실제 인자로 넘기지 않는다.
+    // (execClaudeRetry 의 제네릭 docstring 은 --allowedTools 를 텍스트로 언급하므로
+    //  따옴표로 감싼 실제 args 리터럴 형태만 검사한다.)
+    expect(RUNNER_SRC).not.toMatch(/'--allowedTools'/);
+    expect(RUNNER_SRC).not.toMatch(/'--permission-mode'/);
+    expect(RUNNER_SRC).not.toMatch(/'Bash\([^']*\)'/);
   });
 
-  it('sparse env 오판을 막는 --permission-mode dontAsk 를 포함한다', () => {
-    const block = extractSolutionCallBlock(RUNNER_SRC);
-    expect(block).toContain("'--permission-mode'");
-    expect(block).toContain("'dontAsk'");
+  it('모델 텍스트를 파싱해 forgen 을 직접 실행한다 (결정론적 쓰기)', () => {
+    // --solution "제목" "설명" 파싱 정규식 + forgen 절대경로 execFileSync 호출.
+    expect(RUNNER_SRC).toContain('--solution');
+    expect(RUNNER_SRC).toMatch(/execFileSync\(\s*forgenBin/);
+    expect(RUNNER_SRC).toContain("'compound', '--solution'");
+    // forgen 은 node 형제 바이너리 절대경로 — sparse PATH 의존 제거.
+    expect(RUNNER_SRC).toContain('path.dirname(process.execPath)');
+    expect(RUNNER_SRC).toContain("path.join(nodeBinDir, 'forgen')");
   });
 
-  it('회귀 가드: 전체 Bash 나 --dangerously-skip-permissions/bypassPermissions 로 넓히지 않는다', () => {
-    const block = extractSolutionCallBlock(RUNNER_SRC);
-    expect(block).not.toContain('--dangerously-skip-permissions');
-    expect(block).not.toContain('bypassPermissions');
-    // 스코프 없는 단독 'Bash' 허용 금지 (P1-S1 회귀 방지)
-    expect(block).not.toMatch(/'Bash'/);
+  it('파싱된 solution 을 저장 전 injection/content 필터로 검증한다', () => {
+    expect(RUNNER_SRC).toContain('containsPromptInjection');
+    expect(RUNNER_SRC).toContain('filterSolutionContent');
   });
 
-  it('회귀 가드: 파일 전체 어디에도 위험 플래그가 실제 인자로 등장하지 않는다', () => {
-    // 주석 설명은 백틱으로 표기하므로 걸리지 않고, 코드에서 실제로 쓰이려면
-    // 반드시 따옴표로 감싼 토큰이어야 하므로 이 형태만 검사.
+  it('보안: argument confusion 가드 — 대시-선두 title/content 를 스킵한다', () => {
+    // 악성 모델 출력 title "--remove" 등이 forgen 플래그로 오해석되는 것을 원천 차단.
+    expect(RUNNER_SRC).toMatch(/title\.startsWith\('-'\)\s*\|\|\s*rawContent\.startsWith\('-'\)/);
+  });
+
+  it('회귀 가드: 위험 플래그가 파일 어디에도 실제 인자로 등장하지 않는다', () => {
     expect(RUNNER_SRC).not.toMatch(/['"]--dangerously-skip-permissions['"]/);
     expect(RUNNER_SRC).not.toMatch(/['"]bypassPermissions['"]/);
+    // 스코프 없는 단독 'Bash' 툴 허용도 금지 (P1-S1 회귀 방지).
+    expect(RUNNER_SRC).not.toMatch(/'Bash'/);
+  });
+
+  it('회귀 가드: 옛 오도 프롬프트("형식: forgen compound ...")로 되돌리지 않는다', () => {
+    expect(RUNNER_SRC).not.toContain('형식: forgen compound --solution');
   });
 });
 

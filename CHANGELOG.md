@@ -24,15 +24,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   강화 유지), 하드닝된 `withFileLockSync` 로 retire→lookup→create 크로스-프로세스 락,
   `forgen compound sweep --prune-removed [--apply] [--retention-days N]`(dry-run 기본).
 
-### Fixed — 결함2: solution 추출 무음 실패 (생애 최초 산출 0건)
-- opt-in(`autoCompoundHaiku`) 켜짐에도 `me/solutions/` 신규 산출이 forgen 생애 통틀어
-  0건. 원인: solution 추출이 중첩 `claude` 서브프로세스로 도는데 sparse(cron) 환경에서
-  Haiku 가 `forgen compound` 를 실행 안 하고 산문("승인 필요")으로 exit 0; 게다가 러너가
-  `stdio:'ignore'` 라 무음.
-- 수정: 러너 stdout/stderr 를 세션별 로그(`state/auto-compound/<sessionId>.log`)로 캡처
-  (열기 실패 시 fail-open), 중첩 호출에 `--permission-mode dontAsk` 추가(이미 consent 로
-  게이트된 narrow `Bash(forgen compound:*)` 스코프 그대로 — deny-by-default 라 스코프
-  확대·injection 경계 변화 없음; security 리뷰 LOW 확인).
+### Fixed — 결함2: solution 추출 무음 실패 (생애 최초 산출 0건) — 라이브 확증 후 재설계
+- opt-in(`autoCompoundHaiku`) 켜짐에도 `me/solutions/` 신규 산출이 forgen 생애 통틀어 0건.
+- **라이브 확증으로 초기 진단을 정정**: 처음엔 "sparse env 권한 hedge"로 보고 `--permission-mode
+  dontAsk` 를 넣었으나, 실제 A/B 결과 dontAsk 는 산출을 전혀 바꾸지 못했다(有/無 모두 0).
+  진짜 원인은 (1) 프롬프트가 "형식: forgen compound ..."(format:)이라 headless haiku 가
+  명령을 텍스트로 프린트만 하고 Bash 도구를 호출 안 함, (2) 애초에 headless haiku 의 Bash
+  도구 호출이 근본적으로 불안정(동일 조건 1↔0), (3) cron sparse PATH 에 `forgen` 부재,
+  (4) 러너가 `stdio:'ignore'` 라 이 모든 실패가 무음.
+- **재설계(결정론적)**: 모델에 Bash 도구를 아예 주지 않는다. 모델은 재사용 솔루션을
+  텍스트로만 출력하고, 러너가 `--solution "제목" "설명"` 을 파싱해 `forgen` 을 직접 실행한다
+  (behavior 경로와 동일 패턴). 부수효과로 **P1-S1 injection 표면 제거** — 모델 출력은
+  파싱·필터(`containsPromptInjection`/`filterSolutionContent`) 후 `execFileSync` 의 *인자*로만
+  쓰이고 셸을 거치지 않는다. `forgen` 은 러너 node 의 형제 바이너리를 절대경로로 호출해
+  PATH 의존을 없애고, `spawn.ts` 는 러너를 `process.execPath` 로 띄워 실 cron(nvm node)에서
+  forgen 형제경로가 성립하게 한다. 러너 stdout/stderr 는 세션별 로그로 캡처(무음 실패 제거).
+- **라이브 검증**: cron-faithful sparse env(격리 FORGEN_HOME, 절대 nvm node)에서 실제 러너
+  실행 → solution **0→1** 확인. 전체 회귀 3064 통과.
 
 ### Fixed — 결함3: 전역 CLI 버전 드리프트
 - 대화형 `forgen`/`fgx` 가 0.4.12(설치 후 미갱신)로 러닝 파이프라인(dist 0.5.x)과 불일치.
