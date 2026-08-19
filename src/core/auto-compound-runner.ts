@@ -422,6 +422,15 @@ ${sanitizedSummary.slice(0, 6000)}
     const title = match[1].replace(/\\"/g, '"').trim();
     const rawContent = match[2].replace(/\\"/g, '"').trim();
     if (!title || rawContent.length < 20) continue;
+    // 보안(argument confusion): title/content 는 untrusted 모델 출력이다. execFileSync
+    // 인자로 넘기므로 셸 인젝션은 없지만, '-' 로 시작하면 forgen 의 인자 파서가 이를
+    // 플래그로 오해석할 수 있다(예: 악성 title "--remove" → 삭제 분기). 정상 제목/설명은
+    // '-' 로 시작하지 않으므로 대시-선두 값은 스킵한다. (handleCompound 의 위치인자 파서가
+    // startsWith('--') 를 필터하는 것에 더해 러너에서 원천 차단.)
+    if (title.startsWith('-') || rawContent.startsWith('-')) {
+      process.stderr.write('[forgen-auto-compound] solution: dash-leading title/content, skipping (arg-confusion guard)\n');
+      continue;
+    }
     // 모델 출력은 untrusted transcript 파생 — 저장 전 injection/exfil 필터(defense in depth).
     if (containsPromptInjection(`${title} ${rawContent}`)) {
       process.stderr.write('[forgen-auto-compound] solution: injection detected in LLM output, skipping\n');

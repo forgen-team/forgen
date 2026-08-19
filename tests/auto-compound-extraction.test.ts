@@ -62,6 +62,11 @@ describe('Part B — solution extraction 계약 (source guard, corrected fix v2)
     expect(RUNNER_SRC).toContain('filterSolutionContent');
   });
 
+  it('보안: argument confusion 가드 — 대시-선두 title/content 를 스킵한다', () => {
+    // 악성 모델 출력 title "--remove" 등이 forgen 플래그로 오해석되는 것을 원천 차단.
+    expect(RUNNER_SRC).toMatch(/title\.startsWith\('-'\)\s*\|\|\s*rawContent\.startsWith\('-'\)/);
+  });
+
   it('회귀 가드: 위험 플래그가 파일 어디에도 실제 인자로 등장하지 않는다', () => {
     expect(RUNNER_SRC).not.toMatch(/['"]--dangerously-skip-permissions['"]/);
     expect(RUNNER_SRC).not.toMatch(/['"]bypassPermissions['"]/);
