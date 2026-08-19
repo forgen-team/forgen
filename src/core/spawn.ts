@@ -354,7 +354,12 @@ export function runAutoCompound(
   }
 
   try {
-    const child = spawn('node', [runnerPath, cwd, transcriptPath, sessionId, String(promptCount)], {
+    // 결함2 corrected fix (2026-08-19): 리터럴 'node' 대신 process.execPath 로 spawn.
+    // 실 cron 은 절대 nvm node 경로로 sweep 를 돌리는데, 러너를 'node' 로 spawn 하면
+    // cron sparse PATH 의 /bin/node 로 해석돼 러너의 process.execPath 가 달라지고,
+    // 러너가 forgen(nvm 형제 바이너리)을 절대경로로 못 찾아 solution write 가 ENOENT 로
+    // 실패한다. execPath 를 물려주면 러너가 sweep 과 같은 node(=forgen 형제)를 상속한다.
+    const child = spawn(process.execPath, [runnerPath, cwd, transcriptPath, sessionId, String(promptCount)], {
       cwd,
       detached: true,
       stdio: logFd !== undefined ? ['ignore', logFd, logFd] : 'ignore',

