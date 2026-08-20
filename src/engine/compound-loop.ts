@@ -253,6 +253,18 @@ export async function handleCompound(args: string[]): Promise<void> {
     return;
   }
 
+  // --- manual add (defense-in-depth, 2026-08-20) ---
+  // manual add(--solution/--rule/--convention/--pattern)를 아래 서브커맨드 dispatch 보다
+  // 먼저 처리한다. dispatch 는 args.includes('remove'|'clean-stale'|...) 로 전체 인자를
+  // 스캔하므로, add 의 위치인자(title/content)에 그런 토큰이 섞이면 삭제·정리 분기를
+  // 탈취할 수 있다(argument confusion — auto-compound 러너가 untrusted 모델 출력을 넘기던
+  // 경로에서 실증). type flag 는 add 전용이라 우선 처리해도 legit 동작 불변이며, 이렇게
+  // 하면 title/content 가 dispatch 스캔에 아예 닿지 않는다. (러너측 대시-선두 가드에 더한 2중 방어)
+  if (['--solution', '--rule', '--convention', '--pattern'].some(f => args.includes(f))) {
+    await handleManualAdd(args, cwd, scope);
+    return;
+  }
+
   // --- export command ---
   // 통짜 tar.gz export(플래그만, positional 없음) vs 이름 지정 패턴 export를
   // positional 인자 유무로 구분한다. `compound export foo` = 패턴 export,
@@ -497,11 +509,24 @@ export async function handleCompound(args: string[]): Promise<void> {
     return;
   }
 
+  await handleManualAdd(args, cwd, scope);
+}
+
+/**
+ * 수동 인사이트 추가 (--solution/--rule/--convention/--pattern).
+ * handleCompound 에서 두 경로로 호출된다:
+ *  (1) hoisted early-dispatch — type flag 가 있으면 서브커맨드 스캔 전에 즉시(arg-confusion 방어).
+ *  (2) fallthrough — type flag 없이 다른 known flag(예: --to)만 있는 legacy 경로(동작 보존).
+ */
+async function handleManualAdd(
+  args: string[],
+  cwd: string,
+  scope: ReturnType<typeof resolveScope>,
+): Promise<void> {
   console.log('\n  Compound Loop — Accumulating insights\n');
   console.log(`  Scope: ${scope.summary}`);
   console.log();
 
-  // 수동 인사이트 추가
   const type = args.includes('--solution') ? 'solution' as const
     : args.includes('--rule') ? 'rule' as const
     : args.includes('--convention') ? 'convention' as const

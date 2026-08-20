@@ -40,7 +40,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   PATH 의존을 없애고, `spawn.ts` 는 러너를 `process.execPath` 로 띄워 실 cron(nvm node)에서
   forgen 형제경로가 성립하게 한다. 러너 stdout/stderr 는 세션별 로그로 캡처(무음 실패 제거).
 - **라이브 검증**: cron-faithful sparse env(격리 FORGEN_HOME, 절대 nvm node)에서 실제 러너
-  실행 → solution **0→1** 확인. 전체 회귀 3064 통과.
+  실행 → solution **0→1** 확인.
+- **보안 defense-in-depth**: (1) 러너에서 대시-선두 title/content 스킵(arg confusion 1차 차단),
+  (2) `handleCompound` 인자 파서 리팩터 — manual-add(`--solution`/`--rule`/…)를 서브커맨드
+  dispatch 보다 먼저 처리해, 위치인자(title/content)의 `--remove`/`clean-stale` 등이
+  `args.includes(...)` 스캔에 걸려 삭제·정리 분기를 탈취하던 경로를 CLI 레벨에서 원천 차단.
 
 ### Fixed — 결함3: 전역 CLI 버전 드리프트
 - 대화형 `forgen`/`fgx` 가 0.4.12(설치 후 미갱신)로 러닝 파이프라인(dist 0.5.x)과 불일치.
