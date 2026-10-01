@@ -123,7 +123,7 @@ function findSessionTranscript(
  *
  * 단일 함수에서 둘 다 처리 — schema 자동 감지.
  */
-async function countUserMessages(transcriptPath: string): Promise<number> {
+export async function countUserMessages(transcriptPath: string): Promise<number> {
   const { createInterface } = await import('node:readline');
   const stream = fs.createReadStream(transcriptPath, { encoding: 'utf-8' });
   const rl = createInterface({ input: stream, crlfDelay: Infinity });

@@ -7,6 +7,74 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.3] — 2026-10-01 — Codex 동등화 2차 (룰 주입·에이전트·훅 신뢰) + Stop block 사영 결함 수정 + 최신 호스트 갭 1차
+
+오너가 Codex 를 일상 호스트로 전환하면서 "Claude 와 동일한 forgen 경험" 을 코드·실세션 대조로
+감사. 훅/MCP/스킬은 동등했으나 **개인화 룰과 서브에이전트가 Codex 에 전달되지 않는** 구조적
+갭을 발견·수정. 결정 문서: docs/adr/ADR-014-codex-parity-rules-agents.md.
+
+### Added — ADR-014
+- **D1 개인화 룰 주입 (Codex)**: `session-recovery` 가 `FORGEN_RUNTIME=codex` 일 때
+  `generateClaudeRuleFiles()` 산출(v1-rules / project-context / forge-behavioral / user-profile)을
+  Claude 와 동일 캡(`RULE_FILE_CAPS`)으로 `<forgen-rules host="codex">` 블록에 담아 SessionStart
+  additionalContext 로 주입. 컴팩션 후에는 두 호스트 모두 SessionStart 가 `source="compact"` 로 재발화
+  하므로 같은 경로가 재주입 (별도 플래그 경로 없음). 새 모듈 `src/host/codex-rules-context.ts`.
+  - 설계 이유: hooks.json 을 바이트 동일하게 유지해야 Codex 의 훅 신뢰 기록이 유효 → 새 훅이
+    아니라 기존 훅 내부 분기. AGENTS.md 파일 주입은 사용자 저장소에 개인 룰이 커밋될 위험.
+- **D2 Codex 커스텀 에이전트**: `forgen install codex` 가 `assets/claude/agents/*.md` 14종을
+  `~/.codex/agents/ch-<name>.toml` 로 생성 (공식 스키마 name/description/developer_instructions +
+  model_reasoning_effort/sandbox_mode 만 사용; `tools`/`disallowedTools` 양쪽에서 읽기전용 판정).
+  config.toml 에 `[features] multi_agent = true` 가 없으면 install 출력에 ⚠ 안내. Claude 설치명(ch-*)과 동일해 스킬 본문의
+  `ch-planner → ch-executor → ch-verifier` 참조가 Codex 에서도 해석됨. `# forgen-managed` 마커로
+  idempotent, 사용자 toml 보존.
+- **D3 스킬 Codex 적응**: 설치 시 `$ARGUMENTS`(Codex 미지원 변수) 자연어 치환 + "Codex host note"
+  (ch-* 에이전트 위치, spawn 불가 시 `invoke-agent` MCP 대체) 부착.
+- **D4 훅 신뢰 감사**: `auditCodexHookTrust()` 가 hooks.json forgen 엔트리 vs config.toml
+  `[hooks.state."<hooks.json>:<event>:<i>:<j>"]` 를 대조 (Codex 미지원 이벤트 PostToolUseFailure 는
+  `ignoredByCodex` 로 분리). `forgen install codex` 출력과 `forgen doctor` 의 새 `[Codex Hooks]`
+  섹션에 "N/M trusted, 미승인 시 codex 안에서 `/hooks`" 안내. trusted_hash 를
+  forgen 이 쓰지 않음(신뢰 모델 우회 금지).
+- **D5 측정**: `hook-timing.jsonl` 엔트리에 `rt: claude|codex` 필드.
+
+### Fixed — ADR-015 X-G1 (결함): Codex 에 Stop block 이 전달되지 않음
+- `codex-adapter` 의 사영(`projectCodexToClaude`)이 `decision:"block"` 을 `continue:false +
+  permissionDecision:"block"` 으로 변조해 내보냈다. Codex 는 top-level `decision`/`reason` 을 읽고
+  `continue:false` 를 "처리 중단" 으로 해석하므로 **stop-guard 의 자기검증 차단이 Codex 에서 한 번도
+  continuation 을 만들지 못했다**. 사영을 host 스키마 보존(pass-through) 으로 재설계. fable 갭 분석에서
+  발견, dist 실행으로 재현, 격리 `codex exec` 에서 `hook: Stop Blocked` → 자기 교정 턴 관측.
+- PreToolUse deny 의 `continue:false` 는 Codex 가 "unsupported" 로 로그하던 것을 제거 (차단은
+  `permissionDecision` 이 표현).
+
+### Added — ADR-015 (최신 Claude Code 2.1.286 대비 갭, 0.5.3 반영분)
+- **`SessionEnd` 훅 (Claude 전용)**: 세션 종료 시 user 메시지 ≥10 이면 auto-compound 러너를 detached
+  spawn — Stop 이 안 오는 종료(Ctrl+C 등)·긴 컴팩션 세션의 후반 학습 유실 보강. registry 에
+  `hosts` 필드 도입; **Codex hooks.json 은 22개 바이트 동일 유지** (훅 신뢰 보존).
+- **중첩 실행 가드**: forgen 이 띄우는 추출용 `claude -p` 에 `FORGEN_NESTED_RUN=1` +
+  `--no-session-persistence`. 추출 run 안에서 22개 훅이 재귀 발화해 hook-timing/sessions 를 오염하고
+  다음 SessionStart 의 auto-compound 후보가 되던 문제 차단. (`--bare` 는 OAuth 를 끊어 채택 불가.)
+- **플러그인 스킬 frontmatter 보존**: `skills/<name>/SKILL.md` 가 `disable-model-invocation`(ship),
+  `allowed-tools`, `argument-hint`, `model` 을 잃던 빌드 결함 수정.
+- 백로그(설계/재승인 필요)는 docs/adr/ADR-015 표 참조 — Codex async/SessionEnd/PostCompact 등록,
+  `notify`, `--output-schema`, `.codex/rules`, `verify` 스킬 규약, `InstructionsLoaded`, plugin eval 등.
+
+### Verified
+- vitest 전체 pass (신규: codex-rules-context, install-codex ADR-014 9, hook-timing rt, projection
+  재작성, hooks-generator-hosts, session-end).
+- fresh-context critic (fable) 1라운드 → MAJOR 3 + MINOR 6 반영 (상세: ADR-014 Verification).
+  `tests/extraction-session.test.ts` 2건은 타이밍 flaky(단독 재실행 pass, 본 변경과 무관).
+- self-gate static ✓, self-gate-runtime 9/9 ✓.
+- **격리 라이브 (CODEX_HOME/FORGEN_HOME 임시, Codex 0.153.4)**:
+  - 훅 미승인 `codex exec` → forgen 훅 0건 발화 (공식 문서의 "skipped until trusted" 실증).
+  - `--dangerously-bypass-hook-trust` → rollout 에 `<forgen-rules host="codex">` 4KB 주입 확인
+    (v1-rules `## Must Not` 포함), Codex 가 ch-* 에이전트 14종 전부 열거, 생성 TOML 14/14 tomllib 파싱 OK.
+
+### Known gaps (정직 표기)
+- Codex 전용 이벤트(SessionEnd/PostCompact/Interrupt) 미사용, `PostToolUseFailure` 는 Codex 에 없어
+  dead 엔트리로 유지 — 둘 다 hooks.json 변경이 필요해 신뢰 재승인 비용 때문에 보류.
+- Codex 가 `.claude/rules` 처럼 매 턴 재로드하지는 않음 — 세션 시작 1회 + 컴팩션 시 SessionStart 재발화 1회.
+- 서브에이전트 `model` 은 Codex 기본 subagent 모델 사용 (Claude 의 opus/sonnet 지정은 effort 로만 매핑).
+
+
 ## [0.5.2] — 2026-08-18 — 학습 파이프라인 무결성: 실운영 데이터 진단으로 3대 결함 수정
 
 설치 후 실제 축적 데이터를 감사한 결과, 학습 파이프라인이 "우리 생각대로" 돌지

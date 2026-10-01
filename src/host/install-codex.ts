@@ -51,6 +51,27 @@ export interface CodexInstallResult {
   devGuideSkillsPath: string;
   devGuideSkillsInstalled: number;
   devGuideSkillsRemoved: number;
+  /** ADR-014 D2: ~/.codex/agents/ch-*.toml 커스텀 에이전트 설치 결과 */
+  agentsPath: string;
+  agentsInstalled: number;
+  agentsRemoved: number;
+  /** ADR-014 D4: hooks.json forgen 엔트리 중 config.toml hooks.state 에 신뢰 기록이 있는 수 */
+  hookTrust: CodexHookTrustAudit;
+  /** ADR-014 D2: config.toml `[features] multi_agent = true` 여부 (false 면 ch-* 에이전트 spawn 불가 → 안내) */
+  multiAgentEnabled: boolean;
+}
+
+export interface CodexHookTrustAudit {
+  /** hooks.json 의 forgen hook 명령 수 (Codex 가 지원하는 이벤트만) */
+  total: number;
+  /** Codex 가 모르는 이벤트라 조용히 무시되는 forgen 엔트리 (`<event>:<i>:<j>`) — trust 대상이 아님 */
+  ignoredByCodex: string[];
+  /** config.toml `[hooks.state."<hooks.json>:<event>:<i>:<j>"]` 에 trusted_hash 가 있는 수 */
+  trusted: number;
+  /** 신뢰 기록이 없는 hook 키 (`<event>:<i>:<j>`) */
+  untrusted: string[];
+  /** config.toml 자체가 없거나 hooks.state 가 전혀 없으면 true (Codex 가 아직 한 번도 훅을 review 안 함) */
+  noStateRecorded: boolean;
 }
 
 const MCP_MARKER_BEGIN = '# >>> forgen-managed-mcp';
@@ -218,6 +239,26 @@ export function planCodexInstall(opts: CodexInstallOptions): CodexInstallResult 
     dryRun: opts.dryRun ?? false,
   });
 
+  // 9) ADR-014 D2: assets/claude/agents/*.md → ~/.codex/agents/ch-<name>.toml
+  const codexAgents = installCodexAgents({
+    sourceDir: path.join(opts.pkgRoot, 'assets', 'claude', 'agents'),
+    targetDir: path.join(codexHome, 'agents'),
+    dryRun: opts.dryRun ?? false,
+  });
+
+  // 10) ADR-014 D4: 훅 신뢰 감사 (dryRun 이면 현재 디스크 상태 기준)
+  const hookTrust = auditCodexHookTrust({
+    hooksPath,
+    configTomlPath,
+    pkgRoot: opts.pkgRoot,
+    hooksFile: opts.dryRun ? (existing ?? finalHooksFile) : finalHooksFile,
+    configToml: mcpContentToWrite ?? (fs.existsSync(configTomlPath) ? fs.readFileSync(configTomlPath, 'utf-8') : ''),
+  });
+
+  const multiAgentEnabled = isCodexMultiAgentEnabled(
+    mcpContentToWrite ?? (fs.existsSync(configTomlPath) ? fs.readFileSync(configTomlPath, 'utf-8') : ''),
+  );
+
   return {
     codexHome,
     hooksPath,
@@ -234,7 +275,233 @@ export function planCodexInstall(opts: CodexInstallOptions): CodexInstallResult 
     devGuideSkillsPath: devGuideResult.devGuideSkillsPath,
     devGuideSkillsInstalled: devGuideResult.devGuideSkillsInstalled,
     devGuideSkillsRemoved: devGuideResult.devGuideSkillsRemoved,
+    agentsPath: codexAgents.agentsPath,
+    agentsInstalled: codexAgents.installed,
+    agentsRemoved: codexAgents.removed,
+    hookTrust,
+    multiAgentEnabled,
   };
+}
+
+/** `[features]` 섹션 안에 `multi_agent = true` 가 있는지 (TOML 라이브러리 없이 섹션 범위만 본다). */
+export function isCodexMultiAgentEnabled(configToml: string): boolean {
+  const m = configToml.match(/^\[features\]\s*$([\s\S]*?)(?=^\[|(?![\s\S]))/m);
+  if (!m) return false;
+  return /^\s*multi_agent\s*=\s*true\s*$/m.test(m[1]);
+}
+
+// ── ADR-014 D4: Codex hook trust audit ────────────────────────────────
+
+/**
+ * Codex 0.153 hooks 공식 이벤트 12종 (learn.chatgpt.com/docs/hooks + binary 문자열). 이 밖의 이벤트
+ * (예: Claude 전용 PostToolUseFailure) 는 Codex 가 조용히 무시하므로 trust 대상이 아니다.
+ */
+export const CODEX_SUPPORTED_HOOK_EVENTS: ReadonlySet<string> = new Set([
+  'PreToolUse', 'PermissionRequest', 'PostToolUse', 'PreCompact', 'PostCompact', 'UserPromptSubmit',
+  'SubagentStart', 'SubagentStop', 'Stop', 'Interrupt', 'SessionStart', 'SessionEnd',
+]);
+
+/** Codex 는 hooks.state 키에 이벤트명을 snake_case 로 쓴다 (PreToolUse → pre_tool_use). */
+export function codexHookEventKey(event: string): string {
+  return event.replace(/(?<!^)([A-Z])/g, '_$1').toLowerCase();
+}
+
+/**
+ * hooks.json 의 forgen 엔트리 각각에 대해 config.toml 의
+ * `[hooks.state."<hooksPath>:<event>:<groupIdx>:<hookIdx>"]` 섹션(trusted_hash) 존재를 대조한다.
+ * trusted_hash 자체는 검증하지 않는다 — Codex 가 변경된 훅을 review 전까지 skip 하는 정책을
+ * forgen 이 우회하지 않기 위해, *기록 유무* 만 가시화한다 (ADR-014 D4).
+ */
+export function auditCodexHookTrust(opts: {
+  hooksPath: string;
+  configTomlPath: string;
+  pkgRoot: string;
+  hooksFile?: HooksFile | null;
+  configToml?: string;
+}): CodexHookTrustAudit {
+  const hooksFile = opts.hooksFile ?? readJsonFile<HooksFile>(opts.hooksPath);
+  const toml = opts.configToml ?? (fs.existsSync(opts.configTomlPath) ? fs.readFileSync(opts.configTomlPath, 'utf-8') : '');
+
+  const stateKeys = new Set<string>();
+  const re = /^\[hooks\.state\."([^"]+)"\]\s*$/gm;
+  let m: RegExpExecArray | null = re.exec(toml);
+  while (m !== null) {
+    stateKeys.add(m[1]);
+    m = re.exec(toml);
+  }
+
+  let total = 0;
+  let trusted = 0;
+  const untrusted: string[] = [];
+  const ignoredByCodex: string[] = [];
+  const events = (hooksFile?.hooks ?? {}) as Record<string, unknown[]>;
+  for (const [event, groups] of Object.entries(events)) {
+    if (!Array.isArray(groups)) continue;
+    groups.forEach((group, gi) => {
+      const g = group as { hooks?: Array<{ command?: string }> };
+      if (!Array.isArray(g.hooks)) return;
+      g.hooks.forEach((h, hi) => {
+        const isForgen = typeof h.command === 'string' &&
+          (h.command.includes(opts.pkgRoot) || FORGEN_HOOK_SCRIPT_MARKER.test(h.command));
+        if (!isForgen) return;
+        const key = `${codexHookEventKey(event)}:${gi}:${hi}`;
+        if (!CODEX_SUPPORTED_HOOK_EVENTS.has(event)) { ignoredByCodex.push(key); return; }
+        total += 1;
+        if (stateKeys.has(`${opts.hooksPath}:${key}`)) trusted += 1;
+        else untrusted.push(key);
+      });
+    });
+  }
+  return { total, trusted, untrusted, ignoredByCodex, noStateRecorded: stateKeys.size === 0 };
+}
+
+// ── ADR-014 D2: Codex custom agents (~/.codex/agents/ch-*.toml) ──────
+
+const AGENT_TOML_MARKER = '# forgen-managed';
+const AGENT_NAME_PREFIX = 'ch-';
+
+interface AgentsInstallOutcome {
+  agentsPath: string;
+  installed: number;
+  removed: number;
+}
+
+function parseAgentMarkdown(raw: string): { meta: Record<string, string>; tools: string[]; disallowedTools: string[]; body: string } | null {
+  const fm = raw.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
+  if (!fm) return null;
+  const meta: Record<string, string> = {};
+  const tools: string[] = [];
+  const disallowedTools: string[] = [];
+  let currentList: string[] | null = null;
+  for (const line of fm[1].split('\n')) {
+    const listItem = line.match(/^\s+-\s+(.+)$/);
+    if (currentList && listItem) { currentList.push(listItem[1].trim()); continue; }
+    currentList = null;
+    const kv = line.match(/^([A-Za-z_]+):\s*(.*)$/);
+    if (!kv) continue;
+    const [, k, v] = kv;
+    if (k === 'tools' || k === 'disallowedTools') {
+      const target = k === 'tools' ? tools : disallowedTools;
+      // 인라인 배열 `tools: [Read, Bash]` 도 허용
+      const inline = v.trim().match(/^\[(.*)\]$/);
+      if (inline) target.push(...inline[1].split(',').map((t) => t.trim()).filter(Boolean));
+      else currentList = target;
+      continue;
+    }
+    meta[k] = v.trim();
+  }
+  return { meta, tools, disallowedTools, body: fm[2].trim() };
+}
+
+/** TOML 문자열에 들어갈 수 없는 제어문자 제거 (탭/개행/CR 은 유지). */
+function stripTomlControlChars(v: string): string {
+  let out = '';
+  for (const ch of v) {
+    const code = ch.charCodeAt(0);
+    const isAllowed = (code >= 0x20 && code !== 0x7f) || code === 0x09 || code === 0x0a || code === 0x0d;
+    if (isAllowed) out += ch;
+  }
+  return out;
+}
+
+/** TOML basic string (한 줄). JSON 문자열 문법은 TOML basic string 의 부분집합. */
+function tomlString(v: string): string {
+  return JSON.stringify(stripTomlControlChars(v));
+}
+
+/** TOML multi-line basic string. 백슬래시와 삼중따옴표만 이스케이프하면 된다. */
+function tomlMultiline(v: string): string {
+  const cleaned = stripTomlControlChars(v)
+    .split('\\').join('\\\\')
+    .split('"""').join('\\"\\"\\"');
+  return `"""\n${cleaned}\n"""`;
+}
+
+const REASONING_BY_CLAUDE_MODEL: Record<string, string> = { opus: 'high', sonnet: 'medium', haiku: 'low' };
+
+/**
+ * Claude agent .md → Codex agent role TOML.
+ * 공식 스키마(필수 name/description/developer_instructions, 선택 model_reasoning_effort/sandbox_mode)
+ * 외 필드는 쓰지 않는다 — Codex 가 unknown field 를 거부 (ADR-014 D2).
+ */
+export function renderCodexAgentToml(file: string, raw: string): { name: string; toml: string } | null {
+  const parsed = parseAgentMarkdown(raw);
+  if (!parsed) return null;
+  const base = file.replace(/\.md$/, '');
+  const name = base.startsWith(AGENT_NAME_PREFIX) ? base : `${AGENT_NAME_PREFIX}${base}`;
+  if (!/^[A-Za-z0-9 _-]+$/.test(name)) return null;
+  const description = parsed.meta.description || name;
+  // critic 2026-10-01: 7/14 에이전트는 `tools:` 대신 `disallowedTools: [Write, Edit]` 로 읽기전용을 선언.
+  const WRITE_TOOLS = new Set(['Write', 'Edit', 'NotebookEdit']);
+  const canWrite = parsed.tools.length > 0
+    ? parsed.tools.some((t) => WRITE_TOOLS.has(t))
+    : !parsed.disallowedTools.some((t) => WRITE_TOOLS.has(t));
+  const sandbox = canWrite ? 'workspace-write' : 'read-only';
+  const effort = REASONING_BY_CLAUDE_MODEL[parsed.meta.model ?? ''] ?? 'medium';
+  const body = parsed.body.length > 0 ? parsed.body : description;
+  const toml = [
+    AGENT_TOML_MARKER,
+    `# generated by \`forgen install codex\` from assets/claude/agents/${file} — do not edit; re-generated on install`,
+    `name = ${tomlString(name)}`,
+    `description = ${tomlString(description)}`,
+    `model_reasoning_effort = ${tomlString(effort)}`,
+    `sandbox_mode = ${tomlString(sandbox)}`,
+    `developer_instructions = ${tomlMultiline(body)}`,
+    '',
+  ].join('\n');
+  return { name, toml };
+}
+
+function installCodexAgents(opts: { sourceDir: string; targetDir: string; dryRun: boolean }): AgentsInstallOutcome {
+  const { sourceDir, targetDir, dryRun } = opts;
+  if (!fs.existsSync(sourceDir)) return { agentsPath: targetDir, installed: 0, removed: 0 };
+  const files = fs.readdirSync(sourceDir).filter((f) => f.endsWith('.md'));
+  const isUserOwned = (p: string): boolean => {
+    try {
+      const st = fs.lstatSync(p);
+      if (st.isSymbolicLink()) return true; // 사용자 심링크 (dangling 포함) — 건드리지 않음
+      return !fs.readFileSync(p, 'utf-8').slice(0, 64).startsWith(AGENT_TOML_MARKER);
+    } catch {
+      return false; // 없음
+    }
+  };
+  if (dryRun) {
+    const wouldInstall = files.filter((f) => {
+      const r = renderCodexAgentToml(f, fs.readFileSync(path.join(sourceDir, f), 'utf-8'));
+      return r !== null && !isUserOwned(path.join(targetDir, `${r.name}.toml`));
+    }).length;
+    return { agentsPath: targetDir, installed: wouldInstall, removed: 0 };
+  }
+
+  fs.mkdirSync(targetDir, { recursive: true });
+
+  // stale 정리: forgen-managed 마커가 있는 ch-*.toml 만. 사용자 파일은 보존.
+  let removed = 0;
+  for (const entry of fs.readdirSync(targetDir)) {
+    if (!entry.startsWith(AGENT_NAME_PREFIX) || !entry.endsWith('.toml')) continue;
+    const p = path.join(targetDir, entry);
+    try {
+      if (fs.lstatSync(p).isSymbolicLink()) continue;
+      const head = fs.readFileSync(p, 'utf-8').slice(0, 64);
+      if (!head.startsWith(AGENT_TOML_MARKER)) continue;
+      fs.unlinkSync(p);
+      removed += 1;
+    } catch { /* best-effort */ }
+  }
+
+  let installed = 0;
+  for (const file of files) {
+    const rendered = renderCodexAgentToml(file, fs.readFileSync(path.join(sourceDir, file), 'utf-8'));
+    if (!rendered) continue;
+    const dst = path.join(targetDir, `${rendered.name}.toml`);
+    if (isUserOwned(dst)) {
+      // 방금 stale 정리에서 살아남은 = 사용자 작성 (마커 없음) 또는 심링크 → 보존
+      continue;
+    }
+    fs.writeFileSync(dst, rendered.toml, 'utf-8');
+    installed += 1;
+  }
+  return { agentsPath: targetDir, installed, removed };
 }
 
 // ── v0.4.9: dev-guide skills → ~/.codex/skills ────────────────────────
@@ -310,6 +577,29 @@ function installDevGuideSkillsToCodex(opts: { pkgRoot: string; codexHome: string
 
 // ── P3-3: Codex skills install ────────────────────────────────────────
 
+/** ADR-014 D3 — Codex 스킬에는 `$ARGUMENTS` 치환 변수가 없다. */
+export function adaptSkillBodyForCodex(body: string): string {
+  return body
+    .replace(/\{\$ARGUMENTS\}/g, '{the user\'s request text}')
+    .replace(/`\$ARGUMENTS`/g, 'the user\'s request text (what follows the skill name)')
+    .replace(/\$ARGUMENTS/g, 'the user\'s request text (what follows the skill name)');
+}
+
+/** ADR-014 D2/D3 — 스킬 본문의 ch-* 에이전트 참조가 Codex 에서 어떻게 해석되는지 명시. */
+const CODEX_SKILL_HOST_NOTE = `
+---
+
+## Codex host note (forgen-managed)
+
+- Sub-agents named \`ch-*\` (ch-planner, ch-executor, ch-verifier, ch-critic, ...) are installed as Codex
+  custom agents under \`$CODEX_HOME/agents/ch-*.toml\`. Spawn them with Codex's multi-agent tools when
+  available (\`[features] multi_agent = true\` in config.toml).
+- If spawning is unavailable, call the \`invoke-agent\` tool on the \`forgen-compound\` MCP server
+  (agent_name + task) or perform that stage inline yourself. Do not skip the stage.
+- The forgen personalized rules for this session arrive as a \`<forgen-rules host="codex">\` block at
+  session start. Treat them exactly like Claude Code's .claude/rules/.
+`;
+
 function installCodexSkills(opts: { sourceDir: string; targetDir: string; dryRun: boolean }): { installed: number } {
   const { sourceDir, targetDir, dryRun } = opts;
   if (!fs.existsSync(sourceDir)) return { installed: 0 };
@@ -335,8 +625,8 @@ function installCodexSkills(opts: { sourceDir: string; targetDir: string; dryRun
     const descMatch = raw.match(/description:\s*(.+)/);
     const desc = descMatch?.[1]?.trim() ?? skillName;
     const bodyMatch = raw.match(/^---\n[\s\S]*?\n---\n([\s\S]*)$/);
-    const body = bodyMatch?.[1]?.trim() ?? raw;
-    const out = `---\nname: ${skillName}\ndescription: ${desc}\n---\n\n${FORGEN_SKILL_MARKER}\n\n${body}\n`;
+    const body = adaptSkillBodyForCodex(bodyMatch?.[1]?.trim() ?? raw);
+    const out = `---\nname: ${skillName}\ndescription: ${desc}\n---\n\n${FORGEN_SKILL_MARKER}\n\n${body}\n${CODEX_SKILL_HOST_NOTE}`;
     fs.mkdirSync(skillDir, { recursive: true });
     fs.writeFileSync(skillFile, out);
     count += 1;
@@ -369,7 +659,7 @@ export function resolveAgentsMdPath(_pkgRoot: string): string {
 }
 
 function buildForgenRulesBlock(pkgRoot: string): string {
-  // forgen 의 핵심 규칙 + 사용자 profile 안내 (가벼운 헤더만 — 실 rule 은 hook chain 이 inject)
+  // forgen 의 핵심 규칙 + 사용자 profile 안내 (가벼운 헤더만 — 실 rule 본문은 ADR-014 D1 의 SessionStart hook 주입)
   const lines = [
     AGENTS_MD_BEGIN,
     '## forgen managed rules',
@@ -379,7 +669,7 @@ function buildForgenRulesBlock(pkgRoot: string): string {
     '- forgen-compound MCP 가 ~/.codex/config.toml 에 등록됨. 학습된 솔루션을 `compound-search` 로 조회 가능.',
     '- 사용자 교정은 `correction-record` MCP 도구로 즉시 박제 (kind: fix-now / prefer-from-now / avoid-this).',
     '- forgen 의 4축 profile (quality_safety / autonomy / judgment_philosophy / communication_style) 이 응답 톤 + 검증 깊이를 가이드.',
-    '- 본 rule 은 cwd 의 AGENTS.md 가 자동 read 되는 Codex 의 user_instructions 경로로 흘러들어감.',
+    '- 개인화 룰 본문은 세션 시작 시 SessionStart hook 이 `<forgen-rules host="codex">` 블록으로 주입 (ADR-014). 서브에이전트는 ~/.codex/agents/ch-*.toml.',
     `- pkgRoot: ${pkgRoot}`,
     AGENTS_MD_END,
   ];

@@ -57,15 +57,20 @@ if (existsSync(commandsDir)) {
   for (const file of files) {
     const name = file.replace('.md', '');
     const raw = readFileSync(join(commandsDir, file), 'utf-8');
-    const descMatch = raw.match(/description:\s*(.+)/);
-    const desc = descMatch?.[1]?.trim() ?? name;
-    const bodyMatch = raw.match(/^---\n[\s\S]*?\n---\n([\s\S]*)$/);
-    const body = bodyMatch?.[1]?.trim() ?? raw;
+    const fmMatch = raw.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
+    const body = fmMatch?.[2]?.trim() ?? raw;
+    // ADR-015 C-G2: frontmatter 전체 보존 (disable-model-invocation / allowed-tools / model /
+    // argument-hint 등). 이전엔 name+description 만 남겨 `/forgen:ship` 의
+    // disable-model-invocation 이 플러그인 스킬에서 사라졌다. `name` 은 디렉토리명으로 고정.
+    const fmLines = (fmMatch?.[1] ?? `description: ${name}`)
+      .split('\n')
+      .filter((l) => !/^name:\s*/.test(l));
+    const frontmatter = [`name: ${name}`, ...fmLines].join('\n');
     const skillDir = join(skillsDir, name);
     mkdirSync(skillDir, { recursive: true });
     writeFileSync(
       join(skillDir, 'SKILL.md'),
-      `---\nname: ${name}\ndescription: ${desc}\n---\n\n${body}${WITH_CODEX_SNIPPET}\n`,
+      `---\n${frontmatter}\n---\n\n${body}${WITH_CODEX_SNIPPET}\n`,
     );
   }
   console.log(`[build] Generated ${files.length} skills from commands/ (with --with-codex snippet)`);

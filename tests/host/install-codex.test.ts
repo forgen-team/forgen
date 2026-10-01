@@ -253,3 +253,144 @@ describe('planCodexInstall', () => {
     }
   });
 });
+
+// ── ADR-014 (v0.5.3): Codex agents TOML + skill adaptation + hook trust audit ──
+
+import { adaptSkillBodyForCodex, auditCodexHookTrust, codexHookEventKey, isCodexMultiAgentEnabled, renderCodexAgentToml } from '../../src/host/install-codex.js';
+
+describe('ADR-014 Codex parity', () => {
+  let codexHome: string;
+  beforeEach(() => { codexHome = tmpDir('codex-adr014-'); });
+  afterEach(() => { fs.rmSync(codexHome, { recursive: true, force: true }); });
+
+  it('D2: assets/claude/agents/*.md 전부가 ~/.codex/agents/ch-*.toml 로 설치된다', () => {
+    const result = planCodexInstall({ pkgRoot: PKG_ROOT, codexHome, agentsMdPath: path.join(codexHome, 'AGENTS.md') });
+    const sourceCount = fs.readdirSync(path.join(PKG_ROOT, 'assets', 'claude', 'agents')).filter((f) => f.endsWith('.md')).length;
+    expect(result.agentsInstalled).toBe(sourceCount);
+    const files = fs.readdirSync(result.agentsPath).filter((f) => f.endsWith('.toml'));
+    expect(files.length).toBe(sourceCount);
+    for (const f of files) expect(f).toMatch(/^ch-[a-z0-9-]+\.toml$/);
+
+    const verifier = fs.readFileSync(path.join(result.agentsPath, 'ch-verifier.toml'), 'utf-8');
+    expect(verifier.startsWith('# forgen-managed')).toBe(true);
+    expect(verifier).toContain('name = "ch-verifier"');
+    expect(verifier).toMatch(/^description = ".+"$/m);
+    expect(verifier).toContain('sandbox_mode = "read-only"'); // tools 에 Write/Edit 없음
+    expect(verifier).toContain('developer_instructions = """');
+    const executor = fs.readFileSync(path.join(result.agentsPath, 'ch-executor.toml'), 'utf-8');
+    expect(executor).toContain('sandbox_mode = "workspace-write"');
+    expect(executor).toContain('model_reasoning_effort = "medium"'); // sonnet → medium
+    // critic 2026-10-01: disallowedTools: [Write, Edit] 로 선언된 읽기전용 에이전트
+    for (const ro of ['ch-critic', 'ch-architect', 'ch-code-reviewer', 'ch-planner', 'ch-analyst', 'ch-explore', 'ch-git-master']) {
+      expect(fs.readFileSync(path.join(result.agentsPath, `${ro}.toml`), 'utf-8'), ro).toContain('sandbox_mode = "read-only"');
+    }
+    expect(result.multiAgentEnabled).toBe(false); // 빈 config.toml
+  });
+
+  it('D2: disallowedTools / 인라인 배열 / DEL 문자 처리', () => {
+    const ro = renderCodexAgentToml('a.md', '---\nname: ch-a\ndescription: d\ndisallowedTools:\n  - Write\n  - Edit\n---\nbody')!;
+    expect(ro.toml).toContain('sandbox_mode = "read-only"');
+    const inline = renderCodexAgentToml('b.md', '---\nname: ch-b\ndescription: d\ntools: [Read, Bash]\n---\nbody')!;
+    expect(inline.toml).toContain('sandbox_mode = "read-only"');
+    const none = renderCodexAgentToml('c.md', '---\nname: ch-c\ndescription: d\n---\nbody')!;
+    expect(none.toml).toContain('sandbox_mode = "workspace-write"');
+    const del = renderCodexAgentToml('d.md', '---\nname: ch-d\ndescription: x\u007fy\n---\nbody\u007f!')!;
+    expect(del.toml).not.toContain('\u007f');
+  });
+
+  it('D2: dryRun 은 사용자 파일을 제외한 설치 예정 수를 돌려주고 파일을 쓰지 않는다', () => {
+    const agentsDir = path.join(codexHome, 'agents');
+    fs.mkdirSync(agentsDir, { recursive: true });
+    fs.writeFileSync(path.join(agentsDir, 'ch-verifier.toml'), 'name = "ch-verifier"\ndescription = "USER"\ndeveloper_instructions = "x"\n');
+    const r = planCodexInstall({ pkgRoot: PKG_ROOT, codexHome, dryRun: true, agentsMdPath: path.join(codexHome, 'AGENTS.md') });
+    const sourceCount = fs.readdirSync(path.join(PKG_ROOT, 'assets', 'claude', 'agents')).filter((f) => f.endsWith('.md')).length;
+    expect(r.agentsInstalled).toBe(sourceCount - 1);
+    expect(fs.readdirSync(agentsDir)).toEqual(['ch-verifier.toml']);
+  });
+
+  it('D2: isCodexMultiAgentEnabled 는 [features] 섹션 안의 multi_agent 만 본다', () => {
+    expect(isCodexMultiAgentEnabled('')).toBe(false);
+    expect(isCodexMultiAgentEnabled('[features]\nmulti_agent = true\n')).toBe(true);
+    expect(isCodexMultiAgentEnabled('[features]\nmulti_agent = false\n')).toBe(false);
+    expect(isCodexMultiAgentEnabled('[other]\nmulti_agent = true\n[features]\nx = 1\n')).toBe(false);
+    expect(isCodexMultiAgentEnabled('model = "gpt-5.5"\n\n[features]\nmulti_agent = true\n\n[mcp_servers.x]\nurl = "u"\n')).toBe(true);
+  });
+
+  it('D2: 재실행 idempotent — forgen-managed 만 교체, 사용자 toml 보존', () => {
+    const agentsDir = path.join(codexHome, 'agents');
+    fs.mkdirSync(agentsDir, { recursive: true });
+    fs.writeFileSync(path.join(agentsDir, 'ch-mine.toml'), 'name = "ch-mine"\ndescription = "user"\ndeveloper_instructions = "x"\n');
+    fs.writeFileSync(path.join(agentsDir, 'ch-verifier.toml'), 'name = "ch-verifier"\ndescription = "USER OVERRIDE"\ndeveloper_instructions = "x"\n');
+    const r1 = planCodexInstall({ pkgRoot: PKG_ROOT, codexHome, agentsMdPath: path.join(codexHome, 'AGENTS.md') });
+    const sourceCount = fs.readdirSync(path.join(PKG_ROOT, 'assets', 'claude', 'agents')).filter((f) => f.endsWith('.md')).length;
+    expect(r1.agentsInstalled).toBe(sourceCount - 1); // ch-verifier 는 사용자 파일이라 skip
+    expect(fs.readFileSync(path.join(agentsDir, 'ch-verifier.toml'), 'utf-8')).toContain('USER OVERRIDE');
+    expect(fs.existsSync(path.join(agentsDir, 'ch-mine.toml'))).toBe(true);
+    const r2 = planCodexInstall({ pkgRoot: PKG_ROOT, codexHome, agentsMdPath: path.join(codexHome, 'AGENTS.md') });
+    expect(r2.agentsRemoved).toBe(sourceCount - 1);
+    expect(r2.agentsInstalled).toBe(sourceCount - 1);
+    expect(fs.readdirSync(agentsDir).filter((f) => f.endsWith('.toml')).length).toBe(sourceCount + 1);
+  });
+
+  it('D2: renderCodexAgentToml — 삼중따옴표/백슬래시 이스케이프, 공식 스키마 외 키 없음', () => {
+    const raw = '---\nname: ch-x\ndescription: Desc "q"\nmodel: opus\nmaxTurns: 3\ntools:\n  - Read\n---\n\nbody with """ and \\ slash\n';
+    const r = renderCodexAgentToml('x.md', raw)!;
+    expect(r.name).toBe('ch-x');
+    expect(r.toml).toContain('description = "Desc \\"q\\""');
+    expect(r.toml).toContain('model_reasoning_effort = "high"');
+    expect(r.toml).toContain('sandbox_mode = "read-only"');
+    expect(r.toml).toContain('body with \\"\\"\\" and \\\\ slash');
+    const keys = r.toml.split('\n').filter((l) => /^[a-z_]+ = /.test(l)).map((l) => l.split(' = ')[0]);
+    expect(keys.sort()).toEqual(['description', 'developer_instructions', 'model_reasoning_effort', 'name', 'sandbox_mode']);
+    expect(r.toml).not.toContain('maxTurns');
+  });
+
+  it('D3: Codex 스킬에 $ARGUMENTS 가 남지 않고 host note 가 붙는다', () => {
+    const result = planCodexInstall({ pkgRoot: PKG_ROOT, codexHome, agentsMdPath: path.join(codexHome, 'AGENTS.md') });
+    const forgeLoop = fs.readFileSync(path.join(result.skillsPath, 'forge-loop', 'SKILL.md'), 'utf-8');
+    expect(forgeLoop).not.toContain('$ARGUMENTS');
+    expect(forgeLoop).toContain('## Codex host note (forgen-managed)');
+    expect(forgeLoop).toContain('invoke-agent');
+    expect(adaptSkillBodyForCodex('"task": "{$ARGUMENTS}"')).toBe('"task": "{the user\'s request text}"');
+    expect(adaptSkillBodyForCodex('`$ARGUMENTS` 에서 파싱')).not.toContain('$ARGUMENTS');
+  });
+
+  it('D4: auditCodexHookTrust — hooks.state 키 대조 (snake_case event + group/hook index)', () => {
+    expect(codexHookEventKey('PreToolUse')).toBe('pre_tool_use');
+    expect(codexHookEventKey('PostToolUseFailure')).toBe('post_tool_use_failure');
+    const hooksPath = path.join(codexHome, 'hooks.json');
+    const cmd = (n: string) => `node "${PKG_ROOT}/dist/host/codex-adapter.js" "${PKG_ROOT}/dist/hooks/${n}.js"`;
+    const hooksFile = {
+      hooks: {
+        PreToolUse: [{ matcher: '*', hooks: [{ type: 'command', command: cmd('pre-tool-use'), timeout: 3 }, { type: 'command', command: cmd('rate-limiter'), timeout: 2 }] }],
+        Stop: [{ matcher: '*', hooks: [{ type: 'command', command: cmd('stop-guard'), timeout: 10 }] }, { matcher: '*', hooks: [{ type: 'command', command: 'bash /home/u/my-hook.sh', timeout: 1 }] }],
+        // Claude 전용 이벤트 — Codex 가 무시하므로 total 에서 제외되어야 함 (critic 2026-10-01)
+        PostToolUseFailure: [{ matcher: '*', hooks: [{ type: 'command', command: cmd('post-tool-failure'), timeout: 3 }] }],
+      },
+    };
+    const toml = [
+      `[hooks.state."${hooksPath}:pre_tool_use:0:0"]`, 'trusted_hash = "sha256:aa"',
+      `[hooks.state."${hooksPath}:stop:0:0"]`, 'enabled = true', 'trusted_hash = "sha256:bb"',
+      `[hooks.state."${hooksPath}:stop:1:0"]`, 'trusted_hash = "sha256:cc"', // 사용자 훅 — 집계 제외
+    ].join('\n');
+    const audit = auditCodexHookTrust({ hooksPath, configTomlPath: path.join(codexHome, 'config.toml'), pkgRoot: PKG_ROOT, hooksFile, configToml: toml });
+    expect(audit.total).toBe(3);
+    expect(audit.trusted).toBe(2);
+    expect(audit.untrusted).toEqual(['pre_tool_use:0:1']);
+    expect(audit.ignoredByCodex).toEqual(['post_tool_use_failure:0:0']);
+    expect(audit.noStateRecorded).toBe(false);
+
+    const none = auditCodexHookTrust({ hooksPath, configTomlPath: path.join(codexHome, 'config.toml'), pkgRoot: PKG_ROOT, hooksFile, configToml: '' });
+    expect(none.trusted).toBe(0);
+    expect(none.noStateRecorded).toBe(true);
+  });
+
+  it('D4: planCodexInstall 결과에 hookTrust 가 포함되고, 신규 홈에서는 전부 untrusted', () => {
+    const result = planCodexInstall({ pkgRoot: PKG_ROOT, codexHome, agentsMdPath: path.join(codexHome, 'AGENTS.md') });
+    // PostToolUseFailure 1건은 Codex 미지원 → total 에서 제외
+    expect(result.hookTrust.total + result.hookTrust.ignoredByCodex.length).toBe(result.hooksCount);
+    expect(result.hookTrust.ignoredByCodex).toEqual(['post_tool_use_failure:0:0']);
+    expect(result.hookTrust.trusted).toBe(0);
+    expect(result.hookTrust.noStateRecorded).toBe(true);
+  });
+});

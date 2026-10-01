@@ -94,3 +94,19 @@ describe('hook-timing', () => {
     expect(remaining.length).toBeLessThanOrEqual(500);
   });
 });
+
+describe('hook-timing rt field (ADR-014 D5)', () => {
+  it('FORGEN_RUNTIME=codex 면 rt:"codex", 아니면 "claude"', () => {
+    const prev = process.env.FORGEN_RUNTIME;
+    try {
+      process.env.FORGEN_RUNTIME = 'codex';
+      recordHookTiming('x', 1, 'PreToolUse');
+      delete process.env.FORGEN_RUNTIME;
+      recordHookTiming('y', 2, 'PreToolUse');
+      const lines = fs.readFileSync(path.join(tmpDir, 'hook-timing.jsonl'), 'utf-8').trim().split('\n').map((l) => JSON.parse(l));
+      expect(lines.map((l) => l.rt)).toEqual(['codex', 'claude']);
+    } finally {
+      if (prev === undefined) delete process.env.FORGEN_RUNTIME; else process.env.FORGEN_RUNTIME = prev;
+    }
+  });
+});

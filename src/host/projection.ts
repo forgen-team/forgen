@@ -24,7 +24,9 @@ interface DecisionView {
   permissionDecision?: string;
 }
 
-function parseDecision(raw: unknown): DecisionView {
+// parseDecision 은 구 사영(결정 → continue:false 변환) 의 잔재. ADR-015 G1 이후 Codex 사영은
+// 호스트 스키마를 보존하므로 사용하지 않는다. 다른 host binding 이 참고할 수 있어 export 만 유지.
+export function parseDecision(raw: unknown): DecisionView {
   if (typeof raw === 'boolean') return { continueFlag: raw };
 
   if (typeof raw === 'string') {
@@ -69,59 +71,79 @@ function parseDecision(raw: unknown): DecisionView {
 }
 
 /**
- * Codex 출력 → Claude HookEventOutput 정식 사영.
+ * Codex 출력 정규화 (ADR-015 G1, 2026-10-01 재설계).
  *
- * spec §18.2 fact #3 에 따라 PreToolUse 의 *이중* decision 필드 중 어댑터는
- * `hookSpecificOutput.permissionDecision` 을 우선한다. 본 함수가 그 규약을 강제.
+ * 이 함수의 출력은 *Codex 가 읽는다* (codex-adapter 가 stdout 으로 내보냄). Codex 의 hook 출력
+ * 스키마는 Claude 와 동일하게 **top-level `decision`/`reason`** (Stop/SubagentStop/UserPromptSubmit/
+ * PostToolUse) 과 `hookSpecificOutput.permissionDecision` (PreToolUse) 을 읽고, `continue:false` 는
+ * "continuation" 이 아니라 "처리 중단" 이다 (learn.chatgpt.com/docs/hooks; binary: `hook returned
+ * decision:block without a non-empty reason`, `PreToolUse hook returned unsupported continue:false`).
+ *
+ * 이전 구현은 `decision:block` 을 `continue:false + hookSpecificOutput.permissionDecision:"block"` 으로
+ * 바꿔 **Stop block 이 Codex 에 전혀 전달되지 않았다** (reason 유실 → 자기검증 continuation 0건).
+ * gap-codex 분석(fable) 에서 발견, dist 실행으로 재현.
+ *
+ * 규칙:
+ *   1. 객체가 아니면 fail-open `{ continue: true }`.
+ *   2. 객체면 top-level 필드(`continue`/`decision`/`reason`/`stopReason`/`systemMessage`/
+ *      `suppressOutput`/`hookSpecificOutput`) 를 **그대로 보존**.
+ *   3. 이벤트명을 알면 `hookSpecificOutput.hookEventName` 을 항상 보강 (구 사영과 동일).
+ *   4. `decision:"block"` 인데 `reason` 이 비면 `systemMessage` → 고정 문구 순으로 보강
+ *      (Codex 가 reason 없는 block 을 거부).
+ *   5. PreToolUse 에서 `permissionDecision` 이 있으면 `continue:false` 를 제거 (Codex 미지원 경고;
+ *      차단은 permissionDecision 이 이미 표현).
+ *   6. legacy `approved:false` (구 codex 형) → `hookSpecificOutput.permissionDecision:"deny"`.
  */
 export const projectCodexToClaude: ProjectToClaudeEvent = (raw, input) => {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return { continue: true };
+  const payload = raw as Record<string, unknown>;
   const result: HookEventOutput = { continue: true };
-  const decision = parseDecision(raw);
-  result.continue = decision.continueFlag;
 
-  if (typeof raw === 'object' && raw !== null) {
-    const payload = raw as Record<string, unknown>;
-    if (typeof payload.continue === 'boolean') result.continue = payload.continue;
-    if (typeof payload.systemMessage === 'string') result.systemMessage = payload.systemMessage;
-    if (typeof payload.suppressOutput === 'boolean') result.suppressOutput = payload.suppressOutput;
-    if (typeof payload.hookSpecificOutput === 'object' && payload.hookSpecificOutput !== null) {
-      result.hookSpecificOutput = { ...(payload.hookSpecificOutput as Record<string, unknown>) };
-    }
-
-    // top-level decision (Codex 의 PreToolUse 이중 decision 중 legacy 측 또는 Stop/Post 의 단일 측)
-    // 이 있고, hookSpecificOutput.permissionDecision 이 비었을 때만 보존.
-    if (
-      typeof (payload as { decision?: unknown }).decision === 'string' &&
-      !(result.hookSpecificOutput && 'permissionDecision' in result.hookSpecificOutput)
-    ) {
-      result.hookSpecificOutput = {
-        ...(result.hookSpecificOutput ?? {}),
-        permissionDecision: (payload as { decision: string }).decision,
-      };
-    }
+  if (typeof payload.continue === 'boolean') result.continue = payload.continue;
+  for (const k of ['decision', 'reason', 'stopReason', 'systemMessage', 'suppressOutput'] as const) {
+    const v = payload[k];
+    if (v !== undefined && v !== null) (result as Record<string, unknown>)[k] = v;
+  }
+  if (typeof payload.hookSpecificOutput === 'object' && payload.hookSpecificOutput !== null) {
+    result.hookSpecificOutput = { ...(payload.hookSpecificOutput as Record<string, unknown>) };
   }
 
-  const eventName =
-    result.hookSpecificOutput?.hookEventName ?? input.hookEventName ?? input.event;
-  if (eventName) {
+  // 6. legacy approved boolean
+  if (typeof payload.approved === 'boolean' && !result.hookSpecificOutput?.permissionDecision) {
     result.hookSpecificOutput = {
-      hookEventName: eventName,
       ...(result.hookSpecificOutput ?? {}),
+      permissionDecision: payload.approved
+        ? (typeof payload.decision === 'string' ? payload.decision : 'allow')
+        : 'deny',
     };
+    if (!payload.approved) result.continue = false;
   }
 
-  if (!result.continue && !result.hookSpecificOutput?.permissionDecision) {
-    if (decision.permissionDecision) {
-      result.hookSpecificOutput = {
-        ...(result.hookSpecificOutput ?? {}),
-        permissionDecision: decision.permissionDecision,
-      };
-    } else {
-      result.hookSpecificOutput = {
-        ...(result.hookSpecificOutput ?? {}),
-        permissionDecision: 'deny',
-      };
+  // 3. hookEventName 보강
+  const eventName =
+    (result.hookSpecificOutput?.hookEventName as string | undefined)
+    ?? input.hookEventName
+    ?? (input as { hook_event_name?: string }).hook_event_name // 실 stdin 은 snake_case (critic #7)
+    ?? input.event;
+  if (eventName) {
+    // 이벤트명을 알면 항상 달아 둔다 (구 사영과 동일; Codex 실세션에서 approve 출력에도 문제 없음 확인).
+    result.hookSpecificOutput = { hookEventName: eventName, ...(result.hookSpecificOutput ?? {}) };
+  }
+
+  // 4. block 은 non-empty reason 필수
+  if (typeof result.decision === 'string' && result.decision.toLowerCase() === 'block') {
+    const reason = typeof result.reason === 'string' ? result.reason.trim() : '';
+    if (!reason) {
+      result.reason = typeof result.systemMessage === 'string' && result.systemMessage.trim()
+        ? result.systemMessage
+        : '[forgen] hook blocked this step; re-check the rule that fired before continuing.';
     }
+  }
+
+  // 5. PreToolUse: continue:false 는 Codex 미지원 — permissionDecision 이 차단을 표현
+  const pd = result.hookSpecificOutput?.permissionDecision;
+  if (eventName === 'PreToolUse' && typeof pd === 'string' && result.continue === false) {
+    result.continue = true;
   }
 
   return result;

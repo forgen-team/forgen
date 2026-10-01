@@ -149,6 +149,15 @@ export function renderResult(result: OrchestratorResult, dryRun: boolean): strin
     lines.push(`    CODEX_HOME: ${result.codex.codexHome}`);
     lines.push(`    hooks.json: ${result.codex.hooksCount} forgen hooks (preserved user: ${result.codex.preservedUserHookCount})`);
     lines.push(`    MCP: ${result.codex.mcpAlreadyPresent ? 'already present' : (result.codex.mcpRegistered ? 'registered' : 'skipped')}`);
+    lines.push(`    skills: ${result.codex.skillsInstalled} commands + ${result.codex.devGuideSkillsInstalled} dev-guide → ${result.codex.skillsPath}`);
+    lines.push(`    agents: ${result.codex.agentsInstalled} ch-*.toml → ${result.codex.agentsPath}${result.codex.multiAgentEnabled ? '' : '  (⚠ config.toml 에 [features] multi_agent = true 가 없어 Codex 가 spawn 하지 못함 — 추가 권장)'}`);
+    lines.push(`    rules: injected per session via SessionStart hook (<forgen-rules host="codex">)`);
+    const t = result.codex.hookTrust;
+    if (t.total > 0 && t.trusted === t.total) {
+      lines.push(`    hook trust: ${t.trusted}/${t.total} trusted${t.ignoredByCodex.length ? ` (+${t.ignoredByCodex.length} Claude-only event ignored by Codex)` : ''}`);
+    } else {
+      lines.push(`    hook trust: ${t.trusted}/${t.total} trusted — ${t.untrusted.length} hook(s) need review. Codex skips untrusted hooks: run \`/hooks\` inside codex and trust the forgen entries.`);
+    }
   }
   if (result.opencode) {
     lines.push('');

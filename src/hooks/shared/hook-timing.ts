@@ -19,9 +19,13 @@ const MAX_LINES = 500;
 const ROTATE_SIZE_BYTES = MAX_LINES * 80 * 2; // ~80KB
 
 export function recordHookTiming(hookName: string, durationMs: number, event: string): void {
+  // ADR-015 C-G1 (critic #2): 중첩 추출 run 의 빠른 early-approve 타이밍이 p95 를 왜곡하지 않도록 기록 생략.
+  if (process.env.FORGEN_NESTED_RUN === '1') return;
   try {
     fs.mkdirSync(STATE_DIR, { recursive: true });
-    const entry = JSON.stringify({ hook: hookName, ms: durationMs, event, at: Date.now() });
+    // ADR-014 D5 — host 별 발화 구분 (codex-adapter 가 FORGEN_RUNTIME=codex 주입).
+    const rt = process.env.FORGEN_RUNTIME === 'codex' ? 'codex' : 'claude';
+    const entry = JSON.stringify({ hook: hookName, ms: durationMs, event, at: Date.now(), rt });
     fs.appendFileSync(TIMING_LOG, `${entry}\n`);
 
     // Rotate if too large — size-gated (statSync only, skip read/write 대부분의 호출)
