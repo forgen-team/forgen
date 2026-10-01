@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.4] — 2026-10-01 — Codex 훅 출력 스키마 준수 (0.5.3 의 Stop 훅 Failed 회귀 수정)
+
+### Fixed — Codex 가 forgen Stop 훅 출력을 매 턴 "Failed" 로 버리던 회귀
+- 0.5.3 의 사영(`projectCodexToClaude`)이 모든 출력에 `hookSpecificOutput.hookEventName` 을 붙였는데,
+  Codex 0.153.4 의 Stop/SubagentStop 출력 스키마는 `additionalProperties:false` 이고 `hookSpecificOutput`
+  을 허용하지 않는다 → `parse_stop` 실패 → "hook returned invalid stop hook JSON output" → **Failed**
+  (실환경 `codex exec` 에서 `hook: Stop Failed` ×2 재현; 훅 자체는 exit 0 + 정상 JSON). 0.5.3 격리 검증은
+  당시 사영이 stdin 의 `hook_event_name` 을 못 읽어 우연히 키를 안 붙인 상태라 통과했었다.
+- 사영을 **이벤트별 allowlist** 로 재작성 (`CODEX_OUTPUT_SCHEMA`): universal 키 / `decision`·`reason` 허용
+  이벤트 / `hookSpecificOutput` 허용 이벤트와 하위 키를 Codex 스키마 그대로 따르고, 절대 새 키를 만들지
+  않는다. PostToolUse 에 PreToolUse 형 deny 가 오면 Codex 의 PostToolUse block 형으로 번역.
+- 회귀 방지: `tests/fixtures/codex-hook-schemas/` 에 rust-v0.153.4 출력 스키마 11종을 vendoring 하고,
+  `tests/host/codex-output-schema.test.ts` 가 forgen 의 모든 응답 helper × 이벤트 조합을 사영 후 스키마로
+  검증한다.
+
+### Verified
+- 격리 Codex 세션: Stop 훅 3종(forgen 2 + 서드파티 1) 전부 `Completed`; `rm -rf` 응답 → `Stop Blocked` +
+  continuation 유지. 실환경 재설치 후 동일 확인 (아래 Install 절).
+- vitest 전체, self-gate static/runtime/release.
+
+
 ## [0.5.3] — 2026-10-01 — Codex 동등화 2차 (룰 주입·에이전트·훅 신뢰) + Stop block 사영 결함 수정 + 최신 호스트 갭 1차
 
 오너가 Codex 를 일상 호스트로 전환하면서 "Claude 와 동일한 forgen 경험" 을 코드·실세션 대조로

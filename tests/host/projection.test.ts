@@ -80,10 +80,9 @@ describe('projectCodexToClaude — Codex hook 출력 → Claude HookEventOutput'
     // forgen blockStop() 의 실제 출력 형태
     const raw = { continue: true, decision: 'block', reason: 'tests not run', systemMessage: '[forgen:stop-guard]' };
     const out = projectCodexToClaude(raw, { hookEventName: 'Stop' });
-    expect(out).toMatchObject({ continue: true, decision: 'block', reason: 'tests not run', systemMessage: '[forgen:stop-guard]' });
-    expect(out.hookSpecificOutput?.hookEventName).toBe('Stop');
-    // 구 사영의 유실 형태가 아니어야 한다
-    expect(out.hookSpecificOutput?.permissionDecision).toBeUndefined();
+    expect(out).toEqual({ continue: true, decision: 'block', reason: 'tests not run', systemMessage: '[forgen:stop-guard]' });
+    // Codex 0.153.4 Stop 출력 스키마는 hookSpecificOutput 을 허용하지 않는다 (additionalProperties:false)
+    expect(out.hookSpecificOutput).toBeUndefined();
   });
 
   it('Stop block 인데 reason 이 비면 systemMessage → 고정 문구로 보강 (Codex 가 reason 없는 block 거부)', () => {
@@ -94,13 +93,12 @@ describe('projectCodexToClaude — Codex hook 출력 → Claude HookEventOutput'
     expect((b.reason as string).length).toBeGreaterThan(0);
   });
 
-  it('approved boolean (legacy codex shape) → permissionDecision 보존', () => {
-    const denied = projectCodexToClaude({ approved: false }, {});
-    expect(denied.continue).toBe(false);
+  it('approved boolean (legacy codex shape, PreToolUse) → permissionDecision 로 번역', () => {
+    const denied = projectCodexToClaude({ approved: false }, { hookEventName: 'PreToolUse' });
+    expect(denied.continue).toBe(true); // PreToolUse 는 continue:false 미지원
     expect(denied.hookSpecificOutput?.permissionDecision).toBe('deny');
 
-    const approved = projectCodexToClaude({ approved: true, decision: 'allow' }, {});
-    expect(approved.continue).toBe(true);
+    const approved = projectCodexToClaude({ approved: true }, { hookEventName: 'PreToolUse' });
     expect(approved.hookSpecificOutput?.permissionDecision).toBe('allow');
   });
 
@@ -108,7 +106,8 @@ describe('projectCodexToClaude — Codex hook 출력 → Claude HookEventOutput'
     expect(projectCodexToClaude(null, {})).toEqual({ continue: true });
     expect(projectCodexToClaude(42, {})).toEqual({ continue: true });
     expect(projectCodexToClaude('block', {})).toEqual({ continue: true });
-    expect(projectCodexToClaude({ random: 'thing' }, {})).toEqual({ continue: true });
+    // 이벤트명을 모르면 pass-through + continue 기본값 (실 stdin 은 항상 hook_event_name 을 준다)
+    expect(projectCodexToClaude({ random: 'thing' }, {})).toEqual({ random: 'thing', continue: true });
   });
 
   it('continue:false 는 그대로 보존 (Codex: 처리 중단) — 더 이상 deny 로 변조하지 않음', () => {
@@ -118,25 +117,46 @@ describe('projectCodexToClaude — Codex hook 출력 → Claude HookEventOutput'
     expect(out.hookSpecificOutput?.permissionDecision).toBeUndefined();
   });
 
-  it('hookEventName 우선순위: hookSpecificOutput → input.hookEventName → input.event', () => {
-    const fromOutput = projectCodexToClaude(
-      { hookSpecificOutput: { hookEventName: 'PreToolUse' } },
-      { hookEventName: 'Stop' },
+  it('hookSpecificOutput 은 절대 새로 만들지 않고, 있으면 hookEventName 을 입력 이벤트로 고정한다', () => {
+    const empty = projectCodexToClaude({}, { hookEventName: 'SessionStart' });
+    expect(empty).toEqual({ continue: true });
+
+    const withCtx = projectCodexToClaude(
+      { hookSpecificOutput: { hookEventName: 'WrongName', additionalContext: 'x', bogus: 1 } },
+      { hook_event_name: 'SessionStart' } as never,
     );
-    expect(fromOutput.hookSpecificOutput?.hookEventName).toBe('PreToolUse');
+    expect(withCtx.hookSpecificOutput).toEqual({ hookEventName: 'SessionStart', additionalContext: 'x' });
 
-    const fromInput = projectCodexToClaude({}, { hookEventName: 'SessionStart' });
-    expect(fromInput.hookSpecificOutput?.hookEventName).toBe('SessionStart');
+    // Stop/PreCompact 는 hookSpecificOutput 자체 불허 → 통째로 제거
+    const onStop = projectCodexToClaude({ continue: true, hookSpecificOutput: { hookEventName: 'Stop' } }, { hookEventName: 'Stop' });
+    expect(onStop).toEqual({ continue: true });
+    const onCompact = projectCodexToClaude({ continue: true, systemMessage: 's', hookSpecificOutput: { additionalContext: 'c' } }, { hookEventName: 'PreCompact' });
+    expect(onCompact).toEqual({ continue: true, systemMessage: 's' });
+  });
 
-    const fromEventField = projectCodexToClaude({}, { event: 'Stop' });
-    expect(fromEventField.hookSpecificOutput?.hookEventName).toBe('Stop');
+  it('PostToolUse: PreToolUse 형 deny 를 Codex PostToolUse block 형으로 번역', () => {
+    const out = projectCodexToClaude(
+      { continue: false, hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: 'secret leaked' } },
+      { hookEventName: 'PostToolUse' },
+    );
+    expect(out.decision).toBe('block');
+    expect(out.reason).toBe('secret leaked');
+    expect(out.hookSpecificOutput).toEqual({ hookEventName: 'PostToolUse' });
+  });
+
+  it('이벤트명을 모르면 pass-through (키를 깎지 않는다)', () => {
+    const raw = { continue: true, decision: 'block', reason: 'r', hookSpecificOutput: { hookEventName: 'Mystery' }, extra: 1 };
+    expect(projectCodexToClaude(raw, {})).toEqual(raw);
+    // 입력에 이벤트명이 없어도 출력의 hookEventName 이 아는 이벤트면 그 정책을 쓴다
+    const stopHinted = { continue: true, decision: 'block', reason: 'r', hookSpecificOutput: { hookEventName: 'Stop' } };
+    expect(projectCodexToClaude(stopHinted, {})).toEqual({ continue: true, decision: 'block', reason: 'r' });
   });
 });
 
 describe('projectClaudeToClaude — identity', () => {
-  it('Claude 형 객체는 그대로 통과', () => {
+  it('Claude 형 Stop block 은 decision/reason 이 보존되고 (Codex 스키마상) hookSpecificOutput 만 제거된다', () => {
     const input = { continue: true, decision: 'block', reason: 'r', hookSpecificOutput: { hookEventName: 'Stop' } };
-    expect(projectClaudeToClaude(input, {})).toEqual(input);
+    expect(projectClaudeToClaude(input, { hookEventName: 'Stop' })).toEqual({ continue: true, decision: 'block', reason: 'r' });
   });
 
   it('비객체 입력 → fail-open', () => {
