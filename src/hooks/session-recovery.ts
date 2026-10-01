@@ -172,10 +172,21 @@ async function main(): Promise<void> {
   // 이전엔 prepareHarness (fgx/forgen wrapper) 만 호출 → 직접 claude/codex 호출 시
   // ~/.forgen/state/sessions/<id>.json 미생성. SessionStart hook 에서도 호출하여
   // 양쪽 진입 경로 모두에서 session state 박제.
+  let v1RenderedRules: string | null = null;
   try {
     const { bootstrapV1Session } = await import('../core/v1-bootstrap.js');
-    bootstrapV1Session();
+    v1RenderedRules = bootstrapV1Session().renderedRules;
   } catch (e) { log.debug('v1-bootstrap SessionStart 호출 실패 (fail-open)', e); }
+
+  // ADR-014 D1 — Codex 에는 .claude/rules/ 로드 표면이 없으므로 같은 룰을 SessionStart
+  // additionalContext 로 주입한다 (Claude 세션은 파일 경로로 이미 로드되므로 skip).
+  const codexRulesBlock: string | null = await (async () => {
+    try {
+      const { isCodexRuntime, buildCodexRulesContext } = await import('../host/codex-rules-context.js');
+      if (!isCodexRuntime()) return null;
+      return await buildCodexRulesContext(sessionContext.cwd, v1RenderedRules);
+    } catch (e) { log.debug('codex rules inject 실패 (fail-open)', e); return null; }
+  })();
 
   if (!fs.existsSync(STATE_DIR)) {
     console.log(approve());
@@ -442,6 +453,8 @@ async function main(): Promise<void> {
       writeJSON(lastLifecyclePath, { lastRun: new Date().toISOString() });
     }
   } catch (e) { log.debug('lifecycle check 실패', e); }
+
+  if (codexRulesBlock) recoveryMessages.unshift(codexRulesBlock);
 
   if (recoveryMessages.length > 0) {
     console.log(approveWithContext(recoveryMessages.join('\n\n'), 'SessionStart'));

@@ -151,6 +151,7 @@ forgen install both          # 3지선다 인터랙티브: claude / codex / both
 # 또는 비대화형:
 forgen install claude
 forgen install codex
+# Codex 만: codex 안에서 `/hooks` 로 forgen 훅을 한 번 승인 — Codex 는 미승인 훅을 skip (forgen doctor 의 [Codex Hooks] 로 확인)
 
 # 3. 첫 실행 — 4문항 온보딩 (영어/한국어 선택)
 forgen                        # 기본: Claude

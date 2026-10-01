@@ -16,6 +16,11 @@ import { parseCodexJsonlOutput } from './codex-output-parser.js';
 import type { HostId } from '../core/trust-layer-intent.js';
 
 export interface ExecHostOptions {
+  /**
+   * ADR-015 C-G1: forgen 훅을 끄고(FORGEN_NESTED_RUN=1) 세션을 남기지 않는 "추출용 중첩 실행" 모드.
+   * 기본 true. 위임 에이전트(invoke-agent)처럼 훅이 살아 있어야 하는 호출은 false.
+   */
+  nestedRun?: boolean;
   /** prompt — `-p`/`exec` 의 본문 */
   prompt: string;
   /** model 힌트 (claude: --model haiku, codex: 무시 — codex CLI 가 default 사용) */
@@ -60,6 +65,15 @@ export interface ExecHostResult {
  * 보장 (사용자 환경 미오염). compound-extractor / auto-compound-runner 같은
  * 백그라운드 학습 호출에 적합.
  */
+/** ADR-015 C-G1 — forgen 이 띄우는 중첩 claude 실행의 공통 표식. hook-config.isHookEnabled 가 읽는다. */
+export const NESTED_RUN_ENV: Readonly<Record<string, string>> = { FORGEN_NESTED_RUN: '1' };
+/** `--no-session-persistence` 는 --print 전용 — 추출 run 의 transcript 를 디스크에 남기지 않는다. */
+export const NESTED_RUN_CLAUDE_ARGS: ReadonlyArray<string> = ['--no-session-persistence'];
+
+export function withNestedRunClaudeArgs(args: string[]): string[] {
+  return args.includes('--no-session-persistence') ? args : [...args, ...NESTED_RUN_CLAUDE_ARGS];
+}
+
 export function execHost(opts: ExecHostOptions): ExecHostResult {
   const resolved = resolveDefaultHost(opts.host);
   // 'ask' 는 자동 호출 컨텍스트라 명시 fallback. 그러나 Codex-only 사용자가 'ask'
@@ -82,9 +96,13 @@ export function execHost(opts: ExecHostOptions): ExecHostResult {
   };
 
   if (host === 'claude') {
-    const args = ['-p', opts.prompt];
+    // ADR-015 C-G1: 중첩 실행 표식 + 세션 비영속 (추출 run 의 transcript 가 다음 SessionStart 의
+    // "이전 세션 auto-compound" 후보로 잡히거나 forgen 훅이 재귀 발화하지 않도록).
+    const nested = opts.nestedRun ?? true;
+    const args = ['-p', opts.prompt, ...(nested ? NESTED_RUN_CLAUDE_ARGS : [])];
     if (opts.model) args.push('--model', opts.model);
-    const stdout = execFileSync('claude', args, baseOpts) as unknown as string;
+    const env = nested ? { ...(baseOpts.env ?? {}), ...NESTED_RUN_ENV } : baseOpts.env;
+    const stdout = execFileSync('claude', args, { ...baseOpts, env }) as unknown as string;
     return { message: stdout.toString().trim(), host: 'claude', usage: null };
   }
 

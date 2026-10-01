@@ -27,7 +27,8 @@ export type HookEventType =
   | 'SubagentStart'
   | 'SubagentStop'
   | 'PreCompact'
-  | 'PermissionRequest';
+  | 'PermissionRequest'
+  | 'SessionEnd';
 
 export interface HookEntry {
   /** 고유 이름 (hook-config.json에서 사용) */
@@ -44,6 +45,11 @@ export interface HookEntry {
   timeout: number;
   /** compound 피드백 루프에 필수인 훅인지 */
   compoundCritical: boolean;
+  /**
+   * ADR-015: 이 훅을 등록할 host 목록. 생략 시 모든 host. Codex 의 hooks.json 은 바이트 동일성이
+   * 훅 신뢰(trust) 와 묶여 있으므로, Claude 에만 추가하는 이벤트는 `["claude"]` 로 한정한다.
+   */
+  hosts?: Array<'claude' | 'codex' | 'opencode'>;
 }
 
 /**

@@ -55,7 +55,10 @@ function execClaudeRetry(args: string[], opts: ExecFileSyncOptions): string {
     const MAX_ATTEMPTS = 2;
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
       try {
-        return execFileSync('claude', args, opts) as unknown as string;
+        return execFileSync('claude', mod.withNestedRunClaudeArgs(args), {
+          ...opts,
+          env: { ...process.env, ...(opts.env ?? {}), ...mod.NESTED_RUN_ENV },
+        }) as unknown as string;
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         const match = msg.match(TRANSIENT);
@@ -137,7 +140,10 @@ export async function execClaudeRetryAsync(args: string[], opts: ExecFileOptions
     const MAX_ATTEMPTS = 2;
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
       try {
-        const { stdout } = await execFileAsync('claude', args, opts);
+        const { stdout } = await execFileAsync('claude', mod.withNestedRunClaudeArgs(args), {
+          ...opts,
+          env: { ...process.env, ...(opts.env ?? {}), ...mod.NESTED_RUN_ENV },
+        });
         return typeof stdout === 'string' ? stdout : stdout.toString();
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);

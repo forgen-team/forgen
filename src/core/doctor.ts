@@ -65,6 +65,29 @@ function relativeTime(isoString: string): string {
   return `${diffDays}d ago`;
 }
 
+/** ADR-014 D4 — [Codex Hooks] 섹션: hooks.json forgen 엔트리의 Codex trust 기록 대조 */
+async function renderCodexHookTrust(): Promise<void> {
+  try {
+    const codexHome = process.env.CODEX_HOME ?? path.join(os.homedir(), '.codex');
+    const hooksPath = path.join(codexHome, 'hooks.json');
+    if (!fs.existsSync(hooksPath)) return; // Codex 미설치/미등록 — 섹션 생략
+    const { auditCodexHookTrust } = await import('../host/install-codex.js');
+    // pkgRoot: dist/core/doctor.js → 두 단계 위. 어차피 FORGEN_HOOK_SCRIPT_MARKER fallback 이 있어 정확도 비의존.
+    const pkgRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+    const t = auditCodexHookTrust({ hooksPath, configTomlPath: path.join(codexHome, 'config.toml'), pkgRoot });
+    console.log('  [Codex Hooks]');
+    if (t.total === 0) {
+      console.log('  △ hooks.json 에 forgen hook 없음 — forgen install codex');
+    } else if (t.trusted === t.total) {
+      console.log(`  ✓ ${t.trusted}/${t.total} forgen hooks trusted by Codex`);
+    } else if (t.noStateRecorded) {
+      console.log(`  △ ${t.total} forgen hooks registered, Codex trust 기록 없음 — codex 안에서 /hooks 로 승인 (미승인 훅은 skip 됨)`);
+    } else {
+      console.log(`  ✗ ${t.untrusted.length}/${t.total} forgen hooks untrusted (${t.untrusted.slice(0, 4).join(', ')}${t.untrusted.length > 4 ? ', …' : ''}) — codex 안에서 /hooks 로 승인`);
+    }
+  } catch { /* fail-open */ }
+}
+
 /** [Codex Parity] 섹션 렌더링 — ~/.forgen/state/parity-result.json 신선도 검사 */
 function renderCodexParity(): void {
   console.log('  [Codex Parity]');
@@ -582,6 +605,9 @@ export async function runDoctor(opts: DoctorOptions = {}): Promise<void> {
     console.log('  Unable to read host evidence data.');
   }
   console.log();
+
+  // [Codex Hooks] — ADR-014 D4 trust 감사
+  await renderCodexHookTrust();
 
   // [Codex Parity] — parity-result.json 신선도 검사 (v0.4.2 패턴 확장)
   renderCodexParity();

@@ -167,6 +167,11 @@ export function loadHookConfig(hookName: string): Record<string, unknown> | null
  *   4. 기본값 true (하위호환)
  */
 export function isHookEnabled(hookName: string): boolean {
+  // -1) ADR-015 C-G1: forgen 자신이 띄운 중첩 `claude -p` 추출 실행 안에서는 모든 훅을 끈다.
+  //     (--bare 는 OAuth 를 끊어 쓸 수 없음.) 이전엔 추출 run 마다 22개 훅이 재귀 발화해
+  //     hook-timing / sessions / usage-telemetry 를 오염시키고 auto-compound 연쇄를 유발했다.
+  if (process.env.FORGEN_NESTED_RUN === '1') return false;
+
   // 0) compound-core 가드레일 — config 어떤 경로로도 끌 수 없음
   if (PROTECTED_HOOKS.has(hookName)) return true;
 

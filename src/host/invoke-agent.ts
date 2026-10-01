@@ -122,6 +122,7 @@ export async function invokeAgent(opts: InvokeAgentOptions): Promise<InvokeAgent
     // Phase 3 critic fix: default timeout 60s → 90s (codex sandbox startup +
     // 인증 + LLM 응답까지 60s 부족할 수 있음. tail latency 안전마진).
     const result = execHost({
+    nestedRun: false, // 위임 에이전트는 forgen 훅(안전 tier 포함)이 살아 있어야 한다 (ADR-015 critic #3)
       prompt,
       timeout: opts.timeoutMs ?? 90000,
       host: opts.host,

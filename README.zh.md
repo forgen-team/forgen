@@ -191,6 +191,7 @@ forgen install both          # 三选交互: claude / codex / both
 # 或非交互:
 forgen install claude
 forgen install codex
+# 仅 Codex: 在 codex 内用 `/hooks` 信任一次 forgen 钩子 — Codex 会跳过未信任的钩子 (用 forgen doctor 的 [Codex Hooks] 查看)
 
 # 3. 首次运行 — 4题引导问卷 (英语/韩语选择)
 forgen                        # 默认: Claude

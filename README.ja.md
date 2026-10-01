@@ -191,6 +191,7 @@ forgen install both          # 3択インタラクティブ: claude / codex / bo
 # または非対話:
 forgen install claude
 forgen install codex
+# Codex のみ: codex 内で `/hooks` から forgen フックを一度承認 — Codex は未承認フックをスキップ (forgen doctor の [Codex Hooks] で確認)
 
 # 3. 初回実行 — 4問オンボーディング (英語/韓国語選択)
 forgen                        # デフォルト: Claude

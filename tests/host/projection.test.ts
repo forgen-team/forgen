@@ -26,7 +26,7 @@ describe('projectCodexToClaude — Codex hook 출력 → Claude HookEventOutput'
     expect(out.hookSpecificOutput?.additionalContext).toContain('forge-loop-state');
   });
 
-  it('UserPromptSubmit decision="block" + additionalContext (fact 2)', () => {
+  it('UserPromptSubmit decision="block" + reason + additionalContext 보존 (fact 2, ADR-015 G1)', () => {
     const raw = {
       decision: 'block',
       reason: 'self-completion suspect',
@@ -36,8 +36,9 @@ describe('projectCodexToClaude — Codex hook 출력 → Claude HookEventOutput'
       },
     };
     const out = projectCodexToClaude(raw, { hookEventName: 'UserPromptSubmit' });
-    expect(out.continue).toBe(false);
-    expect(out.hookSpecificOutput?.permissionDecision).toBe('block');
+    expect(out.continue).toBe(true); // continue:false 는 Codex 에선 "처리 중단" — block 과 혼동 금지
+    expect(out.decision).toBe('block');
+    expect(out.reason).toBe('self-completion suspect');
     expect(out.hookSpecificOutput?.additionalContext).toContain('retract-claim');
   });
 
@@ -54,24 +55,43 @@ describe('projectCodexToClaude — Codex hook 출력 → Claude HookEventOutput'
     expect(out.hookSpecificOutput?.permissionDecisionReason).toBe('rm -rf / matched');
   });
 
-  it('PreToolUse 이중 decision: top-level 보다 hookSpecificOutput.permissionDecision 우선 (spec §18.6)', () => {
+  it('PreToolUse deny: forgen deny() 의 continue:false 는 제거 (Codex "unsupported continue:false")', () => {
     const raw = {
-      decision: 'block', // top-level legacy
-      hookSpecificOutput: {
-        hookEventName: 'PreToolUse',
-        permissionDecision: 'deny', // modern, 우선
-      },
+      continue: false,
+      hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: 'no' },
     };
     const out = projectCodexToClaude(raw, { hookEventName: 'PreToolUse' });
-    // permissionDecision 은 hookSpecificOutput 의 값 유지
+    expect(out.continue).toBe(true);
     expect(out.hookSpecificOutput?.permissionDecision).toBe('deny');
   });
 
-  it('Stop decision=block + reason 자동 continuation (fact 5)', () => {
-    const raw = { decision: 'block', reason: 'tests not run' };
+  it('PreToolUse 이중 decision: top-level 과 hookSpecificOutput 둘 다 보존 (Codex 가 후자를 우선)', () => {
+    const raw = {
+      decision: 'block',
+      reason: 'legacy',
+      hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny' },
+    };
+    const out = projectCodexToClaude(raw, { hookEventName: 'PreToolUse' });
+    expect(out.hookSpecificOutput?.permissionDecision).toBe('deny');
+    expect(out.decision).toBe('block');
+  });
+
+  it('Stop decision=block + reason 이 top-level 로 그대로 Codex 에 도달 (fact 5, ADR-015 G1 결함 수정)', () => {
+    // forgen blockStop() 의 실제 출력 형태
+    const raw = { continue: true, decision: 'block', reason: 'tests not run', systemMessage: '[forgen:stop-guard]' };
     const out = projectCodexToClaude(raw, { hookEventName: 'Stop' });
-    expect(out.continue).toBe(false);
-    expect(out.hookSpecificOutput?.permissionDecision).toBe('block');
+    expect(out).toMatchObject({ continue: true, decision: 'block', reason: 'tests not run', systemMessage: '[forgen:stop-guard]' });
+    expect(out.hookSpecificOutput?.hookEventName).toBe('Stop');
+    // 구 사영의 유실 형태가 아니어야 한다
+    expect(out.hookSpecificOutput?.permissionDecision).toBeUndefined();
+  });
+
+  it('Stop block 인데 reason 이 비면 systemMessage → 고정 문구로 보강 (Codex 가 reason 없는 block 거부)', () => {
+    const a = projectCodexToClaude({ decision: 'block', reason: '', systemMessage: 'ui tag' }, { hookEventName: 'Stop' });
+    expect(a.reason).toBe('ui tag');
+    const b = projectCodexToClaude({ decision: 'block' }, { hookEventName: 'Stop' });
+    expect(typeof b.reason).toBe('string');
+    expect((b.reason as string).length).toBeGreaterThan(0);
   });
 
   it('approved boolean (legacy codex shape) → permissionDecision 보존', () => {
@@ -87,13 +107,15 @@ describe('projectCodexToClaude — Codex hook 출력 → Claude HookEventOutput'
   it('알 수 없는 형식 → fail-open (continue: true)', () => {
     expect(projectCodexToClaude(null, {})).toEqual({ continue: true });
     expect(projectCodexToClaude(42, {})).toEqual({ continue: true });
+    expect(projectCodexToClaude('block', {})).toEqual({ continue: true });
     expect(projectCodexToClaude({ random: 'thing' }, {})).toEqual({ continue: true });
   });
 
-  it('continue: false 이고 permissionDecision 미설정이면 deny 로 보강', () => {
-    const out = projectCodexToClaude({ continue: false }, { hookEventName: 'PreToolUse' });
+  it('continue:false 는 그대로 보존 (Codex: 처리 중단) — 더 이상 deny 로 변조하지 않음', () => {
+    const out = projectCodexToClaude({ continue: false, stopReason: 'halt' }, { hookEventName: 'Stop' });
     expect(out.continue).toBe(false);
-    expect(out.hookSpecificOutput?.permissionDecision).toBe('deny');
+    expect(out.stopReason).toBe('halt');
+    expect(out.hookSpecificOutput?.permissionDecision).toBeUndefined();
   });
 
   it('hookEventName 우선순위: hookSpecificOutput → input.hookEventName → input.event', () => {
@@ -113,14 +135,8 @@ describe('projectCodexToClaude — Codex hook 출력 → Claude HookEventOutput'
 
 describe('projectClaudeToClaude — identity', () => {
   it('Claude 형 객체는 그대로 통과', () => {
-    const input = {
-      continue: false,
-      hookSpecificOutput: { hookEventName: 'Stop', permissionDecision: 'block' },
-    };
-    expect(projectClaudeToClaude(input, {})).toEqual({
-      continue: false,
-      hookSpecificOutput: { hookEventName: 'Stop', permissionDecision: 'block' },
-    });
+    const input = { continue: true, decision: 'block', reason: 'r', hookSpecificOutput: { hookEventName: 'Stop' } };
+    expect(projectClaudeToClaude(input, {})).toEqual(input);
   });
 
   it('비객체 입력 → fail-open', () => {

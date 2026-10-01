@@ -100,6 +100,9 @@ export function generateHooksJson(options?: GenerateOptions): HooksJson {
 
   // 활성 훅 필터링
   const activeHooks = HOOK_REGISTRY.filter(hook => {
+    // 0) ADR-015: host 한정 훅 (예: SessionEnd 는 Claude 전용 — Codex hooks.json 바이트 동일성 유지)
+    if (hook.hosts && !hook.hosts.includes(runtime)) return false;
+
     // 1) hook-config.json에서 명시적 비활성화 (releaseMode 시 무시)
     if (!releaseMode && !isHookEnabled(hook.name)) return false;
 

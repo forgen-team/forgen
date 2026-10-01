@@ -1,6 +1,6 @@
 # Codex CLI Integration — Hook 발화 가이드 + 알려진 갭
 
-**Status**: Active (2026-05-14)
+**Status**: Active (2026-05-14, 0.5.3 갱신 2026-10-01)
 **Related**: ADR-001 (mech-ABC), `~/.codex/hooks.json`, `src/host/codex-adapter.ts`
 
 ## 요약
@@ -10,6 +10,31 @@ forgen 의 Codex hook 등록은 정상이며 (`~/.codex/hooks.json` 의 9개 이
 다만 Codex CLI 의 정책 결정 한 가지로 인해 **PermissionRequest 이벤트가
 dispatch 되지 않는 환경**이 존재하며, 본 문서는 이 갭과 forgen 측 보완 동작을
 박제한다.
+
+## 0.5.3 (ADR-014) — Claude 와 동등해진 것 / 아직 아닌 것
+
+**동등 (실세션 실증)**: hooks.json 22종 동일 · MCP forgen-compound · 스킬 10+14 ·
+**개인화 룰 주입** (`<forgen-rules host="codex">`, SessionStart; 컴팩션 시 SessionStart 재발화로 재주입) ·
+**서브에이전트 14종** (`~/.codex/agents/ch-*.toml`) · auto-compound / FTS / 세션 기록.
+
+**0.5.3 에서 고친 결함**: `codex-adapter` 사영이 Stop `decision:block` 을 `continue:false` 로 변조해
+**자기검증 차단이 Codex 에 전달되지 않았다** (ADR-015 X-G1). 이제 pass-through. 격리 `codex exec` 에서
+`hook: Stop Blocked` → continuation 관측.
+
+**아직 다른 것**:
+- 룰 재로드 빈도: Claude 는 `.claude/rules` 매 턴, Codex 는 세션 시작 + 컴팩션 후.
+- 훅 신뢰: Codex 는 hooks.json 이 바뀌면 `/hooks` 재승인 전까지 해당 훅을 **skip** 한다.
+  `forgen doctor` 의 `[Codex Hooks]` 섹션으로 상태 확인. forgen 은 신뢰 기록을 쓰지 않는다.
+- `PostToolUseFailure` 는 Codex 이벤트가 아니라 발화하지 않음 (context-signals 미기록). trust 감사에서는
+  `ignoredByCodex` 로 분리 집계 (21/21 이 정상, 22 가 아님).
+- 서브에이전트 모델은 Codex 기본 subagent 모델 (`[agents] default_subagent_model`).
+
+### 훅 신뢰 체크리스트 (0.5.3+)
+1. `forgen install codex` 출력의 `hook trust: N/21` 확인 (+1 Claude-only event ignored by Codex).
+2. N < 21 이면 codex TUI 에서 `/hooks` → forgen 엔트리 trust.
+3. 글로벌 npm 업그레이드는 경로가 같아 hooks.json 이 바이트 동일 → 기존 신뢰 유지. `npm link` 등으로
+   pkgRoot 가 바뀌면 재승인 필요.
+4. 비대화형 자동화에서만 `codex exec --dangerously-bypass-hook-trust` (forgen 은 쓰지 않음).
 
 ## 권장 Codex 설정 (이상적)
 

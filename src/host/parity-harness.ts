@@ -124,9 +124,11 @@ export const SCENARIO_CORPUS: ReadonlyArray<BehavioralParityScenario> = [
       claude: { decision: 'block', reason: 'tests not yet executed' },
       codex: { decision: 'block', reason: 'tests not yet executed' },
     },
+    // ADR-015 G1: Stop block 은 top-level decision/reason 으로 전달된다 (양 host 동일 스키마).
     compareKeys: [
       'continue',
-      'hookSpecificOutput.permissionDecision',
+      'decision',
+      'reason',
     ],
   },
   {

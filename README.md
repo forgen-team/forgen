@@ -244,6 +244,7 @@ forgen install both         # 3-choice interactive: claude / codex / both
 # or non-interactive:
 forgen install claude
 forgen install codex
+# Codex only: trust the forgen hooks once with `/hooks` inside codex — Codex skips untrusted hooks (forgen doctor shows [Codex Hooks])
 
 # 3. First run — 4-question onboarding (English or Korean)
 forgen                       # default: Claude
