@@ -152,9 +152,11 @@ export const SCENARIO_CORPUS: ReadonlyArray<BehavioralParityScenario> = [
         },
       },
     },
+    // 0.5.4: Codex PostToolUse 스키마는 hookSpecificOutput.permissionDecision 을 모른다 —
+    // 사영이 top-level decision:"block" + reason 으로 번역하므로 그 키로 동치 비교.
     compareKeys: [
-      'hookSpecificOutput.permissionDecision',
-      'hookSpecificOutput.permissionDecisionReason',
+      'decision',
+      'reason',
     ],
   },
   {

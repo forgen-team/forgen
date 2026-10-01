@@ -71,66 +71,129 @@ export function parseDecision(raw: unknown): DecisionView {
 }
 
 /**
- * Codex 출력 정규화 (ADR-015 G1, 2026-10-01 재설계).
+ * Codex 출력 정규화 — **Codex 0.153.4 hook 출력 스키마 준수** (ADR-015 G1 + 0.5.4 수정).
  *
- * 이 함수의 출력은 *Codex 가 읽는다* (codex-adapter 가 stdout 으로 내보냄). Codex 의 hook 출력
- * 스키마는 Claude 와 동일하게 **top-level `decision`/`reason`** (Stop/SubagentStop/UserPromptSubmit/
- * PostToolUse) 과 `hookSpecificOutput.permissionDecision` (PreToolUse) 을 읽고, `continue:false` 는
- * "continuation" 이 아니라 "처리 중단" 이다 (learn.chatgpt.com/docs/hooks; binary: `hook returned
- * decision:block without a non-empty reason`, `PreToolUse hook returned unsupported continue:false`).
+ * 이 함수의 출력은 *Codex 가 읽는다* (codex-adapter 가 stdout 으로 내보냄). Codex 는 이벤트별 출력
+ * 스키마가 `additionalProperties:false` 라서 **허용되지 않은 키가 하나라도 있으면 출력 전체를 버리고
+ * "hook returned invalid ... JSON output" → Failed** 로 처리한다 (codex-rs/hooks/src/engine/
+ * output_parser.rs `parse_json` + events/stop.rs `parse_completed`; 스키마 사본은
+ * tests/fixtures/codex-hook-schemas/). 특히 Stop/SubagentStop 은 `hookSpecificOutput` 자체를
+ * 허용하지 않는다 — 0.5.3 의 사영이 모든 출력에 `hookSpecificOutput.hookEventName` 을 붙여 실환경에서
+ * Stop 훅 2개가 매 턴 Failed 로 떨어졌다 (0.5.4 에서 수정, 실세션 재현 후).
  *
- * 이전 구현은 `decision:block` 을 `continue:false + hookSpecificOutput.permissionDecision:"block"` 으로
- * 바꿔 **Stop block 이 Codex 에 전혀 전달되지 않았다** (reason 유실 → 자기검증 continuation 0건).
- * gap-codex 분석(fable) 에서 발견, dist 실행으로 재현.
- *
- * 규칙:
+ * 규칙 (이벤트별 allowlist — CODEX_OUTPUT_SCHEMA):
  *   1. 객체가 아니면 fail-open `{ continue: true }`.
- *   2. 객체면 top-level 필드(`continue`/`decision`/`reason`/`stopReason`/`systemMessage`/
- *      `suppressOutput`/`hookSpecificOutput`) 를 **그대로 보존**.
- *   3. 이벤트명을 알면 `hookSpecificOutput.hookEventName` 을 항상 보강 (구 사영과 동일).
- *   4. `decision:"block"` 인데 `reason` 이 비면 `systemMessage` → 고정 문구 순으로 보강
- *      (Codex 가 reason 없는 block 을 거부).
- *   5. PreToolUse 에서 `permissionDecision` 이 있으면 `continue:false` 를 제거 (Codex 미지원 경고;
- *      차단은 permissionDecision 이 이미 표현).
- *   6. legacy `approved:false` (구 codex 형) → `hookSpecificOutput.permissionDecision:"deny"`.
+ *   2. universal 키(`continue`/`stopReason`/`suppressOutput`/`systemMessage`) 보존 (Interrupt 는
+ *      systemMessage 만).
+ *   3. `decision`/`reason` 은 PreToolUse/PostToolUse/UserPromptSubmit/Stop/SubagentStop 에서만 보존.
+ *      `decision:"block"` 인데 reason 이 비면 systemMessage → 고정 문구로 보강 (Codex 가 거부).
+ *   4. `hookSpecificOutput` 은 허용 이벤트에서만, 허용 하위 키만 남기고 `hookEventName` 을 이벤트명으로
+ *      고정한다. Stop/SubagentStop/PreCompact/PostCompact/Interrupt 에서는 통째로 제거. 절대 새로
+ *      만들어 붙이지 않는다.
+ *   5. PostToolUse 에 forgen 이 `permissionDecision:"deny"` (PreToolUse 형) 를 냈으면 Codex 의
+ *      PostToolUse block 형(top-level `decision:"block"` + `reason`) 으로 번역.
+ *   6. PreToolUse: `permissionDecision` 이 있으면 `continue:false` 제거 (Codex "unsupported").
+ *   7. legacy `approved:false` → `hookSpecificOutput.permissionDecision:"deny"` (PreToolUse 한정).
+ *   8. 이벤트명을 모르면(입력에 없음) 키를 깎지 않고 pass-through 한다 — 모르면 건드리지 않는다.
  */
+
+interface EventOutputPolicy {
+  universal: ReadonlyArray<string>;
+  decision: boolean;
+  /** hookSpecificOutput 허용 하위 키. undefined = hookSpecificOutput 자체 불허. */
+  hso?: ReadonlyArray<string>;
+}
+
+const UNIVERSAL = ['continue', 'stopReason', 'suppressOutput', 'systemMessage'] as const;
+
+/** codex-rs/hooks/schema/generated/*.command.output.schema.json (rust-v0.153.4) 요약. */
+export const CODEX_OUTPUT_SCHEMA: Readonly<Record<string, EventOutputPolicy>> = {
+  SessionStart: { universal: UNIVERSAL, decision: false, hso: ['hookEventName', 'additionalContext'] },
+  SubagentStart: { universal: UNIVERSAL, decision: false, hso: ['hookEventName', 'additionalContext'] },
+  UserPromptSubmit: { universal: UNIVERSAL, decision: true, hso: ['hookEventName', 'additionalContext'] },
+  PreToolUse: {
+    universal: UNIVERSAL,
+    decision: true,
+    hso: ['hookEventName', 'additionalContext', 'permissionDecision', 'permissionDecisionReason', 'updatedInput'],
+  },
+  PostToolUse: { universal: UNIVERSAL, decision: true, hso: ['hookEventName', 'additionalContext', 'updatedMCPToolOutput'] },
+  PermissionRequest: { universal: UNIVERSAL, decision: false, hso: ['hookEventName', 'decision'] },
+  Stop: { universal: UNIVERSAL, decision: true },
+  SubagentStop: { universal: UNIVERSAL, decision: true },
+  PreCompact: { universal: UNIVERSAL, decision: false },
+  PostCompact: { universal: UNIVERSAL, decision: false },
+  Interrupt: { universal: ['systemMessage'], decision: false },
+};
+
+function resolveEventName(raw: Record<string, unknown>, input: HookEventInput): string | undefined {
+  const hso = raw.hookSpecificOutput;
+  const fromOutput = hso && typeof hso === 'object' ? (hso as { hookEventName?: unknown }).hookEventName : undefined;
+  const candidate =
+    input.hookEventName
+    ?? (input as { hook_event_name?: string }).hook_event_name // 실 stdin 은 snake_case
+    ?? input.event
+    ?? (typeof fromOutput === 'string' ? fromOutput : undefined);
+  return typeof candidate === 'string' && candidate.length > 0 ? candidate : undefined;
+}
+
 export const projectCodexToClaude: ProjectToClaudeEvent = (raw, input) => {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return { continue: true };
   const payload = raw as Record<string, unknown>;
-  const result: HookEventOutput = { continue: true };
+  const eventName = resolveEventName(payload, input);
+  const policy = eventName ? CODEX_OUTPUT_SCHEMA[eventName] : undefined;
 
-  if (typeof payload.continue === 'boolean') result.continue = payload.continue;
-  for (const k of ['decision', 'reason', 'stopReason', 'systemMessage', 'suppressOutput'] as const) {
+  // 8. 모르는 이벤트 → pass-through (continue 기본값만 보장)
+  if (!policy) {
+    const out: HookEventOutput = { ...(payload as HookEventOutput) };
+    if (typeof out.continue !== 'boolean') out.continue = true;
+    return out;
+  }
+
+  const result: HookEventOutput = {};
+  // 2. universal
+  for (const k of policy.universal) {
     const v = payload[k];
     if (v !== undefined && v !== null) (result as Record<string, unknown>)[k] = v;
   }
-  if (typeof payload.hookSpecificOutput === 'object' && payload.hookSpecificOutput !== null) {
-    result.hookSpecificOutput = { ...(payload.hookSpecificOutput as Record<string, unknown>) };
+  if (policy.universal.includes('continue') && typeof result.continue !== 'boolean') result.continue = true;
+
+  // 3. decision / reason
+  if (policy.decision) {
+    if (typeof payload.decision === 'string') result.decision = payload.decision;
+    if (typeof payload.reason === 'string') result.reason = payload.reason;
   }
 
-  // 6. legacy approved boolean
-  if (typeof payload.approved === 'boolean' && !result.hookSpecificOutput?.permissionDecision) {
+  // 4. hookSpecificOutput — 허용 이벤트 + 허용 키만
+  const rawHso = payload.hookSpecificOutput;
+  if (policy.hso && rawHso && typeof rawHso === 'object') {
+    const filtered: Record<string, unknown> = { hookEventName: eventName };
+    for (const k of policy.hso) {
+      if (k === 'hookEventName') continue;
+      const v = (rawHso as Record<string, unknown>)[k];
+      if (v !== undefined && v !== null) filtered[k] = v;
+    }
+    // 5. PostToolUse: PreToolUse 형 deny → Codex PostToolUse block 형으로 번역
+    if (eventName === 'PostToolUse') {
+      const pd = (rawHso as { permissionDecision?: unknown }).permissionDecision;
+      if (pd === 'deny' || pd === 'block') {
+        result.decision = 'block';
+        const pdr = (rawHso as { permissionDecisionReason?: unknown }).permissionDecisionReason;
+        if (typeof result.reason !== 'string' && typeof pdr === 'string') result.reason = pdr;
+      }
+    }
+    result.hookSpecificOutput = filtered;
+  }
+
+  // 7. legacy approved boolean (PreToolUse 한정)
+  if (eventName === 'PreToolUse' && typeof payload.approved === 'boolean' && !result.hookSpecificOutput?.permissionDecision) {
     result.hookSpecificOutput = {
+      hookEventName: eventName,
       ...(result.hookSpecificOutput ?? {}),
-      permissionDecision: payload.approved
-        ? (typeof payload.decision === 'string' ? payload.decision : 'allow')
-        : 'deny',
+      permissionDecision: payload.approved ? 'allow' : 'deny',
     };
-    if (!payload.approved) result.continue = false;
   }
 
-  // 3. hookEventName 보강
-  const eventName =
-    (result.hookSpecificOutput?.hookEventName as string | undefined)
-    ?? input.hookEventName
-    ?? (input as { hook_event_name?: string }).hook_event_name // 실 stdin 은 snake_case (critic #7)
-    ?? input.event;
-  if (eventName) {
-    // 이벤트명을 알면 항상 달아 둔다 (구 사영과 동일; Codex 실세션에서 approve 출력에도 문제 없음 확인).
-    result.hookSpecificOutput = { hookEventName: eventName, ...(result.hookSpecificOutput ?? {}) };
-  }
-
-  // 4. block 은 non-empty reason 필수
+  // 3b. block 은 non-empty reason 필수
   if (typeof result.decision === 'string' && result.decision.toLowerCase() === 'block') {
     const reason = typeof result.reason === 'string' ? result.reason.trim() : '';
     if (!reason) {
@@ -140,9 +203,8 @@ export const projectCodexToClaude: ProjectToClaudeEvent = (raw, input) => {
     }
   }
 
-  // 5. PreToolUse: continue:false 는 Codex 미지원 — permissionDecision 이 차단을 표현
-  const pd = result.hookSpecificOutput?.permissionDecision;
-  if (eventName === 'PreToolUse' && typeof pd === 'string' && result.continue === false) {
+  // 6. PreToolUse: continue:false 는 Codex 미지원 — permissionDecision 이 차단을 표현
+  if (eventName === 'PreToolUse' && result.continue === false && typeof result.hookSpecificOutput?.permissionDecision === 'string') {
     result.continue = true;
   }
 

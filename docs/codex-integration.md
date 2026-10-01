@@ -21,6 +21,10 @@ dispatch 되지 않는 환경**이 존재하며, 본 문서는 이 갭과 forgen
 **자기검증 차단이 Codex 에 전달되지 않았다** (ADR-015 X-G1). 이제 pass-through. 격리 `codex exec` 에서
 `hook: Stop Blocked` → continuation 관측.
 
+**0.5.4**: Codex 는 이벤트별 출력 스키마가 `additionalProperties:false` 다. Stop/SubagentStop 에
+`hookSpecificOutput` 을 보내면 출력 전체가 버려지고 `hook: Stop Failed` 로 표시된다. 사영이 이벤트별
+allowlist 로 깎아 보내며, 스키마 사본은 `tests/fixtures/codex-hook-schemas/`.
+
 **아직 다른 것**:
 - 룰 재로드 빈도: Claude 는 `.claude/rules` 매 턴, Codex 는 세션 시작 + 컴팩션 후.
 - 훅 신뢰: Codex 는 hooks.json 이 바뀌면 `/hooks` 재승인 전까지 해당 훅을 **skip** 한다.

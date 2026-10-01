@@ -26,6 +26,13 @@ binary 문자열 대조). 보고서 원문은 세션 산출물; 핵심은 본 �
 - 검증: 격리 `codex exec` 에서 `rm -rf` 가 포함된 응답 → `hook: Stop Blocked` → `<hook_prompt>` 로
   stop-guard 사유가 다음 턴에 주입되고 모델이 자기 교정. vitest projection/parity 갱신.
 
+#### X-G1 후속 (0.5.4): 출력 스키마 준수
+0.5.3 사영은 모든 출력에 `hookSpecificOutput.hookEventName` 을 붙였고, Codex Stop/SubagentStop 스키마는
+`hookSpecificOutput` 을 허용하지 않아(`additionalProperties:false`) 실환경에서 Stop 훅이 매 턴 Failed 였다.
+0.5.4 에서 이벤트별 allowlist(`CODEX_OUTPUT_SCHEMA`) 로 재작성하고 rust-v0.153.4 스키마를 vendoring 한
+conformance 테스트를 추가. 교훈: **격리 검증은 실환경과 같은 입력(실 stdin 의 `hook_event_name`)으로
+돌려야 한다** — 0.5.3 격리 통과는 입력 필드명 불일치 덕분의 우연이었다.
+
 ### X-G2 Codex 훅 신뢰 가시화 — ADR-014 D4 로 이미 반영 (실머신: 20/21 trusted, 미지원 이벤트 1 분리)
 
 ### C-G6 `SessionEnd` 훅 (Claude 전용) 으로 auto-compound 트리거 보강
