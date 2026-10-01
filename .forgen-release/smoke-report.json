@@ -1,7 +1,7 @@
 {
   "schema": "smoke-report/v1",
   "passed": true,
-  "at": "2026-10-01T10:42:09.621Z",
+  "at": "2026-10-01T10:49:02.423Z",
   "version": "0.5.3",
   "mock_detected": false,
   "node": "v22.22.0",
@@ -9,7 +9,7 @@
     {
       "name": "vitest",
       "passed": true,
-      "summary": "3094 passed | 5 skipped (3099)"
+      "summary": "3096 passed | 5 skipped (3101)"
     },
     {
       "name": "cli-version",
