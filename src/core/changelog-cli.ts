@@ -24,23 +24,23 @@ interface CommitInfo {
   subject: string;
 }
 
-function getLatestTag(): string | null {
+function getLatestTag(cwd?: string): string | null {
   try {
     return execFileSync('git', ['describe', '--tags', '--abbrev=0'], {
-      encoding: 'utf-8', timeout: 5000, stdio: ['pipe', 'pipe', 'pipe'],
+      encoding: 'utf-8', timeout: 5000, stdio: ['pipe', 'pipe', 'pipe'], cwd,
     }).trim();
   } catch {
     return null;
   }
 }
 
-function getCommitsSince(tag: string | null): string[] {
+function getCommitsSince(tag: string | null, cwd?: string): string[] {
   try {
     const args = tag
       ? ['log', `${tag}..HEAD`, '--oneline', '--no-merges']
       : ['log', '--oneline', '--no-merges', '-30'];
     return execFileSync('git', args, {
-      encoding: 'utf-8', timeout: 10000, stdio: ['pipe', 'pipe', 'pipe'],
+      encoding: 'utf-8', timeout: 10000, stdio: ['pipe', 'pipe', 'pipe'], cwd,
     }).trim().split('\n').filter(Boolean);
   } catch {
     return [];
@@ -67,9 +67,10 @@ const TYPE_ORDER: Record<string, { label: string; order: number }> = {
   other: { label: 'Other', order: 7 },
 };
 
-export async function handleChangelog(): Promise<void> {
-  const tag = getLatestTag();
-  const rawCommits = getCommitsSince(tag);
+/** `opts.cwd`: git 저장소 위치 (기본 process.cwd()). 테스트 fixture 용. */
+export async function handleChangelog(opts: { cwd?: string } = {}): Promise<void> {
+  const tag = getLatestTag(opts.cwd);
+  const rawCommits = getCommitsSince(tag, opts.cwd);
 
   if (rawCommits.length === 0) {
     console.log(`\n  ${C.dim}No commits since ${tag ?? 'beginning'}.${C.reset}\n`);

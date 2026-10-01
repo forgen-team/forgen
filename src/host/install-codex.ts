@@ -161,29 +161,33 @@ export function planCodexInstall(opts: CodexInstallOptions): CodexInstallResult 
   });
   const generatedHooks = generated.hooks as Record<string, unknown[]>;
 
-  // 2) 기존 hooks.json 읽기 + forgen entry 제거 후 보존
+  // 2) 기존 hooks.json 읽기 — forgen 그룹은 *제자리에서* 교체, 사용자 그룹은 위치 그대로 보존.
+  //    (0.5.3 critic/실머신: 이전엔 사용자 그룹을 앞으로 모으고 forgen 을 뒤에 붙여 그룹 인덱스가
+  //    바뀌었고, Codex 의 trust 키 `<event>:<groupIdx>:<hookIdx>` 가 어긋나 20/21 → 12/21 로
+  //    훅 신뢰가 깨졌다. 바이트 동일성이 곧 신뢰 보존이다.)
   const existing = readJsonFile<HooksFile>(hooksPath);
   const existingHooksByEvent = (existing?.hooks ?? {}) as Record<string, unknown[]>;
-  const preserved: Record<string, unknown[]> = {};
+  const eventOrder = [...new Set([...Object.keys(existingHooksByEvent), ...Object.keys(generatedHooks)])];
+  const merged: Record<string, unknown[]> = {};
   let preservedCount = 0;
-  for (const [event, entries] of Object.entries(existingHooksByEvent)) {
-    if (!Array.isArray(entries)) continue;
-    const userEntries = entries.filter((e) => !isForgenManagedHook(e, opts.pkgRoot));
-    if (userEntries.length > 0) {
-      preserved[event] = userEntries;
-      preservedCount += userEntries.length;
-    }
-  }
-
-  // 3) merge: user 보존 + forgen fresh.
-  //    `forgenCount` 는 실제 hook 명령 개수 (matcher group 내부 hooks[] 길이의 합) 로 집계한다.
-  const merged: Record<string, unknown[]> = { ...preserved };
   let forgenCount = 0;
-  for (const [event, entries] of Object.entries(generatedHooks)) {
-    const list = merged[event] ?? [];
-    list.push(...entries);
-    merged[event] = list;
-    for (const group of entries) {
+  for (const event of eventOrder) {
+    const existingGroups = Array.isArray(existingHooksByEvent[event]) ? existingHooksByEvent[event] : [];
+    const generatedGroups = generatedHooks[event] ?? [];
+    const out: unknown[] = [];
+    let inserted = false;
+    for (const group of existingGroups) {
+      if (isForgenManagedHook(group, opts.pkgRoot)) {
+        if (!inserted) { out.push(...generatedGroups); inserted = true; }
+        // 이후 중복 forgen 그룹은 드롭 (stale 누적 방지)
+      } else {
+        out.push(group);
+        preservedCount += 1;
+      }
+    }
+    if (!inserted && generatedGroups.length > 0) out.push(...generatedGroups);
+    if (out.length > 0) merged[event] = out;
+    for (const group of generatedGroups) {
       const g = group as { hooks?: unknown[] };
       if (Array.isArray(g.hooks)) forgenCount += g.hooks.length;
     }
