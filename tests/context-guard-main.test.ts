@@ -86,6 +86,26 @@ describe('context-guard main()', () => {
     expect(logOutput.some(l => l.includes('"continue":true'))).toBe(true);
   });
 
+  it('0.5.5: Codex 형 Stop 입력(hook_event_name:"Stop", stop_hook_type 없음)도 Stop 분기를 탄다', async () => {
+    const { main } = await import('../src/hooks/context-guard.js');
+    // 같은 세션에 프롬프트 20개를 쌓는다 (promptCount >= 20 → Stop 에서 세션 종료 안내가 나와야 함)
+    for (let i = 0; i < 20; i += 1) {
+      mockReadStdinJSON.mockResolvedValue({ prompt: `p${i}`, session_id: 'codex-session-1' });
+      await main();
+    }
+    logOutput.length = 0;
+    mockReadStdinJSON.mockResolvedValue({
+      hook_event_name: 'Stop',
+      session_id: 'codex-session-1',
+      cwd: '/tmp/x',
+      stop_hook_active: false,
+      last_assistant_message: 'done',
+    });
+    await main();
+    expect(logOutput.some(l => l.includes('"continue":true'))).toBe(true);
+    expect(logOutput.some(l => l.includes('prompts ended'))).toBe(true);
+  });
+
   it('context limit 에러가 있으면 handoff 저장', async () => {
     mockReadStdinJSON.mockResolvedValue({
       stop_hook_type: 'error',
