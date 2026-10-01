@@ -394,3 +394,37 @@ describe('ADR-014 Codex parity', () => {
     expect(result.hookTrust.noStateRecorded).toBe(true);
   });
 });
+
+describe('hooks.json 그룹 순서 보존 (0.5.3 훅 신뢰 회귀)', () => {
+  let codexHome: string;
+  beforeEach(() => { codexHome = tmpDir('codex-order-'); });
+  afterEach(() => { fs.rmSync(codexHome, { recursive: true, force: true }); });
+
+  it('forgen 그룹이 앞, 사용자 그룹이 뒤인 기존 파일을 재설치해도 바이트 동일', () => {
+    const first = planCodexInstall({ pkgRoot: PKG_ROOT, codexHome, agentsMdPath: path.join(codexHome, 'AGENTS.md') });
+    const hooks = JSON.parse(fs.readFileSync(first.hooksPath, 'utf-8')) as { hooks: Record<string, unknown[]> };
+    // 사용자 훅을 각 이벤트 *뒤* 에 추가 (orca 등 다른 도구가 append 하는 실제 형태)
+    const userGroup = { matcher: '*', hooks: [{ type: 'command', command: "if [ -x '/home/u/.orca/hook.sh' ]; then /home/u/.orca/hook.sh; fi", timeout: 5 }] };
+    for (const ev of ['UserPromptSubmit', 'Stop', 'PreToolUse']) hooks.hooks[ev].push(userGroup);
+    fs.writeFileSync(first.hooksPath, `${JSON.stringify(hooks, null, 2)}\n`);
+    const before = fs.readFileSync(first.hooksPath, 'utf-8');
+
+    const second = planCodexInstall({ pkgRoot: PKG_ROOT, codexHome, agentsMdPath: path.join(codexHome, 'AGENTS.md') });
+    const after = fs.readFileSync(second.hooksPath, 'utf-8');
+    expect(second.preservedUserHookCount).toBe(3);
+    expect(after).toBe(before); // 바이트 동일 → Codex trust 키(<event>:<groupIdx>:<hookIdx>) 유지
+  });
+
+  it('사용자 그룹이 앞인 파일도 그 순서를 유지하고, stale forgen 중복 그룹은 하나로 합친다', () => {
+    const first = planCodexInstall({ pkgRoot: PKG_ROOT, codexHome, agentsMdPath: path.join(codexHome, 'AGENTS.md') });
+    const hooks = JSON.parse(fs.readFileSync(first.hooksPath, 'utf-8')) as { hooks: Record<string, unknown[]> };
+    const userGroup = { matcher: '*', hooks: [{ type: 'command', command: 'echo user', timeout: 1 }] };
+    hooks.hooks.Stop = [userGroup, ...hooks.hooks.Stop, ...hooks.hooks.Stop]; // user 앞 + forgen 중복
+    fs.writeFileSync(first.hooksPath, `${JSON.stringify(hooks, null, 2)}\n`);
+    const second = planCodexInstall({ pkgRoot: PKG_ROOT, codexHome, agentsMdPath: path.join(codexHome, 'AGENTS.md') });
+    const after = JSON.parse(fs.readFileSync(second.hooksPath, 'utf-8')) as { hooks: Record<string, Array<{ hooks: Array<{ command: string }> }>> };
+    expect(after.hooks.Stop[0].hooks[0].command).toBe('echo user');
+    const forgenGroups = after.hooks.Stop.filter((g) => g.hooks.some((h) => h.command.includes('codex-adapter')));
+    expect(forgenGroups.length).toBe(1);
+  });
+});
