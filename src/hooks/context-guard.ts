@@ -234,7 +234,7 @@ export async function main(): Promise<void> {
   const _hookStart = Date.now();
   let _hookEvent = 'UserPromptSubmit';
   try {
-  const input = await readStdinJSON<{ prompt?: string; session_id?: string; stop_hook_type?: string; error?: string; transcript_path?: string; cwd?: string }>();
+  const input = await readStdinJSON<{ prompt?: string; session_id?: string; stop_hook_type?: string; hook_event_name?: string; error?: string; transcript_path?: string; cwd?: string }>();
   if (!isHookEnabled('context-guard')) {
     console.log(approve());
     return;
@@ -246,8 +246,14 @@ export async function main(): Promise<void> {
 
   const sessionId = input.session_id ?? 'default';
 
-  // Stop 훅: stop_hook_type이 있으면 처리
-  if (input.stop_hook_type) {
+  // Stop 훅 판별. Claude 는 `stop_hook_type`(user|end_turn|…) 을 주지만 Codex 의 Stop 입력에는 그 필드가
+  // 없고 `hook_event_name:"Stop"` 만 온다 (0.5.5 — 이전엔 Codex 세션에서 Stop 분기 전체가 건너뛰어져
+  // finalizeSession / Stop 트리거 auto-compound / rate-limit 감지가 돌지 않았다). Codex 의 정상 턴 종료는
+  // end_turn 과 동치로 취급한다.
+  const stopType: string | undefined =
+    input.stop_hook_type ?? (input.hook_event_name === 'Stop' ? 'end_turn' : undefined);
+
+  if (stopType) {
     _hookEvent = 'Stop';
 
     // 세션 종료 시 pending outcome을 unknown으로 finalize.
@@ -318,7 +324,7 @@ export async function main(): Promise<void> {
     }
 
     // 정상 종료 시: 의미 있는 세션이었으면 compound 안내/자동 트리거
-    if (input.stop_hook_type === 'user' || input.stop_hook_type === 'end_turn') {
+    if (stopType === 'user' || stopType === 'end_turn') {
       const state = loadContextState(sessionId);
 
       // ADR-002 T1 — 세션 중간에 교정이 들어와도 session-scoped rule 이 me-scope 으로

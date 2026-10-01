@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.5] — 2026-10-01 — Codex Stop 분기 복구 (Stop 트리거 auto-compound·finalizeSession)
+
+### Fixed
+- `context-guard` 가 Stop 이벤트를 Claude 전용 `stop_hook_type` 필드로만 판별해, Codex 의 Stop 입력
+  (`hook_event_name:"Stop"` 만 있고 `stop_hook_type` 없음) 에서는 Stop 분기 전체가 건너뛰어졌다 →
+  Codex 세션은 `finalizeSession`, Stop 트리거 auto-compound(≥10 프롬프트), rate-limit 감지, 세션 종료
+  안내가 전혀 돌지 않고 컴팩션 때만 학습 추출됐다. `hook_event_name === "Stop"` 을 `end_turn` 과 동치로
+  인정. (0.5.4 실환경 검증 중 hook-timing 의 context-guard 가 Stop 시점에 `UserPromptSubmit` 로 기록되는
+  것을 보고 발견.)
+
+### Verified
+- vitest: Codex 형 Stop 입력으로 20-프롬프트 세션 종료 안내가 나오는 테스트 추가.
+- 격리 Codex 세션: hook-timing 에 `context-guard … event:"Stop", rt:"codex"` 기록, Stop 훅 Completed.
+
+
 ## [0.5.4] — 2026-10-01 — Codex 훅 출력 스키마 준수 (0.5.3 의 Stop 훅 Failed 회귀 수정)
 
 ### Fixed — Codex 가 forgen Stop 훅 출력을 매 턴 "Failed" 로 버리던 회귀

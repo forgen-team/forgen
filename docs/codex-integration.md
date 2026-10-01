@@ -25,6 +25,10 @@ dispatch 되지 않는 환경**이 존재하며, 본 문서는 이 갭과 forgen
 `hookSpecificOutput` 을 보내면 출력 전체가 버려지고 `hook: Stop Failed` 로 표시된다. 사영이 이벤트별
 allowlist 로 깎아 보내며, 스키마 사본은 `tests/fixtures/codex-hook-schemas/`.
 
+**0.5.5**: Codex 의 Stop 입력에는 `stop_hook_type` 이 없다. forgen 훅이 Stop 을 판별할 때는
+`hook_event_name === "Stop"` 도 봐야 한다 (context-guard 수정). 확인법: `hook-timing.jsonl` 의
+`event` 라벨이 Stop 시점에 `Stop` 으로 찍히는지.
+
 **아직 다른 것**:
 - 룰 재로드 빈도: Claude 는 `.claude/rules` 매 턴, Codex 는 세션 시작 + 컴팩션 후.
 - 훅 신뢰: Codex 는 hooks.json 이 바뀌면 `/hooks` 재승인 전까지 해당 훅을 **skip** 한다.
