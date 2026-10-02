@@ -307,3 +307,111 @@ describe('planCodexUninstall', () => {
     expect(fs.readFileSync(again.configTomlPath, 'utf-8').match(/forgen-managed-mcp/g)).toHaveLength(2);
   });
 });
+
+describe('ADR-016 0.5.9: install 이 사용자 스킬을 보존하고, AGENTS.md 설치 위치를 기억한다', () => {
+  it('install codex 는 사용자가 만든 forgen-<stack>-* 스킬을 지우지 않는다', () => {
+    const inst = install();
+    const mine = path.join(inst.skillsPath, 'forgen-react-mine');
+    fs.mkdirSync(mine);
+    fs.writeFileSync(path.join(mine, 'SKILL.md'), '---\nname: forgen-react-mine\ndescription: mine\n---\nmine');
+    fs.mkdirSync(path.join(inst.skillsPath, 'forgen-go-gone'));
+    fs.symlinkSync('/old/forgen/assets/dev-guide/be/skills/go/gone/SKILL.md', path.join(inst.skillsPath, 'forgen-go-gone', 'SKILL.md'));
+    const again = install();
+    expect(fs.readFileSync(path.join(mine, 'SKILL.md'), 'utf-8')).toContain('mine');
+    expect(fs.existsSync(path.join(inst.skillsPath, 'forgen-go-gone'))).toBe(false);
+    expect(again.devGuideSkillsRemoved).toBe(again.devGuideSkillsInstalled + 1);
+  });
+
+  it('여러 프로젝트에서 install 한 AGENTS.md 블록을 uninstall 한 번으로 전부 걷어낸다', () => {
+    const projA = path.join(codexHome, 'projA', 'AGENTS.md');
+    const projB = path.join(codexHome, 'projB', 'AGENTS.md');
+    fs.mkdirSync(path.dirname(projA));
+    fs.mkdirSync(path.dirname(projB));
+    fs.writeFileSync(projB, '# Project B\n\nKeep me.\n');
+    planCodexInstall({ pkgRoot: PKG_ROOT, codexHome, agentsMdPath: projA });
+    planCodexInstall({ pkgRoot: PKG_ROOT, codexHome, agentsMdPath: projB });
+    planCodexInstall({ pkgRoot: PKG_ROOT, codexHome, agentsMdPath: projB }); // 재설치는 중복 기록하지 않는다
+    const registry = path.join(codexHome, 'forgen-agents-md.json');
+    expect((JSON.parse(fs.readFileSync(registry, 'utf-8')) as { paths: string[] }).paths).toEqual([projA, projB]);
+
+    // 다른 디렉토리(= agentsMd 가 가리키는 cwd 에는 블록이 없음)에서 uninstall
+    const r = planCodexUninstall({ pkgRoot: PKG_ROOT, codexHome, agentsMdPath: path.join(codexHome, 'elsewhere', 'AGENTS.md') });
+    expect(r.agentsMdCleanedPaths.sort()).toEqual([projA, projB]);
+    expect(fs.existsSync(projA)).toBe(false); // 블록뿐이던 파일
+    expect(fs.readFileSync(projB, 'utf-8')).toBe('# Project B\n\nKeep me.\n');
+    expect(fs.existsSync(registry)).toBe(false);
+    expect(renderCodexUninstall(r).join('\n')).toMatch(/2 AGENTS\.md file\(s\)/);
+  });
+
+  it('기록된 프로젝트가 사라졌거나 블록이 이미 없어도 문제없다; dry-run 은 기록을 지우지 않는다', () => {
+    const gone = path.join(codexHome, 'gone', 'AGENTS.md');
+    fs.mkdirSync(path.dirname(gone));
+    planCodexInstall({ pkgRoot: PKG_ROOT, codexHome, agentsMdPath: gone });
+    fs.rmSync(path.dirname(gone), { recursive: true, force: true });
+    const dry = planCodexUninstall({ pkgRoot: PKG_ROOT, codexHome, agentsMdPath: agentsMd, dryRun: true });
+    expect(dry.agentsMdCleanedPaths).toEqual([]);
+    expect(fs.existsSync(path.join(codexHome, 'forgen-agents-md.json'))).toBe(true);
+    const r = planCodexUninstall({ pkgRoot: PKG_ROOT, codexHome, agentsMdPath: agentsMd });
+    expect(r.errors).toEqual([]);
+    expect(fs.existsSync(path.join(codexHome, 'forgen-agents-md.json'))).toBe(false);
+  });
+});
+
+describe('0.5.9 critic: 심링크 관통 금지 · AGENTS.md 쓰기 실패 보고 · 인용된 마커', () => {
+  it('install codex 는 심링크된 dev-guide 스킬 디렉토리 안의 사용자 파일을 덮어쓰지 않는다', () => {
+    const inst = install();
+    const name = fs.readdirSync(inst.skillsPath).find((n) => /^forgen-(react|vue|node|go)-/.test(n)) as string;
+    const dotfiles = path.join(codexHome, 'dotfiles-skill');
+    fs.mkdirSync(dotfiles);
+    fs.writeFileSync(path.join(dotfiles, 'SKILL.md'), 'dotfiles user skill');
+    fs.unlinkSync(path.join(inst.skillsPath, name, 'SKILL.md'));
+    fs.rmdirSync(path.join(inst.skillsPath, name));
+    fs.symlinkSync(dotfiles, path.join(inst.skillsPath, name), 'dir');
+    const again = install();
+    expect(fs.readFileSync(path.join(dotfiles, 'SKILL.md'), 'utf-8')).toBe('dotfiles user skill');
+    expect(again.devGuideSkillsInstalled).toBe(inst.devGuideSkillsInstalled - 1);
+    // uninstall 도 심링크 디렉토리는 건드리지 않는다
+    uninstall();
+    expect(fs.readFileSync(path.join(dotfiles, 'SKILL.md'), 'utf-8')).toBe('dotfiles user skill');
+  });
+
+  it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)('쓰지 못한 AGENTS.md 는 오류로 보고하고 기록에 남긴다 (다음 uninstall 이 다시 시도)', () => {
+    const ro = path.join(codexHome, 'ro', 'AGENTS.md');
+    const ok = path.join(codexHome, 'ok', 'AGENTS.md');
+    fs.mkdirSync(path.dirname(ro));
+    fs.mkdirSync(path.dirname(ok));
+    fs.writeFileSync(ro, '# keep\n');
+    planCodexInstall({ pkgRoot: PKG_ROOT, codexHome, agentsMdPath: ro });
+    planCodexInstall({ pkgRoot: PKG_ROOT, codexHome, agentsMdPath: ok });
+    fs.chmodSync(ro, 0o444);
+    let r;
+    try { r = planCodexUninstall({ pkgRoot: PKG_ROOT, codexHome, agentsMdPath: ok }); } finally { fs.chmodSync(ro, 0o644); }
+    expect(r.agentsMdCleanedPaths).toEqual([ok]);
+    expect(r.errors.some((e) => e.startsWith(`AGENTS.md ${ro}:`))).toBe(true);
+    const registry = path.join(codexHome, 'forgen-agents-md.json');
+    expect((JSON.parse(fs.readFileSync(registry, 'utf-8')) as { paths: string[] }).paths).toEqual([ro]);
+    // 권한을 고친 뒤 다시 실행하면 정리되고 기록도 사라진다
+    const again = planCodexUninstall({ pkgRoot: PKG_ROOT, codexHome, agentsMdPath: ok });
+    expect(again.agentsMdCleanedPaths).toEqual([ro]);
+    expect(fs.readFileSync(ro, 'utf-8')).toBe('# keep\n');
+    expect(fs.existsSync(registry)).toBe(false);
+  });
+
+  it('본문에 마커 문자열을 인용한 줄은 블록 경계가 아니다 — 그 사이의 글을 지우지 않는다; 블록이 둘이면 둘 다 제거', () => {
+    const md = path.join(codexHome, 'doc', 'AGENTS.md');
+    fs.mkdirSync(path.dirname(md));
+    const prose = 'doc: `<!-- >>> forgen-managed-rules -->` is the marker forgen uses.\n\nImportant user text.\n';
+    fs.writeFileSync(md, prose);
+    planCodexInstall({ pkgRoot: PKG_ROOT, codexHome, agentsMdPath: md });
+    const once = fs.readFileSync(md, 'utf-8');
+    expect(once.startsWith(prose.trimEnd())).toBe(true); // 설치가 인용 줄부터 덮어쓰지 않는다
+    // 재설치는 idempotent, 중복 블록을 만들지 않는다
+    planCodexInstall({ pkgRoot: PKG_ROOT, codexHome, agentsMdPath: md });
+    expect(fs.readFileSync(md, 'utf-8')).toBe(once);
+    // 사용자가 블록을 복사해 둘이 된 경우
+    const block = once.slice(once.indexOf('\n<!-- >>> forgen-managed-rules -->') + 1);
+    fs.writeFileSync(md, `${once}\nmiddle text\n\n${block}`);
+    planCodexUninstall({ pkgRoot: PKG_ROOT, codexHome, agentsMdPath: md });
+    expect(fs.readFileSync(md, 'utf-8')).toBe(`${prose}\nmiddle text\n`);
+  });
+});

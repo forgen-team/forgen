@@ -13,12 +13,12 @@
 import type { Arm, ArmContext } from './types.js';
 import type { ArmResponse, BlockEvent, InjectEvent, TestCase } from '../types.js';
 import { pickDriver, type ChatTurn } from './driver-llm.js';
+import { claudeMemRecallActual } from './mem-recall.js';
 import {
   userPromptSubmitHook,
   stopGuardHook,
   newSessionId,
 } from './forgen-bridge.js';
-import { execSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -49,75 +49,6 @@ function seedForgenNotepad(c: TestCase): string {
 }
 
 const DRIVER = pickDriver();
-
-/**
- * claude-mem 콘텐츠 recall — `claude-mem search` 가 검색 결과 *테이블* (세션
- *   ID + 제목) 만 반환하므로 LLM 컨텍스트로는 사실상 메타-noise. v0.4.5 fix
- *   (2026-05-08): 검색 후 상위 N hit 의 ID 를 파싱 → 로컬 ~/.claude-mem/
- *   claude-mem.db 의 observations.narrative / session_summaries.learned 를
- *   직접 조회해 실제 콘텐츠를 inject.
- *
- * Returns concatenated narrative fragments or '' on any failure (graceful).
- */
-function claudeMemRecallActual(userMsg: string, topN = 2): string {
-  let searchOut: string;
-  try {
-    searchOut = execSync(
-      `npx --no-install claude-mem search ${JSON.stringify(userMsg.slice(0, 80))} 2>/dev/null`,
-      { encoding: 'utf-8', timeout: 5000 },
-    ).trim();
-  } catch {
-    return '';
-  }
-  if (!searchOut) return '';
-
-  let parsed: { content?: Array<{ text?: string }> };
-  try {
-    parsed = JSON.parse(searchOut);
-  } catch {
-    return '';
-  }
-  const rawText = parsed?.content?.[0]?.text ?? '';
-  if (!rawText) return '';
-
-  // Match table rows: `| #NNN | ... |` or `| #S NNN | ... |`. Digits only → SQL-safe.
-  const idMatches = [...rawText.matchAll(/\|\s*#(S?)(\d+)\s*\|/g)];
-  if (idMatches.length === 0) return '';
-
-  const dbPath = process.env.CLAUDE_MEM_DB ?? `${os.homedir()}/.claude-mem/claude-mem.db`;
-  if (!fs.existsSync(dbPath)) return '';
-
-  const seen = new Set<string>();
-  const hits: Array<{ table: 'observations' | 'session_summaries'; id: number }> = [];
-  for (const m of idMatches) {
-    const key = `${m[1]}${m[2]}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    hits.push({ table: m[1] === 'S' ? 'session_summaries' : 'observations', id: parseInt(m[2], 10) });
-    if (hits.length >= topN) break;
-  }
-
-  const fragments: string[] = [];
-  for (const hit of hits) {
-    const sql =
-      hit.table === 'observations'
-        ? `SELECT coalesce(title,'') || char(10) || coalesce(narrative, text, '') FROM observations WHERE id=${hit.id}`
-        : `SELECT coalesce(request,'') || char(10) || coalesce(learned,'') || char(10) || coalesce(completed,'') FROM session_summaries WHERE id=${hit.id}`;
-    try {
-      const out = execSync(`sqlite3 ${JSON.stringify(dbPath)} ${JSON.stringify(sql)}`, {
-        encoding: 'utf-8',
-        timeout: 3000,
-      }).trim();
-      if (out) {
-        const tag = hit.table === 'observations' ? `#${hit.id}` : `#S${hit.id}`;
-        fragments.push(`[${tag}]\n${out.slice(0, 600)}`);
-      }
-    } catch {
-      /* skip this hit */
-    }
-  }
-  return fragments.join('\n\n');
-}
 
 /**
  * 중간 turn 의 assistant 응답을 history 에 추가할 때 적용할 최대 길이 cap.

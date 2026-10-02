@@ -379,7 +379,8 @@ export async function handleUninstall(cwd: string, options: { force?: boolean; p
   console.log('  4. Remove forgen block from CLAUDE.md');
   console.log('  5. Remove slash commands (~/.claude/commands/forgen/) and the forgen-managed verify skill (~/.claude/skills/verify/)');
   console.log('  6. Remove plugin artifacts (cache, installed_plugins.json, plugin directory), dev-guide skills, and the forgen-compound MCP entry in ~/.claude.json');
-  console.log('  7. Codex (if $CODEX_HOME or ~/.codex exists): forgen hooks in hooks.json, the MCP/notify blocks in config.toml, forgen skills, ch-*.toml agents, and the AGENTS.md block — hooks and files from other tools are kept');
+  console.log('  7. Codex (if $CODEX_HOME or ~/.codex exists): forgen hooks in hooks.json, the MCP/notify blocks in config.toml, forgen skills, ch-*.toml agents, and the AGENTS.md blocks (every project recorded at install time) — hooks and files from other tools are kept');
+  console.log('     OpenCode (if its config dir exists): the forgen plugin, the forgen-compound MCP entry, AGENTS.md blocks');
   if (options.purge) {
     console.log('  8. --purge: Delete ~/.forgen/ entirely (rules, me/, state/, solutions/, behavior/)');
     console.log('     WARNING: this erases all accumulated corrections, rules, drift, and lifecycle history.');
@@ -419,6 +420,12 @@ export async function handleUninstall(cwd: string, options: { force?: boolean; p
     for (const line of renderCodexUninstall(planCodexUninstall({ pkgRoot }))) console.log(line);
   } catch (e) {
     console.error('  ✗ Codex cleanup failed:', e instanceof Error ? e.message : String(e));
+  }
+  try {
+    const { planOpencodeUninstall, renderOpencodeUninstall } = await import('../host/uninstall-opencode.js');
+    for (const line of renderOpencodeUninstall(planOpencodeUninstall({ pkgRoot }))) console.log(line);
+  } catch (e) {
+    console.error('  ✗ OpenCode cleanup failed:', e instanceof Error ? e.message : String(e));
   }
   cleanPluginArtifacts();
 

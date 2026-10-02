@@ -1,20 +1,20 @@
 {
   "schema": "smoke-report/v1",
   "passed": true,
-  "at": "2026-10-02T08:44:32.965Z",
-  "version": "0.5.8",
+  "at": "2026-10-02T09:41:11.471Z",
+  "version": "0.5.9",
   "mock_detected": false,
   "node": "v22.22.0",
   "checks": [
     {
       "name": "vitest",
       "passed": true,
-      "summary": "3222 passed | 5 skipped (3227)"
+      "summary": "3242 passed | 5 skipped (3247)"
     },
     {
       "name": "cli-version",
       "passed": true,
-      "summary": "0.5.8"
+      "summary": "0.5.9"
     },
     {
       "name": "statusline-roundtrip",

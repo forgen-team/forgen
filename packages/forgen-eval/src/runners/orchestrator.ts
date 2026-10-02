@@ -29,6 +29,7 @@ import { computePsi } from '../metrics/psi.js';
 import { fleissKappa, cohensKappa } from '../judges/kappa.js';
 import { judgePassFail, renderMarkdownReport } from '../reports/pass-fail.js';
 import { detectClaudeMemVersion, CLAUDE_MEM_TESTED_VERSION } from './worker-lifecycle.js';
+import { detectMemReadBackend } from '../arms/mem-recall.js';
 
 export interface RunOptions {
   track: Track;
@@ -51,6 +52,11 @@ export async function runTestbed(opts: RunOptions): Promise<RunReport> {
   const detectedMem = detectClaudeMemVersion();
   if (detectedMem && !detectedMem.includes(CLAUDE_MEM_TESTED_VERSION)) {
     warnings.push(`claude-mem version mismatch: tested ${CLAUDE_MEM_TESTED_VERSION}, actual ${detectedMem}`);
+  }
+  // recall 은 claude-mem DB 를 직접 읽는다. 읽을 방법이 없으면 mem arm 의 recall 이 항상 비어
+  // forgen+mem 이 forgen-only 와 같아진다 — 조용히 넘어가지 않는다.
+  if (detectMemReadBackend() === 'none') {
+    warnings.push('claude-mem recall unavailable: neither node:sqlite (Node >=22.13) nor the sqlite3 CLI is present — mem arms will inject no recall');
   }
 
   // 1. Execute every arm × every case × every turn-depth

@@ -312,3 +312,53 @@ describe('postinstall', () => {
     });
   });
 });
+
+describe('postinstall: 심링크된 스킬 디렉토리를 관통하지 않는다 (0.5.9 critic M1)', () => {
+  beforeEach(() => { fs.rmSync(TEST_HOME, { recursive: true, force: true }); fs.mkdirSync(TEST_HOME, { recursive: true }); });
+  afterEach(() => { fs.rmSync(TEST_HOME, { recursive: true, force: true }); });
+
+  it('패키지 이름과 같은 스킬 디렉토리가 사용자 dotfiles 로의 심링크면 그 안의 SKILL.md 를 지우거나 바꾸지 않는다', () => {
+    runPostinstall(); // 먼저 설치해 실제 이름을 얻는다
+    for (const base of [path.join(TEST_HOME, '.claude', 'skills'), path.join(TEST_HOME, '.codex', 'skills')]) {
+      const name = fs.readdirSync(base).find((n) => /^forgen-(react|vue|node|go)-/.test(n)) as string;
+      const dotfiles = path.join(TEST_HOME, 'dotfiles', path.basename(path.dirname(base)), name);
+      fs.mkdirSync(dotfiles, { recursive: true });
+      fs.writeFileSync(path.join(dotfiles, 'SKILL.md'), 'dotfiles user skill');
+      fs.unlinkSync(path.join(base, name, 'SKILL.md'));
+      fs.rmdirSync(path.join(base, name));
+      fs.symlinkSync(dotfiles, path.join(base, name), 'dir');
+      runPostinstall();
+      expect(fs.readFileSync(path.join(dotfiles, 'SKILL.md'), 'utf-8')).toBe('dotfiles user skill');
+      expect(fs.lstatSync(path.join(dotfiles, 'SKILL.md')).isSymbolicLink()).toBe(false);
+      expect(fs.lstatSync(path.join(base, name)).isSymbolicLink()).toBe(true);
+    }
+  });
+});
+
+describe('postinstall: dev-guide 스킬 stale 정리는 forgen 소유만 (ADR-016 0.5.9)', () => {
+  const skillsDir = path.join(TEST_HOME, '.claude', 'skills');
+  const codexSkillsDir = path.join(TEST_HOME, '.codex', 'skills');
+  beforeEach(() => { fs.rmSync(TEST_HOME, { recursive: true, force: true }); fs.mkdirSync(TEST_HOME, { recursive: true }); });
+  afterEach(() => { fs.rmSync(TEST_HOME, { recursive: true, force: true }); });
+
+  it('사용자가 만든 forgen-* 스킬은 npm install 을 반복해도 남고, forgen 이 설치한 것은 갱신된다', () => {
+    for (const base of [skillsDir, codexSkillsDir]) {
+      fs.mkdirSync(path.join(base, 'forgen-notes'), { recursive: true });
+      fs.writeFileSync(path.join(base, 'forgen-notes', 'SKILL.md'), '---\nname: forgen-notes\ndescription: mine\n---\nmine');
+      fs.mkdirSync(path.join(base, 'forgen-react-mine'), { recursive: true });
+      fs.writeFileSync(path.join(base, 'forgen-react-mine', 'SKILL.md'), '---\nname: forgen-react-mine\ndescription: mine\n---\nmine');
+      // 이전 버전이 설치했던 스킬 (지금 패키지에는 없는 이름) — dev-guide 를 가리키는 dangling 심링크
+      fs.mkdirSync(path.join(base, 'forgen-react-old-skill'), { recursive: true });
+      fs.symlinkSync('/old/prefix/node_modules/@wooojin/forgen/assets/dev-guide/fe/skills/react/old-skill/SKILL.md', path.join(base, 'forgen-react-old-skill', 'SKILL.md'));
+    }
+    runPostinstall();
+    runPostinstall();
+    for (const base of [skillsDir, codexSkillsDir]) {
+      expect(fs.readFileSync(path.join(base, 'forgen-notes', 'SKILL.md'), 'utf-8')).toContain('mine');
+      expect(fs.readFileSync(path.join(base, 'forgen-react-mine', 'SKILL.md'), 'utf-8')).toContain('mine');
+      expect(fs.existsSync(path.join(base, 'forgen-react-old-skill'))).toBe(false); // stale forgen 스킬은 정리
+      const installed = fs.readdirSync(base).filter((n) => /^forgen-(react|vue|node|go)-/.test(n) && n !== 'forgen-react-mine');
+      expect(installed.length).toBeGreaterThan(0);
+    }
+  });
+});
