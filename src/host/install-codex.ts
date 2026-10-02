@@ -17,6 +17,8 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { generateHooksJson } from '../hooks/hooks-generator.js';
+import { HOOK_REGISTRY } from '../hooks/hook-registry.js';
+import { hasManagedSkillMarker, isManagedAgentToml } from './managed-marker.js';
 
 export interface CodexInstallOptions {
   /** forgen package root (build 산출물 dist/ 의 부모). 기본: 호출 시 process.cwd(). */
@@ -105,7 +107,7 @@ const MCP_MARKER_BEGIN = '# >>> forgen-managed-mcp';
 const MCP_MARKER_END = '# <<< forgen-managed-mcp';
 const NOTIFY_MARKER_BEGIN = '# >>> forgen-managed-notify';
 const NOTIFY_MARKER_END = '# <<< forgen-managed-notify';
-const FORGEN_SKILL_MARKER = '<!-- forgen-managed -->';
+export const FORGEN_SKILL_MARKER = '<!-- forgen-managed -->';
 const AGENTS_MD_BEGIN = '<!-- >>> forgen-managed-rules -->';
 const AGENTS_MD_END = '<!-- <<< forgen-managed-rules -->';
 
@@ -116,22 +118,35 @@ function resolveCodexHome(opts: CodexInstallOptions): string {
 // 0.4.6 fix — pkgRoot match 외에 script-marker fallback 추가.
 // Stale install path (예: 다른 머신에서 install 한 hooks.json 마운트, 또는
 // node_modules path 변경) 의 forgen entry 를 "user entry" 로 오분류 → 중복 누적
-// 하던 버그. forgen hook 의 시그니처는 dist/host/codex-adapter.js 또는
-// dist/hooks/<name>.js — 사용자 custom hook 과 충돌 가능성 거의 없음.
-const FORGEN_HOOK_SCRIPT_MARKER = /\bdist\/(host\/codex-adapter|hooks\/[a-z][a-z0-9-]+)\.js\b/;
+// 하던 버그.
+//
+// 0.5.7 (critic): fallback 이 `dist/hooks/<아무이름>.js` 전부와 pkgRoot *부분문자열* 을 forgen 으로 봐서
+// 다른 프로젝트의 `…/dist/hooks/pre-commit.js` 나 `<pkgRoot>-fork/hook.sh` 까지 forgen 소유로 분류했다
+// (uninstall 이 그것을 지운다). 이제: (1) pkgRoot 의 dist/ 아래, (2) codex-adapter 경유, (3) registry 에
+// 있는 forgen 훅 스크립트 이름 — 셋 중 하나일 때만.
+const FORGEN_ADAPTER_RE = /[\\/]dist[\\/]host[\\/]codex-adapter\.js(?![\w-])/;
+const FORGEN_HOOK_SCRIPT_RE = /[\\/]dist[\\/]hooks[\\/]([a-z][a-z0-9-]*)\.js(?![\w-])/;
+const FORGEN_HOOK_SCRIPT_NAMES: ReadonlySet<string> = new Set(
+  HOOK_REGISTRY.map((h) => h.script.split(' ')[0].replace(/^hooks\//, '').replace(/\.js$/, '')),
+);
+
+/** 훅 command 문자열이 forgen 소유인가. */
+export function isForgenHookCommand(command: unknown, pkgRoot: string): boolean {
+  if (typeof command !== 'string') return false;
+  if (command.includes(`${pkgRoot}/dist/`) || command.includes(`${pkgRoot}\\dist\\`)) return true;
+  if (FORGEN_ADAPTER_RE.test(command)) return true;
+  const script = command.match(FORGEN_HOOK_SCRIPT_RE)?.[1];
+  return script !== undefined && FORGEN_HOOK_SCRIPT_NAMES.has(script);
+}
 
 function isForgenManagedHook(entry: unknown, pkgRoot: string): boolean {
   if (!entry || typeof entry !== 'object') return false;
   const e = entry as { hooks?: Array<{ command?: string }> };
   if (!Array.isArray(e.hooks)) return false;
-  return e.hooks.some(
-    (h) => typeof h.command === 'string' && (
-      h.command.includes(pkgRoot) || FORGEN_HOOK_SCRIPT_MARKER.test(h.command)
-    ),
-  );
+  return e.hooks.some((h) => isForgenHookCommand(h.command, pkgRoot));
 }
 
-function readJsonFile<T>(p: string): T | null {
+export function readJsonFile<T>(p: string): T | null {
   try {
     if (!fs.existsSync(p)) return null;
     return JSON.parse(fs.readFileSync(p, 'utf-8')) as T;
@@ -216,6 +231,32 @@ function upsertMcpBlock(currentToml: string, pkgRoot: string): { content: string
   return { content, alreadyPresent: content === currentToml };
 }
 
+/**
+ * forgen MCP 블록 제거 (uninstall, ADR-016 D4). forgen 테이블(본문 + `[mcp_servers.forgen-compound.*]` 하위
+ * 테이블)과 마커만 걷어내고, 블록 사이에 Codex 가 끼워 넣은 다른 내용은 그 자리에 보존한다.
+ * 마커 없는 사용자 관리 테이블은 건드리지 않는다.
+ */
+export function removeMcpBlock(currentToml: string): { content: string; removed: boolean } {
+  const { bom, body } = tomlShape(currentToml);
+  const span = splitManagedSpan(body.split('\n'), MCP_MARKER_BEGIN, MCP_MARKER_END);
+  if (!span) return { content: currentToml, removed: false };
+  const kept: string[] = [];
+  let dropping = false;
+  for (const line of span.inner) {
+    const t = line.trim();
+    // 헤더 줄에서만 상태를 바꾼다: forgen 테이블 본체, 그 하위 테이블/배열 테이블은 버리고 나머지는 보존.
+    if (/^\[/.test(t)) dropping = /^\[{1,2}mcp_servers\.forgen-compound(\]{1,2}|\.)/.test(t);
+    if (!dropping) kept.push(line);
+  }
+  const foreign = trimBlankEdges(kept);
+  const before = [...span.before];
+  // 블록 앞의 구분용 빈 줄은 블록과 함께 정리 (재설치/제거를 반복해도 빈 줄이 쌓이지 않게)
+  if (foreign.length === 0) while (before.length > 0 && before[before.length - 1].trim() === '') before.pop();
+  const out = [...before, ...foreign, ...span.after];
+  while (out.length > 1 && out[0].trim() === '') out.shift(); // 파일 맨 앞 빈 줄
+  return { content: bom + out.join('\n'), removed: true };
+}
+
 // ── ADR-016 D1: notify 폴백 (config.toml top-level `notify`) ───────────
 
 /** forgen notify 바이너리 argv 접두 (`--` 뒤는 사용자가 수동으로 붙인 체인 프로그램). */
@@ -292,20 +333,30 @@ export function upsertNotifyBlock(currentToml: string, pkgRoot: string): { conte
   return { content, status: content === currentToml ? 'already-present' : 'installed' };
 }
 
-/** forgen notify 블록 제거 (`--no-notify`, uninstall). 블록 사이에 끼어든 다른 줄은 보존. */
-export function removeNotifyBlock(currentToml: string): { content: string; removed: boolean } {
-  const { bom, body } = tomlShape(currentToml);
-  const { span, foreign } = parseNotifyBlock(body.split('\n'));
-  if (!span) return { content: currentToml, removed: false };
-  const rest = [...span.before, ...foreign, ...span.after];
+/**
+ * forgen notify 블록 제거 (`--no-notify`, uninstall). 블록 사이에 끼어든 다른 줄은 보존.
+ *
+ * - 사용자가 블록의 notify 줄을 여러 줄 배열 등으로 손편집했으면(`custom`) **건드리지 않는다** — 첫 줄만
+ *   지우면 남은 줄이 깨진 TOML 이 되어 Codex 가 기동하지 못한다 (critic 2026-10-02).
+ * - `"--"` 뒤에 사용자가 체인해 둔 자기 notifier 가 있으면 그 argv 만으로 `notify` 를 되돌려 놓는다.
+ */
+export function removeNotifyBlock(currentToml: string): { content: string; removed: boolean; custom: boolean; restoredChain: string[] } {
+  const { bom, body, cr } = tomlShape(currentToml);
+  const { span, foreign, argv } = parseNotifyBlock(body.split('\n'));
+  if (!span) return { content: currentToml, removed: false, custom: false, restoredChain: [] };
+  if (argv === 'unparseable') return { content: currentToml, removed: false, custom: true, restoredChain: [] };
+  const sep = argv ? argv.indexOf('--') : -1;
+  const restoredChain = argv && sep !== -1 ? argv.slice(sep + 1) : [];
+  const restored = restoredChain.length > 0 ? [`notify = ${JSON.stringify(restoredChain)}${cr}`] : [];
+  const rest = [...span.before, ...restored, ...foreign, ...span.after];
   let start = 0;
-  if (span.before.every((l) => l.trim() === '') && foreign.length === 0) {
+  if (span.before.every((l) => l.trim() === '') && restored.length === 0 && foreign.length === 0) {
     while (start < rest.length && rest[start].trim() === '') start += 1;
   }
-  return { content: bom + rest.slice(start).join('\n'), removed: true };
+  return { content: bom + rest.slice(start).join('\n'), removed: true, custom: false, restoredChain };
 }
 
-interface HooksFile {
+export interface HooksFile {
   description?: string;
   hooks: Record<string, Array<unknown>>;
 }
@@ -340,7 +391,11 @@ export function planCodexInstall(opts: CodexInstallOptions): CodexInstallResult 
     const out: unknown[] = [];
     let inserted = false;
     for (const group of existingGroups) {
-      if (isForgenManagedHook(group, opts.pkgRoot)) {
+      // 빈 그룹(`{"hooks": []}`)은 uninstall 이 다른 도구 훅의 trust 인덱스를 지키려고 남긴 자리표시다 —
+      // 재설치 시 그 자리를 다시 채워 forgen 훅이 원래 인덱스(= 이미 승인된 trust 키)로 돌아가게 한다.
+      const isPlaceholder = Array.isArray((group as { hooks?: unknown } | null)?.hooks)
+        && ((group as { hooks: unknown[] }).hooks.length === 0);
+      if (isForgenManagedHook(group, opts.pkgRoot) || isPlaceholder) {
         if (!inserted) { out.push(...generatedGroups); inserted = true; }
         // 이후 중복 forgen 그룹은 드롭 (stale 누적 방지)
       } else {
@@ -385,6 +440,7 @@ export function planCodexInstall(opts: CodexInstallOptions): CodexInstallResult 
     // opt-out 은 "더 이상 등록하지 않음" 이 아니라 "없앰" 이어야 한다 (이전 설치의 블록이 남지 않게).
     const r = removeNotifyBlock(configToml);
     if (r.removed) { notify = 'removed'; configToml = r.content; }
+    else if (r.custom) notify = 'custom-block';
   }
   const configTomlToWrite: string | null = configToml !== currentToml ? configToml : null;
 
@@ -609,9 +665,7 @@ export function auditCodexHookTrust(opts: {
       const g = group as { matcher?: unknown; hooks?: Array<Record<string, unknown>> };
       if (!Array.isArray(g.hooks)) return;
       g.hooks.forEach((h, hi) => {
-        const isForgen = typeof h.command === 'string' &&
-          (h.command.includes(opts.pkgRoot) || FORGEN_HOOK_SCRIPT_MARKER.test(h.command));
-        if (!isForgen) return;
+        if (!isForgenHookCommand(h.command, opts.pkgRoot)) return;
         const key = `${codexHookEventKey(event)}:${gi}:${hi}`;
         if (!CODEX_SUPPORTED_HOOK_EVENTS.has(event)) { ignoredByCodex.push(key); return; }
         total += 1;
@@ -628,8 +682,8 @@ export function auditCodexHookTrust(opts: {
 
 // ── ADR-014 D2: Codex custom agents (~/.codex/agents/ch-*.toml) ──────
 
-const AGENT_TOML_MARKER = '# forgen-managed';
-const AGENT_NAME_PREFIX = 'ch-';
+export const AGENT_TOML_MARKER = '# forgen-managed';
+export const AGENT_NAME_PREFIX = 'ch-';
 
 interface AgentsInstallOutcome {
   agentsPath: string;
@@ -731,7 +785,7 @@ function installCodexAgents(opts: { sourceDir: string; targetDir: string; dryRun
     try {
       const st = fs.lstatSync(p);
       if (st.isSymbolicLink()) return true; // 사용자 심링크 (dangling 포함) — 건드리지 않음
-      return !fs.readFileSync(p, 'utf-8').slice(0, 64).startsWith(AGENT_TOML_MARKER);
+      return !isManagedAgentToml(fs.readFileSync(p, 'utf-8'));
     } catch {
       return false; // 없음
     }
@@ -753,8 +807,7 @@ function installCodexAgents(opts: { sourceDir: string; targetDir: string; dryRun
     const p = path.join(targetDir, entry);
     try {
       if (fs.lstatSync(p).isSymbolicLink()) continue;
-      const head = fs.readFileSync(p, 'utf-8').slice(0, 64);
-      if (!head.startsWith(AGENT_TOML_MARKER)) continue;
+      if (!isManagedAgentToml(fs.readFileSync(p, 'utf-8'))) continue;
       fs.unlinkSync(p);
       removed += 1;
     } catch { /* best-effort */ }
@@ -779,7 +832,7 @@ function installCodexAgents(opts: { sourceDir: string; targetDir: string; dryRun
 
 // dev-guide prefix pattern: forgen-<stack>-<skill> (e.g. forgen-react-fe-build)
 // 반드시 stack 이 react|vue|node|go 인 것만 매칭 — forgen 자체 commands 보존
-const DEV_GUIDE_SKILL_PATTERN = /^forgen-(react|vue|node|go)-/;
+export const DEV_GUIDE_SKILL_PATTERN = /^forgen-(react|vue|node|go)-/;
 
 interface DevGuideSkillsOutcome {
   devGuideSkillsPath: string;
@@ -889,8 +942,7 @@ function installCodexSkills(opts: { sourceDir: string; targetDir: string; dryRun
       // 사용자가 forgen 문서를 인용해 본문 안에 marker 가 우연히 포함될 수 있어
       // includes() 만으론 안전 X. 정규식으로 frontmatter 종결(`---\n`) 다음 빈 줄 다음
       // 첫 non-blank 줄에 marker 가 있는지 확인.
-      const fmMarkerRe = /^---\n[\s\S]*?\n---\n\s*<!-- forgen-managed -->/;
-      if (!fmMarkerRe.test(existing)) continue; // 사용자 작성 또는 손상 — skip
+      if (!hasManagedSkillMarker(existing)) continue; // 사용자 작성 또는 손상 — skip
     }
     const raw = fs.readFileSync(path.join(sourceDir, file), 'utf-8');
     const descMatch = raw.match(/description:\s*(.+)/);
@@ -981,6 +1033,24 @@ export function upsertForgenRulesInAgentsMd(opts: { agentsMdPath: string; pkgRoo
   fs.mkdirSync(path.dirname(agentsMdPath), { recursive: true });
   fs.writeFileSync(agentsMdPath, newContent, 'utf-8');
   return { injected: newContent !== current };
+}
+
+/** AGENTS.md 의 forgen 블록 제거 (uninstall). 블록뿐이던 파일은 삭제한다. */
+export function removeForgenRulesFromAgentsMd(opts: { agentsMdPath: string; dryRun: boolean }): { removed: boolean; fileDeleted: boolean } {
+  let current: string;
+  try { current = fs.readFileSync(opts.agentsMdPath, 'utf-8'); } catch { return { removed: false, fileDeleted: false }; }
+  const re = new RegExp(`\\n*${escapeRegex(AGENTS_MD_BEGIN)}[\\s\\S]*?${escapeRegex(AGENTS_MD_END)}\\n?`);
+  if (!re.test(current)) return { removed: false, fileDeleted: false };
+  const rest = current.replace(re, '\n').replace(/^\n+/, '');
+  const empty = rest.trim().length === 0;
+  // 심링크면 링크를 지우지 않고 대상 파일에 써 넣는다 (링크만 지우면 대상에 블록이 남는다).
+  const isLink = fs.lstatSync(opts.agentsMdPath).isSymbolicLink();
+  const deleteFile = empty && !isLink;
+  if (!opts.dryRun) {
+    if (deleteFile) fs.unlinkSync(opts.agentsMdPath);
+    else fs.writeFileSync(opts.agentsMdPath, empty ? '' : (rest.endsWith('\n') ? rest : `${rest}\n`), 'utf-8');
+  }
+  return { removed: true, fileDeleted: deleteFile };
 }
 
 function escapeRegex(s: string): string {

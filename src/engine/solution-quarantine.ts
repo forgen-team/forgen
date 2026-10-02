@@ -1,6 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import yaml from 'js-yaml';
+import * as yaml from 'js-yaml';
 import { SOLUTION_QUARANTINE_PATH, STATE_DIR } from '../core/paths.js';
 import { diagnoseFrontmatter } from './solution-format.js';
 import { createLogger } from '../core/logger.js';
@@ -29,7 +29,7 @@ export function diagnoseFromRawContent(content: string): string[] {
   if (raw.length > 5000) return ['frontmatter too large (>5000 chars — YAML bomb guard)'];
   let parsed: unknown;
   try {
-    parsed = yaml.load(raw, { schema: yaml.JSON_SCHEMA });
+    parsed = yaml.load(raw, { schema: yaml.CORE_SCHEMA });
   } catch (e) {
     return [`YAML parse error: ${e instanceof Error ? e.message : String(e)}`];
   }

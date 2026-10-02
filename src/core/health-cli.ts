@@ -62,21 +62,20 @@ export function computeHealth(): HealthScore {
     if (Object.keys(s.philosophy.axisScores).length >= 4) profile += 3;
   }
 
-  const total = Math.round(utilization + effectiveness + growth + coverage + profile);
+  // 총점은 *표시되는* 항목 점수의 합이어야 한다. 이전엔 합을 반올림(round(Σ))하고 항목은 따로 반올림해서
+  // 실 상태에 따라 "항목 합 60 ≠ 총점 61" 이 나왔다 (tests/health-cli 가 머신 상태에 따라 간헐 실패).
+  const components = {
+    utilization: Math.round(utilization),
+    effectiveness: Math.round(effectiveness),
+    growth: Math.round(growth),
+    coverage: Math.round(coverage),
+    profile: Math.round(profile),
+  };
+  const total = components.utilization + components.effectiveness + components.growth + components.coverage + components.profile;
 
   const grade = total >= 80 ? 'A' : total >= 60 ? 'B' : total >= 40 ? 'C' : total >= 20 ? 'D' : 'F';
 
-  return {
-    total,
-    components: {
-      utilization: Math.round(utilization),
-      effectiveness: Math.round(effectiveness),
-      growth: Math.round(growth),
-      coverage: Math.round(coverage),
-      profile: Math.round(profile),
-    },
-    grade,
-  };
+  return { total, components, grade };
 }
 
 function gradeColor(grade: string): string {

@@ -19,6 +19,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { generateHooksJson } from '../hooks/hooks-generator.js';
+import { hasManagedSkillMarker } from './managed-marker.js';
 
 export interface ClaudeInstallOptions {
   pkgRoot: string;
@@ -365,9 +366,6 @@ function installDevGuideSkills(opts: { pkgRoot: string; skillsDir: string; dryRu
 
 // ── 6. verify skill (ADR-016 D3) ───────────────────────────────────────
 
-/** frontmatter 직후에 forgen-managed 마커가 있는 SKILL.md 만 forgen 소유로 본다. */
-const MANAGED_SKILL_RE = /^---\n[\s\S]*?\n---\n\s*<!-- forgen-managed -->/;
-
 /** `<skillsDir>/verify` 가 사용자 소유인가 (심링크 / 마커 없는 SKILL.md / SKILL.md 없이 다른 파일만 있음). */
 export function isUserOwnedVerifySkill(skillsDir: string): boolean {
   const dir = path.join(skillsDir, 'verify');
@@ -379,7 +377,7 @@ export function isUserOwnedVerifySkill(skillsDir: string): boolean {
   const file = path.join(dir, 'SKILL.md');
   try {
     if (fs.lstatSync(file).isSymbolicLink()) return true;
-    return !MANAGED_SKILL_RE.test(fs.readFileSync(file, 'utf-8'));
+    return !hasManagedSkillMarker(fs.readFileSync(file, 'utf-8'));
   } catch {
     // SKILL.md 없음 — 디렉토리에 다른 것이 있으면 사용자가 만들던 것
     try { return fs.readdirSync(dir).length > 0; } catch { return true; }

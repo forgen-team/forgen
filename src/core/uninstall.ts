@@ -2,6 +2,8 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import * as readline from 'node:readline';
+import { fileURLToPath } from 'node:url';
+import { hasManagedSkillMarker, listDevGuideSkillNames, removeSkillFile } from '../host/managed-marker.js';
 import {
   SETTINGS_PATH,
   acquireLock,
@@ -110,8 +112,7 @@ export function cleanVerifySkill(homeDir: string = os.homedir()): boolean {
   const file = path.join(dir, 'SKILL.md');
   try {
     if (fs.lstatSync(dir).isSymbolicLink() || fs.lstatSync(file).isSymbolicLink()) return false;
-    const content = fs.readFileSync(file, 'utf-8');
-    if (!/^---\n[\s\S]*?\n---\n\s*<!-- forgen-managed -->/.test(content)) return false;
+    if (!hasManagedSkillMarker(fs.readFileSync(file, 'utf-8'))) return false;
     fs.unlinkSync(file);
     try { if (fs.readdirSync(dir).length === 0) fs.rmdirSync(dir); } catch { /* ignore */ }
     return true;
@@ -121,20 +122,37 @@ export function cleanVerifySkill(homeDir: string = os.homedir()): boolean {
 }
 
 /**
- * ADR-016 D1 — Codex config.toml 의 forgen notify 블록 제거. 남겨 두면 Codex 가 매 턴 사라진 스크립트를
- * spawn 한다. (Codex hooks.json / MCP 블록 정리는 아직 uninstall 범위 밖 — 알려진 갭.)
+ * ADR-016 D4 — `~/.claude/skills/forgen-<stack>-<skill>/` dev-guide 스킬 제거.
+ * 패키지가 실제로 제공하는 이름만 지운다 (사용자가 만든 `forgen-react-mine` 같은 스킬은 보존).
  */
-export async function cleanCodexNotify(codexHome: string = process.env.CODEX_HOME ?? path.join(os.homedir(), '.codex')): Promise<boolean> {
-  const configPath = path.join(codexHome, 'config.toml');
+export function cleanDevGuideSkills(pkgRoot: string, homeDir: string = os.homedir()): number {
+  const skillsDir = path.join(homeDir, '.claude', 'skills');
+  let removed = 0;
+  for (const name of listDevGuideSkillNames(pkgRoot)) {
+    if (removeSkillFile(skillsDir, name, false)) removed += 1;
+  }
+  return removed;
+}
+
+/**
+ * ADR-016 D4 — `~/.claude.json` 의 `mcpServers["forgen-compound"]` 제거. install 은 settings.json 이 아니라
+ * 여기에 등록하는데 uninstall 은 settings.json 만 정리하고 있었다. forgen 서버 경로를 가리킬 때만 지운다.
+ */
+export function cleanClaudeJsonMcp(homeDir: string = os.homedir()): boolean {
+  const claudeJsonPath = path.join(homeDir, '.claude.json');
   try {
-    const current = fs.readFileSync(configPath, 'utf-8');
-    const { removeNotifyBlock } = await import('../host/install-codex.js');
-    const r = removeNotifyBlock(current);
-    if (!r.removed) return false;
-    fs.writeFileSync(configPath, r.content, 'utf-8');
+    const data = JSON.parse(fs.readFileSync(claudeJsonPath, 'utf-8')) as { mcpServers?: Record<string, { args?: unknown }> };
+    const entry = data.mcpServers?.['forgen-compound'];
+    if (!entry) return false;
+    const args = Array.isArray(entry.args) ? entry.args : [];
+    const isForgenServer = args.some((a) => typeof a === 'string' && /[\\/]dist[\\/]mcp[\\/]server\.js$/.test(a));
+    if (!isForgenServer) return false; // 사용자가 같은 이름으로 다른 서버를 등록
+    delete data.mcpServers?.['forgen-compound'];
+    if (data.mcpServers && Object.keys(data.mcpServers).length === 0) delete data.mcpServers;
+    atomicWriteFileSync(claudeJsonPath, `${JSON.stringify(data, null, 2)}\n`);
     return true;
   } catch {
-    return false; // Codex 미사용
+    return false; // 파일 없음 / 파싱 실패 — 건드리지 않는다
   }
 }
 
@@ -360,9 +378,10 @@ export async function handleUninstall(cwd: string, options: { force?: boolean; p
   console.log('  3. Delete .claude/rules/ rule files (project-context, routing, forge-*)');
   console.log('  4. Remove forgen block from CLAUDE.md');
   console.log('  5. Remove slash commands (~/.claude/commands/forgen/) and the forgen-managed verify skill (~/.claude/skills/verify/)');
-  console.log('  6. Remove plugin artifacts (cache, installed_plugins.json, plugin directory)');
+  console.log('  6. Remove plugin artifacts (cache, installed_plugins.json, plugin directory), dev-guide skills, and the forgen-compound MCP entry in ~/.claude.json');
+  console.log('  7. Codex (if $CODEX_HOME or ~/.codex exists): forgen hooks in hooks.json, the MCP/notify blocks in config.toml, forgen skills, ch-*.toml agents, and the AGENTS.md block — hooks and files from other tools are kept');
   if (options.purge) {
-    console.log('  7. --purge: Delete ~/.forgen/ entirely (rules, me/, state/, solutions/, behavior/)');
+    console.log('  8. --purge: Delete ~/.forgen/ entirely (rules, me/, state/, solutions/, behavior/)');
     console.log('     WARNING: this erases all accumulated corrections, rules, drift, and lifecycle history.');
   } else {
     console.log('');
@@ -390,7 +409,17 @@ export async function handleUninstall(cwd: string, options: { force?: boolean; p
   cleanClaudeMd(cwd);
   cleanSlashCommands();
   if (cleanVerifySkill()) console.log('  ✓ Removed forgen verify skill (~/.claude/skills/verify/)');
-  if (await cleanCodexNotify()) console.log('  ✓ Removed forgen notify block from Codex config.toml');
+  const pkgRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+  const devGuide = cleanDevGuideSkills(pkgRoot);
+  if (devGuide > 0) console.log(`  ✓ Removed ${devGuide} dev-guide skill(s) (~/.claude/skills/forgen-*)`);
+  if (cleanClaudeJsonMcp()) console.log('  ✓ Removed forgen-compound MCP server from ~/.claude.json');
+  // ADR-016 D4 — Codex 에 등록한 것도 되돌린다 (다른 도구의 훅과 그 신뢰는 보존)
+  try {
+    const { planCodexUninstall, renderCodexUninstall } = await import('../host/uninstall-codex.js');
+    for (const line of renderCodexUninstall(planCodexUninstall({ pkgRoot }))) console.log(line);
+  } catch (e) {
+    console.error('  ✗ Codex cleanup failed:', e instanceof Error ? e.message : String(e));
+  }
   cleanPluginArtifacts();
 
   if (options.purge) {
@@ -408,5 +437,5 @@ export async function handleUninstall(cwd: string, options: { force?: boolean; p
     }
   }
 
-  console.log('\n[forgen] Uninstall complete. Restart Claude Code for a clean state.\n');
+  console.log('\n[forgen] Uninstall complete. Restart Claude Code (and Codex) for a clean state.\n');
 }

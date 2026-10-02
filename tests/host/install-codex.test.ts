@@ -266,7 +266,7 @@ describe('planCodexInstall', () => {
 
 // ── ADR-014 (v0.5.3): Codex agents TOML + skill adaptation + hook trust audit ──
 
-import { adaptSkillBodyForCodex, auditCodexHookTrust, codexHookEventKey, codexHookTrustHash, isCodexMultiAgentEnabled, removeNotifyBlock, renderCodexAgentToml, upsertNotifyBlock } from '../../src/host/install-codex.js';
+import { adaptSkillBodyForCodex, auditCodexHookTrust, codexHookEventKey, codexHookTrustHash, isCodexMultiAgentEnabled, isForgenHookCommand, removeNotifyBlock, renderCodexAgentToml, upsertNotifyBlock } from '../../src/host/install-codex.js';
 
 type TrustFixtureRow = [event: string, matcher: string, handler: { type: 'command'; command: string; timeout: number }, expected: string];
 /** Codex 0.153.4 가 실머신에서 기록한 trusted_hash (2026-10-02 `~/.codex/config.toml`). */
@@ -751,6 +751,49 @@ describe('config.toml managed blocks — Codex 가 블록 안에 써 넣은 내�
     expect(toml).toContain('[mcp_servers.forgen-compound]');
     // 블록이 없을 때의 --no-notify 는 no-op
     expect(planCodexInstall({ pkgRoot: PKG_ROOT, codexHome, registerNotify: false, agentsMdPath: path.join(codexHome, 'AGENTS.md') }).notify).toBe('skipped');
-    expect(removeNotifyBlock('model = "x"\n')).toEqual({ content: 'model = "x"\n', removed: false });
+    expect(removeNotifyBlock('model = "x"\n')).toEqual({ content: 'model = "x"\n', removed: false, custom: false, restoredChain: [] });
+  });
+
+  it('M1: 손으로 여러 줄로 고친 notify 블록은 제거하지 않는다 — 첫 줄만 지우면 Codex 가 기동 못 하는 TOML 이 된다', () => {
+    const base = upsertNotifyBlock('model = "x"\n', PKG_ROOT).content;
+    const multi = base.replace(/^notify = .*$/m, 'notify = [\n  "node", "/p/dist/host/codex-notify.js",\n  "--", "say", "done",\n]');
+    expect(removeNotifyBlock(multi)).toEqual({ content: multi, removed: false, custom: true, restoredChain: [] });
+    fs.writeFileSync(path.join(codexHome, 'config.toml'), multi);
+    const r = planCodexInstall({ pkgRoot: PKG_ROOT, codexHome, registerNotify: false, registerMcp: false, agentsMdPath: path.join(codexHome, 'AGENTS.md') });
+    expect(r.notify).toBe('custom-block');
+    expect(fs.readFileSync(r.configTomlPath, 'utf-8')).toBe(multi);
+  });
+
+  it('제거 시 체인돼 있던 사용자 notifier 는 그 argv 만으로 되돌려 놓는다', () => {
+    const base = upsertNotifyBlock('model = "x"\n', PKG_ROOT).content;
+    const chained = base.replace(/^notify = .*$/m, `notify = ${JSON.stringify(['node', '/p/dist/host/codex-notify.js', '--', 'terminal-notifier', '-title', 'codex'])}`);
+    const r = removeNotifyBlock(chained);
+    expect(r.removed).toBe(true);
+    expect(r.restoredChain).toEqual(['terminal-notifier', '-title', 'codex']);
+    expect(r.content).toBe('notify = ["terminal-notifier","-title","codex"]\n\nmodel = "x"\n');
+    // 되돌려 놓은 뒤 다시 설치하면 사용자 notify 로 인식해 건드리지 않는다
+    expect(upsertNotifyBlock(r.content, PKG_ROOT).status).toBe('user-defined');
+  });
+
+  it('BOM/CRLF 파일에서 블록을 제거해도 BOM 은 맨 앞, 줄 끝은 그대로', () => {
+    const original = '\uFEFFmodel = "x"\r\n\r\n[features]\r\nmulti_agent = true\r\n';
+    const installed = upsertNotifyBlock(original, PKG_ROOT).content;
+    expect(removeNotifyBlock(installed).content).toBe(original);
+  });
+});
+
+describe('훅 소유 판정 (critic 2026-10-02: 부분문자열/임의 dist/hooks 오탐)', () => {
+  it.each([
+    [`node "${PKG_ROOT}/dist/host/codex-adapter.js" "${PKG_ROOT}/dist/hooks/stop-guard.js"`, true],
+    ['node "/old/prefix/dist/host/codex-adapter.js" "/old/prefix/dist/hooks/stop-guard.js"', true], // 다른 경로의 forgen
+    ['node "/usr/lib/node_modules/@wooojin/forgen/dist/hooks/stop-guard.js"', true], // adapter 없는 구버전 형태
+    ['node /home/me/otherproj/dist/hooks/pre-commit.js', false], // 다른 프로젝트의 dist/hooks
+    ['echo "see dist/hooks/readme.js"', false],
+    [`${PKG_ROOT}-fork/hook.sh`, false], // pkgRoot 를 접두로 가진 다른 경로
+    [`bash ${PKG_ROOT}/my-own-script.sh`, false], // 저장소 체크아웃 안의 사용자 스크립트
+    ["if [ -x '/home/u/.orca/hook.sh' ]; then /home/u/.orca/hook.sh; fi", false],
+    [undefined, false],
+  ])('%j → forgen=%s', (command, expected) => {
+    expect(isForgenHookCommand(command, PKG_ROOT)).toBe(expected);
   });
 });

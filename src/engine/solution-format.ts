@@ -1,4 +1,4 @@
-import yaml from 'js-yaml';
+import * as yaml from 'js-yaml';
 
 // ── Types ──
 
@@ -183,7 +183,7 @@ export function parseFrontmatterOnly(content: string): SolutionFrontmatter | nul
     const anchorCount = (raw.match(/(?<=\s|^)&\w+/g) ?? []).length;
     if (anchorCount > 3) return null;
 
-    const parsed = yaml.load(raw, { schema: yaml.JSON_SCHEMA });
+    const parsed = yaml.load(raw, { schema: yaml.CORE_SCHEMA });
     if (!validateFrontmatter(parsed)) return null;
 
     return parsed;
@@ -235,8 +235,8 @@ export function parseSolutionV3(content: string): SolutionV3 | null {
 export function serializeSolutionV3(solution: SolutionV3): string {
   const yamlStr = yaml.dump(solution.frontmatter, {
     lineWidth: -1,
-    quotingType: '"',
-    schema: yaml.JSON_SCHEMA,
+    quoteStyle: 'double',
+    schema: yaml.CORE_SCHEMA,
   });
   return `---\n${yamlStr}---\n\n## Context\n${solution.context}\n\n## Content\n${solution.content}\n`;
 }

@@ -10,8 +10,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { isUserOwnedVerifySkill, planClaudeInstall } from '../../src/host/install-claude.js';
-import { cleanCodexNotify, cleanVerifySkill } from '../../src/core/uninstall.js';
-import { upsertNotifyBlock } from '../../src/host/install-codex.js';
+import { cleanClaudeJsonMcp, cleanDevGuideSkills, cleanVerifySkill } from '../../src/core/uninstall.js';
 
 const PKG_ROOT = process.cwd();
 
@@ -247,15 +246,57 @@ describe('ADR-016 D3: user-level verify skill', () => {
   });
 });
 
-describe('uninstall: Codex notify 블록 제거 (ADR-016, critic m9)', () => {
-  it('forgen 블록만 걷어내고 나머지 config 는 보존, 블록이 없거나 Codex 미사용이면 no-op', async () => {
-    const codexHome = path.join(tmpHome, '.codex');
-    fs.mkdirSync(codexHome, { recursive: true });
-    const cfg = path.join(codexHome, 'config.toml');
-    fs.writeFileSync(cfg, upsertNotifyBlock('model = "x"\n\n[features]\nmulti_agent = true\n', PKG_ROOT).content);
-    expect(await cleanCodexNotify(codexHome)).toBe(true);
-    expect(fs.readFileSync(cfg, 'utf-8')).toBe('model = "x"\n\n[features]\nmulti_agent = true\n');
-    expect(await cleanCodexNotify(codexHome)).toBe(false);
-    expect(await cleanCodexNotify(path.join(tmpHome, 'no-codex'))).toBe(false);
+describe('uninstall: Claude 쪽 대칭 보강 (ADR-016 D4)', () => {
+  it('dev-guide 스킬(forgen-<stack>-*)을 제거하고 다른 스킬은 보존', () => {
+    const r = planClaudeInstall({ pkgRoot: PKG_ROOT, homeDir: tmpHome });
+    expect(r.skillsInstalled).toBeGreaterThan(0);
+    const skillsDir = path.join(tmpHome, '.claude', 'skills');
+    fs.mkdirSync(path.join(skillsDir, 'my-skill'), { recursive: true });
+    fs.writeFileSync(path.join(skillsDir, 'my-skill', 'SKILL.md'), '---\nname: my-skill\ndescription: x\n---\n');
+    fs.mkdirSync(path.join(skillsDir, 'forgen-notes'), { recursive: true }); // forgen- 접두어지만 dev-guide 패턴 아님
+    // 패턴은 맞지만 패키지가 제공하지 않는 이름 = 사용자가 만든 스킬
+    fs.mkdirSync(path.join(skillsDir, 'forgen-react-mine'), { recursive: true });
+    fs.writeFileSync(path.join(skillsDir, 'forgen-react-mine', 'SKILL.md'), '---\nname: forgen-react-mine\ndescription: mine\n---\n');
+    expect(cleanDevGuideSkills(PKG_ROOT, tmpHome)).toBe(r.skillsInstalled);
+    expect(fs.readdirSync(skillsDir).sort()).toEqual(['forgen-notes', 'forgen-react-mine', 'my-skill', 'verify']);
+    expect(cleanDevGuideSkills(PKG_ROOT, tmpHome)).toBe(0);
+  });
+
+  it('~/.claude.json 의 forgen-compound MCP 등록을 제거 — 같은 이름의 사용자 서버와 다른 키는 보존', () => {
+    const claudeJson = path.join(tmpHome, '.claude.json');
+    fs.writeFileSync(claudeJson, JSON.stringify({ numStartups: 3, mcpServers: { other: { command: 'x' } } }));
+    planClaudeInstall({ pkgRoot: PKG_ROOT, homeDir: tmpHome });
+    expect(JSON.parse(fs.readFileSync(claudeJson, 'utf-8')).mcpServers['forgen-compound']).toBeDefined();
+    expect(cleanClaudeJsonMcp(tmpHome)).toBe(true);
+    const after = JSON.parse(fs.readFileSync(claudeJson, 'utf-8'));
+    expect(after.mcpServers).toEqual({ other: { command: 'x' } });
+    expect(after.numStartups).toBe(3);
+    expect(cleanClaudeJsonMcp(tmpHome)).toBe(false);
+
+    fs.writeFileSync(claudeJson, JSON.stringify({ mcpServers: { 'forgen-compound': { command: 'python', args: ['/mine/server.py'] } } }));
+    expect(cleanClaudeJsonMcp(tmpHome)).toBe(false); // 사용자가 같은 이름으로 등록한 다른 서버
+    expect(JSON.parse(fs.readFileSync(claudeJson, 'utf-8')).mcpServers['forgen-compound'].command).toBe('python');
+    expect(cleanClaudeJsonMcp(path.join(tmpHome, 'nope'))).toBe(false);
+  });
+
+  it.skipIf(process.platform === 'win32')('~/.claude.json 의 권한(0600)과 심링크를 보존한다', () => {
+    const real = path.join(tmpHome, 'dotfiles-claude.json');
+    const link = path.join(tmpHome, '.claude.json');
+    fs.writeFileSync(real, JSON.stringify({ mcpServers: { 'forgen-compound': { command: 'node', args: ['/x/dist/mcp/server.js'] }, other: { command: 'x', env: { TOKEN: 'secret' } } } }), { mode: 0o600 });
+    fs.symlinkSync(real, link);
+    expect(cleanClaudeJsonMcp(tmpHome)).toBe(true);
+    expect(fs.lstatSync(link).isSymbolicLink()).toBe(true); // 링크가 일반 파일로 바뀌지 않는다
+    expect(fs.statSync(real).mode & 0o777).toBe(0o600); // 비밀값이 든 파일의 권한이 넓어지지 않는다
+    expect(Object.keys(JSON.parse(fs.readFileSync(real, 'utf-8')).mcpServers)).toEqual(['other']);
+  });
+
+  it('verify 스킬: 본문에 `---` 구분선 뒤 마커를 인용한 사용자 스킬은 forgen 소유가 아니다', () => {
+    const file = path.join(tmpHome, '.claude', 'skills', 'verify', 'SKILL.md');
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    const mine = '---\nname: verify\ndescription: mine\n---\n\nrun make check\n\n---\n<!-- forgen-managed -->\n';
+    fs.writeFileSync(file, mine);
+    expect(planClaudeInstall({ pkgRoot: PKG_ROOT, homeDir: tmpHome }).verifySkill).toBe('user-owned');
+    expect(cleanVerifySkill(tmpHome)).toBe(false);
+    expect(fs.readFileSync(file, 'utf-8')).toBe(mine);
   });
 });

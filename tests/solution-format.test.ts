@@ -522,3 +522,47 @@ describe('validateFrontmatter', () => {
     expect(validateFrontmatter({})).toBe(false);
   });
 });
+
+// ── js-yaml 5 스키마 회귀 (0.5.7) ──
+// js-yaml 5 의 JSON_SCHEMA 는 strict JSON 이라 v4 가 읽던 YAML 스칼라(.5, ~, True, 0x1F …)를 문자열로 읽는다.
+// CORE_SCHEMA 가 v4 JSON_SCHEMA 와 같은 해석을 준다 — 손으로 고친 frontmatter 가 조용히 탈락하지 않게 고정.
+describe('frontmatter YAML 스칼라 해석 (js-yaml v4 호환)', () => {
+  const fileWith = (fmLines: string) => `---\n${fmLines}\n---\n\n## Context\nc\n\n## Content\nd\n`;
+  const base = (over: Record<string, string> = {}) => {
+    const fields: Record<string, string> = {
+      name: 'hand-edited', version: '1', status: 'experiment', confidence: '0.5', type: 'pattern', scope: 'me',
+      tags: '[a, b]', identifiers: '[]',
+      evidence: '{injected: 0, reflected: 0, negative: 0, sessions: 0, reExtracted: 0}',
+      created: '"2026-01-01"', updated: '"2026-01-01"', supersedes: 'null', extractedBy: 'manual', ...over,
+    };
+    return fileWith(Object.entries(fields).map(([k, v]) => `${k}: ${v}`.trimEnd()).join('\n'));
+  };
+
+  it.each([
+    ['confidence: .5', { confidence: '.5' }, (s: SolutionV3) => expect(s.frontmatter.confidence).toBe(0.5)],
+    ['confidence: +0.5', { confidence: '+0.5' }, (s: SolutionV3) => expect(s.frontmatter.confidence).toBe(0.5)],
+    ['version: 01', { version: '01' }, (s: SolutionV3) => expect(s.frontmatter.version).toBe(1)],
+    ['supersedes: ~', { supersedes: '~' }, (s: SolutionV3) => expect(s.frontmatter.supersedes).toBeNull()],
+    ['supersedes: (blank)', { supersedes: '' }, (s: SolutionV3) => expect(s.frontmatter.supersedes).toBeNull()],
+    ['supersedes: Null', { supersedes: 'Null' }, (s: SolutionV3) => expect(s.frontmatter.supersedes).toBeNull()],
+  ])('%s 는 v4 와 같게 읽힌다', (_label, over, check) => {
+    const parsed = parseSolutionV3(base(over as Record<string, string>));
+    expect(parsed).not.toBeNull();
+    check(parsed as SolutionV3);
+  });
+
+  it('필수 필드가 비어 있으면(null) 여전히 거부한다 — 빈 문자열로 통과시키지 않는다', () => {
+    expect(parseSolutionV3(base({ name: '' }))).toBeNull();
+  });
+
+  it('YAML 키워드처럼 보이는 문자열 태그는 따옴표로 직렬화되어 문자열로 되읽힌다', () => {
+    const tricky = ['True', 'False', 'NULL', 'null', '~', '007', '0x1F', '.5', '+1', '1e3', '2026-10-02', '한국어'];
+    const text = buildV3File(validFrontmatter({ tags: tricky, identifiers: ['True', 'NULL'] }), 'ctx', 'body');
+    for (const t of ['True', 'False', 'NULL', 'null', '~', '007', '0x1F', '.5', '+1', '1e3']) {
+      expect(text, `${t} must be quoted`).toContain(`- "${t}"`);
+    }
+    const back = parseSolutionV3(text);
+    expect(back?.frontmatter.tags).toEqual(tricky);
+    expect(back?.frontmatter.identifiers).toEqual(['True', 'NULL']);
+  });
+});

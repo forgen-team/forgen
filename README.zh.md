@@ -533,7 +533,7 @@ forgen mcp list                 # 列出已安装的 MCP 服务器
 forgen mcp add <名称>           # 从模板添加 MCP 服务器
 forgen mcp templates            # 显示可用模板
 forgen notepad show             # 查看会话记事本
-forgen uninstall                # 干净地卸载 forgen
+forgen uninstall                # 干净地卸载 forgen (Claude Code + Codex 的注册项)
 ```
 
 ### MCP 工具（会话中 Claude 可使用）

@@ -549,7 +549,7 @@ forgen mcp list                 # 설치된 MCP 서버 목록
 forgen mcp add <이름>           # 템플릿에서 MCP 서버 추가
 forgen mcp templates            # 사용 가능한 템플릿 목록
 forgen notepad show             # 세션 노트패드 보기
-forgen uninstall                # forgen 깔끔하게 제거
+forgen uninstall                # forgen 깔끔하게 제거 (Claude Code + Codex 등록분)
 ```
 
 ### MCP 도구 (세션 중 Claude가 사용)

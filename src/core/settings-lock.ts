@@ -102,11 +102,24 @@ export function releaseLock(): void {
   } catch { /* 이미 없으면 무시 */ }
 }
 
-/** 임시파일에 쓴 후 rename으로 원자적 교체 */
+/**
+ * 임시파일에 쓴 후 rename으로 원자적 교체.
+ *
+ * 0.5.7 (critic): 기존 파일의 권한과 심링크를 보존한다. 이전엔 새 파일을 기본 mode(0644)로 만들어 rename 해서
+ * 0600 이던 `~/.claude.json`(MCP env 에 비밀값이 들어갈 수 있다)이 0644 로 넓어졌고, 심링크였으면 링크가
+ * 일반 파일로 바뀌고 원본은 갱신되지 않았다.
+ */
 export function atomicWriteFileSync(targetPath: string, data: string): void {
-  const tmpPath = `${targetPath}.tmp.${process.pid}`;
-  fs.writeFileSync(tmpPath, data);
-  fs.renameSync(tmpPath, targetPath);
+  let realTarget = targetPath;
+  let mode: number | undefined;
+  try {
+    realTarget = fs.realpathSync(targetPath);
+    mode = fs.statSync(realTarget).mode & 0o777;
+  } catch { /* 새 파일 — 기본 mode */ }
+  const tmpPath = `${realTarget}.tmp.${process.pid}`;
+  fs.writeFileSync(tmpPath, data, mode !== undefined ? { mode } : undefined);
+  if (mode !== undefined) fs.chmodSync(tmpPath, mode); // umask 로 깎였을 수 있어 명시
+  fs.renameSync(tmpPath, realTarget);
 }
 
 /**

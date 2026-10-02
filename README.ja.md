@@ -564,7 +564,7 @@ forgen mcp list                 # インストール済み MCP サーバーを�
 forgen mcp add <名前>           # テンプレートから MCP サーバーを追加
 forgen mcp templates            # 利用可能なテンプレートを表示
 forgen notepad show             # セッションノートパッドを表示
-forgen uninstall                # forgen をきれいに削除
+forgen uninstall                # forgen をきれいに削除 (Claude Code + Codex の登録分)
 ```
 
 ### MCP ツール（セッション中に Claude が使用可能）
