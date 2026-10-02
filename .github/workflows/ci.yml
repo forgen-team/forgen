@@ -62,11 +62,18 @@ jobs:
             node-version: '22.x'
     steps:
       - uses: actions/checkout@v7
+      # 빌드는 지원 Node(engines >=22)로 한다 — 사용자는 빌드된 dist 를 받는다. TypeScript 7 의 tsc 는
+      # Node 20.0 에서 실행되지 않으므로(확장자 없는 ESM bin) 빌드 도구와 런타임 검증을 분리한다.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npm run build
+      # 여기서부터가 검증 대상: 빌드된 훅이 이 Node 버전에서 로드되는가.
       - uses: actions/setup-node@v7
         with:
           node-version: ${{ matrix.node-version }}
-      - run: npm ci
-      - run: npm run build
+      - run: node --version
       - name: Smoke load every hook (parses + executes without error)
         shell: bash
         run: |
