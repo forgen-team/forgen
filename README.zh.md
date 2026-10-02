@@ -192,6 +192,10 @@ forgen install both          # 三选交互: claude / codex / both
 forgen install claude
 forgen install codex
 # 仅 Codex: 在 codex 内用 `/hooks` 信任一次 forgen 钩子 — Codex 会跳过未信任的钩子 (用 forgen doctor 的 [Codex Hooks] 查看)
+#   升级到 v0.5.6: 重新运行 `forgen install codex` 会改动 2 个钩子 (session_start, session_end) — 在 `/hooks` 中再信任一次。
+#   同时在 config.toml 注册 `notify` 兜底 (如果你已定义 `notify` 则不改动; 关闭: --no-notify)。
+# 仅 Claude: 将 `verify` 技能安装到 ~/.claude/skills/verify — Claude Code 在提交代码前运行它
+#   (不会覆盖你自己的 `verify` 技能; 关闭: --no-verify-skill)。
 
 # 3. 首次运行 — 4题引导问卷 (英语/韩语选择)
 forgen                        # 默认: Claude

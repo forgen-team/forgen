@@ -15,6 +15,7 @@
 import { spawnSync } from 'node:child_process';
 import type { HookEventInput } from '../core/types.js';
 import { projectCodexToClaude } from './projection.js';
+import { markCodexHookAlive } from './codex-hook-alive.js';
 
 function lastJSONObjectFromText(raw: string): unknown | null {
   const lines = raw.split('\n').map((line) => line.trim()).filter(Boolean);
@@ -55,6 +56,10 @@ async function main(): Promise<void> {
       return {};
     }
   })();
+
+  // ADR-016 D1 — "Codex 가 forgen 훅을 실제로 실행 중" 마커 (notify 폴백이 신선도를 본다).
+  // forgen 자신의 추출용 중첩 실행은 사용자 세션이 아니므로 제외.
+  if (process.env.FORGEN_NESTED_RUN !== '1') markCodexHookAlive(input);
 
   try {
     // 0.4.6 fix — delegate hook 이 자기가 codex runtime context 인지 알 수 있게

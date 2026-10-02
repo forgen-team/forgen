@@ -128,10 +128,20 @@ describe('planCodexInstall', () => {
     expect(fs.existsSync(r.configTomlPath)).toBe(false);
   });
 
-  it('registerMcp:false 면 config.toml 미작성', () => {
+  it('registerMcp:false + registerNotify:false 면 config.toml 미작성', () => {
+    const r = planCodexInstall({ pkgRoot: PKG_ROOT, codexHome, registerMcp: false, registerNotify: false });
+    expect(r.mcpRegistered).toBe(false);
+    expect(r.notify).toBe('skipped');
+    expect(fs.existsSync(r.configTomlPath)).toBe(false);
+  });
+
+  it('registerMcp:false 만 주면 MCP 블록 없이 notify 블록만 쓴다', () => {
     const r = planCodexInstall({ pkgRoot: PKG_ROOT, codexHome, registerMcp: false });
     expect(r.mcpRegistered).toBe(false);
-    expect(fs.existsSync(r.configTomlPath)).toBe(false);
+    expect(r.notify).toBe('installed');
+    const toml = fs.readFileSync(r.configTomlPath, 'utf-8');
+    expect(toml).toContain('forgen-managed-notify');
+    expect(toml).not.toContain('mcp_servers.forgen-compound');
   });
 
   it('P3-3: Codex skills/ 에 forgen 10 commands install (SKILL.md frontmatter)', () => {
@@ -256,7 +266,20 @@ describe('planCodexInstall', () => {
 
 // ── ADR-014 (v0.5.3): Codex agents TOML + skill adaptation + hook trust audit ──
 
-import { adaptSkillBodyForCodex, auditCodexHookTrust, codexHookEventKey, isCodexMultiAgentEnabled, renderCodexAgentToml } from '../../src/host/install-codex.js';
+import { adaptSkillBodyForCodex, auditCodexHookTrust, codexHookEventKey, codexHookTrustHash, isCodexMultiAgentEnabled, removeNotifyBlock, renderCodexAgentToml, upsertNotifyBlock } from '../../src/host/install-codex.js';
+
+type TrustFixtureRow = [event: string, matcher: string, handler: { type: 'command'; command: string; timeout: number }, expected: string];
+/** Codex 0.153.4 가 실머신에서 기록한 trusted_hash (2026-10-02 `~/.codex/config.toml`). */
+const REAL_TRUST_FIXTURE = (cmd: (n: string, arg?: string) => string): TrustFixtureRow[] => [
+  ['UserPromptSubmit', '*', { type: 'command', command: cmd('notepad-injector'), timeout: 3 }, 'sha256:e1329ea49297337891c86559c0e60f3b710f87b2e20f90b6096d2d38f2940f9c'],
+  ['SessionStart', '*', { type: 'command', command: cmd('session-recovery'), timeout: 3 }, 'sha256:e518fe4cddeb0b88b97d5fee0e344c7c42c664003c4005ef7463950e2446d323'],
+  ['PostToolUse', 'Write|Edit|Bash', { type: 'command', command: cmd('secret-filter'), timeout: 3 }, 'sha256:1c6306f4306b02e75f1b7e4225f7f8bcf81875676ed35d6598b7ff6f51ab17cb'],
+  ['Stop', '*', { type: 'command', command: cmd('stop-guard'), timeout: 10 }, 'sha256:8c2d9488a51da8af2f535afb7f1444e2cc0b947b9eb35e089537ddd3e5ab964d'],
+  ['PreToolUse', 'Bash', { type: 'command', command: cmd('db-guard'), timeout: 3 }, 'sha256:0538322eddbacc755d1f880723a42eaef4a22ec9de0bf2732cba3ef2fa6ab9f5'],
+  ['PermissionRequest', '*', { type: 'command', command: cmd('permission-handler'), timeout: 2 }, 'sha256:044b64034bb1e42b0c6bdae9a1c6e4f8c7d61a6a110af85699694304578d1164'],
+  ['SubagentStart', '*', { type: 'command', command: cmd('subagent-tracker', ' "start"'), timeout: 2 }, 'sha256:3a2f0556d0925b29831dd805374d5d7f0537bae22b2665fbc63ecbeb87a5c535'],
+  ['PreCompact', '*', { type: 'command', command: cmd('pre-compact'), timeout: 3 }, 'sha256:0ebcb3fb0274f8c509d014a7cff7029859221dfedc0e1297092de51f8a8252af'],
+];
 
 describe('ADR-014 Codex parity', () => {
   let codexHome: string;
@@ -355,43 +378,157 @@ describe('ADR-014 Codex parity', () => {
     expect(adaptSkillBodyForCodex('`$ARGUMENTS` 에서 파싱')).not.toContain('$ARGUMENTS');
   });
 
-  it('D4: auditCodexHookTrust — hooks.state 키 대조 (snake_case event + group/hook index)', () => {
+  it('D4: auditCodexHookTrust — trusted / modified / untrusted 를 해시로 구분 (ADR-016 D2)', () => {
     expect(codexHookEventKey('PreToolUse')).toBe('pre_tool_use');
     expect(codexHookEventKey('PostToolUseFailure')).toBe('post_tool_use_failure');
     const hooksPath = path.join(codexHome, 'hooks.json');
     const cmd = (n: string) => `node "${PKG_ROOT}/dist/host/codex-adapter.js" "${PKG_ROOT}/dist/hooks/${n}.js"`;
+    const pre = { type: 'command', command: cmd('pre-tool-use'), timeout: 3 };
+    const stop = { type: 'command', command: cmd('stop-guard'), timeout: 10 };
     const hooksFile = {
       hooks: {
-        PreToolUse: [{ matcher: '*', hooks: [{ type: 'command', command: cmd('pre-tool-use'), timeout: 3 }, { type: 'command', command: cmd('rate-limiter'), timeout: 2 }] }],
-        Stop: [{ matcher: '*', hooks: [{ type: 'command', command: cmd('stop-guard'), timeout: 10 }] }, { matcher: '*', hooks: [{ type: 'command', command: 'bash /home/u/my-hook.sh', timeout: 1 }] }],
+        PreToolUse: [{ matcher: '*', hooks: [pre, { type: 'command', command: cmd('rate-limiter'), timeout: 2 }] }],
+        Stop: [{ matcher: '*', hooks: [stop] }, { matcher: '*', hooks: [{ type: 'command', command: 'bash /home/u/my-hook.sh', timeout: 1 }] }],
         // Claude 전용 이벤트 — Codex 가 무시하므로 total 에서 제외되어야 함 (critic 2026-10-01)
         PostToolUseFailure: [{ matcher: '*', hooks: [{ type: 'command', command: cmd('post-tool-failure'), timeout: 3 }] }],
       },
     };
     const toml = [
-      `[hooks.state."${hooksPath}:pre_tool_use:0:0"]`, 'trusted_hash = "sha256:aa"',
-      `[hooks.state."${hooksPath}:stop:0:0"]`, 'enabled = true', 'trusted_hash = "sha256:bb"',
+      `[hooks.state."${hooksPath}:pre_tool_use:0:0"]`, `trusted_hash = "${codexHookTrustHash('PreToolUse', '*', pre)}"`,
+      `[hooks.state."${hooksPath}:stop:0:0"]`, 'enabled = true', `trusted_hash = "${codexHookTrustHash('Stop', '*', stop)}"`,
       `[hooks.state."${hooksPath}:stop:1:0"]`, 'trusted_hash = "sha256:cc"', // 사용자 훅 — 집계 제외
     ].join('\n');
     const audit = auditCodexHookTrust({ hooksPath, configTomlPath: path.join(codexHome, 'config.toml'), pkgRoot: PKG_ROOT, hooksFile, configToml: toml });
     expect(audit.total).toBe(3);
     expect(audit.trusted).toBe(2);
+    expect(audit.modified).toEqual([]);
     expect(audit.untrusted).toEqual(['pre_tool_use:0:1']);
     expect(audit.ignoredByCodex).toEqual(['post_tool_use_failure:0:0']);
     expect(audit.noStateRecorded).toBe(false);
+
+    // 핸들러 필드가 바뀌면(timeout 3→5) 신뢰 기록이 있어도 Codex 는 skip 한다 → modified
+    const changed = { hooks: { ...hooksFile.hooks, PreToolUse: [{ matcher: '*', hooks: [{ ...pre, timeout: 5 }, hooksFile.hooks.PreToolUse[0].hooks[1]] }] } };
+    const drift = auditCodexHookTrust({ hooksPath, configTomlPath: path.join(codexHome, 'config.toml'), pkgRoot: PKG_ROOT, hooksFile: changed, configToml: toml });
+    expect(drift.trusted).toBe(1);
+    expect(drift.modified).toEqual(['pre_tool_use:0:0']);
+
+    // 승인돼 있어도 사용자가 /hooks 에서 끈 훅(enabled = false)은 Codex 가 실행하지 않는다 → disabled
+    const off = auditCodexHookTrust({ hooksPath, configTomlPath: path.join(codexHome, 'config.toml'), pkgRoot: PKG_ROOT, hooksFile, configToml: toml.replace('enabled = true', 'enabled = false') });
+    expect(off.disabled).toEqual(['stop:0:0']);
+    expect(off.trusted).toBe(1);
+
+    // Codex 가 literal('…') 키나 CRLF 로 쓴 섹션도 읽는다
+    const literal = toml.replace(`[hooks.state."${hooksPath}:pre_tool_use:0:0"]`, `[hooks.state.'${hooksPath}:pre_tool_use:0:0']`).replace(/\n/g, '\r\n');
+    expect(auditCodexHookTrust({ hooksPath, configTomlPath: path.join(codexHome, 'config.toml'), pkgRoot: PKG_ROOT, hooksFile, configToml: literal }).trusted).toBe(2);
+
+    // trusted_hash 없이 enabled 만 있는 섹션은 미승인
+    const noHash = auditCodexHookTrust({ hooksPath, configTomlPath: path.join(codexHome, 'config.toml'), pkgRoot: PKG_ROOT, hooksFile, configToml: `[hooks.state."${hooksPath}:stop:0:0"]\nenabled = false\n` });
+    expect(noHash.untrusted).toContain('stop:0:0');
 
     const none = auditCodexHookTrust({ hooksPath, configTomlPath: path.join(codexHome, 'config.toml'), pkgRoot: PKG_ROOT, hooksFile, configToml: '' });
     expect(none.trusted).toBe(0);
     expect(none.noStateRecorded).toBe(true);
   });
 
+  it('codexHookTrustHash — Codex 0.153.4 가 실제로 기록한 trusted_hash 와 일치 (실머신 fixture)', () => {
+    // 실 ~/.codex/config.toml 의 [hooks.state] 에서 가져온 값 (2026-10-02, forgen 0.5.5 설치 상태).
+    // 경로/인덱스는 해시에 들어가지 않는다 — command 문자열·timeout·matcher·event 만.
+    const root = '/home/ubuntu/.nvm/versions/node/v22.22.0/lib/node_modules/@wooojin/forgen/dist';
+    const cmd = (n: string, arg = '') => `node "${root}/host/codex-adapter.js" "${root}/hooks/${n}.js"${arg}`;
+    for (const [event, matcher, handler, expected] of REAL_TRUST_FIXTURE(cmd)) {
+      expect(codexHookTrustHash(event, matcher, handler), `${event} ${handler.command}`).toBe(expected);
+    }
+  });
+
+  it('codexHookTrustHash — Codex `hooks/list` 의 currentHash 와 일치 (0.5.6 이 추가한 핸들러 형태)', () => {
+    // 격리 CODEX_HOME 에서 Codex 0.153.4 app-server `hooks/list` 가 계산한 값 (2026-10-02).
+    const adapter = (n: string) => `node "/X/dist/host/codex-adapter.js" "/X/dist/hooks/${n}.js"`;
+    expect(codexHookTrustHash('SessionStart', '*', { type: 'command', command: adapter('session-recovery'), timeout: 3, additionalContextLimit: 0 }))
+      .toBe('sha256:0ea28725702db95e579db421859b9a994ce98d0ba87838f0ef03acff370a0698');
+    expect(codexHookTrustHash('SessionEnd', '*', { type: 'command', command: adapter('session-end'), timeout: 3 }))
+      .toBe('sha256:48db5bce67b2678842c909b305fd954f8b503fe50596f7264e5131a13d469f15');
+    expect(codexHookTrustHash('Stop', '*', { type: 'command', command: 'echo a', timeout: 7, async: true }))
+      .toBe('sha256:c762a60e062d747b21bc3ebd85279a70d3703d4841db4393a940eac6c8aa8188');
+  });
+
+  it('codexHookTrustHash — 정규화 규칙', () => {
+    const h = { type: 'command', command: 'x' };
+    // timeout 생략 = 600 (SessionEnd/Interrupt 는 1, 1~3 clamp)
+    expect(codexHookTrustHash('PreToolUse', '*', h)).toBe(codexHookTrustHash('PreToolUse', '*', { ...h, timeout: 600 }));
+    expect(codexHookTrustHash('SessionEnd', '*', { ...h, timeout: 10 })).toBe(codexHookTrustHash('SessionEnd', '*', { ...h, timeout: 3 }));
+    expect(codexHookTrustHash('SessionEnd', '*', h)).toBe(codexHookTrustHash('SessionEnd', '*', { ...h, timeout: 1 }));
+    // matcher 는 UserPromptSubmit/Stop/Interrupt 에서 무시
+    expect(codexHookTrustHash('Stop', '*', h)).toBe(codexHookTrustHash('Stop', undefined, h));
+    expect(codexHookTrustHash('PreToolUse', 'Bash', h)).not.toBe(codexHookTrustHash('PreToolUse', '*', h));
+    // additionalContextLimit: 기본값 2500 은 생략과 동치, 0 은 다른 해시, 미지원 이벤트에선 무시
+    expect(codexHookTrustHash('SessionStart', '*', { ...h, additionalContextLimit: 2500 })).toBe(codexHookTrustHash('SessionStart', '*', h));
+    expect(codexHookTrustHash('SessionStart', '*', { ...h, additionalContextLimit: 0 })).not.toBe(codexHookTrustHash('SessionStart', '*', h));
+    expect(codexHookTrustHash('Stop', '*', { ...h, additionalContextLimit: 0 })).toBe(codexHookTrustHash('Stop', '*', h));
+    // async 는 해시에 포함, 미지 필드는 불포함
+    expect(codexHookTrustHash('PostToolUse', '*', { ...h, async: true })).not.toBe(codexHookTrustHash('PostToolUse', '*', h));
+    // upstream 은 SessionEnd 에서도 raw async 플래그를 해시한다 (동기 강등은 실행 방식에만 반영)
+    expect(codexHookTrustHash('SessionEnd', '*', { ...h, async: true })).not.toBe(codexHookTrustHash('SessionEnd', '*', h));
+    expect(codexHookTrustHash('PostToolUse', '*', { ...h, bogus: 1 } as never)).toBe(codexHookTrustHash('PostToolUse', '*', h));
+    // command 훅이 아니면 null
+    expect(codexHookTrustHash('Stop', '*', { type: 'prompt' })).toBeNull();
+  });
+
   it('D4: planCodexInstall 결과에 hookTrust 가 포함되고, 신규 홈에서는 전부 untrusted', () => {
     const result = planCodexInstall({ pkgRoot: PKG_ROOT, codexHome, agentsMdPath: path.join(codexHome, 'AGENTS.md') });
-    // PostToolUseFailure 1건은 Codex 미지원 → total 에서 제외
-    expect(result.hookTrust.total + result.hookTrust.ignoredByCodex.length).toBe(result.hooksCount);
-    expect(result.hookTrust.ignoredByCodex).toEqual(['post_tool_use_failure:0:0']);
+    // 0.5.6: Codex 가 무시하는 PostToolUseFailure 는 더 이상 등록하지 않는다 → 전부 trust 대상
+    expect(result.hookTrust.total).toBe(result.hooksCount);
+    expect(result.hookTrust.ignoredByCodex).toEqual([]);
     expect(result.hookTrust.trusted).toBe(0);
+    expect(result.hookTrust.modified).toEqual([]);
     expect(result.hookTrust.noStateRecorded).toBe(true);
+  });
+
+  it('심링크된 CODEX_HOME: Codex 는 canonical 경로로 키를 쓴다 — raw 경로로도 대조된다', () => {
+    const real = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-real-'));
+    const link = `${real}-link`;
+    fs.symlinkSync(real, link, 'dir');
+    try {
+      const fresh = planCodexInstall({ pkgRoot: PKG_ROOT, codexHome: link, agentsMdPath: path.join(real, 'AGENTS.md') });
+      const hooks = JSON.parse(fs.readFileSync(fresh.hooksPath, 'utf-8')) as { hooks: Record<string, Array<{ matcher?: string; hooks: Array<Record<string, unknown>> }>> };
+      const canonical = fs.realpathSync(fresh.hooksPath);
+      expect(canonical).not.toBe(fresh.hooksPath);
+      const g = hooks.hooks.Stop[0];
+      fs.appendFileSync(fresh.configTomlPath, `\n[hooks.state."${canonical}:stop:0:0"]\ntrusted_hash = "${codexHookTrustHash('Stop', g.matcher, g.hooks[0])}"\n`);
+      const again = planCodexInstall({ pkgRoot: PKG_ROOT, codexHome: link, agentsMdPath: path.join(real, 'AGENTS.md') });
+      expect(again.hookTrust.trusted).toBe(1);
+    } finally {
+      fs.unlinkSync(link);
+      fs.rmSync(real, { recursive: true, force: true });
+    }
+  });
+
+  it('0.5.5 → 0.5.6 업그레이드: 재승인 대상은 session_start(modified) + session_end(신규) 뿐, 죽은 PostToolUseFailure 는 제거', () => {
+    // 0.5.5 형 hooks.json: session-recovery 에 additionalContextLimit 없음, SessionEnd 없음, PostToolUseFailure 있음
+    const fresh = planCodexInstall({ pkgRoot: PKG_ROOT, codexHome, agentsMdPath: path.join(codexHome, 'AGENTS.md') });
+    type G = { matcher?: string; hooks: Array<Record<string, unknown>> };
+    const cur = JSON.parse(fs.readFileSync(fresh.hooksPath, 'utf-8')) as { hooks: Record<string, G[]> };
+    const old = structuredClone(cur);
+    delete old.hooks.SessionEnd;
+    for (const g of old.hooks.SessionStart) for (const h of g.hooks) delete h.additionalContextLimit;
+    old.hooks.PostToolUseFailure = [{ matcher: '*', hooks: [{ type: 'command', command: `node "${PKG_ROOT}/dist/host/codex-adapter.js" "${PKG_ROOT}/dist/hooks/post-tool-failure.js"`, timeout: 3 }] }];
+    fs.writeFileSync(fresh.hooksPath, `${JSON.stringify(old, null, 2)}\n`);
+    // 사용자가 0.5.5 훅을 전부 승인해 둔 상태
+    const state: string[] = [];
+    for (const [ev, groups] of Object.entries(old.hooks)) {
+      if (ev === 'PostToolUseFailure') continue;
+      groups.forEach((g, gi) => g.hooks.forEach((h, hi) => {
+        state.push(`[hooks.state."${fresh.hooksPath}:${codexHookEventKey(ev)}:${gi}:${hi}"]`, `trusted_hash = "${codexHookTrustHash(ev, g.matcher, h)}"`, '');
+      }));
+    }
+    fs.appendFileSync(fresh.configTomlPath, `\n${state.join('\n')}`);
+
+    const up = planCodexInstall({ pkgRoot: PKG_ROOT, codexHome, agentsMdPath: path.join(codexHome, 'AGENTS.md') });
+    expect(up.hookTrust.modified).toEqual(['session_start:0:0']);
+    expect(up.hookTrust.untrusted).toEqual(['session_end:0:0']);
+    expect(up.hookTrust.trusted).toBe(up.hookTrust.total - 2);
+    expect(up.hookTrust.ignoredByCodex).toEqual([]);
+    const after = JSON.parse(fs.readFileSync(up.hooksPath, 'utf-8')) as { hooks: Record<string, unknown> };
+    expect(Object.keys(after.hooks)).not.toContain('PostToolUseFailure');
   });
 });
 
@@ -426,5 +563,194 @@ describe('hooks.json 그룹 순서 보존 (0.5.3 훅 신뢰 회귀)', () => {
     expect(after.hooks.Stop[0].hooks[0].command).toBe('echo user');
     const forgenGroups = after.hooks.Stop.filter((g) => g.hooks.some((h) => h.command.includes('codex-adapter')));
     expect(forgenGroups.length).toBe(1);
+  });
+});
+
+describe('ADR-016 D1: config.toml notify 폴백', () => {
+  let codexHome: string;
+  beforeEach(() => { codexHome = tmpDir('codex-notify-'); });
+  afterEach(() => { fs.rmSync(codexHome, { recursive: true, force: true }); });
+  const NOTIFY_JS = path.join(PKG_ROOT, 'dist', 'host', 'codex-notify.js');
+
+  it('빈 config: 블록을 최상단에 쓰고, top-level 키가 첫 테이블 헤더보다 앞에 온다', () => {
+    const r = planCodexInstall({ pkgRoot: PKG_ROOT, codexHome, agentsMdPath: path.join(codexHome, 'AGENTS.md') });
+    expect(r.notify).toBe('installed');
+    const toml = fs.readFileSync(r.configTomlPath, 'utf-8');
+    expect(toml.startsWith('# >>> forgen-managed-notify\n')).toBe(true);
+    expect(toml).toContain(`notify = ${JSON.stringify(['node', NOTIFY_JS])}`);
+    expect(toml.indexOf('notify = ')).toBeLessThan(toml.indexOf('[mcp_servers.forgen-compound]'));
+  });
+
+  it('기존 top-level 키·테이블을 보존하고 재설치는 바이트 동일 (idempotent)', () => {
+    const user = 'model = "gpt-5.5"\napproval_policy = "on-request"\n\n[features]\nmulti_agent = true\n';
+    fs.writeFileSync(path.join(codexHome, 'config.toml'), user);
+    const r1 = planCodexInstall({ pkgRoot: PKG_ROOT, codexHome, agentsMdPath: path.join(codexHome, 'AGENTS.md') });
+    const first = fs.readFileSync(r1.configTomlPath, 'utf-8');
+    expect(first).toContain('model = "gpt-5.5"');
+    expect(first.indexOf('notify = ')).toBeLessThan(first.indexOf('[features]'));
+    expect(r1.multiAgentEnabled).toBe(true);
+    const r2 = planCodexInstall({ pkgRoot: PKG_ROOT, codexHome, agentsMdPath: path.join(codexHome, 'AGENTS.md') });
+    expect(r2.notify).toBe('already-present');
+    expect(fs.readFileSync(r2.configTomlPath, 'utf-8')).toBe(first);
+  });
+
+  it('사용자 notify 가 있으면 건드리지 않는다 — 중복 키를 만들지 않는다', () => {
+    const user = 'notify = ["terminal-notifier", "-title", "codex"]\nmodel = "x"\n';
+    fs.writeFileSync(path.join(codexHome, 'config.toml'), user);
+    const r = planCodexInstall({ pkgRoot: PKG_ROOT, codexHome, agentsMdPath: path.join(codexHome, 'AGENTS.md') });
+    expect(r.notify).toBe('user-defined');
+    const toml = fs.readFileSync(r.configTomlPath, 'utf-8');
+    expect(toml).toContain('notify = ["terminal-notifier", "-title", "codex"]');
+    expect(toml).not.toContain('forgen-managed-notify');
+    expect(toml.match(/^[ \t]*notify[ \t]*=/gm)).toHaveLength(1);
+  });
+
+  it('forgen 블록이 있는데 사용자가 나중에 자기 notify 를 추가했으면 forgen 블록을 걷어낸다', () => {
+    const r1 = upsertNotifyBlock('model = "x"\n', PKG_ROOT);
+    const withUser = `${r1.content}notify = ["mine"]\n`;
+    const r2 = upsertNotifyBlock(withUser, PKG_ROOT);
+    expect(r2.status).toBe('user-defined');
+    expect(r2.content).not.toContain('forgen-managed-notify');
+    expect(r2.content.match(/^[ \t]*notify[ \t]*=/gm)).toHaveLength(1);
+    expect(r2.content).toContain('model = "x"');
+  });
+
+  it('블록 안에 사용자가 붙인 체인 꼬리("--", prog…)는 재설치 후에도 보존', () => {
+    const r1 = upsertNotifyBlock('', PKG_ROOT);
+    const chained = r1.content.replace(/^notify = .*$/m, `notify = ${JSON.stringify(['node', '/old/path/codex-notify.js', '--', 'terminal-notifier', '-title', 'codex'])}`);
+    const r2 = upsertNotifyBlock(chained, PKG_ROOT);
+    expect(r2.status).toBe('installed'); // 경로가 갱신됨
+    expect(r2.content).toContain(`notify = ${JSON.stringify(['node', NOTIFY_JS, '--', 'terminal-notifier', '-title', 'codex'])}`);
+    expect(upsertNotifyBlock(r2.content, PKG_ROOT).status).toBe('already-present');
+  });
+
+  it('dry-run 은 config.toml 을 쓰지 않는다', () => {
+    const r = planCodexInstall({ pkgRoot: PKG_ROOT, codexHome, dryRun: true, agentsMdPath: path.join(codexHome, 'AGENTS.md') });
+    expect(r.notify).toBe('installed');
+    expect(fs.existsSync(r.configTomlPath)).toBe(false);
+  });
+});
+
+describe('config.toml managed blocks — Codex 가 블록 안에 써 넣은 내용 보존 (critic 2026-10-02)', () => {
+  let codexHome: string;
+  beforeEach(() => { codexHome = tmpDir('codex-blocks-'); });
+  afterEach(() => { fs.rmSync(codexHome, { recursive: true, force: true }); });
+  const install = () => planCodexInstall({ pkgRoot: PKG_ROOT, codexHome, agentsMdPath: path.join(codexHome, 'AGENTS.md') });
+
+  it('C2: /hooks 승인으로 MCP 블록 END 마커 앞에 끼어든 [hooks.state] 테이블이 재설치에서 살아남는다', () => {
+    const r1 = install();
+    const toml1 = fs.readFileSync(r1.configTomlPath, 'utf-8');
+    expect(toml1.trimEnd().endsWith('# <<< forgen-managed-mcp')).toBe(true); // 신규 설치: 블록이 파일 끝
+    // Codex(toml_edit)는 새 테이블을 파일 끝 주석(=END 마커) *앞* 에 넣는다 — 실 Codex 로 재현된 형태.
+    const hooks = JSON.parse(fs.readFileSync(r1.hooksPath, 'utf-8')) as { hooks: Record<string, Array<{ matcher?: string; hooks: Array<Record<string, unknown>> }>> };
+    const state: string[] = [];
+    for (const [ev, groups] of Object.entries(hooks.hooks)) {
+      groups.forEach((g, gi) => g.hooks.forEach((h, hi) => {
+        state.push('', `[hooks.state."${r1.hooksPath}:${codexHookEventKey(ev)}:${gi}:${hi}"]`, `trusted_hash = "${codexHookTrustHash(ev, g.matcher, h)}"`);
+      }));
+    }
+    const inside = toml1.replace('# <<< forgen-managed-mcp', `enabled = false\n${state.join('\n')}\n\n[features]\nmulti_agent = true\n# <<< forgen-managed-mcp`);
+    fs.writeFileSync(r1.configTomlPath, inside);
+
+    const r2 = install();
+    const toml2 = fs.readFileSync(r2.configTomlPath, 'utf-8');
+    expect(r2.hookTrust.trusted).toBe(r2.hookTrust.total); // 훅 신뢰 22건 전부 유지
+    expect(r2.multiAgentEnabled).toBe(true);
+    // 사용자가 Codex 에서 이 MCP 서버에 붙인 설정은 테이블 안에 남는다
+    expect(toml2).toMatch(/\[mcp_servers\.forgen-compound\]\ncommand = "node"\nargs = .*\nenabled = false\n# <<< forgen-managed-mcp/);
+    // 끼어든 테이블은 블록 밖(뒤)으로 옮겨진다 → 이후 Codex 가 추가하는 테이블도 밖에 쌓인다
+    expect(toml2.indexOf('[hooks.state.')).toBeGreaterThan(toml2.indexOf('# <<< forgen-managed-mcp'));
+    expect(toml2.match(/\[mcp_servers\.forgen-compound\]/g)).toHaveLength(1);
+    // 재설치는 idempotent
+    const r3 = install();
+    expect(fs.readFileSync(r3.configTomlPath, 'utf-8')).toBe(toml2);
+    expect(r3.mcpAlreadyPresent).toBe(true);
+  });
+
+  it('마커 없는 같은 이름의 MCP 테이블이 있으면 append 하지 않는다 (중복 테이블 = 파싱 실패)', () => {
+    fs.writeFileSync(path.join(codexHome, 'config.toml'), '[mcp_servers.forgen-compound]\ncommand = "node"\nargs = ["/mine.js"]\n');
+    const r = install();
+    const toml = fs.readFileSync(r.configTomlPath, 'utf-8');
+    expect(toml.match(/\[mcp_servers\.forgen-compound\]/g)).toHaveLength(1);
+    expect(toml).toContain('args = ["/mine.js"]');
+  });
+
+  it('C1: notify 블록 안에 Codex 가 써 넣은 root 키(model 등)가 재설치에서 살아남고 root-level 에 남는다', () => {
+    fs.writeFileSync(path.join(codexHome, 'config.toml'), '[projects."/home/u/p"]\ntrust_level = "trusted"\n');
+    const r1 = install();
+    const toml1 = fs.readFileSync(r1.configTomlPath, 'utf-8');
+    // Codex 는 root 키를 root 테이블의 마지막 키(= forgen 의 notify 줄) 바로 뒤, END 마커 앞에 넣는다.
+    const inside = toml1.replace('# <<< forgen-managed-notify', 'model = "gpt-5.5"\nmodel_reasoning_effort = "high"\n# <<< forgen-managed-notify');
+    fs.writeFileSync(r1.configTomlPath, inside);
+
+    const r2 = install();
+    const toml2 = fs.readFileSync(r2.configTomlPath, 'utf-8');
+    expect(toml2).toContain('model = "gpt-5.5"');
+    expect(toml2).toContain('model_reasoning_effort = "high"');
+    const firstTable = toml2.search(/^\[/m);
+    expect(toml2.indexOf('model = "gpt-5.5"')).toBeLessThan(firstTable); // 여전히 root-level
+    expect(toml2.indexOf('model = "gpt-5.5"')).toBeGreaterThan(toml2.indexOf('# <<< forgen-managed-notify')); // 블록 밖으로
+    expect(toml2).toContain('trust_level = "trusted"');
+    expect(fs.readFileSync(install().configTomlPath, 'utf-8')).toBe(toml2); // idempotent
+  });
+
+  it('M1: BOM 으로 시작하는 config.toml — BOM 은 파일 맨 앞에 남는다', () => {
+    fs.writeFileSync(path.join(codexHome, 'config.toml'), '\uFEFFmodel = "gpt-5"\n');
+    const r = install();
+    const toml = fs.readFileSync(r.configTomlPath, 'utf-8');
+    expect(toml.startsWith('\uFEFF# >>> forgen-managed-notify')).toBe(true);
+    expect(toml.indexOf('\uFEFF', 1)).toBe(-1);
+    expect(fs.readFileSync(install().configTomlPath, 'utf-8')).toBe(toml);
+  });
+
+  it('CRLF 파일: 줄 끝을 보존하고 idempotent', () => {
+    fs.writeFileSync(path.join(codexHome, 'config.toml'), 'model = "x"\r\n\r\n[features]\r\nmulti_agent = true\r\n');
+    const r = install();
+    const toml = fs.readFileSync(r.configTomlPath, 'utf-8');
+    expect(toml.replace(/\r\n/g, '')).not.toContain('\n'); // 모든 줄이 CRLF
+    expect(r.multiAgentEnabled).toBe(true);
+    expect(fs.readFileSync(install().configTomlPath, 'utf-8')).toBe(toml);
+  });
+
+  it.each([
+    ['"notify" = ["x"]'],
+    ["'notify' = ['x']"],
+    ['notify.program = "x"'],
+    ['  notify=["x"]'],
+    ['notify = [\n  "x",\n]'],
+  ])('m1: 사용자 notify 변형 %j 도 감지 — 중복 키를 만들지 않는다', (line) => {
+    const r = upsertNotifyBlock(`${line}\nmodel = "x"\n`, PKG_ROOT);
+    expect(r.status).toBe('user-defined');
+    expect(r.content).toBe(`${line}\nmodel = "x"\n`);
+  });
+
+  it('주석 처리된 notify / [tui] notifications 는 사용자 정의가 아니다', () => {
+    expect(upsertNotifyBlock('# notify = ["x"]\n[tui]\nnotifications = true\n', PKG_ROOT).status).toBe('installed');
+  });
+
+  it('m4: 블록의 notify 줄을 손으로 여러 줄/홑따옴표로 고쳤으면 아무것도 바꾸지 않는다 (체인 유실 방지)', () => {
+    const base = upsertNotifyBlock('model = "x"\n', PKG_ROOT).content;
+    const multi = base.replace(/^notify = .*$/m, 'notify = [\n  "node", "/p/codex-notify.js",\n  "--", "mine",\n]');
+    expect(upsertNotifyBlock(multi, PKG_ROOT)).toEqual({ content: multi, status: 'custom-block' });
+    const literal = base.replace(/^notify = .*$/m, "notify = ['node', 'C:\\tools\\n.js', '--', 'mine']");
+    expect(upsertNotifyBlock(literal, PKG_ROOT)).toEqual({ content: literal, status: 'custom-block' });
+    const commented = base.replace(/^(notify = .*)$/m, '$1 # mine');
+    expect(upsertNotifyBlock(commented, PKG_ROOT).status).toBe('custom-block');
+  });
+
+  it('m9: --no-notify 는 기존 forgen 블록을 제거한다 (끼어든 root 키는 보존)', () => {
+    const r1 = install();
+    const withKey = fs.readFileSync(r1.configTomlPath, 'utf-8').replace('# <<< forgen-managed-notify', 'model = "gpt-5.5"\n# <<< forgen-managed-notify');
+    fs.writeFileSync(r1.configTomlPath, withKey);
+    const r2 = planCodexInstall({ pkgRoot: PKG_ROOT, codexHome, registerNotify: false, agentsMdPath: path.join(codexHome, 'AGENTS.md') });
+    expect(r2.notify).toBe('removed');
+    const toml = fs.readFileSync(r2.configTomlPath, 'utf-8');
+    expect(toml).not.toContain('forgen-managed-notify');
+    expect(toml).not.toMatch(/^notify\s*=/m);
+    expect(toml.startsWith('model = "gpt-5.5"\n')).toBe(true);
+    expect(toml).toContain('[mcp_servers.forgen-compound]');
+    // 블록이 없을 때의 --no-notify 는 no-op
+    expect(planCodexInstall({ pkgRoot: PKG_ROOT, codexHome, registerNotify: false, agentsMdPath: path.join(codexHome, 'AGENTS.md') }).notify).toBe('skipped');
+    expect(removeNotifyBlock('model = "x"\n')).toEqual({ content: 'model = "x"\n', removed: false });
   });
 });

@@ -7,6 +7,75 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.6] — 2026-10-02 — Codex notify 폴백 · 훅 번들(재승인 2건) · Claude verify 스킬 (ADR-016)
+
+> **Codex 사용자 — 재승인 필요**: 업그레이드 후 `forgen install codex` 를 다시 실행하면 훅 2개
+> (`session_start` 변경, `session_end` 신규)가 Codex `/hooks` 승인 전까지 skip 된다. 그동안 Codex 세션에
+> `<forgen-rules>` 블록이 주입되지 않는다. install 출력과 `forgen doctor` 가 대상 훅을 표시한다.
+
+### Added
+- **Codex `notify` 폴백** (`dist/host/codex-notify.js`). `forgen install codex` 가 config.toml 최상단에 마커 블록으로
+  `notify` 를 등록한다. Codex 의 notify 는 훅 신뢰와 무관하게 턴 완료마다 detached 로 실행되므로, forgen 훅이
+  미승인/변경 상태로 조용히 skip 되는 동안에도 (a) `state/codex-hooks-silent.json` 에 관측을 남겨 `forgen doctor`
+  [Codex Hooks] 가 보여주고 (b) 프롬프트 ≥10 인 세션은 Stop 훅과 같은 디바운스 경로로 auto-compound 를 띄운다.
+  훅이 정상 실행 중이면(codex-adapter 의 alive 마커) 아무것도 하지 않는다. 사용자가 이미 `notify` 를 정의했으면
+  **건드리지 않는다** (수동 체인: argv 뒤에 `"--", "<program>", …`). 끄기: `--no-notify` (기존 블록도 제거).
+  `forgen uninstall` 도 블록을 제거한다. Codex 가 블록 사이에 써 넣은 root 키(`model` 등)와 BOM/CRLF 는 보존한다.
+- **Codex `SessionEnd` 훅** — `session-end` 를 Codex 에도 등록. Stop 없이 끝나는 세션의 학습 추출 트리거.
+  Codex rollout 의 실제 사용자 프롬프트(`event_msg`/`user_message`)를 raw 바이트 스캔으로 센다.
+- **Claude `verify` 스킬** — `forgen install claude` 가 `~/.claude/skills/verify/SKILL.md` 를 설치한다. Claude Code
+  2.1.286+ 는 project/user 스킬에 `verify` 가 있으면 코드 커밋 직전에 실행하도록 모델에 안내한다 (플러그인 스킬
+  `forgen:verify` 는 대상이 아님). 본문은 "프로젝트 자체 레시피 우선 → 실제 build/type-check/lint/test 실행 →
+  confirmed / refuted / unverified 판정, mock 통과는 증거 아님". 사용자가 만든 `verify` 스킬은 덮어쓰지 않고,
+  `forgen uninstall` 은 forgen 이 설치한 것만 제거한다. 끄기: `--no-verify-skill`. (npm postinstall 은 설치하지 않음 —
+  명시적 `forgen install claude` 에서만.)
+- `forgen install` 플래그 `--no-notify`, `--no-verify-skill`.
+
+### Fixed
+- **`forgen install codex` 재실행이 Codex 훅 신뢰를 전부 지우던 결함 (0.5.3~).** 신규 설치는 MCP 마커 블록을
+  config.toml 끝에 붙이는데, Codex 는 `/hooks` 승인 시 `[hooks.state]` 테이블을 파일 끝 주석(= forgen 의 END 마커)
+  *앞* 에 써 넣는다 — 즉 블록 안. 재설치가 블록을 통째로 교체하면서 22개 신뢰 기록, `[features]`, MCP 서버의
+  `enabled = false` 등이 사라졌다. 이제 forgen 이 쓴 줄만 다시 쓰고 사이에 끼어든 내용은 블록 뒤로 옮겨 보존한다.
+  (실 Codex 0.153.4 app-server 로 재현·수정 확인: 재설치 후 22/22 유지.)
+- Codex 추출 run(`codex exec --ephemeral`)에 `FORGEN_NESTED_RUN=1` 이 전달되지 않던 것 — forgen 훅이 추출 세션에서
+  발화하지 않도록 Claude 분기와 동일하게 표식.
+- `[mcp_servers.forgen-compound]` 가 마커 없이 이미 있으면 중복 테이블을 append 하지 않는다.
+
+### Changed
+- **Codex 훅 신뢰 감사가 해시를 대조한다.** `auditCodexHookTrust` 가 Codex 0.153.4 의 핸들러 단위 trust 해시를
+  계산해 `trusted` / `modified` / `untrusted` 를 구분한다. 이전엔 `hooks.state` 키의 존재만 봐서, 핸들러가 바뀌어
+  Codex 가 skip 하는 훅을 "trusted" 로 표시했다. `/hooks` 에서 끈 훅(`enabled = false`)은 `disabled` 로 따로 센다.
+  읽기 전용 대조이며 신뢰 기록은 쓰지 않는다.
+- **`session-recovery` 의 Codex 핸들러에 `additionalContextLimit: 0`.** Codex 는 약 10KB 를 넘는
+  `additionalContext` 를 임시 파일로 스필하고 모델에는 잘린 미리보기만 준다 — 한국어 룰 블록(상한 15,000자)은 이를
+  쉽게 넘는다.
+- `post-tool-failure` 를 Codex hooks.json 에서 제외 (`PostToolUseFailure` 는 Codex 이벤트가 아니라 무시되던 죽은 엔트리).
+- `forgen install codex` 는 config.toml 내용이 바뀔 때만 파일을 쓴다.
+- CI: 태그 푸시 발행을 npm Trusted Publishing(OIDC) 으로 전환, `release.yml`/`compat.yml` 에 누락됐던
+  `hooks/hooks.json` 생성 단계 추가 (v0.5.0 이후 태그 발행이 계속 실패하던 원인).
+
+### Not done (정직 표기 — ADR-016)
+- `async: true` 훅: Codex 는 같은 이벤트의 핸들러를 이미 동시 실행한다. 어댑터 경유 훅 1회 91~137ms 실측 →
+  이득 상한 ≈130ms/이벤트. 반면 async 는 block/deny 가 적용되지 않고 핸들러마다 재승인이 든다.
+- `PostCompact` / `Interrupt` 등록: 둘 다 컨텍스트 주입이 불가능하고 forgen 이 거기서 할 일이 없다.
+- 사용자 `notify` 자동 체인: TOML 임의 배열 재작성 + 원복 보장 불가로 수동 체인 안내만 제공.
+
+### Verified
+- vitest 3161 통과 (신규: trust 해시·notify 블록 upsert·notify 폴백 분기·rollout 카운터·verify 스킬 install/uninstall).
+- trust 해시: 실머신 `~/.codex/config.toml` 의 trusted_hash 20건과 일치 (fixture 8건 vendoring), 격리 `CODEX_HOME` 에서
+  forgen 계산 해시를 기록한 뒤 Codex `hooks/list` 가 22/22 `trusted` 로 판정 (`additionalContextLimit:0`·SessionEnd 포함).
+- 격리 Codex 0.153.4 실세션 (`codex exec`):
+  - 훅 미승인: notify 발화 → silent 기록, `forgen doctor` 가 "forgen 훅 미발화" 표시.
+  - 훅 승인: alive 마커(Stop) 기록 → notify 가 silent 를 지움, hook-timing 에 `SessionEnd:session-end (rt: codex)`.
+  - 스필: 21KB SessionStart 컨텍스트 — 기본값은 "Full hook output saved to" + 중간 내용 미전달, `additionalContextLimit:0`
+    은 전문 전달.
+- notify 폴백의 auto-compound 트리거: 실 바이너리 + 12-프롬프트 rollout 으로 러너 인자(cwd, rollout, session id, 12)와
+  `FORGEN_RUNTIME=codex` 전달, 재호출 시 in-flight 게이트로 skip 확인. (러너 자체는 스텁으로 대체 — LLM 추출은 이 검증 범위 밖.)
+- fresh-context critic 리뷰 1라운드: CRITICAL 2 · MAJOR 1 · MINOR 10 → 위 Fixed 항목 포함 전부 반영 또는 한계로 명시
+  (ADR-016 Review 절). 리뷰어의 실 Codex 재현 스크립트를 수정 후 빌드에 다시 돌려 통과 확인.
+- 이 머신의 실 `~/.codex` 에는 아직 설치하지 않았다 (재승인 전까지 룰 주입이 멈추므로 오너 결정 후).
+
+
 ## [0.5.5] — 2026-10-01 — Codex Stop 분기 복구 (Stop 트리거 auto-compound·finalizeSession)
 
 ### Fixed

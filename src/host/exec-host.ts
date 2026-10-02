@@ -118,7 +118,11 @@ export function execHost(opts: ExecHostOptions): ExecHostResult {
     '--skip-git-repo-check',
     opts.prompt,
   ];
-  const stdout = execFileSync('codex', args, baseOpts) as unknown as string;
+  // ADR-016 (critic m2): Codex 추출 run 에도 중첩 표식을 준다. `--ephemeral` 은 rollout 만 안 남길 뿐
+  // 사용자 config(훅·notify)는 그대로 로드한다 — 표식이 없으면 forgen 훅이 추출 세션에서 발화하고
+  // notify 폴백이 그 세션을 "훅 미발화" 로 오기록한다.
+  const codexEnv = (opts.nestedRun ?? true) ? { ...(baseOpts.env ?? {}), ...NESTED_RUN_ENV } : baseOpts.env;
+  const stdout = execFileSync('codex', args, { ...baseOpts, env: codexEnv }) as unknown as string;
   const parsed = parseCodexJsonlOutput(stdout.toString());
   return {
     message: parsed.message,

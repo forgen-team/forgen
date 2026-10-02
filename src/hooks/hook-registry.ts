@@ -50,6 +50,17 @@ export interface HookEntry {
    * 훅 신뢰(trust) 와 묶여 있으므로, Claude 에만 추가하는 이벤트는 `["claude"]` 로 한정한다.
    */
   hosts?: Array<'claude' | 'codex' | 'opencode'>;
+  /**
+   * ADR-016 D2: Codex hooks.json 핸들러에만 붙는 필드. Codex 의 trust 해시는 핸들러 단위라
+   * 여기 값을 바꾸면 *그 핸들러만* `/hooks` 재승인이 필요하다 (다른 핸들러는 영향 없음).
+   */
+  codex?: {
+    /**
+     * `additionalContext` 를 임시 파일로 스필하는 임계(근사 토큰, 기본 2500 ≈ 10KB). 0 = 스필 안 함.
+     * Codex 는 PreToolUse/PostToolUse/SessionStart/UserPromptSubmit/SubagentStart 에서만 인정한다.
+     */
+    additionalContextLimit?: number;
+  };
 }
 
 /**

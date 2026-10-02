@@ -24,7 +24,10 @@
     "matcher": "*",
     "script": "hooks/session-recovery.js",
     "timeout": 3,
-    "compoundCritical": true
+    "compoundCritical": true,
+    "codex": {
+      "additionalContextLimit": 0
+    }
   },
   {
     "name": "post-tool-use",
@@ -168,7 +171,10 @@
     "matcher": "*",
     "script": "hooks/post-tool-failure.js",
     "timeout": 3,
-    "compoundCritical": false
+    "compoundCritical": false,
+    "hosts": [
+      "claude"
+    ]
   },
   {
     "name": "solution-injector",
@@ -206,7 +212,8 @@
     "timeout": 3,
     "compoundCritical": true,
     "hosts": [
-      "claude"
+      "claude",
+      "codex"
     ]
   }
 ]

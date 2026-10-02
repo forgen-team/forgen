@@ -152,6 +152,10 @@ forgen install both          # 3지선다 인터랙티브: claude / codex / both
 forgen install claude
 forgen install codex
 # Codex 만: codex 안에서 `/hooks` 로 forgen 훅을 한 번 승인 — Codex 는 미승인 훅을 skip (forgen doctor 의 [Codex Hooks] 로 확인)
+#   v0.5.6 업그레이드: `forgen install codex` 를 다시 돌리면 훅 2개(session_start, session_end)가 바뀜 — `/hooks` 에서 한 번 더 승인.
+#   config.toml 에 `notify` 폴백도 등록됨 (이미 `notify` 를 쓰고 있으면 건드리지 않음; 끄기: --no-notify).
+# Claude 만: `verify` 스킬을 ~/.claude/skills/verify 에 설치 — Claude Code 가 코드 커밋 직전에 실행
+#   (직접 만든 `verify` 스킬은 덮어쓰지 않음; 끄기: --no-verify-skill).
 
 # 3. 첫 실행 — 4문항 온보딩 (영어/한국어 선택)
 forgen                        # 기본: Claude
@@ -670,7 +674,7 @@ forgen는 설치 시 다른 Claude Code 플러그인(oh-my-claudecode, superpowe
 
 | 문서 | 설명 |
 |------|------|
-| [훅 레퍼런스](docs/reference/hooks-reference.md) | 3개 계층의 19개 훅 — 이벤트, 타임아웃, 동작 |
+| [훅 레퍼런스](docs/reference/hooks-reference.md) | 3개 계층의 23개 훅 — 이벤트, 타임아웃, 동작 |
 | [공존 가이드](docs/guides/with-omc.md) | oh-my-claudecode와 forgen 함께 사용하기 |
 | [CHANGELOG](CHANGELOG.md) | 버전 히스토리 및 릴리즈 노트 |
 
