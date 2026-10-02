@@ -49,6 +49,10 @@ allowlist 로 깎아 보내며, 스키마 사본은 `tests/fixtures/codex-hook-s
 - **하지 않은 것**: `async` 훅 (같은 이벤트의 핸들러는 이미 동시 실행 — 실측 이득 상한 ≈130ms/이벤트, 대신 제어 효과
   상실·재승인 비용), `PostCompact`/`Interrupt` 등록 (컨텍스트 주입 불가, 할 일이 없음).
 
+**0.5.8 — Codex 0.160.0 확인**: 훅 출력 스키마·trust 해시·이벤트 구성이 0.153.4 와 같다 (스키마 11종 대조, 실머신 22/22).
+Codex 는 config.toml 을 다시 쓰며 forgen 마커 주석을 옮긴다 — forgen 은 마커를 범위로 쓰지 않고 TOML 구조로 자기 테이블/키를
+찾는다 (ADR-016 0.5.8 addendum).
+
 **아직 다른 것**:
 - 룰 재로드 빈도: Claude 는 `.claude/rules` 매 턴, Codex 는 세션 시작 + 컴팩션 후.
 - 훅 신뢰: Codex 는 새로 추가되거나 바뀐 훅을 `/hooks` 승인 전까지 **skip** 한다.

@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.8] — 2026-10-02 — Codex 가 재배치한 마커에서도 설치·제거가 정확하게 (Codex 0.160 확인)
+
+### Fixed
+- **Codex 가 config.toml 을 다시 쓰면서 forgen 마커를 뒤집어 놓은 형태에서 `forgen uninstall` 이 MCP 서버 등록을 지우지
+  못하던 것 (0.5.7).** 실머신에서 `/hooks` 승인 후 관측: `# >>> forgen-managed-mcp` 는 forgen 테이블과 함께 파일 끝으로 가고
+  `# <<< forgen-managed-mcp` 는 앞쪽에 고아로 남는다. 이제 마커를 *범위* 가 아니라 *표식* 으로만 쓰고, 범위는 TOML 구조
+  (테이블 헤더 ~ 다음 헤더, notify 한 줄)로 정한다. 재설치는 고아 마커를 걷어 테이블 위아래로 정규화하고, 제거는 테이블·하위
+  테이블·모든 마커 줄을 지운다. notify 블록도 END 마커가 옮겨지거나 사라져도 동작한다.
+- 사용자가 forgen MCP 테이블만 지우고 마커가 남은 경우, 재설치가 고아 마커를 정리하고 블록을 한 번만 쓴다.
+- **`codex mcp add <다른 서버>` 뒤에는 forgen 테이블을 알아보지 못하던 것.** Codex 가 mcp_servers 를 다시 쓰며 시작 마커를
+  없앤다. 소유 판정을 "헤더 바로 위의 마커 또는 forgen 내용 시그니처(args 의 `dist/mcp/server.js` + `--host=codex`,
+  notify 의 `dist/host/codex-notify.js`)" 로 바꿨다 — 마커가 사라져도 경로 갱신과 제거가 된다.
+- CRLF config.toml 에서 블록 제거 후 파일이 `\r` 로만 끝나 Codex 가 로드하지 못할 수 있던 것 (0.5.8 작업 중 회귀로 발견, 미출시).
+- forgen 테이블 뒤·다음 테이블 헤더 위의 사용자 주석을 forgen 본문으로 취급하지 않는다.
+- Codex 가 forgen notify 블록 안의 값을 사용자의 notifier 로 바꿔 놓은 경우 그 값을 보존한다 (이전엔 재설치가 덮어썼다).
+- 같은 MCP 서버가 다른 TOML 표기(따옴표·공백 헤더, inline table, dotted key)로 정의돼 있으면 중복 정의를 추가하지 않는다
+  (추가하면 Codex 가 `duplicate key` 로 로드 실패).
+- 블록 제거가 "지웠다" 고 보고하는 것은 실제로 테이블/notify 줄을 지웠을 때만.
+
+### Verified
+- vitest 3222 통과 (신규: 실머신에서 채취한 재배치 형태, CRLF/BOM, 마커 소실, 사용자 주석, 다른 TOML 표기).
+- fresh-context critic 리뷰: CRITICAL 1 · MAJOR 2 · MINOR 6 → 전부 반영. 리뷰어의 케이스 68건 + 퍼징 14,000건에서 Codex 로드
+  불가 출력·사용자 데이터 변경·비멱등 0건, 실 Codex 0.160 재현 스크립트(`codex mcp add` 후 설치/제거, CRLF 왕복) 통과.
+- 이 머신의 실 `~/.codex/config.toml` 사본에 적용: 재설치 diff 는 고아 END 마커 한 줄 이동뿐(hooks.state 31개 보존),
+  제거 후 forgen 항목 0건, 두 결과 모두 Codex 0.160.0 이 정상 파싱.
+- **Codex 0.160.0 호환 확인**: 훅 출력 스키마 11종이 vendoring 한 0.153.4 사본과 동일, trust 해시 일치(실머신 22/22 trusted,
+  Codex `hooks/list` 30/30), 실세션에서 SessionStart(룰 블록 주입, 스필 없음)·UserPromptSubmit·Stop·SessionEnd 훅 발화, 오류 0건.
+
+
 ## [0.5.7] — 2026-10-02 — `forgen uninstall` 의 Codex 정리 · 의존성 메이저 업그레이드
 
 ### Added

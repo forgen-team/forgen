@@ -158,28 +158,66 @@ export function readJsonFile<T>(p: string): T | null {
 // ── config.toml managed blocks ─────────────────────────────────────────
 //
 // Codex 는 config.toml 을 스스로 다시 쓴다 (toml_edit): `/hooks` 승인은 `[hooks.state."…"]` 테이블을,
-// 모델 변경 등은 root 키를 추가한다. 주석은 "다음 항목의 장식" 으로 취급되므로, forgen 의 END 마커가
-// 파일 끝(또는 첫 테이블 앞)에 있으면 **Codex 가 쓴 내용이 BEGIN…END 사이에 끼어든다**. 블록을 통째로
-// 교체하면 그 내용 — 훅 신뢰 22건, 사용자의 model 설정 — 이 사라진다 (critic 2026-10-02, 실 Codex 로 재현).
-// 그래서 블록은 줄 단위로 다룬다: forgen 이 쓴 줄만 다시 쓰고, 그 사이의 나머지 줄은 블록 뒤로 옮겨 보존한다.
+// 모델 변경 등은 root 키를 추가한다. 주석은 "다음 항목의 장식" 으로 취급되므로 forgen 의 마커 주석은
+// **제자리에 있지 않는다**:
+//   - END 마커가 파일 끝/첫 테이블 앞에 있으면 Codex 가 쓴 내용이 BEGIN…END 사이에 끼어든다
+//     (0.5.6 critic — 블록을 통째로 교체하면 훅 신뢰 22건과 사용자 설정이 사라졌다).
+//   - Codex 0.160 은 테이블을 재배치한다: BEGIN 은 forgen 테이블과 함께 파일 끝으로 가고 END 는 앞쪽에
+//     고아로 남는다 (2026-10-02 실머신).
+//   - `codex mcp add <다른 서버>` 는 mcp_servers 를 통째로 다시 써서 BEGIN 마커를 **없앤다** (0.5.8 critic).
+// 그래서 마커를 범위로도, 유일한 소유 근거로도 쓰지 않는다. 범위는 TOML 구조(테이블 헤더 ~ 다음 헤더, notify 한 줄),
+// 소유는 "마커가 있거나, forgen 만 쓰는 내용 시그니처가 있다" 로 판정한다. forgen 이 쓴 줄만 고치고 나머지는 그대로 둔다.
 
-interface ManagedSpan { before: string[]; inner: string[]; after: string[] }
+const FORGEN_SERVER_KEY = `(?:forgen-compound|"forgen-compound"|'forgen-compound')`;
+/** `[mcp_servers.forgen-compound]` — 따옴표/공백 표기도 같은 테이블이다 */
+const MCP_HEADER_RE = new RegExp(`^\\[\\s*mcp_servers\\s*\\.\\s*${FORGEN_SERVER_KEY}\\s*\\]\\s*(#.*)?$`);
+/** forgen 서버의 하위 테이블 (`[mcp_servers.forgen-compound.env]`, `[[…things]]`) */
+const MCP_SUBTABLE_RE = new RegExp(`^\\[{1,2}\\s*mcp_servers\\s*\\.\\s*${FORGEN_SERVER_KEY}\\s*\\.`);
+/** 같은 서버를 헤더가 아닌 형태로 정의한 줄 (inline table / dotted key) — 손으로 쓴 설정 */
+const MCP_ALT_FORM_RE = new RegExp(`^\\s*(?:mcp_servers\\s*\\.\\s*)?${FORGEN_SERVER_KEY}\\s*(?:=|\\.)`);
+/** forgen 이 쓰는 args 의 시그니처: `…/dist/mcp/server.js` + `--host=codex` (이 플래그는 forgen 전용) */
+const MCP_SIGNATURE_RE = /[\\/]dist[\\/]mcp[\\/]server\.js["'][\s\S]*--host=codex/;
+const MCP_TABLE_HEADER = '[mcp_servers.forgen-compound]';
+const MCP_OWN_KEY_RE = /^\s*(command|args)\s*=/;
 
-function splitManagedSpan(lines: string[], begin: string, end: string): ManagedSpan | null {
-  const b = lines.findIndex((l) => l.trim() === begin);
-  if (b === -1) return null;
-  const rel = lines.slice(b + 1).findIndex((l) => l.trim() === end);
-  if (rel === -1) return null;
-  const e = b + 1 + rel;
-  return { before: lines.slice(0, b), inner: lines.slice(b + 1, e), after: lines.slice(e + 1) };
-}
+const TOML_KEY = `(?:[A-Za-z0-9_-]+|"[^"]*"|'[^']*')`;
+/** 테이블 헤더 한 줄: `[a.b]`, `[[a.b]]`, `[a."b c"] # 주석`. 배열 값의 한 줄(`["x", "y"],`)과 구분한다. */
+const TABLE_HEADER_RE = new RegExp(`^\\s*\\[\\[?\\s*${TOML_KEY}(?:\\s*\\.\\s*${TOML_KEY})*\\s*\\]\\]?\\s*(#.*)?$`);
 
-function trimBlankEdges(lines: string[]): string[] {
-  let a = 0;
-  let z = lines.length;
-  while (a < z && lines[a].trim() === '') a += 1;
-  while (z > a && lines[z - 1].trim() === '') z -= 1;
-  return lines.slice(a, z);
+type LineKind = 'header' | 'cont' | 'other';
+
+/**
+ * 줄을 구조적으로 분류한다. 여러 줄 문자열(`"""`/`'''`)이나 여러 줄 배열의 이어지는 줄(`cont`)은 값의 일부이므로
+ * 그 안의 `[` 로 시작하는 줄을 헤더로, 마커처럼 보이는 줄을 마커로 오인하면 안 된다 (0.5.8 critic m6).
+ * 완전한 TOML 파서는 아니다 — 문자열 밖의 대괄호 균형과 삼중따옴표 열림/닫힘만 추적한다.
+ */
+function classifyLines(lines: string[]): LineKind[] {
+  const kinds: LineKind[] = [];
+  let inString: string | null = null;
+  let depth = 0;
+  const stripInline = (l: string): string => l.replace(/"(?:[^"\\\\]|\\\\.)*"|'[^']*'/g, '""').replace(/#.*$/, '');
+  const balance = (l: string): number => (l.match(/\[/g)?.length ?? 0) - (l.match(/\]/g)?.length ?? 0);
+  for (const raw of lines) {
+    const line = raw.replace(/\r$/, '');
+    if (inString !== null) {
+      kinds.push('cont');
+      if (line.includes(inString)) inString = null;
+      continue;
+    }
+    if (depth > 0) {
+      kinds.push('cont');
+      depth = Math.max(0, depth + balance(stripInline(line)));
+      continue;
+    }
+    if (TABLE_HEADER_RE.test(line)) { kinds.push('header'); continue; }
+    kinds.push('other');
+    const t = line.trim();
+    if (t === '' || t.startsWith('#')) continue;
+    const triple = line.match(/"""|'''/g) ?? [];
+    if (triple.length % 2 === 1) { inString = triple[triple.length - 1]; continue; }
+    depth = Math.max(0, balance(stripInline(line)));
+  }
+  return kinds;
 }
 
 /** BOM 은 파일 맨 앞에 있어야 한다 — 떼어 두었다가 결과 맨 앞에 다시 붙인다. 줄 끝(CRLF)도 보존. */
@@ -188,8 +226,107 @@ function tomlShape(toml: string): { bom: string; body: string; cr: string } {
   return { bom, body: toml.slice(bom.length), cr: /\r\n/.test(toml) ? '\r' : '' };
 }
 
-const MCP_TABLE_HEADER = '[mcp_servers.forgen-compound]';
-const MCP_OWN_KEY_RE = /^\s*(command|args)\s*=/;
+/** 줄 배열 → 파일 내용. CRLF 파일의 마지막 줄이 `\r` 로만 끝나면(개행 없음) Codex 가 거부하므로 `\n` 을 붙인다. */
+function joinToml(bom: string, lines: string[]): string {
+  const text = lines.join('\n');
+  return bom + (text.endsWith('\r') ? `${text}\n` : text);
+}
+
+/**
+ * 지정한 줄들을 지운다. 지운 자리 양옆이 모두 빈 줄(또는 파일 시작)이면 빈 줄 하나도 함께 지워
+ * 제거/재설치를 반복해도 빈 줄이 쌓이지 않게 한다. 지우지 않은 구간의 서식은 건드리지 않는다.
+ */
+function deleteLines(lines: string[], drop: ReadonlySet<number>): string[] {
+  const out: string[] = [];
+  let justDropped = false;
+  for (let i = 0; i < lines.length; i += 1) {
+    if (drop.has(i)) { justDropped = true; continue; }
+    const blank = lines[i].trim() === '';
+    if (justDropped && blank && (out.length === 0 || out[out.length - 1].trim() === '')) {
+      // 마지막 요소('' = 파일 끝 개행)는 남기고 앞의 빈 줄을 대신 버린다. CRLF 파일에서 앞의 빈 줄은 '\r' 이라
+      // 그것을 마지막에 남기면 bare CR 로 끝나 Codex 가 로드하지 못한다 (0.5.8 critic C1).
+      if (i === lines.length - 1) {
+        if (out.length > 0) out[out.length - 1] = lines[i]; else out.push(lines[i]);
+      }
+      continue;
+    }
+    justDropped = false;
+    out.push(lines[i]);
+  }
+  return out;
+}
+
+/**
+ * 제거 뒤 파일 끝을 정리한다: 끝의 빈 줄은 걷어내고, 내용이 있으면 개행 하나로 끝나게 한다.
+ * 설치↔제거를 반복해도 결과가 같아지게 하기 위함 (설치는 블록을 개행으로 끝내므로).
+ */
+function trimEofBlankLines(lines: string[]): string[] {
+  const out = [...lines];
+  while (out.length > 1 && out[out.length - 1] === '' && out[out.length - 2].trim() === '') out.splice(out.length - 2, 1);
+  if (out.length > 0 && out[out.length - 1] !== '' && out.some((l) => l.trim() !== '')) {
+    // CRLF 파일이면 마지막 줄도 CRLF 로 끝낸다
+    if (out.some((l) => l.endsWith('\r')) && !out[out.length - 1].endsWith('\r')) out[out.length - 1] += '\r';
+    out.push('');
+  }
+  return out;
+}
+
+/** 테이블 본문의 끝: 다음 헤더/마커 직전. 끝의 빈 줄과 주석은 *다음 항목의 장식* 이므로 본문이 아니다. */
+function tableBodyEnd(lines: string[], kinds: LineKind[], header: number, isMarker: (t: string) => boolean): number {
+  let end = header + 1;
+  while (end < lines.length) {
+    if (kinds[end] === 'header' || (kinds[end] === 'other' && isMarker(lines[end].trim()))) break;
+    end += 1;
+  }
+  while (end > header + 1) {
+    const t = lines[end - 1].trim();
+    if (kinds[end - 1] === 'other' && (t === '' || t.startsWith('#'))) end -= 1; else break;
+  }
+  return end;
+}
+
+interface McpLayout {
+  kinds: LineKind[];
+  beginIdx: number[];
+  endIdx: number[];
+  /** forgen 테이블 헤더 줄 (-1 = 없음) */
+  header: number;
+  /** 테이블 본문 [header+1, bodyEnd) */
+  bodyEnd: number;
+  /**
+   * forgen 이 쓴 테이블인가: 헤더 바로 위에 BEGIN 마커가 붙어 있거나(주석은 테이블과 함께 움직인다),
+   * args 가 forgen 시그니처다(마커가 사라진 뒤에도 알아본다). 파일 어딘가의 BEGIN 마커만으로는 인정하지 않는다 —
+   * 다른 테이블에 붙은 고아 마커 때문에 사용자가 직접 쓴 같은 이름의 테이블을 forgen 것으로 오인하지 않게.
+   */
+  owned: boolean;
+}
+
+const isMcpMarker = (t: string): boolean => t === MCP_MARKER_BEGIN || t === MCP_MARKER_END;
+
+function locateMcp(lines: string[]): McpLayout {
+  const kinds = classifyLines(lines);
+  const beginIdx: number[] = [];
+  const endIdx: number[] = [];
+  let header = -1;
+  lines.forEach((l, i) => {
+    if (kinds[i] === 'cont') return; // 여러 줄 값 안의 텍스트
+    const t = l.trim();
+    if (t === MCP_MARKER_BEGIN) beginIdx.push(i);
+    else if (t === MCP_MARKER_END) endIdx.push(i);
+    else if (header === -1 && kinds[i] === 'header' && MCP_HEADER_RE.test(t)) header = i;
+  });
+  const bodyEnd = header === -1 ? 0 : tableBodyEnd(lines, kinds, header, isMcpMarker);
+  // 헤더 바로 위(빈 줄과 forgen 의 다른 마커/주석은 건너뛴다)에 BEGIN 이 있는가
+  let above = header - 1;
+  while (above >= 0) {
+    const t = lines[above].trim();
+    if (t === '' || t === MCP_MARKER_END || isNotifyMarker(t) || isNotifyOwnComment(t)) above -= 1; else break;
+  }
+  const beginAdjacent = above >= 0 && beginIdx.includes(above);
+  const owned = header !== -1
+    && (beginAdjacent || MCP_SIGNATURE_RE.test(lines.slice(header + 1, bodyEnd).join('\n')));
+  return { kinds, beginIdx, endIdx, header, bodyEnd, owned };
+}
 
 function upsertMcpBlock(currentToml: string, pkgRoot: string): { content: string; alreadyPresent: boolean } {
   const { bom, body, cr } = tomlShape(currentToml);
@@ -199,62 +336,68 @@ function upsertMcpBlock(currentToml: string, pkgRoot: string): { content: string
   // correction-record evidence 박제 시 host:"codex" 로 정확히 태깅되게 한다 (spec §10-5).
   const ownKeys = ['command = "node"', `args = [${JSON.stringify(serverPath)}, "--host=codex"]`];
   const lines = body.split('\n');
-  const span = splitManagedSpan(lines, MCP_MARKER_BEGIN, MCP_MARKER_END);
+  const at = locateMcp(lines);
 
-  if (!span) {
-    // 마커 없이 같은 테이블이 있으면(사용자 직접 작성 / 마커 손상) append 하지 않는다 — 중복 테이블 = 파싱 실패.
-    if (lines.some((l) => l.trim() === MCP_TABLE_HEADER)) return { content: currentToml, alreadyPresent: true };
+  if (at.header === -1) {
+    // 헤더가 아닌 형태(inline table / dotted key)로 같은 서버가 정의돼 있으면 append 하지 않는다 —
+    // 중복 정의는 Codex 가 config 를 로드하지 못하게 한다.
+    if (lines.some((l, i) => at.kinds[i] === 'other' && MCP_ALT_FORM_RE.test(l))) return { content: currentToml, alreadyPresent: true };
+    // 테이블이 없다 → 끝에 새 블록. 고아 마커(테이블만 지워진 흔적)는 걷어낸다.
+    const cleaned = deleteLines(lines, new Set([...at.beginIdx, ...at.endIdx])).join('\n');
     const block = [MCP_MARKER_BEGIN, MCP_TABLE_HEADER, ...ownKeys, MCP_MARKER_END].map((l) => l + cr).join('\n');
-    const trimmed = body.replace(/\s+$/, '');
+    const trimmed = cleaned.replace(/\s+$/, '');
     const sep = trimmed.length > 0 ? `${cr}\n${cr}\n` : '';
     return { content: `${bom}${trimmed}${sep}${block}\n`, alreadyPresent: false };
   }
 
-  const h = span.inner.findIndex((l) => l.trim() === MCP_TABLE_HEADER);
-  let extraKeys: string[] = [];
-  let foreign: string[] = span.inner;
-  if (h !== -1) {
-    const afterHeader = span.inner.slice(h + 1);
-    const next = afterHeader.findIndex((l) => /^\s*\[/.test(l));
-    const tableBody = next === -1 ? afterHeader : afterHeader.slice(0, next);
-    // 손으로 고쳐 여러 줄이 된 command/args 는 안전하게 다시 쓸 수 없다 — 블록을 그대로 둔다.
-    const own = tableBody.filter((l) => MCP_OWN_KEY_RE.test(l));
-    if (own.some((l) => !/(["'\]])\s*(#.*)?$/.test(l.trim()))) return { content: currentToml, alreadyPresent: true };
-    // 사용자가 Codex 로 이 서버에 붙인 설정(enabled, startup_timeout_sec …)은 테이블 안에 유지.
-    extraKeys = tableBody.filter((l) => l.trim() !== '' && !MCP_OWN_KEY_RE.test(l)).map((l) => l.replace(/\r$/, ''));
-    foreign = [...span.inner.slice(0, h), ...(next === -1 ? [] : afterHeader.slice(next))];
-  }
-  const block = [MCP_MARKER_BEGIN, MCP_TABLE_HEADER, ...ownKeys, ...extraKeys, MCP_MARKER_END].map((l) => l + cr);
-  const moved = trimBlankEdges(foreign);
-  const out = [...span.before, ...block, ...(moved.length > 0 ? [cr, ...moved] : []), ...span.after];
-  const content = bom + out.join('\n');
+  // 마커도 forgen 시그니처도 없는 같은 이름의 테이블 = 사용자가 직접 관리. 건드리지도, append 하지도 않는다.
+  if (!at.owned) return { content: currentToml, alreadyPresent: true };
+
+  const tableBody = lines.slice(at.header + 1, at.bodyEnd);
+  // 손으로 고쳐 여러 줄이 된 command/args 는 안전하게 다시 쓸 수 없다 — 그대로 둔다.
+  const own = tableBody.filter((l) => MCP_OWN_KEY_RE.test(l));
+  if (own.some((l) => !/(["'\]])\s*(#.*)?$/.test(l.trim()))) return { content: currentToml, alreadyPresent: true };
+  // 사용자가 Codex 로 이 서버에 붙인 설정(enabled, startup_timeout_sec …)은 테이블 안에 유지.
+  const extraKeys = tableBody.filter((l) => l.trim() !== '' && !MCP_OWN_KEY_RE.test(l)).map((l) => l.replace(/\r$/, ''));
+  const block = [MCP_MARKER_BEGIN, lines[at.header].replace(/\r$/, ''), ...ownKeys, ...extraKeys, MCP_MARKER_END].map((l) => l + cr);
+
+  // 마커는 어디에 있든 전부 걷어내고, 테이블 바로 위/아래에 다시 둔다 (재배치/소실된 마커 정규화).
+  const SENTINEL = '\u0000forgen-mcp-block\u0000';
+  const drop = new Set<number>([...at.beginIdx, ...at.endIdx]);
+  for (let i = at.header + 1; i < at.bodyEnd; i += 1) drop.add(i);
+  const kept = deleteLines(lines.map((l, i) => (i === at.header ? SENTINEL : l)), drop);
+  const pos = kept.indexOf(SENTINEL);
+  const next = kept[pos + 1];
+  // 블록 뒤에 다른 내용이 바로 붙으면 빈 줄로 구분
+  const needsGap = next !== undefined && next.trim() !== '';
+  kept.splice(pos, 1, ...block, ...(needsGap ? [cr] : []));
+  const content = joinToml(bom, kept);
   return { content, alreadyPresent: content === currentToml };
 }
 
 /**
- * forgen MCP 블록 제거 (uninstall, ADR-016 D4). forgen 테이블(본문 + `[mcp_servers.forgen-compound.*]` 하위
- * 테이블)과 마커만 걷어내고, 블록 사이에 Codex 가 끼워 넣은 다른 내용은 그 자리에 보존한다.
- * 마커 없는 사용자 관리 테이블은 건드리지 않는다.
+ * forgen MCP 블록 제거 (uninstall, ADR-016 D4). forgen 테이블(본문 + 하위 테이블)과 마커 줄만 걷어낸다.
+ * 마커도 시그니처도 없는 같은 이름의 테이블(사용자 관리)은 건드리지 않는다.
+ * `removed` 는 테이블을 실제로 지웠을 때만 true — 고아 마커만 치운 경우는 false.
  */
 export function removeMcpBlock(currentToml: string): { content: string; removed: boolean } {
   const { bom, body } = tomlShape(currentToml);
-  const span = splitManagedSpan(body.split('\n'), MCP_MARKER_BEGIN, MCP_MARKER_END);
-  if (!span) return { content: currentToml, removed: false };
-  const kept: string[] = [];
-  let dropping = false;
-  for (const line of span.inner) {
-    const t = line.trim();
-    // 헤더 줄에서만 상태를 바꾼다: forgen 테이블 본체, 그 하위 테이블/배열 테이블은 버리고 나머지는 보존.
-    if (/^\[/.test(t)) dropping = /^\[{1,2}mcp_servers\.forgen-compound(\]{1,2}|\.)/.test(t);
-    if (!dropping) kept.push(line);
+  const lines = body.split('\n');
+  const at = locateMcp(lines);
+  if (at.beginIdx.length === 0 && at.endIdx.length === 0 && !at.owned) return { content: currentToml, removed: false };
+  const drop = new Set<number>([...at.beginIdx, ...at.endIdx]);
+  if (at.owned) {
+    for (let i = at.header; i < at.bodyEnd; i += 1) drop.add(i);
+    // 하위 테이블은 Codex 가 어디로 옮겼든 함께 제거 (command 없는 서버 정의가 남지 않게).
+    // 각 하위 테이블도 끝의 빈 줄/주석(다음 항목의 장식)은 남긴다.
+    lines.forEach((l, i) => {
+      if (at.kinds[i] !== 'header' || !MCP_SUBTABLE_RE.test(l.trim())) return;
+      for (let k = i; k < tableBodyEnd(lines, at.kinds, i, isMcpMarker); k += 1) drop.add(k);
+    });
   }
-  const foreign = trimBlankEdges(kept);
-  const before = [...span.before];
-  // 블록 앞의 구분용 빈 줄은 블록과 함께 정리 (재설치/제거를 반복해도 빈 줄이 쌓이지 않게)
-  if (foreign.length === 0) while (before.length > 0 && before[before.length - 1].trim() === '') before.pop();
-  const out = [...before, ...foreign, ...span.after];
+  const out = trimEofBlankLines(deleteLines(lines, drop));
   while (out.length > 1 && out[0].trim() === '') out.shift(); // 파일 맨 앞 빈 줄
-  return { content: bom + out.join('\n'), removed: true };
+  return { content: joinToml(bom, out), removed: at.owned };
 }
 
 // ── ADR-016 D1: notify 폴백 (config.toml top-level `notify`) ───────────
@@ -268,92 +411,138 @@ const NOTIFY_OWN_COMMENTS = [
   '# forgen turn-complete fallback (ADR-016): works even while forgen hooks are untrusted.',
   '# To chain your own notifier, append:  "--", "<program>", "<args…>"  (kept across re-install).',
 ];
+const isNotifyOwnComment = (t: string): boolean =>
+  t.startsWith('# forgen turn-complete fallback') || t.startsWith('# To chain your own notifier');
+const isNotifyMarker = (t: string): boolean => t === NOTIFY_MARKER_BEGIN || t === NOTIFY_MARKER_END;
 /** `notify`, `"notify"`, `'notify'` 키 (dotted `notify.x` 포함) — 어느 것이든 forgen 의 notify 와 충돌한다. */
 const NOTIFY_KEY_RE = /^[ \t]*(?:notify|"notify"|'notify')[ \t]*[.=]/;
+/** forgen notify argv 의 시그니처: `…/dist/host/codex-notify.js` */
+const NOTIFY_SIGNATURE_RE = /[\\/]dist[\\/]host[\\/]codex-notify\.js$/;
 
-interface NotifyBlockParts {
-  span: ManagedSpan | null;
-  /** 블록 안에서 forgen 이 쓰지 않은 줄 (Codex 가 끼워 넣은 root 키 등) */
-  foreign: string[];
-  /** 블록 안 notify 줄의 argv. 없으면 null, 한 줄 JSON 으로 못 읽으면 'unparseable'. */
-  argv: string[] | null | 'unparseable';
+/** `notify = ["a","b"]` 한 줄을 argv 로. 여러 줄 배열·홑따옴표·뒤 주석 등 JSON 으로 못 읽으면 null. */
+function parseNotifyArgvLine(line: string): string[] | null {
+  const value = line.trim().match(/^(?:notify|"notify"|'notify')[ \t]*=[ \t]*(\[.*\])$/)?.[1];
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return Array.isArray(parsed) && parsed.every((a) => typeof a === 'string') ? (parsed as string[]) : null;
+  } catch {
+    return null;
+  }
 }
 
+interface NotifyBlockParts {
+  /** forgen 이 쓴 줄(마커/주석/notify)이 하나라도 있는가 */
+  touched: boolean;
+  /** forgen notify 줄이 있는가 (argv 시그니처로 판정) */
+  hasForgenLine: boolean;
+  /** forgen notify 줄의 argv (없으면 null) */
+  argv: string[] | null;
+  /** BEGIN 마커 바로 아래의 notify 줄이 손편집돼(여러 줄 배열 등) 한 줄 JSON 으로 읽히지 않는다 */
+  custom: boolean;
+  /** forgen 이 쓴 줄을 뺀 나머지 (원래 순서 그대로) */
+  rest: string[];
+  /** forgen 것이 아닌 `notify` 키가 어딘가에 있는가 (사용자 정의) */
+  userNotifyKey: boolean;
+}
+
+/**
+ * forgen notify 줄은 **argv 시그니처**(`…/dist/host/codex-notify.js`)로 찾는다. 마커는 Codex 가 옮기거나
+ * 없앨 수 있고, Codex 가 `notify` 값을 직접 바꾸면 forgen 블록 안에 사용자의 값이 들어앉기도 한다
+ * (그때 그 줄은 forgen 것이 아니다 — 마커/주석만 걷어내고 값은 보존).
+ */
 function parseNotifyBlock(lines: string[]): NotifyBlockParts {
-  const span = splitManagedSpan(lines, NOTIFY_MARKER_BEGIN, NOTIFY_MARKER_END);
-  if (!span) return { span: null, foreign: [], argv: null };
-  const idx = span.inner.findIndex((l) => NOTIFY_KEY_RE.test(l));
-  let argv: NotifyBlockParts['argv'] = null;
-  if (idx !== -1) {
-    argv = 'unparseable';
-    const value = span.inner[idx].trim().match(/^notify[ \t]*=[ \t]*(\[.*\])$/)?.[1];
-    try {
-      const parsed = value ? (JSON.parse(value) as unknown) : null;
-      if (Array.isArray(parsed) && parsed.every((a) => typeof a === 'string')) argv = parsed as string[];
-    } catch { /* multi-line / single-quoted / trailing comment — 아래에서 블록을 그대로 둔다 */ }
+  const kinds = classifyLines(lines);
+  const own = new Set<number>();
+  lines.forEach((l, i) => {
+    if (kinds[i] === 'cont') return; // 여러 줄 값 안의 텍스트는 건드리지 않는다
+    const t = l.trim();
+    if (isNotifyMarker(t) || isNotifyOwnComment(t)) own.add(i);
+  });
+  let argv: string[] | null = null;
+  const forgenIdx = lines.findIndex((l, i) => {
+    if (kinds[i] !== 'other' || !NOTIFY_KEY_RE.test(l)) return false;
+    const parsed = parseNotifyArgvLine(l);
+    if (!parsed?.some((a) => NOTIFY_SIGNATURE_RE.test(a))) return false;
+    argv = parsed;
+    return true;
+  });
+  if (forgenIdx !== -1) own.add(forgenIdx);
+
+  // BEGIN 바로 아래(forgen 주석만 사이)의 notify 키가 한 줄 JSON 이 아니면 손편집된 블록 — 호출부가 그대로 둔다.
+  let custom = false;
+  const begin = lines.findIndex((l) => l.trim() === NOTIFY_MARKER_BEGIN);
+  if (begin !== -1) {
+    let i = begin + 1;
+    while (i < lines.length && isNotifyOwnComment(lines[i].trim())) i += 1;
+    if (i < lines.length && NOTIFY_KEY_RE.test(lines[i]) && parseNotifyArgvLine(lines[i]) === null) custom = true;
   }
-  const foreign = span.inner.filter((l, i) => i !== idx && l.trim() !== '' && !l.trim().startsWith('# forgen turn-complete fallback') && !l.trim().startsWith('# To chain your own notifier'));
-  return { span, foreign, argv };
+  return {
+    touched: own.size > 0,
+    hasForgenLine: forgenIdx !== -1,
+    argv,
+    custom,
+    rest: deleteLines(lines, own),
+    userNotifyKey: lines.some((l, i) => !own.has(i) && kinds[i] === 'other' && NOTIFY_KEY_RE.test(l)),
+  };
 }
 
 /**
  * config.toml 에 forgen notify 블록을 upsert.
  *
  * - Codex 의 `notify` 는 top-level 단일 argv 다. 사용자가 이미 정의했으면 **건드리지 않는다** — 그리고
- *   forgen 블록이 남아 있으면 제거한다 (중복 키 = config.toml 파싱 실패 → Codex 기동 불가).
+ *   forgen 줄이 남아 있으면 제거한다 (중복 키 = config.toml 파싱 실패 → Codex 기동 불가).
  * - top-level 키는 첫 테이블 헤더 앞에 와야 하므로 블록은 항상 파일 최상단(BOM 뒤)에 둔다.
- * - 사용자가 forgen 블록의 argv 뒤에 `"--", "<prog>", …` 로 자기 notifier 를 체인해 뒀으면 그 꼬리를 보존.
+ * - 사용자가 forgen argv 뒤에 `"--", "<prog>", …` 로 자기 notifier 를 체인해 뒀으면 그 꼬리를 보존.
  *   블록의 notify 줄을 한 줄 JSON 으로 읽을 수 없으면(여러 줄 배열 등 손편집) 아무것도 바꾸지 않는다.
- * - 블록 사이에 Codex 가 끼워 넣은 줄(root 키)은 블록 바로 뒤로 옮겨 보존한다.
+ * - forgen 이 쓴 줄 외에는 원래 순서 그대로 둔다 (Codex 가 사이에 끼워 넣은 root 키 포함).
  */
 export function upsertNotifyBlock(currentToml: string, pkgRoot: string): { content: string; status: CodexNotifyStatus } {
   const { bom, body, cr } = tomlShape(currentToml);
   const lines = body.split('\n');
-  const { span, foreign, argv: existingArgv } = parseNotifyBlock(lines);
-  const outside = span ? [...span.before, ...span.after] : lines;
+  const { touched, rest, argv: existingArgv, custom, userNotifyKey } = parseNotifyBlock(lines);
+  if (custom) return { content: currentToml, status: 'custom-block' };
 
-  // 보수적 판정: 블록 밖 어디든 `notify =` 줄이 있으면 사용자 정의로 본다 (프로필 테이블 안이어도 skip —
+  // 보수적 판정: forgen 줄 밖 어디든 `notify =` 줄이 있으면 사용자 정의로 본다 (프로필 테이블 안이어도 skip —
   // 폴백을 못 넣는 쪽이 config 를 깨뜨리는 쪽보다 낫다).
-  if (outside.some((l) => NOTIFY_KEY_RE.test(l))) {
-    if (!span) return { content: currentToml, status: 'user-defined' };
-    return { content: bom + [...span.before, ...foreign, ...span.after].join('\n'), status: 'user-defined' };
+  if (userNotifyKey) {
+    return { content: touched ? joinToml(bom, rest) : currentToml, status: 'user-defined' };
   }
-  if (existingArgv === 'unparseable') return { content: currentToml, status: 'custom-block' };
 
   const sep = existingArgv ? existingArgv.indexOf('--') : -1;
   const chainTail = existingArgv && sep !== -1 ? existingArgv.slice(sep) : [];
   const argv = [...forgenNotifyArgv(pkgRoot), ...chainTail];
   const block = [NOTIFY_MARKER_BEGIN, ...NOTIFY_OWN_COMMENTS, `notify = ${JSON.stringify(argv)}`, NOTIFY_MARKER_END].map((l) => l + cr);
 
-  const rest = span ? [...span.before, ...foreign, ...span.after] : lines;
   let start = 0;
   while (start < rest.length && rest[start].trim() === '') start += 1;
   const tail = rest.slice(start);
-  const content = bom + (tail.length > 0 ? [...block, cr, ...tail] : [...block, '']).join('\n');
+  const content = joinToml(bom, tail.length > 0 ? [...block, cr, ...tail] : [...block, '']);
   return { content, status: content === currentToml ? 'already-present' : 'installed' };
 }
 
 /**
- * forgen notify 블록 제거 (`--no-notify`, uninstall). 블록 사이에 끼어든 다른 줄은 보존.
+ * forgen notify 블록 제거 (`--no-notify`, uninstall).
  *
  * - 사용자가 블록의 notify 줄을 여러 줄 배열 등으로 손편집했으면(`custom`) **건드리지 않는다** — 첫 줄만
  *   지우면 남은 줄이 깨진 TOML 이 되어 Codex 가 기동하지 못한다 (critic 2026-10-02).
  * - `"--"` 뒤에 사용자가 체인해 둔 자기 notifier 가 있으면 그 argv 만으로 `notify` 를 되돌려 놓는다.
+ * - `removed` 는 forgen notify 줄을 실제로 지웠을 때만 true. 고아 마커/주석만 치운 경우는 false
+ *   (내용은 정리된 것을 돌려준다).
  */
 export function removeNotifyBlock(currentToml: string): { content: string; removed: boolean; custom: boolean; restoredChain: string[] } {
   const { bom, body, cr } = tomlShape(currentToml);
-  const { span, foreign, argv } = parseNotifyBlock(body.split('\n'));
-  if (!span) return { content: currentToml, removed: false, custom: false, restoredChain: [] };
-  if (argv === 'unparseable') return { content: currentToml, removed: false, custom: true, restoredChain: [] };
+  const { touched, hasForgenLine, rest, argv, custom } = parseNotifyBlock(body.split('\n'));
+  if (custom) return { content: currentToml, removed: false, custom: true, restoredChain: [] };
+  if (!touched) return { content: currentToml, removed: false, custom: false, restoredChain: [] };
   const sep = argv ? argv.indexOf('--') : -1;
   const restoredChain = argv && sep !== -1 ? argv.slice(sep + 1) : [];
-  const restored = restoredChain.length > 0 ? [`notify = ${JSON.stringify(restoredChain)}${cr}`] : [];
-  const rest = [...span.before, ...restored, ...foreign, ...span.after];
   let start = 0;
-  if (span.before.every((l) => l.trim() === '') && restored.length === 0 && foreign.length === 0) {
-    while (start < rest.length && rest[start].trim() === '') start += 1;
-  }
-  return { content: bom + rest.slice(start).join('\n'), removed: true, custom: false, restoredChain };
+  while (start < rest.length - 1 && rest[start].trim() === '') start += 1;
+  const tail = trimEofBlankLines(rest.slice(start));
+  const hasContent = tail.some((l) => l.trim() !== '');
+  const restored = restoredChain.length > 0 ? [`notify = ${JSON.stringify(restoredChain)}${cr}`, ...(hasContent ? [cr] : [])] : [];
+  return { content: joinToml(bom, [...restored, ...tail]), removed: hasForgenLine, custom: false, restoredChain };
 }
 
 export interface HooksFile {
@@ -439,7 +628,8 @@ export function planCodexInstall(opts: CodexInstallOptions): CodexInstallResult 
   } else {
     // opt-out 은 "더 이상 등록하지 않음" 이 아니라 "없앰" 이어야 한다 (이전 설치의 블록이 남지 않게).
     const r = removeNotifyBlock(configToml);
-    if (r.removed) { notify = 'removed'; configToml = r.content; }
+    configToml = r.content; // 고아 마커만 정리된 경우도 반영
+    if (r.removed) notify = 'removed';
     else if (r.custom) notify = 'custom-block';
   }
   const configTomlToWrite: string | null = configToml !== currentToml ? configToml : null;
