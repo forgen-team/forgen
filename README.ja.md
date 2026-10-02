@@ -192,6 +192,10 @@ forgen install both          # 3択インタラクティブ: claude / codex / bo
 forgen install claude
 forgen install codex
 # Codex のみ: codex 内で `/hooks` から forgen フックを一度承認 — Codex は未承認フックをスキップ (forgen doctor の [Codex Hooks] で確認)
+#   v0.5.6 へのアップグレード: `forgen install codex` を再実行するとフック 2 件 (session_start, session_end) が変わる — `/hooks` でもう一度承認。
+#   config.toml に `notify` フォールバックも登録 (既に `notify` を定義していれば変更しない; 無効化: --no-notify)。
+# Claude のみ: `verify` スキルを ~/.claude/skills/verify にインストール — Claude Code がコードのコミット直前に実行
+#   (自作の `verify` スキルは上書きしない; 無効化: --no-verify-skill)。
 
 # 3. 初回実行 — 4問オンボーディング (英語/韓国語選択)
 forgen                        # デフォルト: Claude

@@ -43,8 +43,12 @@ export type CodexNotifyStatus =
   | 'already-present'
   /** 사용자가 직접 정의한 `notify` 가 있어 건드리지 않음 (단일 argv 라 병합 불가) */
   | 'user-defined'
-  /** --no-notify */
-  | 'skipped';
+  /** forgen 블록의 notify 줄이 손으로 고쳐져(여러 줄 배열 등) 안전하게 다시 쓸 수 없어 그대로 둠 */
+  | 'custom-block'
+  /** --no-notify: 블록이 없었음 */
+  | 'skipped'
+  /** --no-notify: 기존 forgen 블록을 제거함 */
+  | 'removed';
 
 export interface CodexInstallResult {
   codexHome: string;
@@ -82,7 +86,7 @@ export interface CodexHookTrustAudit {
   total: number;
   /** Codex 가 모르는 이벤트라 조용히 무시되는 forgen 엔트리 (`<event>:<i>:<j>`) — trust 대상이 아님 */
   ignoredByCodex: string[];
-  /** trusted_hash 기록이 있고 현재 핸들러의 해시와 일치하는 수 (Codex 가 실제로 실행하는 훅) */
+  /** trusted_hash 가 현재 핸들러의 해시와 일치하고 꺼져 있지 않은 수 (Codex 가 실제로 실행하는 훅) */
   trusted: number;
   /** 신뢰 기록이 없는 hook 키 (`<event>:<i>:<j>`) */
   untrusted: string[];
@@ -91,6 +95,8 @@ export interface CodexHookTrustAudit {
    * 전까지 이 훅도 skip 한다 (이전엔 키 존재만 봐서 "trusted" 로 오표시).
    */
   modified: string[];
+  /** 승인돼 있고 해시도 맞지만 사용자가 `/hooks` 에서 끈 훅 (`enabled = false`) — Codex 가 실행하지 않는다 */
+  disabled: string[];
   /** config.toml 자체가 없거나 hooks.state 가 전혀 없으면 true (Codex 가 아직 한 번도 훅을 review 안 함) */
   noStateRecorded: boolean;
 }
@@ -134,35 +140,80 @@ function readJsonFile<T>(p: string): T | null {
   }
 }
 
-function buildMcpBlock(pkgRoot: string): string {
+// ── config.toml managed blocks ─────────────────────────────────────────
+//
+// Codex 는 config.toml 을 스스로 다시 쓴다 (toml_edit): `/hooks` 승인은 `[hooks.state."…"]` 테이블을,
+// 모델 변경 등은 root 키를 추가한다. 주석은 "다음 항목의 장식" 으로 취급되므로, forgen 의 END 마커가
+// 파일 끝(또는 첫 테이블 앞)에 있으면 **Codex 가 쓴 내용이 BEGIN…END 사이에 끼어든다**. 블록을 통째로
+// 교체하면 그 내용 — 훅 신뢰 22건, 사용자의 model 설정 — 이 사라진다 (critic 2026-10-02, 실 Codex 로 재현).
+// 그래서 블록은 줄 단위로 다룬다: forgen 이 쓴 줄만 다시 쓰고, 그 사이의 나머지 줄은 블록 뒤로 옮겨 보존한다.
+
+interface ManagedSpan { before: string[]; inner: string[]; after: string[] }
+
+function splitManagedSpan(lines: string[], begin: string, end: string): ManagedSpan | null {
+  const b = lines.findIndex((l) => l.trim() === begin);
+  if (b === -1) return null;
+  const rel = lines.slice(b + 1).findIndex((l) => l.trim() === end);
+  if (rel === -1) return null;
+  const e = b + 1 + rel;
+  return { before: lines.slice(0, b), inner: lines.slice(b + 1, e), after: lines.slice(e + 1) };
+}
+
+function trimBlankEdges(lines: string[]): string[] {
+  let a = 0;
+  let z = lines.length;
+  while (a < z && lines[a].trim() === '') a += 1;
+  while (z > a && lines[z - 1].trim() === '') z -= 1;
+  return lines.slice(a, z);
+}
+
+/** BOM 은 파일 맨 앞에 있어야 한다 — 떼어 두었다가 결과 맨 앞에 다시 붙인다. 줄 끝(CRLF)도 보존. */
+function tomlShape(toml: string): { bom: string; body: string; cr: string } {
+  const bom = toml.startsWith('﻿') ? '﻿' : '';
+  return { bom, body: toml.slice(bom.length), cr: /\r\n/.test(toml) ? '\r' : '' };
+}
+
+const MCP_TABLE_HEADER = '[mcp_servers.forgen-compound]';
+const MCP_OWN_KEY_RE = /^\s*(command|args)\s*=/;
+
+function upsertMcpBlock(currentToml: string, pkgRoot: string): { content: string; alreadyPresent: boolean } {
+  const { bom, body, cr } = tomlShape(currentToml);
+  const serverPath = path.join(pkgRoot, 'dist', 'mcp', 'server.js');
   // forgen-mcp 는 dist/mcp/server.js. node 경로는 PATH 기반.
   // `--host=codex` 인자는 server.ts 가 process.env.FORGEN_HOST 로 set 하여
   // correction-record evidence 박제 시 host:"codex" 로 정확히 태깅되게 한다 (spec §10-5).
-  const serverPath = path.join(pkgRoot, 'dist', 'mcp', 'server.js');
-  return [
-    MCP_MARKER_BEGIN,
-    '[mcp_servers.forgen-compound]',
-    'command = "node"',
-    `args = [${JSON.stringify(serverPath)}, "--host=codex"]`,
-    MCP_MARKER_END,
-  ].join('\n');
-}
+  const ownKeys = ['command = "node"', `args = [${JSON.stringify(serverPath)}, "--host=codex"]`];
+  const lines = body.split('\n');
+  const span = splitManagedSpan(lines, MCP_MARKER_BEGIN, MCP_MARKER_END);
 
-function upsertMcpBlock(currentToml: string, pkgRoot: string): { content: string; alreadyPresent: boolean } {
-  const block = buildMcpBlock(pkgRoot);
-  // marker block 이 있으면 그 사이를 새 block 으로 교체
-  const reMarker = new RegExp(
-    `${MCP_MARKER_BEGIN}[\\s\\S]*?${MCP_MARKER_END}`,
-    'g',
-  );
-  if (reMarker.test(currentToml)) {
-    const replaced = currentToml.replace(reMarker, block);
-    return { content: replaced, alreadyPresent: replaced === currentToml };
+  if (!span) {
+    // 마커 없이 같은 테이블이 있으면(사용자 직접 작성 / 마커 손상) append 하지 않는다 — 중복 테이블 = 파싱 실패.
+    if (lines.some((l) => l.trim() === MCP_TABLE_HEADER)) return { content: currentToml, alreadyPresent: true };
+    const block = [MCP_MARKER_BEGIN, MCP_TABLE_HEADER, ...ownKeys, MCP_MARKER_END].map((l) => l + cr).join('\n');
+    const trimmed = body.replace(/\s+$/, '');
+    const sep = trimmed.length > 0 ? `${cr}\n${cr}\n` : '';
+    return { content: `${bom}${trimmed}${sep}${block}\n`, alreadyPresent: false };
   }
-  // 없으면 끝에 append
-  const trimmed = currentToml.replace(/\s+$/, '');
-  const sep = trimmed.length > 0 ? '\n\n' : '';
-  return { content: `${trimmed}${sep}${block}\n`, alreadyPresent: false };
+
+  const h = span.inner.findIndex((l) => l.trim() === MCP_TABLE_HEADER);
+  let extraKeys: string[] = [];
+  let foreign: string[] = span.inner;
+  if (h !== -1) {
+    const afterHeader = span.inner.slice(h + 1);
+    const next = afterHeader.findIndex((l) => /^\s*\[/.test(l));
+    const tableBody = next === -1 ? afterHeader : afterHeader.slice(0, next);
+    // 손으로 고쳐 여러 줄이 된 command/args 는 안전하게 다시 쓸 수 없다 — 블록을 그대로 둔다.
+    const own = tableBody.filter((l) => MCP_OWN_KEY_RE.test(l));
+    if (own.some((l) => !/(["'\]])\s*(#.*)?$/.test(l.trim()))) return { content: currentToml, alreadyPresent: true };
+    // 사용자가 Codex 로 이 서버에 붙인 설정(enabled, startup_timeout_sec …)은 테이블 안에 유지.
+    extraKeys = tableBody.filter((l) => l.trim() !== '' && !MCP_OWN_KEY_RE.test(l)).map((l) => l.replace(/\r$/, ''));
+    foreign = [...span.inner.slice(0, h), ...(next === -1 ? [] : afterHeader.slice(next))];
+  }
+  const block = [MCP_MARKER_BEGIN, MCP_TABLE_HEADER, ...ownKeys, ...extraKeys, MCP_MARKER_END].map((l) => l + cr);
+  const moved = trimBlankEdges(foreign);
+  const out = [...span.before, ...block, ...(moved.length > 0 ? [cr, ...moved] : []), ...span.after];
+  const content = bom + out.join('\n');
+  return { content, alreadyPresent: content === currentToml };
 }
 
 // ── ADR-016 D1: notify 폴백 (config.toml top-level `notify`) ───────────
@@ -172,50 +223,86 @@ function forgenNotifyArgv(pkgRoot: string): string[] {
   return ['node', path.join(pkgRoot, 'dist', 'host', 'codex-notify.js')];
 }
 
+const NOTIFY_OWN_COMMENTS = [
+  '# forgen turn-complete fallback (ADR-016): works even while forgen hooks are untrusted.',
+  '# To chain your own notifier, append:  "--", "<program>", "<args…>"  (kept across re-install).',
+];
+/** `notify`, `"notify"`, `'notify'` 키 (dotted `notify.x` 포함) — 어느 것이든 forgen 의 notify 와 충돌한다. */
+const NOTIFY_KEY_RE = /^[ \t]*(?:notify|"notify"|'notify')[ \t]*[.=]/;
+
+interface NotifyBlockParts {
+  span: ManagedSpan | null;
+  /** 블록 안에서 forgen 이 쓰지 않은 줄 (Codex 가 끼워 넣은 root 키 등) */
+  foreign: string[];
+  /** 블록 안 notify 줄의 argv. 없으면 null, 한 줄 JSON 으로 못 읽으면 'unparseable'. */
+  argv: string[] | null | 'unparseable';
+}
+
+function parseNotifyBlock(lines: string[]): NotifyBlockParts {
+  const span = splitManagedSpan(lines, NOTIFY_MARKER_BEGIN, NOTIFY_MARKER_END);
+  if (!span) return { span: null, foreign: [], argv: null };
+  const idx = span.inner.findIndex((l) => NOTIFY_KEY_RE.test(l));
+  let argv: NotifyBlockParts['argv'] = null;
+  if (idx !== -1) {
+    argv = 'unparseable';
+    const value = span.inner[idx].trim().match(/^notify[ \t]*=[ \t]*(\[.*\])$/)?.[1];
+    try {
+      const parsed = value ? (JSON.parse(value) as unknown) : null;
+      if (Array.isArray(parsed) && parsed.every((a) => typeof a === 'string')) argv = parsed as string[];
+    } catch { /* multi-line / single-quoted / trailing comment — 아래에서 블록을 그대로 둔다 */ }
+  }
+  const foreign = span.inner.filter((l, i) => i !== idx && l.trim() !== '' && !l.trim().startsWith('# forgen turn-complete fallback') && !l.trim().startsWith('# To chain your own notifier'));
+  return { span, foreign, argv };
+}
+
 /**
  * config.toml 에 forgen notify 블록을 upsert.
  *
  * - Codex 의 `notify` 는 top-level 단일 argv 다. 사용자가 이미 정의했으면 **건드리지 않는다** — 그리고
  *   forgen 블록이 남아 있으면 제거한다 (중복 키 = config.toml 파싱 실패 → Codex 기동 불가).
- * - top-level 키는 첫 테이블 헤더 앞에 와야 하므로 블록은 항상 파일 최상단에 둔다.
+ * - top-level 키는 첫 테이블 헤더 앞에 와야 하므로 블록은 항상 파일 최상단(BOM 뒤)에 둔다.
  * - 사용자가 forgen 블록의 argv 뒤에 `"--", "<prog>", …` 로 자기 notifier 를 체인해 뒀으면 그 꼬리를 보존.
+ *   블록의 notify 줄을 한 줄 JSON 으로 읽을 수 없으면(여러 줄 배열 등 손편집) 아무것도 바꾸지 않는다.
+ * - 블록 사이에 Codex 가 끼워 넣은 줄(root 키)은 블록 바로 뒤로 옮겨 보존한다.
  */
 export function upsertNotifyBlock(currentToml: string, pkgRoot: string): { content: string; status: CodexNotifyStatus } {
-  const blockRe = new RegExp(`${NOTIFY_MARKER_BEGIN}[\\s\\S]*?${NOTIFY_MARKER_END}\\n?`);
-  const existingBlock = currentToml.match(blockRe)?.[0] ?? null;
-  const withoutBlock = existingBlock ? currentToml.replace(blockRe, '') : currentToml;
+  const { bom, body, cr } = tomlShape(currentToml);
+  const lines = body.split('\n');
+  const { span, foreign, argv: existingArgv } = parseNotifyBlock(lines);
+  const outside = span ? [...span.before, ...span.after] : lines;
 
   // 보수적 판정: 블록 밖 어디든 `notify =` 줄이 있으면 사용자 정의로 본다 (프로필 테이블 안이어도 skip —
   // 폴백을 못 넣는 쪽이 config 를 깨뜨리는 쪽보다 낫다).
-  if (/^[ \t]*notify[ \t]*=/m.test(withoutBlock)) {
-    return { content: withoutBlock, status: 'user-defined' };
+  if (outside.some((l) => NOTIFY_KEY_RE.test(l))) {
+    if (!span) return { content: currentToml, status: 'user-defined' };
+    return { content: bom + [...span.before, ...foreign, ...span.after].join('\n'), status: 'user-defined' };
   }
+  if (existingArgv === 'unparseable') return { content: currentToml, status: 'custom-block' };
 
-  let chainTail: string[] = [];
-  if (existingBlock) {
-    const line = existingBlock.match(/^notify[ \t]*=[ \t]*(\[.*\])[ \t]*$/m)?.[1];
-    try {
-      const argv = line ? (JSON.parse(line) as unknown) : null;
-      if (Array.isArray(argv) && argv.every((a) => typeof a === 'string')) {
-        const sep = argv.indexOf('--');
-        if (sep !== -1) chainTail = argv.slice(sep) as string[];
-      }
-    } catch { /* 사용자가 JSON 비호환으로 고친 줄 — 체인 보존 불가, 기본 argv 로 재작성 */ }
-  }
-
+  const sep = existingArgv ? existingArgv.indexOf('--') : -1;
+  const chainTail = existingArgv && sep !== -1 ? existingArgv.slice(sep) : [];
   const argv = [...forgenNotifyArgv(pkgRoot), ...chainTail];
-  const block = [
-    NOTIFY_MARKER_BEGIN,
-    '# forgen turn-complete fallback (ADR-016): works even while forgen hooks are untrusted.',
-    '# To chain your own notifier, append:  "--", "<program>", "<args…>"  (kept across re-install).',
-    `notify = ${JSON.stringify(argv)}`,
-    NOTIFY_MARKER_END,
-    '',
-  ].join('\n');
+  const block = [NOTIFY_MARKER_BEGIN, ...NOTIFY_OWN_COMMENTS, `notify = ${JSON.stringify(argv)}`, NOTIFY_MARKER_END].map((l) => l + cr);
 
-  const rest = withoutBlock.replace(/^\n+/, '');
-  const content = rest.length > 0 ? `${block}\n${rest}` : block;
+  const rest = span ? [...span.before, ...foreign, ...span.after] : lines;
+  let start = 0;
+  while (start < rest.length && rest[start].trim() === '') start += 1;
+  const tail = rest.slice(start);
+  const content = bom + (tail.length > 0 ? [...block, cr, ...tail] : [...block, '']).join('\n');
   return { content, status: content === currentToml ? 'already-present' : 'installed' };
+}
+
+/** forgen notify 블록 제거 (`--no-notify`, uninstall). 블록 사이에 끼어든 다른 줄은 보존. */
+export function removeNotifyBlock(currentToml: string): { content: string; removed: boolean } {
+  const { bom, body } = tomlShape(currentToml);
+  const { span, foreign } = parseNotifyBlock(body.split('\n'));
+  if (!span) return { content: currentToml, removed: false };
+  const rest = [...span.before, ...foreign, ...span.after];
+  let start = 0;
+  if (span.before.every((l) => l.trim() === '') && foreign.length === 0) {
+    while (start < rest.length && rest[start].trim() === '') start += 1;
+  }
+  return { content: bom + rest.slice(start).join('\n'), removed: true };
 }
 
 interface HooksFile {
@@ -294,6 +381,10 @@ export function planCodexInstall(opts: CodexInstallOptions): CodexInstallResult 
     const r = upsertNotifyBlock(configToml, opts.pkgRoot);
     notify = r.status;
     configToml = r.content;
+  } else {
+    // opt-out 은 "더 이상 등록하지 않음" 이 아니라 "없앰" 이어야 한다 (이전 설치의 블록이 남지 않게).
+    const r = removeNotifyBlock(configToml);
+    if (r.removed) { notify = 'removed'; configToml = r.content; }
   }
   const configTomlToWrite: string | null = configToml !== currentToml ? configToml : null;
 
@@ -432,7 +523,8 @@ export function codexHookTrustHash(
     type: 'command',
     command: handler.command,
     timeout,
-    async: handler.async === true && event !== 'SessionEnd',
+    // upstream 은 raw 플래그를 해시한다 (SessionEnd 의 "동기로 실행" 강등은 실행 방식에만 반영).
+    async: handler.async === true,
   };
   if (typeof handler.statusMessage === 'string') normalized.statusMessage = handler.statusMessage;
   if (
@@ -447,18 +539,27 @@ export function codexHookTrustHash(
   return `sha256:${crypto.createHash('sha256').update(canonicalJson(identity)).digest('hex')}`;
 }
 
-/** config.toml 의 `[hooks.state."<key>"]` 섹션 → trusted_hash (없으면 null). */
-function parseCodexHookState(toml: string): Map<string, string | null> {
-  const state = new Map<string, string | null>();
-  const lines = toml.split('\n');
-  let current: string | null = null;
-  for (const line of lines) {
-    const header = line.match(/^\[hooks\.state\."([^"]+)"\]\s*$/);
-    if (header) { current = header[1]; state.set(current, null); continue; }
+interface CodexHookState { hash: string | null; enabled: boolean }
+
+/** config.toml 의 `[hooks.state."<key>"]` (또는 literal `'<key>'`) 섹션 → trusted_hash / enabled. */
+function parseCodexHookState(toml: string): Map<string, CodexHookState> {
+  const state = new Map<string, CodexHookState>();
+  let current: CodexHookState | null = null;
+  for (const raw of toml.split('\n')) {
+    const line = raw.replace(/\r$/, '');
+    const header = line.match(/^\[hooks\.state\.(?:"((?:[^"\\]|\\.)*)"|'([^']*)')\]\s*(#.*)?$/);
+    if (header) {
+      // basic string 은 이스케이프(\\, \") 를 풀고, literal string 은 그대로.
+      const key = header[1] !== undefined ? header[1].replace(/\\(["\\])/g, '$1') : header[2];
+      current = { hash: null, enabled: true };
+      state.set(key, current);
+      continue;
+    }
     if (/^\s*\[/.test(line)) { current = null; continue; }
     if (current === null) continue;
-    const hash = line.match(/^\s*trusted_hash\s*=\s*"([^"]*)"/);
-    if (hash) state.set(current, hash[1]);
+    const hash = line.match(/^\s*trusted_hash\s*=\s*(?:"([^"]*)"|'([^']*)')/);
+    if (hash) current.hash = hash[1] ?? hash[2];
+    if (/^\s*enabled\s*=\s*false\b/.test(line)) current.enabled = false;
   }
   return state;
 }
@@ -481,11 +582,25 @@ export function auditCodexHookTrust(opts: {
   const hooksFile = opts.hooksFile ?? readJsonFile<HooksFile>(opts.hooksPath);
   const toml = opts.configToml ?? (fs.existsSync(opts.configTomlPath) ? fs.readFileSync(opts.configTomlPath, 'utf-8') : '');
   const state = parseCodexHookState(toml);
+  // Codex 는 $CODEX_HOME 을 canonicalize 한 경로로 키를 쓴다 — 심링크된 홈에서는 raw 경로와 다르다.
+  const keyPrefixes = [opts.hooksPath];
+  try {
+    const real = fs.realpathSync(opts.hooksPath);
+    if (real !== opts.hooksPath) keyPrefixes.push(real);
+  } catch { /* hooks.json 없음 (dry-run) */ }
+  const lookup = (key: string): CodexHookState | undefined => {
+    for (const prefix of keyPrefixes) {
+      const hit = state.get(`${prefix}:${key}`);
+      if (hit) return hit;
+    }
+    return undefined;
+  };
 
   let total = 0;
   let trusted = 0;
   const untrusted: string[] = [];
   const modified: string[] = [];
+  const disabled: string[] = [];
   const ignoredByCodex: string[] = [];
   const events = (hooksFile?.hooks ?? {}) as Record<string, unknown[]>;
   for (const [event, groups] of Object.entries(events)) {
@@ -500,14 +615,15 @@ export function auditCodexHookTrust(opts: {
         const key = `${codexHookEventKey(event)}:${gi}:${hi}`;
         if (!CODEX_SUPPORTED_HOOK_EVENTS.has(event)) { ignoredByCodex.push(key); return; }
         total += 1;
-        const recorded = state.get(`${opts.hooksPath}:${key}`);
-        if (recorded === undefined || recorded === null) { untrusted.push(key); return; }
-        if (recorded === codexHookTrustHash(event, g.matcher, h)) trusted += 1;
-        else modified.push(key);
+        const recorded = lookup(key);
+        if (!recorded || recorded.hash === null) { untrusted.push(key); return; }
+        if (recorded.hash !== codexHookTrustHash(event, g.matcher, h)) { modified.push(key); return; }
+        if (!recorded.enabled) { disabled.push(key); return; }
+        trusted += 1;
       });
     });
   }
-  return { total, trusted, untrusted, modified, ignoredByCodex, noStateRecorded: state.size === 0 };
+  return { total, trusted, untrusted, modified, disabled, ignoredByCodex, noStateRecorded: state.size === 0 };
 }
 
 // ── ADR-014 D2: Codex custom agents (~/.codex/agents/ch-*.toml) ──────

@@ -245,6 +245,10 @@ forgen install both         # 3-choice interactive: claude / codex / both
 forgen install claude
 forgen install codex
 # Codex only: trust the forgen hooks once with `/hooks` inside codex — Codex skips untrusted hooks (forgen doctor shows [Codex Hooks])
+#   Upgrading to v0.5.6: re-running `forgen install codex` changes 2 hooks (session_start, session_end) — approve them in `/hooks` once more.
+#   It also registers a `notify` fallback in config.toml (left alone if you already define `notify`; opt out: --no-notify).
+# Claude only: installs a `verify` skill to ~/.claude/skills/verify — Claude Code runs it right before code commits
+#   (your own `verify` skill is never overwritten; opt out: --no-verify-skill).
 
 # 3. First run — 4-question onboarding (English or Korean)
 forgen                       # default: Claude
@@ -924,7 +928,7 @@ See [Coexistence Guide](docs/guides/with-omc.md) for the full plugin-detection m
 
 | Document | Description |
 |----------|-------------|
-| [Hooks Reference](docs/reference/hooks-reference.md) | 19 hooks across 3 tiers — events, timeouts, behavior |
+| [Hooks Reference](docs/reference/hooks-reference.md) | 23 hooks across 3 tiers — events, timeouts, behavior |
 | [Coexistence Guide](docs/guides/with-omc.md) | Using forgen alongside oh-my-claudecode |
 | [forgen-eval testbed](packages/forgen-eval/) | Alpha self-measurement package — multi-host parity, 7-axis metrics, drift detection (private workspace, v0.4.3+) |
 | [Multi-host core design](docs/superpowers/specs/2026-04-27-forgen-multi-host-core-design.md) | Codex/Claude symmetric host adapter spec |

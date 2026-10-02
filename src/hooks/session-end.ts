@@ -64,6 +64,18 @@ export function countUserMessagesBounded(transcriptPath: string, maxBytes: numbe
   }
 }
 
+/**
+ * host 별 user 메시지 수. Codex rollout 은 스키마가 달라 전용 카운터를 쓴다 (ADR-016 D2 — 실제 사용자
+ * 프롬프트만, raw 바이트 스캔). codex-adapter 가 delegate 훅에 FORGEN_RUNTIME=codex 를 주입한다.
+ */
+export async function countSessionUserMessages(transcriptPath: string, runtime: string | undefined = process.env.FORGEN_RUNTIME): Promise<number> {
+  if (runtime === 'codex') {
+    const { countCodexUserPrompts } = await import('../host/codex-rollout.js');
+    return countCodexUserPrompts(transcriptPath);
+  }
+  return countUserMessagesBounded(transcriptPath);
+}
+
 /** 순수 판정: 이 입력으로 auto-compound 를 띄울지. (테스트 대상) */
 export function shouldRunSessionEndCompound(input: SessionEndInput | null, userMessageCount: number): boolean {
   if (!input || typeof input.transcript_path !== 'string' || input.transcript_path.length === 0) return false;
@@ -82,15 +94,7 @@ export async function main(): Promise<void> {
     const transcript = input.transcript_path ?? '';
     let count = 0;
     if (transcript && fs.existsSync(transcript)) {
-      try {
-        // ADR-016 D2: Codex rollout 은 스키마가 달라 전용 카운터 (실제 사용자 프롬프트만, raw 바이트 스캔).
-        if (process.env.FORGEN_RUNTIME === 'codex') {
-          const { countCodexUserPrompts } = await import('../host/codex-rollout.js');
-          count = countCodexUserPrompts(transcript);
-        } else {
-          count = countUserMessagesBounded(transcript);
-        }
-      } catch (e) { log.debug('user message count 실패', e); }
+      try { count = await countSessionUserMessages(transcript); } catch (e) { log.debug('user message count 실패', e); }
     }
     if (shouldRunSessionEndCompound(input, count)) {
       const cwd = input.cwd ?? process.cwd();

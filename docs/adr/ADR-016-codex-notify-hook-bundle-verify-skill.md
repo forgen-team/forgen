@@ -40,7 +40,8 @@ forgen 훅이 Codex 에서 미승인/modified 라 조용히 skip 되는 동안�
   (= config.toml 파싱 실패) 를 만들지 않는다. install 출력에 수동 체인 방법을 안내:
   `notify = ["node", ".../codex-notify.js", "--", "<원래 프로그램>", "<인자…>"]` — `--` 뒤 argv 에 페이로드를 붙여 detached 로 먼저 실행.
 - 동작 (모든 단계 fail-open, exit 0):
-  1. `FORGEN_NESTED_RUN=1`(forgen 자신의 추출용 `codex exec`) 이면 즉시 종료 — 재귀/오탐 방지.
+  1. `FORGEN_NESTED_RUN=1`(forgen 자신의 추출용 `codex exec`) 이면 즉시 종료 — 재귀/오탐 방지. `execHost` 가 Codex
+     추출 run 에도 이 표식을 준다 (이전엔 Claude 분기에만 있었다 — `--ephemeral` 은 사용자 config 의 훅·notify 를 그대로 로드한다).
   2. 체인 프로그램이 있으면 detached 로 전달.
   3. `agent-turn-complete` 가 아니면 종료.
   4. **훅 생존 판정**: codex-adapter 가 Stop/SubagentStop/UserPromptSubmit 에서 `state/codex-hook-alive.json` 을 갱신한다
@@ -50,13 +51,18 @@ forgen 훅이 Codex 에서 미승인/modified 라 조용히 skip 되는 동안�
      rollout 을 찾아 user 메시지 ≥10 이면 Stop 훅과 **같은** 디바운스 경로(`maybeSpawnAutoCompound` — adaptive cooldown +
      in-flight gate)로 auto-compound 를 띄운다. 추출 동의(ADR-012)는 러너가 그대로 강제한다.
 - 자동 체인(사용자 notify 를 forgen 래퍼로 감싸기)은 **하지 않는다**: TOML 라이브러리 없이 임의 배열을 재작성하는
-  위험 + Codex uninstall 경로 부재로 원복을 보장할 수 없다.
+  위험 + 원복을 보장할 수 없다.
+- 사용자가 `context-guard` 훅을 꺼 뒀으면 폴백도 auto-compound 를 띄우지 않는다 (Stop 경로와 같은 opt-out).
+- `--no-notify` 와 `forgen uninstall` 은 forgen 블록을 **제거** 한다. 블록의 notify 줄이 손으로 고쳐져 한 줄 JSON 배열로
+  읽히지 않으면 forgen 은 블록을 건드리지 않는다 (`custom-block`).
+- `forgen doctor` 는 silent 관측이 연속 2회 이상일 때만 표시한다 — Stop 훅 없이 notify 만 도는 내부 서브세션
+  (`/review` 등, 소스상 추정)의 1회성 오탐을 거른다.
 
 ### D2 — Codex 훅 번들 (X-G5/G6): 재승인 2건으로 축소
 
 | 변경 | 재승인 | 근거 |
 |---|---|---|
-| `session-end` 훅을 Codex 에도 등록 (`SessionEnd`) | 신규 1건 | Ctrl+C/종료 시 Stop 이 안 오는 세션의 학습 유실 (forgen-autocompound-gap). 3s 예산 → 기존 bounded count + detached spawn 그대로. user 카운트를 Codex rollout 스키마(`response_item` + `payload.role=="user"`)로 확장 |
+| `session-end` 훅을 Codex 에도 등록 (`SessionEnd`) | 신규 1건 | Ctrl+C/종료 시 Stop 이 안 오는 세션의 학습 유실 (forgen-autocompound-gap). 3s 예산 → 기존 bounded count + detached spawn 그대로. user 카운트는 Codex rollout 의 실제 프롬프트 레코드(`event_msg` / `payload.type=="user_message"`)를 raw 바이트 스캔 — `response_item` role=user 는 주입 컨텍스트까지 세어 실측 1.8배 과대(51 vs 91) |
 | `session-recovery` 핸들러에 `additionalContextLimit: 0` (Codex 한정) | modified 1건 | 실 문제 1. forgen 이 자체 상한(RULE_FILE_CAPS)을 이미 갖고 있으므로 Codex 스필을 끈다 |
 | `post-tool-failure` 를 Codex 에서 제외 (`hosts:["claude"]`) | 0건 | Codex 가 무시하는 죽은 엔트리 |
 | `auditCodexHookTrust` 가 trusted_hash 를 **계산해 대조** (`trusted`/`modified`/`untrusted`) | — | 실 문제 2. 읽기 전용 대조라 Codex 의 신뢰 정책을 우회하지 않는다. 위 `modified` 1건을 사용자에게 정확히 알리는 전제 |
@@ -90,8 +96,9 @@ forgen 훅이 Codex 에서 미승인/modified 라 조용히 skip 되는 동안�
 ## Consequences
 
 - 업그레이드 후 `forgen install codex` 를 다시 돌리면 `session_start:0:0`(modified) 과 `session_end:0:0`(신규) 이 `/hooks`
-  승인 전까지 skip 된다 → **그 사이 Codex 세션에는 룰 블록이 주입되지 않는다.** install/doctor 가 정확히 그 2개를 표시하고,
-  notify 폴백이 silent 를 기록한다. README/CHANGELOG 에 재승인 명시.
+  승인 전까지 skip 된다 → **그 사이 Codex 세션에는 룰 블록이 주입되지 않는다.** install/doctor 가 정확히 그 2개를 표시한다.
+  (이 경우 Stop/UserPromptSubmit 훅은 여전히 신뢰 상태라 alive 마커가 갱신되므로 notify 폴백은 조용하다 — 폴백이
+  잡는 것은 "훅 전체가 미승인" 인 상황이다.) README/CHANGELOG 에 재승인 명시.
 - notify 는 사용자가 이미 쓰고 있으면 설치되지 않는다 (폴백 부재 — install 출력에 표시).
 - verify 스킬은 Claude 가 문서/테스트 전용이 아닌 커밋마다 실행하도록 안내받는다 → 커밋당 검증 시간이 늘어난다. 끄려면
   `~/.claude/skills/verify/` 를 지우거나 자기 것으로 교체.
@@ -103,3 +110,26 @@ forgen 훅이 Codex 에서 미승인/modified 라 조용히 skip 되는 동안�
 - 격리 `CODEX_HOME`+`FORGEN_HOME` 실세션(`codex exec`): (1) 승인 전 — notify 가 silent 기록, (2) trust 우회 플래그 —
   alive 마커·SessionEnd 훅 발화·`hooks/list` 로 계산 해시 = Codex 해시 대조.
 - fresh-context critic 리뷰 후 반영.
+
+## Review (2026-10-02, fresh-context critic) — 반영 내역
+
+실 Codex 0.153.4 app-server 로 재현된 결함과 수정:
+
+| # | 결함 | 수정 |
+|---|---|---|
+| C1 | notify 블록 사이에 Codex 가 root 키(`model` 등)를 써 넣는다 (END 마커 주석이 "다음 테이블의 장식" 이라 그 앞에 삽입). 블록을 통째로 교체하면 그 키가 사라진다 | 블록을 줄 단위로 처리 — forgen 이 쓴 줄만 다시 쓰고 나머지는 블록 뒤로 옮겨 보존 |
+| C2 | **기존 결함(0.5.3~)**: MCP 블록이 파일 끝에 있으면 `/hooks` 승인으로 생긴 `[hooks.state]` 테이블 22개가 END 마커 앞(= 블록 안)에 들어가고, 재설치가 전부 지운다 → 훅 신뢰 0/22 | 같은 방식. forgen 테이블의 `command`/`args` 만 갱신, 사용자가 붙인 키(`enabled` 등)는 테이블에 유지, 끼어든 테이블은 블록 뒤로 이동 |
+| M1 | BOM 으로 시작하는 config.toml 앞에 블록을 붙여 BOM 이 7행으로 밀림 → Codex 기동 실패 | BOM 을 떼었다가 맨 앞에 재부착 |
+| m1 | `"notify" = …`, `notify.x = …` 를 사용자 정의로 못 알아봐 중복 키 생성 | 키 패턴 확장 |
+| m2 | Codex 추출 run 에 `FORGEN_NESTED_RUN` 미전달 | `execHost` codex 분기에 추가 (실 spawn 테스트) |
+| m3 | SessionEnd 의 `async` 해시 정규화가 upstream 과 다름 | raw 플래그 해시 |
+| m4 | 손편집된(여러 줄 등) 체인 꼬리를 조용히 버림 | `custom-block` — 건드리지 않음 |
+| m7 | `enabled = false` 훅을 trusted 로 집계, 심링크된 `CODEX_HOME` 키 불일치 | `disabled` 분리, realpath 키도 대조 |
+| m9 | notify 블록 제거 경로 없음 | `--no-notify` 와 uninstall 이 제거 |
+| m10 | 폴백이 꺼진 `context-guard` 를 무시 | hook-config 확인 |
+
+**남은 한계 (정직 표기)**:
+- 폴백의 프롬프트 수는 rollout 전체 기준(resume 이력 포함)이고 Stop 경로는 훅이 본 프롬프트 수라, barren 쿨다운의 "세션 성장"
+  판정이 두 경로 사이에서 정확히 같지 않다.
+- `forgen uninstall` 은 Codex 의 notify 블록만 걷어낸다. hooks.json 의 forgen 엔트리와 MCP 블록 정리는 아직 없다 (기존 갭).
+- Review/Compact 내부 서브세션에서 notify 가 Stop 훅 없이 발화하는지는 소스로만 확인했다 (doctor 2회 임계로 완화).

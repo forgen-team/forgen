@@ -10,7 +10,8 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { isUserOwnedVerifySkill, planClaudeInstall } from '../../src/host/install-claude.js';
-import { cleanVerifySkill } from '../../src/core/uninstall.js';
+import { cleanCodexNotify, cleanVerifySkill } from '../../src/core/uninstall.js';
+import { upsertNotifyBlock } from '../../src/host/install-codex.js';
 
 const PKG_ROOT = process.cwd();
 
@@ -243,5 +244,18 @@ describe('ADR-016 D3: user-level verify skill', () => {
     fs.writeFileSync(skillFile(), '---\nname: verify\ndescription: mine\n---\nmine\n');
     expect(cleanVerifySkill(tmpHome)).toBe(false);
     expect(fs.existsSync(skillFile())).toBe(true);
+  });
+});
+
+describe('uninstall: Codex notify 블록 제거 (ADR-016, critic m9)', () => {
+  it('forgen 블록만 걷어내고 나머지 config 는 보존, 블록이 없거나 Codex 미사용이면 no-op', async () => {
+    const codexHome = path.join(tmpHome, '.codex');
+    fs.mkdirSync(codexHome, { recursive: true });
+    const cfg = path.join(codexHome, 'config.toml');
+    fs.writeFileSync(cfg, upsertNotifyBlock('model = "x"\n\n[features]\nmulti_agent = true\n', PKG_ROOT).content);
+    expect(await cleanCodexNotify(codexHome)).toBe(true);
+    expect(fs.readFileSync(cfg, 'utf-8')).toBe('model = "x"\n\n[features]\nmulti_agent = true\n');
+    expect(await cleanCodexNotify(codexHome)).toBe(false);
+    expect(await cleanCodexNotify(path.join(tmpHome, 'no-codex'))).toBe(false);
   });
 });

@@ -120,6 +120,24 @@ export function cleanVerifySkill(homeDir: string = os.homedir()): boolean {
   }
 }
 
+/**
+ * ADR-016 D1 — Codex config.toml 의 forgen notify 블록 제거. 남겨 두면 Codex 가 매 턴 사라진 스크립트를
+ * spawn 한다. (Codex hooks.json / MCP 블록 정리는 아직 uninstall 범위 밖 — 알려진 갭.)
+ */
+export async function cleanCodexNotify(codexHome: string = process.env.CODEX_HOME ?? path.join(os.homedir(), '.codex')): Promise<boolean> {
+  const configPath = path.join(codexHome, 'config.toml');
+  try {
+    const current = fs.readFileSync(configPath, 'utf-8');
+    const { removeNotifyBlock } = await import('../host/install-codex.js');
+    const r = removeNotifyBlock(current);
+    if (!r.removed) return false;
+    fs.writeFileSync(configPath, r.content, 'utf-8');
+    return true;
+  } catch {
+    return false; // Codex 미사용
+  }
+}
+
 /** 사용자에게 y/n 확인 */
 function confirm(message: string): Promise<boolean> {
   return new Promise((resolve) => {
@@ -372,6 +390,7 @@ export async function handleUninstall(cwd: string, options: { force?: boolean; p
   cleanClaudeMd(cwd);
   cleanSlashCommands();
   if (cleanVerifySkill()) console.log('  ✓ Removed forgen verify skill (~/.claude/skills/verify/)');
+  if (await cleanCodexNotify()) console.log('  ✓ Removed forgen notify block from Codex config.toml');
   cleanPluginArtifacts();
 
   if (options.purge) {

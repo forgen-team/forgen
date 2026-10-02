@@ -166,9 +166,9 @@ export function renderResult(result: OrchestratorResult, dryRun: boolean): strin
     if (t.total > 0 && t.trusted === t.total) {
       lines.push(`    hook trust: ${t.trusted}/${t.total} trusted${t.ignoredByCodex.length ? ` (+${t.ignoredByCodex.length} Claude-only event ignored by Codex)` : ''}`);
     } else {
-      const pending = [...t.modified.map((k) => `${k} (modified)`), ...t.untrusted.map((k) => `${k} (new)`)];
+      const pending = [...t.modified.map((k) => `${k} (modified)`), ...t.untrusted.map((k) => `${k} (new)`), ...t.disabled.map((k) => `${k} (disabled)`)];
       lines.push(`    hook trust: ${t.trusted}/${t.total} trusted — ${pending.length} hook(s) need review: ${pending.slice(0, 6).join(', ')}${pending.length > 6 ? ', …' : ''}`);
-      lines.push('      Codex skips these until approved: run `/hooks` inside codex and trust the forgen entries.');
+      lines.push('      Codex skips these until approved/enabled: run `/hooks` inside codex and trust the forgen entries.');
       if (t.modified.some((k) => k.startsWith('session_start:'))) {
         lines.push('      ⚠ session_start is pending — the <forgen-rules> block is NOT injected into Codex sessions until you approve it.');
       }
@@ -177,7 +177,9 @@ export function renderResult(result: OrchestratorResult, dryRun: boolean): strin
       installed: 'registered (turn-complete fallback — runs even while hooks are untrusted)',
       'already-present': 'already present',
       'user-defined': 'skipped — your config.toml already defines `notify` (kept as is). To chain forgen: notify = ["node", "<pkgRoot>/dist/host/codex-notify.js", "--", <your argv…>]',
+      'custom-block': 'left as is — the forgen notify block in config.toml was hand-edited into a form forgen will not rewrite (keep it on one line as a JSON array to let forgen manage it)',
       skipped: 'skipped (--no-notify)',
+      removed: 'removed (--no-notify)',
     };
     lines.push(`    notify: ${notifyLine[result.codex.notify]}`);
   }

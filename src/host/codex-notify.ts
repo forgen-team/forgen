@@ -118,6 +118,18 @@ export interface NotifyDeps {
   env?: NodeJS.ProcessEnv;
   /** 테스트 주입: auto-compound 디바운스 트리거 */
   spawnCompound?: (sessionId: string, transcriptPath: string, promptCount: number, cwd: string) => Promise<boolean>;
+  /** 테스트 주입: forgen hook-config 조회 */
+  isHookEnabled?: (name: string) => boolean;
+}
+
+/** Stop 경로는 context-guard 훅이 auto-compound 를 띄운다 — 사용자가 그 훅을 껐으면 폴백도 띄우지 않는다. */
+async function contextGuardEnabled(deps: NotifyDeps): Promise<boolean> {
+  try {
+    const isEnabled = deps.isHookEnabled ?? (await import('../hooks/hook-config.js')).isHookEnabled;
+    return isEnabled('context-guard');
+  } catch {
+    return true; // 설정을 못 읽으면 기본값(활성)
+  }
 }
 
 export async function handleNotify(argv: string[], deps: NotifyDeps = {}): Promise<NotifyOutcome> {
@@ -142,14 +154,17 @@ export async function handleNotify(argv: string[], deps: NotifyDeps = {}): Promi
   try { recordSilent(sessionId, cwd, now); } catch { /* fail-open */ }
 
   // 훅이 돌지 않으므로 Stop 트리거 auto-compound 도 없다 → 같은 디바운스 경로로 대신 띄운다.
+  // (프롬프트 수는 rollout 전체 기준이라 resume 된 세션에서는 Stop 경로의 훅 카운터보다 클 수 있다.)
   try {
+    if (!(await contextGuardEnabled(deps))) return 'silent-recorded';
     const codexHome = env.CODEX_HOME ?? path.join(os.homedir(), '.codex');
     const rollout = findCodexRollout(codexHome, sessionId);
     if (!rollout) return 'silent-recorded';
     const prompts = countCodexUserPrompts(rollout);
     if (prompts < MIN_USER_PROMPTS) return 'silent-recorded';
     const spawnCompound = deps.spawnCompound ?? (async (sid, transcript, count, dir) => {
-      // 러너가 host 를 codex 로 해석하도록 (훅 경로에선 codex-adapter 가 주입한다).
+      // 훅 경로에선 codex-adapter 가 주입하는 값 — 러너의 evidence/timing 이 rt:"codex" 로 태깅된다.
+      // (추출에 쓸 LLM host 는 이것과 무관하게 profile.default_host 로 정해진다 — Stop 경로와 동일.)
       process.env.FORGEN_RUNTIME = 'codex';
       const { maybeSpawnAutoCompound } = await import('../hooks/context-guard.js');
       return maybeSpawnAutoCompound(sid, transcript, count, dir);

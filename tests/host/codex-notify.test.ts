@@ -169,8 +169,16 @@ describe('handleNotify', () => {
   it('훅이 돌지 않았고 프롬프트 ≥10 이면 Stop 과 같은 디바운스 경로로 auto-compound 를 띄운다', async () => {
     const spawnCompound = vi.fn(async () => true);
     const rollout = writeRollout(12);
-    expect(await handleNotify([payload()], { env, spawnCompound })).toBe('silent-compound-spawned');
+    expect(await handleNotify([payload()], { env, spawnCompound, isHookEnabled: () => true })).toBe('silent-compound-spawned');
     expect(spawnCompound).toHaveBeenCalledWith(THREAD, rollout, 12, tmpRoot);
+  });
+
+  it('사용자가 context-guard 훅을 껐으면 폴백도 auto-compound 를 띄우지 않는다 (Stop 경로와 같은 opt-out)', async () => {
+    const spawnCompound = vi.fn(async () => true);
+    writeRollout(12);
+    expect(await handleNotify([payload()], { env, spawnCompound, isHookEnabled: (n) => n !== 'context-guard' })).toBe('silent-recorded');
+    expect(spawnCompound).not.toHaveBeenCalled();
+    expect(await handleNotify([payload()], { env, spawnCompound, isHookEnabled: () => true })).toBe('silent-compound-spawned');
   });
 
   it('디바운스가 skip 하면(쿨다운/in-flight) silent-recorded', async () => {

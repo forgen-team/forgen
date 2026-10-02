@@ -13,7 +13,7 @@ dispatch 되지 않는 환경**이 존재하며, 본 문서는 이 갭과 forgen
 
 ## 0.5.3 (ADR-014) — Claude 와 동등해진 것 / 아직 아닌 것
 
-**동등 (실세션 실증)**: hooks.json 22종 동일 · MCP forgen-compound · 스킬 10+14 ·
+**동등 (실세션 실증)**: hooks.json 22종 (0.5.6: SessionEnd 추가, Codex 미지원 PostToolUseFailure 제외) · MCP forgen-compound · 스킬 10+14 ·
 **개인화 룰 주입** (`<forgen-rules host="codex">`, SessionStart; 컴팩션 시 SessionStart 재발화로 재주입) ·
 **서브에이전트 14종** (`~/.codex/agents/ch-*.toml`) · auto-compound / FTS / 세션 기록.
 
@@ -29,19 +29,42 @@ allowlist 로 깎아 보내며, 스키마 사본은 `tests/fixtures/codex-hook-s
 `hook_event_name === "Stop"` 도 봐야 한다 (context-guard 수정). 확인법: `hook-timing.jsonl` 의
 `event` 라벨이 Stop 시점에 `Stop` 으로 찍히는지.
 
+**0.5.6 (ADR-016)** — Codex 0.153.4 소스로 전제를 재검증하고 반영:
+- **trust 해시는 핸들러 단위** (`event` + `matcher` + 정규화된 핸들러 1개). 새 이벤트 추가·append·미지원 이벤트 제거는
+  기존 훅의 신뢰를 건드리지 않는다. 필드(`command`/`timeout`/`async`/`additionalContextLimit`/`matcher`)를 바꾼
+  핸들러만 `modified` 가 되어 skip 된다. → 0.5.6 재설치 시 재승인 대상은 **2건**: `session_start:0:0`(modified),
+  `session_end:0:0`(신규).
+- **SessionEnd 훅을 Codex 에도 등록** — Stop 없이 끝나는 세션의 auto-compound 트리거 (관찰 전용, 1~3s clamp).
+- **`session-recovery` 에 `additionalContextLimit: 0`** — Codex 는 `additionalContext` 가 약 10KB(2,500 근사 토큰)를
+  넘으면 임시 파일로 스필하고 모델에는 머리/꼬리 미리보기만 준다. 한국어 룰 블록은 쉽게 넘는다. 격리 실세션에서
+  기본값은 21KB 블록의 중간이 보이지 않았고, 0 으로는 전문이 전달됨을 확인.
+- **`notify` 폴백** — `forgen install codex` 가 config.toml 최상단에 `notify = ["node", ".../dist/host/codex-notify.js"]`
+  를 마커 블록으로 등록. notify 는 훅 신뢰와 무관하게 턴 완료마다 돈다: forgen 훅이 방금 돌았으면(codex-adapter 의
+  alive 마커) 아무것도 하지 않고, 돌지 않았으면 `state/codex-hooks-silent.json` 을 남기고(`forgen doctor` 가 표시),
+  프롬프트 ≥10 인 세션은 Stop 훅과 같은 디바운스 경로로 auto-compound 를 띄운다. **이미 `notify` 를 쓰고 있으면
+  건드리지 않는다** — 체인하려면 `notify = ["node", ".../codex-notify.js", "--", "<원래 프로그램>", "<인자…>"]`.
+  끄기: `forgen install codex --no-notify`.
+- **`forgen doctor` / install 출력이 trusted / modified / new 를 구분** — forgen 이 Codex 와 같은 해시를 계산해 대조한다
+  (읽기 전용; 신뢰 기록은 쓰지 않는다).
+- **하지 않은 것**: `async` 훅 (같은 이벤트의 핸들러는 이미 동시 실행 — 실측 이득 상한 ≈130ms/이벤트, 대신 제어 효과
+  상실·재승인 비용), `PostCompact`/`Interrupt` 등록 (컨텍스트 주입 불가, 할 일이 없음).
+
 **아직 다른 것**:
 - 룰 재로드 빈도: Claude 는 `.claude/rules` 매 턴, Codex 는 세션 시작 + 컴팩션 후.
-- 훅 신뢰: Codex 는 hooks.json 이 바뀌면 `/hooks` 재승인 전까지 해당 훅을 **skip** 한다.
+- 훅 신뢰: Codex 는 새로 추가되거나 바뀐 훅을 `/hooks` 승인 전까지 **skip** 한다.
   `forgen doctor` 의 `[Codex Hooks]` 섹션으로 상태 확인. forgen 은 신뢰 기록을 쓰지 않는다.
-- `PostToolUseFailure` 는 Codex 이벤트가 아니라 발화하지 않음 (context-signals 미기록). trust 감사에서는
-  `ignoredByCodex` 로 분리 집계 (21/21 이 정상, 22 가 아님).
+- `PostToolUseFailure` 는 Codex 이벤트가 아니다. 0.5.6 부터 Codex hooks.json 에 등록하지 않는다 (실패 복구 안내는
+  Claude 전용).
 - 서브에이전트 모델은 Codex 기본 subagent 모델 (`[agents] default_subagent_model`).
+- Claude 의 `verify` 스킬 규약(커밋 직전 자동 실행, 0.5.6 에서 `~/.claude/skills/verify` 설치)은 Codex 에 동등 기능이 없다.
 
-### 훅 신뢰 체크리스트 (0.5.3+)
-1. `forgen install codex` 출력의 `hook trust: N/21` 확인 (+1 Claude-only event ignored by Codex).
-2. N < 21 이면 codex TUI 에서 `/hooks` → forgen 엔트리 trust.
-3. 글로벌 npm 업그레이드는 경로가 같아 hooks.json 이 바이트 동일 → 기존 신뢰 유지. `npm link` 등으로
-   pkgRoot 가 바뀌면 재승인 필요.
+### 훅 신뢰 체크리스트 (0.5.6+)
+1. `forgen install codex` 출력의 `hook trust: N/22` 와 그 뒤의 목록 확인 — `(modified)` 는 바뀐 훅, `(new)` 는 새 훅.
+2. N < 22 이면 codex TUI 에서 `/hooks` → forgen 엔트리 trust. `session_start` 가 대기 중이면 그동안
+   `<forgen-rules>` 블록이 주입되지 않는다.
+3. 글로벌 npm 업그레이드만으로는 Codex hooks.json 이 바뀌지 않는다 (postinstall 은 Codex 를 건드리지 않음) —
+   `forgen install codex` 를 다시 실행했을 때만 위 2건이 재승인 대상이 된다. `npm link` 등으로 pkgRoot 가 바뀌면
+   command 문자열이 달라져 전부 재승인.
 4. 비대화형 자동화에서만 `codex exec --dangerously-bypass-hook-trust` (forgen 은 쓰지 않음).
 
 ## 권장 Codex 설정 (이상적)

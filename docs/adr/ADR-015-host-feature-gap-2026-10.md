@@ -61,6 +61,11 @@ auto-compound / finalizeSession 이 돌지 않았다. `hook_event_name:"Stop"` �
 
 ## 백로그 (설계 결정 또는 훅 재승인 필요 — 0.5.3 미반영, 정직 표기)
 
+> **2026-10-02 갱신 (ADR-016, v0.5.6)**: X-G3(notify) · X-G5/G6 중 SessionEnd 등록·`additionalContextLimit:0`·죽은
+> `PostToolUseFailure` 제거 · C-G3(verify 스킬) 은 반영됨. "hooks.json 변경 = 22개 훅 재승인" 전제는 **틀렸다** —
+> Codex trust 해시는 핸들러 단위라 실제 재승인은 2건. `async` 와 PostCompact/Interrupt 등록은 실측·검토 후
+> **하지 않기로** 결정 (근거는 ADR-016).
+
 | # | 항목 | 왜 보류 | 비용 |
 |---|---|---|---|
 | X-G3 | Codex `notify` 설정으로 trust-free turn-complete 신호 → auto-compound/evidence | config.toml 단일 배열이라 사용자 값과 병합 불가, 설계 필요 | S |
