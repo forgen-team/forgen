@@ -750,7 +750,7 @@ forgen mcp list                 # List installed MCP servers
 forgen mcp add <name>           # Add MCP server from template
 forgen mcp templates            # Show available templates
 forgen notepad show             # View session notepad
-forgen uninstall                # Remove forgen cleanly
+forgen uninstall                # Remove forgen cleanly (Claude Code + Codex registrations)
 ```
 
 ### Rule lifecycle (v0.4.0, ADR-001/002)

@@ -105,7 +105,9 @@ const MCP_MARKER_BEGIN = '# >>> forgen-managed-mcp';
 const MCP_MARKER_END = '# <<< forgen-managed-mcp';
 const NOTIFY_MARKER_BEGIN = '# >>> forgen-managed-notify';
 const NOTIFY_MARKER_END = '# <<< forgen-managed-notify';
-const FORGEN_SKILL_MARKER = '<!-- forgen-managed -->';
+export const FORGEN_SKILL_MARKER = '<!-- forgen-managed -->';
+/** frontmatter 직후에 마커가 있는 SKILL.md 만 forgen 소유 (본문 인용과 구분). */
+export const FORGEN_SKILL_MARKER_RE = /^---\n[\s\S]*?\n---\n\s*<!-- forgen-managed -->/;
 const AGENTS_MD_BEGIN = '<!-- >>> forgen-managed-rules -->';
 const AGENTS_MD_END = '<!-- <<< forgen-managed-rules -->';
 
@@ -120,6 +122,11 @@ function resolveCodexHome(opts: CodexInstallOptions): string {
 // dist/hooks/<name>.js — 사용자 custom hook 과 충돌 가능성 거의 없음.
 const FORGEN_HOOK_SCRIPT_MARKER = /\bdist\/(host\/codex-adapter|hooks\/[a-z][a-z0-9-]+)\.js\b/;
 
+/** 훅 command 문자열이 forgen 소유인가 (pkgRoot 포함 또는 forgen 스크립트 시그니처). */
+export function isForgenHookCommand(command: unknown, pkgRoot: string): boolean {
+  return typeof command === 'string' && (command.includes(pkgRoot) || FORGEN_HOOK_SCRIPT_MARKER.test(command));
+}
+
 function isForgenManagedHook(entry: unknown, pkgRoot: string): boolean {
   if (!entry || typeof entry !== 'object') return false;
   const e = entry as { hooks?: Array<{ command?: string }> };
@@ -131,7 +138,7 @@ function isForgenManagedHook(entry: unknown, pkgRoot: string): boolean {
   );
 }
 
-function readJsonFile<T>(p: string): T | null {
+export function readJsonFile<T>(p: string): T | null {
   try {
     if (!fs.existsSync(p)) return null;
     return JSON.parse(fs.readFileSync(p, 'utf-8')) as T;
@@ -214,6 +221,31 @@ function upsertMcpBlock(currentToml: string, pkgRoot: string): { content: string
   const out = [...span.before, ...block, ...(moved.length > 0 ? [cr, ...moved] : []), ...span.after];
   const content = bom + out.join('\n');
   return { content, alreadyPresent: content === currentToml };
+}
+
+/**
+ * forgen MCP 블록 제거 (uninstall, ADR-016 D4). forgen 테이블(본문 + `[mcp_servers.forgen-compound.*]` 하위
+ * 테이블)과 마커만 걷어내고, 블록 사이에 Codex 가 끼워 넣은 다른 내용은 그 자리에 보존한다.
+ * 마커 없는 사용자 관리 테이블은 건드리지 않는다.
+ */
+export function removeMcpBlock(currentToml: string): { content: string; removed: boolean } {
+  const { bom, body } = tomlShape(currentToml);
+  const span = splitManagedSpan(body.split('\n'), MCP_MARKER_BEGIN, MCP_MARKER_END);
+  if (!span) return { content: currentToml, removed: false };
+  const kept: string[] = [];
+  let dropping = false;
+  for (const line of span.inner) {
+    const t = line.trim();
+    if (/^\[/.test(t)) dropping = t === MCP_TABLE_HEADER || t.startsWith('[mcp_servers.forgen-compound.');
+    if (!dropping) kept.push(line);
+  }
+  const foreign = trimBlankEdges(kept);
+  const before = [...span.before];
+  // 블록 앞의 구분용 빈 줄은 블록과 함께 정리 (재설치/제거를 반복해도 빈 줄이 쌓이지 않게)
+  if (foreign.length === 0) while (before.length > 0 && before[before.length - 1].trim() === '') before.pop();
+  const out = [...before, ...foreign, ...span.after];
+  while (out.length > 1 && out[0].trim() === '') out.shift(); // 파일 맨 앞 빈 줄
+  return { content: bom + out.join('\n'), removed: true };
 }
 
 // ── ADR-016 D1: notify 폴백 (config.toml top-level `notify`) ───────────
@@ -305,7 +337,7 @@ export function removeNotifyBlock(currentToml: string): { content: string; remov
   return { content: bom + rest.slice(start).join('\n'), removed: true };
 }
 
-interface HooksFile {
+export interface HooksFile {
   description?: string;
   hooks: Record<string, Array<unknown>>;
 }
@@ -628,8 +660,8 @@ export function auditCodexHookTrust(opts: {
 
 // ── ADR-014 D2: Codex custom agents (~/.codex/agents/ch-*.toml) ──────
 
-const AGENT_TOML_MARKER = '# forgen-managed';
-const AGENT_NAME_PREFIX = 'ch-';
+export const AGENT_TOML_MARKER = '# forgen-managed';
+export const AGENT_NAME_PREFIX = 'ch-';
 
 interface AgentsInstallOutcome {
   agentsPath: string;
@@ -779,7 +811,7 @@ function installCodexAgents(opts: { sourceDir: string; targetDir: string; dryRun
 
 // dev-guide prefix pattern: forgen-<stack>-<skill> (e.g. forgen-react-fe-build)
 // 반드시 stack 이 react|vue|node|go 인 것만 매칭 — forgen 자체 commands 보존
-const DEV_GUIDE_SKILL_PATTERN = /^forgen-(react|vue|node|go)-/;
+export const DEV_GUIDE_SKILL_PATTERN = /^forgen-(react|vue|node|go)-/;
 
 interface DevGuideSkillsOutcome {
   devGuideSkillsPath: string;
@@ -981,6 +1013,21 @@ export function upsertForgenRulesInAgentsMd(opts: { agentsMdPath: string; pkgRoo
   fs.mkdirSync(path.dirname(agentsMdPath), { recursive: true });
   fs.writeFileSync(agentsMdPath, newContent, 'utf-8');
   return { injected: newContent !== current };
+}
+
+/** AGENTS.md 의 forgen 블록 제거 (uninstall). 블록뿐이던 파일은 삭제한다. */
+export function removeForgenRulesFromAgentsMd(opts: { agentsMdPath: string; dryRun: boolean }): { removed: boolean; fileDeleted: boolean } {
+  let current: string;
+  try { current = fs.readFileSync(opts.agentsMdPath, 'utf-8'); } catch { return { removed: false, fileDeleted: false }; }
+  const re = new RegExp(`\\n*${escapeRegex(AGENTS_MD_BEGIN)}[\\s\\S]*?${escapeRegex(AGENTS_MD_END)}\\n?`);
+  if (!re.test(current)) return { removed: false, fileDeleted: false };
+  const rest = current.replace(re, '\n').replace(/^\n+/, '');
+  const empty = rest.trim().length === 0;
+  if (!opts.dryRun) {
+    if (empty) fs.unlinkSync(opts.agentsMdPath);
+    else fs.writeFileSync(opts.agentsMdPath, rest.endsWith('\n') ? rest : `${rest}\n`, 'utf-8');
+  }
+  return { removed: true, fileDeleted: empty };
 }
 
 function escapeRegex(s: string): string {

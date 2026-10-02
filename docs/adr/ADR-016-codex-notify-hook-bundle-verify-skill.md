@@ -133,3 +133,30 @@ forgen 훅이 Codex 에서 미승인/modified 라 조용히 skip 되는 동안�
   판정이 두 경로 사이에서 정확히 같지 않다.
 - `forgen uninstall` 은 Codex 의 notify 블록만 걷어낸다. hooks.json 의 forgen 엔트리와 MCP 블록 정리는 아직 없다 (기존 갭).
 - Review/Compact 내부 서브세션에서 notify 가 Stop 훅 없이 발화하는지는 소스로만 확인했다 (doctor 2회 임계로 완화).
+
+## Addendum (2026-10-02, v0.5.7) — D4: `forgen uninstall` 의 Codex 대칭
+
+**현황**: `forgen install codex` 는 hooks.json 훅 22개 · config.toml 의 MCP/notify 블록 · `skills/` 24개 · `agents/ch-*.toml` 14개 ·
+cwd 의 AGENTS.md 블록을 쓰지만, `forgen uninstall` 은 0.5.6 에서 notify 블록만 걷어낸다. 패키지를 지우면 Codex 는 매 훅
+이벤트마다 사라진 스크립트를 실행하려다 실패한다. Claude 쪽에도 같은 종류의 누락이 있다 (`~/.claude.json` 의 MCP 등록,
+`~/.claude/skills/forgen-<stack>-*` dev-guide 스킬).
+
+**결정**:
+- `planCodexUninstall` (`src/host/uninstall-codex.ts`) 를 추가하고 `handleUninstall` 이 `$CODEX_HOME` 이 있을 때 호출한다.
+- **hooks.json**: forgen 핸들러만 제거, 사용자 핸들러/그룹은 보존. Codex 의 trust 키는 `<event>:<groupIdx>:<hookIdx>` 라,
+  forgen 그룹을 지워 뒤따르는 사용자 그룹의 인덱스가 당겨지면 **다른 도구의 훅이 조용히 skip** 된다 (재승인 전까지).
+  그래서 *뒤에 사용자 그룹이 남는 위치의* forgen 그룹은 빈 그룹(`{"hooks": []}`)으로 남겨 인덱스를 유지한다 — Codex
+  0.153.4 `hooks/list` 로 확인: 빈 그룹은 경고 없이 로드되고 뒤 그룹의 신뢰가 유지된다. 뒤에 아무것도 없으면 그냥 제거한다.
+  forgen 이 `hooks.state` 를 고쳐 쓰는 대안(키 재매핑)은 "신뢰 기록은 쓰지 않는다" 원칙에 어긋나 기각.
+  남은 훅이 없고 파일이 forgen 이 만든 형태면 파일을 삭제한다. forgen 핸들러와 사용자 핸들러가 한 그룹에 섞여 인덱스가
+  바뀌는 경우는 보존하되 재승인 필요 대상으로 보고한다.
+- **config.toml**: MCP 블록(forgen 테이블과 그 하위 테이블)과 notify 블록을 제거. 블록 사이에 Codex 가 끼워 넣은 다른
+  내용은 보존 (0.5.6 의 줄 단위 처리). 마커 없는 사용자 관리 테이블은 건드리지 않는다. `[hooks.state]` 는 손대지 않는다.
+- **skills / agents**: forgen-managed 마커가 있는 `skills/<cmd>/SKILL.md`, `forgen-(react|vue|node|go)-*` dev-guide 스킬,
+  마커가 있는 `agents/ch-*.toml` 만 제거. 사용자 작성/심링크는 보존.
+- **AGENTS.md**: cwd(git root) 의 forgen 블록 제거. 블록뿐이던 파일은 삭제.
+- **Claude 쪽 보강**: `~/.claude.json` 의 `mcpServers["forgen-compound"]` (forgen 서버 경로를 가리킬 때만),
+  `~/.claude/skills/forgen-(react|vue|node|go)-*` 제거.
+
+**대안**: (A) 현상 유지 + 문서로 수동 정리 안내 — 훅 실패가 매 턴 발생하므로 기각. (B) 인덱스 재정렬 + trust 키 재매핑 —
+위 원칙 위반으로 기각. (C) 빈 그룹 없이 제거하고 재승인 안내 — 다른 도구의 훅이 조용히 멈추는 기간이 생겨 기각.
