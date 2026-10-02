@@ -19,7 +19,7 @@ import {
   codexHookEventKey,
   type HooksFile,
   isForgenHookCommand,
-  removeForgenRulesFromAgentsMd,
+  removeForgenRulesEverywhere,
   removeMcpBlock,
   removeNotifyBlock,
   resolveAgentsMdPath,
@@ -58,6 +58,8 @@ export interface CodexUninstallResult {
   skillsRemoved: number;
   agentsRemoved: number;
   agentsMdCleaned: boolean;
+  /** forgen 블록을 걷어낸 AGENTS.md 경로 (설치 시 기록된 프로젝트들 + 지금의 cwd) */
+  agentsMdCleanedPaths: string[];
   /** 단계별 실패 (한 단계가 실패해도 나머지는 진행한다) */
   errors: string[];
 }
@@ -170,6 +172,7 @@ export function planCodexUninstall(opts: CodexUninstallOptions): CodexUninstallR
     skillsRemoved: 0,
     agentsRemoved: 0,
     agentsMdCleaned: false,
+    agentsMdCleanedPaths: [],
     errors: [],
   };
   if (!result.present) return result;
@@ -221,10 +224,11 @@ export function planCodexUninstall(opts: CodexUninstallOptions): CodexUninstallR
   step('skills', () => { result.skillsRemoved = removeManagedSkills(path.join(codexHome, 'skills'), opts.pkgRoot, dryRun); });
   step('agents', () => { result.agentsRemoved = removeManagedAgents(path.join(codexHome, 'agents'), dryRun); });
 
-  // 4) AGENTS.md (cwd 의 git root)
+  // 4) AGENTS.md — 설치 때 기록된 프로젝트 전부 + 지금의 cwd (0.5.9 이전 설치분은 기록이 없어 cwd 만)
   step('AGENTS.md', () => {
-    const agentsMdPath = opts.agentsMdPath ?? resolveAgentsMdPath(opts.pkgRoot);
-    result.agentsMdCleaned = removeForgenRulesFromAgentsMd({ agentsMdPath, dryRun }).removed;
+    const cwdAgentsMdPath = opts.agentsMdPath ?? resolveAgentsMdPath(opts.pkgRoot);
+    result.agentsMdCleanedPaths = removeForgenRulesEverywhere({ hostDir: codexHome, cwdAgentsMdPath, dryRun });
+    result.agentsMdCleaned = result.agentsMdCleanedPaths.length > 0;
   });
 
   return result;
@@ -254,10 +258,9 @@ export function renderCodexUninstall(r: CodexUninstallResult): string[] {
   }
   if (r.skillsRemoved > 0) lines.push(`  ✓ Removed ${r.skillsRemoved} forgen skill(s) from ${path.join(r.codexHome, 'skills')}`);
   if (r.agentsRemoved > 0) lines.push(`  ✓ Removed ${r.agentsRemoved} ch-*.toml agent(s) from ${path.join(r.codexHome, 'agents')}`);
-  if (r.agentsMdCleaned) lines.push('  ✓ Removed forgen block from AGENTS.md');
-  for (const e of r.errors) lines.push(`  ✗ Codex cleanup — ${e}`);
-  if (lines.length > 0) {
-    lines.push('    note: AGENTS.md blocks in other projects where you ran `forgen install codex` are not touched — run `forgen uninstall` there or delete the forgen-managed-rules block.');
+  if (r.agentsMdCleaned) {
+    lines.push(`  ✓ Removed forgen block from ${r.agentsMdCleanedPaths.length} AGENTS.md file(s): ${r.agentsMdCleanedPaths.slice(0, 4).join(', ')}${r.agentsMdCleanedPaths.length > 4 ? ', …' : ''}`);
   }
+  for (const e of r.errors) lines.push(`  ✗ Codex cleanup — ${e}`);
   return lines;
 }

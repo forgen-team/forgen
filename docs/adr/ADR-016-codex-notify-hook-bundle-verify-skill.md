@@ -200,3 +200,27 @@ cwd 의 AGENTS.md 블록을 쓰지만, `forgen uninstall` 은 0.5.6 에서 notif
 - 여러 줄 문자열/배열 안의 줄은 헤더·마커·키로 보지 않는다 (삼중따옴표와 대괄호 균형만 추적하는 가벼운 분류기 — 완전한
   TOML 파서는 아니다).
 - 검증: 리뷰어의 케이스 68건 + 퍼징 14,000건(LF/CRLF/BOM, 마커 무작위 배치)에서 로드 불가 출력·사용자 데이터 변경·비멱등 0건.
+
+## Addendum (2026-10-02, v0.5.9) — 남겨 둔 한계 정리
+
+0.5.7 addendum 이 "남은 한계" 로 적어 둔 세 가지를 닫는다.
+
+1. **install 의 dev-guide stale 정리가 사용자 스킬을 지운다.** `install claude` 는 `~/.claude/skills/forgen-*` 를,
+   `install codex` 와 npm postinstall 은 `forgen-(react|vue|node|go)-*` 를 **이름만 보고 재귀 삭제** 했다 — 사용자가 만든
+   `forgen-notes`, `forgen-react-mine` 같은 스킬이 설치할 때마다 사라진다.
+   → 소유 판정으로 교체: (a) 패키지가 현재 제공하는 이름, 또는 (b) `SKILL.md` 가 `…/assets/dev-guide/…` 를 가리키는 심링크
+   (이전 버전이 설치한 것 — 대상이 사라졌어도 링크 문자열로 판정). 그 외에는 건드리지 않는다. 삭제도 `SKILL.md` 한 파일과
+   빈 디렉토리만 (재귀 삭제 없음).
+2. **다른 프로젝트의 AGENTS.md 블록.** `forgen install codex|opencode` 는 실행한 cwd 의 AGENTS.md 에 블록을 쓰지만 어디에
+   썼는지 기록하지 않아, uninstall 은 실행한 cwd 것만 지웠다.
+   → 설치 시 경로를 host 설정 디렉토리의 `forgen-agents-md.json` 에 기록하고(`$CODEX_HOME`, OpenCode config dir), uninstall 이
+   기록된 경로 전부 + cwd 를 정리한 뒤 기록 파일을 지운다. 전역 forgen state 가 아니라 host 디렉토리에 두는 이유: 그 host 의
+   설치가 만든 흔적이고, 격리 설치(`CODEX_HOME=…`)가 서로의 기록을 섞지 않는다. 0.5.9 이전 설치분은 기록이 없으므로 여전히
+   cwd 만 정리된다(정직 표기).
+3. **OpenCode uninstall 부재.** `planOpencodeUninstall`: forgen-managed 마커가 있는 `plugins/forgen.ts` 제거(설치 때 백업한
+   사용자 plugin `.bak` 이 있으면 되돌림), config(JSONC) 의 `mcp.forgen-compound` 를 forgen 시그니처(`dist/mcp/server.js` +
+   `--host=opencode`)일 때만 surgical 제거(주석/포맷 보존, 파싱 불가면 건드리지 않음), AGENTS.md 블록.
+
+**claude-mem 13.28.0 (Dependabot #136)**: 0.5.7 에서 "재현성 핀이라 재측정 필요" 로 보류했으나 근거가 약했다 — 저장소의 측정
+리포트는 claude-mem 버전에 묶여 있지 않고, forgen-eval 이 의존하는 것은 CLI 계약이다. 격리 HOME 에 13.12.4 와 13.28.0 을 설치해
+계약(version/start/status/stop, search 출력, DB 컬럼, 비매칭 쿼리 동작)이 동일함을 실측하고 반영했다.

@@ -18,7 +18,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { generateHooksJson } from '../hooks/hooks-generator.js';
 import { HOOK_REGISTRY } from '../hooks/hook-registry.js';
-import { hasManagedSkillMarker, isManagedAgentToml } from './managed-marker.js';
+import { hasManagedSkillMarker, isManagedAgentToml, removeOwnedDevGuideSkills } from './managed-marker.js';
 
 export interface CodexInstallOptions {
   /** forgen package root (build 산출물 dist/ 의 부모). 기본: 호출 시 process.cwd(). */
@@ -655,6 +655,7 @@ export function planCodexInstall(opts: CodexInstallOptions): CodexInstallResult 
   //    pkgRoot 의 git repo root 의 AGENTS.md, 또는 explicit override.
   const agentsMdPath = opts.agentsMdPath ?? resolveAgentsMdPath(opts.pkgRoot);
   const agentsResult = upsertForgenRulesInAgentsMd({ agentsMdPath, pkgRoot: opts.pkgRoot, dryRun: opts.dryRun ?? false });
+  if (!opts.dryRun) recordAgentsMdInstall(codexHome, agentsMdPath);
 
   // 8) v0.4.9: dev-guide skills → ~/.codex/skills/forgen-<stack>-<skill>/SKILL.md
   const devGuideResult = installDevGuideSkillsToCodex({
@@ -1061,13 +1062,8 @@ function installDevGuideSkillsToCodex(opts: { pkgRoot: string; codexHome: string
 
   fs.mkdirSync(codexSkillsDir, { recursive: true });
 
-  // Stale cleanup: dev-guide pattern 만 정리 (forgen 자체 commands 보존)
-  let removed = 0;
-  for (const entry of fs.readdirSync(codexSkillsDir)) {
-    if (DEV_GUIDE_SKILL_PATTERN.test(entry)) {
-      try { fs.rmSync(path.join(codexSkillsDir, entry), { recursive: true, force: true }); removed++; } catch { /* best-effort */ }
-    }
-  }
+  // stale 정리 — forgen 이 설치한 dev-guide 스킬만 (사용자가 만든 `forgen-<stack>-*` 스킬은 보존, ADR-016 0.5.9)
+  const removed = removeOwnedDevGuideSkills(codexSkillsDir, opts.pkgRoot);
 
   // Install via symlink → copyFileSync fallback
   let installed = 0;
@@ -1223,6 +1219,50 @@ export function upsertForgenRulesInAgentsMd(opts: { agentsMdPath: string; pkgRoo
   fs.mkdirSync(path.dirname(agentsMdPath), { recursive: true });
   fs.writeFileSync(agentsMdPath, newContent, 'utf-8');
   return { injected: newContent !== current };
+}
+
+// ── AGENTS.md 설치 위치 기록 (ADR-016 0.5.9) ────────────────────────────
+//
+// `forgen install codex|opencode` 는 실행한 cwd 의 AGENTS.md 에 블록을 쓴다. 어디에 썼는지 남기지 않으면
+// uninstall 은 그때의 cwd 것만 지울 수 있다. host 설정 디렉토리에 경로 목록을 둔다 (전역 forgen state 가
+// 아니라 host 디렉토리 — 그 host 설치의 흔적이고, 격리 설치끼리 기록이 섞이지 않는다).
+
+const AGENTS_MD_REGISTRY = 'forgen-agents-md.json';
+
+export function readAgentsMdInstalls(hostDir: string): string[] {
+  try {
+    const data = JSON.parse(fs.readFileSync(path.join(hostDir, AGENTS_MD_REGISTRY), 'utf-8')) as { paths?: unknown };
+    return Array.isArray(data.paths) ? data.paths.filter((p): p is string => typeof p === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+export function recordAgentsMdInstall(hostDir: string, agentsMdPath: string): void {
+  try {
+    const abs = path.resolve(agentsMdPath);
+    const paths = readAgentsMdInstalls(hostDir);
+    if (paths.includes(abs)) return;
+    fs.mkdirSync(hostDir, { recursive: true });
+    fs.writeFileSync(path.join(hostDir, AGENTS_MD_REGISTRY), `${JSON.stringify({ paths: [...paths, abs] }, null, 2)}\n`, 'utf-8');
+  } catch { /* 기록 실패는 설치를 막지 않는다 */ }
+}
+
+export function clearAgentsMdInstalls(hostDir: string): void {
+  try { fs.unlinkSync(path.join(hostDir, AGENTS_MD_REGISTRY)); } catch { /* 없음 */ }
+}
+
+/** 기록된 경로 + 지금의 cwd 경로에서 forgen 블록을 걷어낸다. 반환: 실제로 정리한 파일 경로. */
+export function removeForgenRulesEverywhere(opts: { hostDir: string; cwdAgentsMdPath: string; dryRun: boolean }): string[] {
+  const candidates = [...new Set([...readAgentsMdInstalls(opts.hostDir), path.resolve(opts.cwdAgentsMdPath)])];
+  const cleaned: string[] = [];
+  for (const p of candidates) {
+    try {
+      if (removeForgenRulesFromAgentsMd({ agentsMdPath: p, dryRun: opts.dryRun }).removed) cleaned.push(p);
+    } catch { /* 읽기 전용 등 — 나머지는 계속 */ }
+  }
+  if (!opts.dryRun) clearAgentsMdInstalls(opts.hostDir);
+  return cleaned;
 }
 
 /** AGENTS.md 의 forgen 블록 제거 (uninstall). 블록뿐이던 파일은 삭제한다. */

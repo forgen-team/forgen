@@ -15,7 +15,7 @@
  *   - 실패해도 npm install을 깨뜨리지 않음 (silent failure)
  */
 
-import { readFileSync, readdirSync, writeFileSync, mkdirSync, existsSync, rmSync, symlinkSync, cpSync, lstatSync, statSync, copyFileSync, renameSync } from 'node:fs';
+import { readFileSync, readdirSync, writeFileSync, mkdirSync, existsSync, rmSync, symlinkSync, cpSync, lstatSync, statSync, copyFileSync, renameSync, readlinkSync, unlinkSync, rmdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { homedir, platform } from 'node:os';
 import { execFileSync } from 'node:child_process';
@@ -752,6 +752,53 @@ function cleanLegacyMcpFromSettings(settings) {
  *
  * forgen- prefix 로 사용자 own skills 와 격리. idempotent 재실행 시 forgen-* 만 정리 후 재설치.
  */
+/**
+ * forgen 이 설치한 dev-guide 스킬만 정리한다 (src/host/managed-marker.ts 의 removeOwnedDevGuideSkills 와 같은 규칙).
+ *
+ * 이전엔 `forgen-*` 디렉토리를 이름만 보고 재귀 삭제해, 사용자가 만든 `forgen-notes` / `forgen-react-mine`
+ * 같은 스킬이 npm install 때마다 사라졌다. 소유 근거: (a) 패키지가 현재 제공하는 이름, 또는
+ * (b) SKILL.md 가 `…/assets/dev-guide/…` 를 가리키는 심링크(이전 버전이 설치한 것).
+ * SKILL.md 한 파일과 빈 디렉토리만 지운다.
+ */
+function removeOwnedDevGuideSkills(skillsDir, devGuideRoot) {
+  const known = new Set();
+  try {
+    for (const tier of readdirSync(devGuideRoot)) {
+      const base = join(devGuideRoot, tier, 'skills');
+      if (!existsSync(base)) continue;
+      for (const stack of readdirSync(base)) {
+        const stackDir = join(base, stack);
+        if (!statSync(stackDir).isDirectory()) continue;
+        for (const skill of readdirSync(stackDir)) {
+          if (existsSync(join(stackDir, skill, 'SKILL.md'))) known.add(`forgen-${stack}-${skill}`);
+        }
+      }
+    }
+  } catch { /* 자산 없음 */ }
+
+  let removed = 0;
+  let entries = [];
+  try { entries = readdirSync(skillsDir); } catch { return 0; }
+  for (const name of entries) {
+    if (!name.startsWith('forgen-')) continue;
+    const dir = join(skillsDir, name);
+    const file = join(dir, 'SKILL.md');
+    let owned = known.has(name);
+    if (!owned) {
+      try { owned = /[\\/]assets[\\/]dev-guide[\\/]/.test(readlinkSync(file)); } catch { owned = false; }
+    }
+    if (!owned) continue;
+    try {
+      if (lstatSync(dir).isSymbolicLink()) continue;
+      lstatSync(file); // 없으면 throw
+      unlinkSync(file);
+      try { if (readdirSync(dir).length === 0) rmdirSync(dir); } catch { /* ignore */ }
+      removed++;
+    } catch { /* best-effort */ }
+  }
+  return removed;
+}
+
 function installDevGuideSkills(home) {
   const devGuideRoot = join(PKG_ROOT, 'assets', 'dev-guide');
   if (!existsSync(devGuideRoot)) {
@@ -762,13 +809,8 @@ function installDevGuideSkills(home) {
   const userSkillsDir = join(home, '.claude', 'skills');
   mkdirSync(userSkillsDir, { recursive: true });
 
-  // 1. 기존 forgen-* 디렉토리 정리 (사용자 own 보존)
-  let removed = 0;
-  for (const entry of readdirSync(userSkillsDir)) {
-    if (entry.startsWith('forgen-')) {
-      try { rmSync(join(userSkillsDir, entry), { recursive: true, force: true }); removed++; } catch { /* best-effort */ }
-    }
-  }
+  // 1. forgen 이 설치한 dev-guide 스킬 정리 (사용자가 만든 forgen-* 스킬은 보존)
+  const removed = removeOwnedDevGuideSkills(userSkillsDir, devGuideRoot);
 
   // 2. assets/dev-guide/{side}/skills/{stack}/{skill}/SKILL.md 수집
   let installed = 0;
@@ -810,9 +852,8 @@ function installDevGuideSkills(home) {
 /**
  * v0.4.9: dev-guide 14 skills → ~/.codex/skills/forgen-<stack>-<skill>/SKILL.md
  * forgen 자체 commands(forgen-compound 등) 와 prefix 겹치지 않도록
- * DEV_GUIDE_SKILL_PATTERN(/^forgen-(react|vue|node|go)-/) 으로 stale 정리.
+ * stale 정리는 removeOwnedDevGuideSkills (forgen 소유만).
  */
-const DEV_GUIDE_SKILL_PATTERN = /^forgen-(react|vue|node|go)-/;
 
 function installDevGuideSkillsToCodex(home) {
   const devGuideRoot = join(PKG_ROOT, 'assets', 'dev-guide');
@@ -824,13 +865,8 @@ function installDevGuideSkillsToCodex(home) {
   const codexSkillsDir = join(home, '.codex', 'skills');
   mkdirSync(codexSkillsDir, { recursive: true });
 
-  // 1. stale forgen-<stack>-<skill> 정리 (forgen 자체 commands 보존)
-  let removed = 0;
-  for (const entry of readdirSync(codexSkillsDir)) {
-    if (DEV_GUIDE_SKILL_PATTERN.test(entry)) {
-      try { rmSync(join(codexSkillsDir, entry), { recursive: true, force: true }); removed++; } catch { /* best-effort */ }
-    }
-  }
+  // 1. forgen 이 설치한 dev-guide 스킬 정리 (forgen 자체 commands 와 사용자 스킬은 보존)
+  const removed = removeOwnedDevGuideSkills(codexSkillsDir, devGuideRoot);
 
   // 2. assets/dev-guide/{tier}/skills/{stack}/{skill}/SKILL.md 수집
   let installed = 0;

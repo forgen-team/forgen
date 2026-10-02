@@ -300,3 +300,26 @@ describe('uninstall: Claude 쪽 대칭 보강 (ADR-016 D4)', () => {
     expect(fs.readFileSync(file, 'utf-8')).toBe(mine);
   });
 });
+
+describe('install: dev-guide stale 정리는 forgen 소유만 (ADR-016 0.5.9)', () => {
+  it('사용자가 만든 forgen-* 스킬을 지우지 않는다 (이전엔 이름만 보고 재귀 삭제)', () => {
+    const skillsDir = path.join(tmpHome, '.claude', 'skills');
+    fs.mkdirSync(path.join(skillsDir, 'forgen-notes'), { recursive: true });
+    fs.writeFileSync(path.join(skillsDir, 'forgen-notes', 'SKILL.md'), 'mine');
+    fs.writeFileSync(path.join(skillsDir, 'forgen-notes', 'extra.md'), 'extra');
+    fs.mkdirSync(path.join(skillsDir, 'forgen-react-mine'), { recursive: true });
+    fs.writeFileSync(path.join(skillsDir, 'forgen-react-mine', 'SKILL.md'), 'mine too');
+    // 이전 버전이 설치한 stale 스킬: dev-guide 를 가리키는 (dangling) 심링크
+    fs.mkdirSync(path.join(skillsDir, 'forgen-vue-gone'), { recursive: true });
+    fs.symlinkSync('/old/forgen/assets/dev-guide/fe/skills/vue/gone/SKILL.md', path.join(skillsDir, 'forgen-vue-gone', 'SKILL.md'));
+
+    const r1 = planClaudeInstall({ pkgRoot: PKG_ROOT, homeDir: tmpHome });
+    expect(r1.skillsRemoved).toBe(1); // forgen-vue-gone 만
+    const r2 = planClaudeInstall({ pkgRoot: PKG_ROOT, homeDir: tmpHome });
+    expect(r2.skillsRemoved).toBe(r2.skillsInstalled); // 재설치: 자기가 설치한 것만 갈아 끼운다
+    expect(fs.readFileSync(path.join(skillsDir, 'forgen-notes', 'SKILL.md'), 'utf-8')).toBe('mine');
+    expect(fs.existsSync(path.join(skillsDir, 'forgen-notes', 'extra.md'))).toBe(true);
+    expect(fs.readFileSync(path.join(skillsDir, 'forgen-react-mine', 'SKILL.md'), 'utf-8')).toBe('mine too');
+    expect(fs.existsSync(path.join(skillsDir, 'forgen-vue-gone'))).toBe(false);
+  });
+});

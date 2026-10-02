@@ -19,7 +19,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { generateHooksJson } from '../hooks/hooks-generator.js';
-import { hasManagedSkillMarker } from './managed-marker.js';
+import { hasManagedSkillMarker, removeOwnedDevGuideSkills } from './managed-marker.js';
 
 export interface ClaudeInstallOptions {
   pkgRoot: string;
@@ -323,16 +323,9 @@ function installDevGuideSkills(opts: { pkgRoot: string; skillsDir: string; dryRu
 
   fs.mkdirSync(skillsDir, { recursive: true });
 
-  // Remove stale forgen-* skill dirs (idempotent re-install, do not touch user's own skills)
-  let removed = 0;
-  for (const entry of fs.readdirSync(skillsDir)) {
-    if (!entry.startsWith(FORGEN_SKILL_PREFIX)) continue;
-    const fullPath = path.join(skillsDir, entry);
-    if (fs.statSync(fullPath).isDirectory()) {
-      fs.rmSync(fullPath, { recursive: true, force: true });
-      removed += 1;
-    }
-  }
+  // stale 정리 — forgen 이 설치한 dev-guide 스킬만 (패키지가 제공하는 이름 / dev-guide 를 가리키는 심링크).
+  // 이전엔 `forgen-*` 디렉토리를 이름만 보고 재귀 삭제해 사용자가 만든 스킬까지 지웠다 (ADR-016 0.5.9).
+  const removed = removeOwnedDevGuideSkills(skillsDir, pkgRoot);
 
   // Install each skill via symlink → cpSync fallback (mirrors plugin cache pattern)
   let installed = 0;

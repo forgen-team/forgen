@@ -15,13 +15,13 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { applyEdits, modify, parse as parseJsonc } from 'jsonc-parser';
 import { createLogger } from '../core/logger.js';
-import { resolveAgentsMdPath, upsertForgenRulesInAgentsMd } from './install-codex.js';
+import { recordAgentsMdInstall, resolveAgentsMdPath, upsertForgenRulesInAgentsMd } from './install-codex.js';
 
 const log = createLogger('install-opencode');
 
-const PLUGIN_FILENAME = 'forgen.ts';
-const PLUGIN_MARKER = 'forgen-managed';
-const MCP_SERVER_NAME = 'forgen-compound';
+export const PLUGIN_FILENAME = 'forgen.ts';
+export const PLUGIN_MARKER = 'forgen-managed';
+export const MCP_SERVER_NAME = 'forgen-compound';
 
 export interface OpencodeInstallOptions {
   pkgRoot: string;
@@ -60,7 +60,7 @@ export function resolveOpencodeConfigDir(opts: OpencodeInstallOptions): string {
 }
 
 /** 기존 config 파일 경로 감지 — opencode.jsonc 우선, 없으면 opencode.json (둘 다 없으면 .json 신규). */
-function resolveConfigFilePath(configDir: string): string {
+export function resolveConfigFilePath(configDir: string): string {
   const jsonc = path.join(configDir, 'opencode.jsonc');
   if (fs.existsSync(jsonc)) return jsonc;
   return path.join(configDir, 'opencode.json');
@@ -188,6 +188,7 @@ export function planOpencodeInstall(opts: OpencodeInstallOptions): OpencodeInsta
   const agentsMdPath = opts.agentsMdPath ?? resolveAgentsMdPath(opts.pkgRoot);
   const agentsResult = upsertForgenRulesInAgentsMd({ agentsMdPath, pkgRoot: opts.pkgRoot, dryRun });
   result.agentsMdInjected = agentsResult.injected;
+  if (!dryRun) recordAgentsMdInstall(configDir, agentsMdPath);
 
   return result;
 }
