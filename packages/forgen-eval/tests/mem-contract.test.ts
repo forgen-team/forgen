@@ -10,9 +10,13 @@ import { describe, expect, it } from 'vitest';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
 import { detectMemReadBackend, parseSearchHits, readMemFragments } from '../src/arms/mem-recall.js';
 import { CLAUDE_MEM_TESTED_VERSION, parseWorkerRunning } from '../src/runners/worker-lifecycle.js';
+
+// node:sqlite 는 Node 22.13+ 에서 플래그 없이 쓸 수 있다. 없는 런타임에서는 DB 테스트를 건너뛴다
+// (정적 import 는 Node 20 에서 테스트 파일 전체의 로드를 실패시킨다).
+const sqlite = await import('node:sqlite').catch(() => null);
+const DatabaseSync = sqlite?.DatabaseSync as typeof import('node:sqlite').DatabaseSync;
 
 /** 두 버전에서 실제로 받은 search 출력 (seed: observation #1 "zebraquartz retry policy") */
 const REAL_SEARCH_OUTPUT = JSON.stringify({
@@ -49,7 +53,7 @@ describe('parseSearchHits', () => {
     expect(parseSearchHits(REAL_SEARCH_OUTPUT)).toEqual([{ table: 'observations', id: 1 }]);
   });
 
-  it('session summary 행(`#S12`, `#S 12`), 중복 제거, topN', () => {
+  it('session summary 행(`#S12` — 13.x 포매터의 형태; 공백이 낀 `#S 12` 도 허용), 중복 제거, topN', () => {
     const out = JSON.stringify({ content: [{ text: '| #7 | a |\n| #S12 | b |\n| #S 13 | c |\n| #7 | dup |\n| #9 | d |' }] });
     expect(parseSearchHits(out, 10)).toEqual([
       { table: 'observations', id: 7 },
@@ -67,7 +71,7 @@ describe('parseSearchHits', () => {
   });
 });
 
-describe('readMemFragments (실 SQLite DB)', () => {
+describe.skipIf(!sqlite)('readMemFragments (실 SQLite DB)', () => {
   function makeDb(): string {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'forgen-eval-mem-'));
     const dbPath = path.join(dir, 'claude-mem.db');
@@ -82,8 +86,8 @@ describe('readMemFragments (실 SQLite DB)', () => {
     return dbPath;
   }
 
-  it('이 환경에 DB 를 읽을 방법이 있다 (없으면 mem arm recall 이 조용히 비게 된다)', () => {
-    expect(detectMemReadBackend()).not.toBe('none');
+  it('node:sqlite 가 있는 런타임에서는 그것을 쓴다 (sqlite3 CLI 없이도 recall 이 동작)', () => {
+    expect(detectMemReadBackend()).toBe('node:sqlite');
   });
 
   it('observation 은 title + narrative, narrative 가 없으면 text; session summary 는 request/learned/completed', () => {

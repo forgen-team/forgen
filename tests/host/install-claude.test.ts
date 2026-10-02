@@ -323,3 +323,46 @@ describe('install: dev-guide stale 정리는 forgen 소유만 (ADR-016 0.5.9)', 
     expect(fs.existsSync(path.join(skillsDir, 'forgen-vue-gone'))).toBe(false);
   });
 });
+
+describe('install: 이미 있는 스킬은 덮어쓰지 않는다 (0.5.9 critic M1)', () => {
+  it('심링크된 스킬 디렉토리를 따라 들어가 사용자 파일을 덮어쓰지 않는다', () => {
+    const first = planClaudeInstall({ pkgRoot: PKG_ROOT, homeDir: tmpHome });
+    const skillsDir = path.join(tmpHome, '.claude', 'skills');
+    const known = fs.readdirSync(skillsDir).filter((n) => /^forgen-(react|vue|node|go)-/.test(n));
+    const [linkedName, innerLinkName] = known;
+    // (1) 스킬 디렉토리 자체가 사용자 dotfiles 로의 심링크
+    const dotfiles = path.join(tmpHome, 'dotfiles', 'my-skill');
+    fs.mkdirSync(dotfiles, { recursive: true });
+    fs.writeFileSync(path.join(dotfiles, 'SKILL.md'), 'dotfiles user skill');
+    fs.unlinkSync(path.join(skillsDir, linkedName, 'SKILL.md'));
+    fs.rmdirSync(path.join(skillsDir, linkedName));
+    fs.symlinkSync(dotfiles, path.join(skillsDir, linkedName), 'dir');
+    // (2) SKILL.md 가 스킬 디렉토리 밖의 사용자 파일로의 심링크 (dev-guide 를 가리키지 않음) — 패키지 이름이라
+    //     stale 정리가 링크는 걷어내지만, 링크 *대상* 은 건드리면 안 된다
+    const real = path.join(tmpHome, 'dotfiles', 'REAL.md');
+    fs.writeFileSync(real, 'real user file reached through a link');
+    fs.unlinkSync(path.join(skillsDir, innerLinkName, 'SKILL.md'));
+    fs.symlinkSync(real, path.join(skillsDir, innerLinkName, 'SKILL.md'));
+
+    const r = planClaudeInstall({ pkgRoot: PKG_ROOT, homeDir: tmpHome });
+    expect(fs.readFileSync(path.join(dotfiles, 'SKILL.md'), 'utf-8')).toBe('dotfiles user skill');
+    expect(fs.lstatSync(path.join(skillsDir, linkedName)).isSymbolicLink()).toBe(true);
+    expect(fs.readFileSync(real, 'utf-8')).toBe('real user file reached through a link');
+    expect(r.skillsInstalled).toBe(first.skillsInstalled - 1); // 심링크된 디렉토리 하나만 건너뜀
+  });
+
+  it('한 스킬 자리가 막혀 있어도(이름 자리에 파일, SKILL.md 가 디렉토리) 나머지 설치는 계속된다', () => {
+    const first = planClaudeInstall({ pkgRoot: PKG_ROOT, homeDir: tmpHome });
+    const skillsDir = path.join(tmpHome, '.claude', 'skills');
+    const [a, b] = fs.readdirSync(skillsDir).filter((n) => /^forgen-(react|vue|node|go)-/.test(n));
+    fs.unlinkSync(path.join(skillsDir, a, 'SKILL.md'));
+    fs.rmdirSync(path.join(skillsDir, a));
+    fs.writeFileSync(path.join(skillsDir, a), 'a file where a dir is expected');
+    fs.unlinkSync(path.join(skillsDir, b, 'SKILL.md'));
+    fs.mkdirSync(path.join(skillsDir, b, 'SKILL.md'));
+    const r = planClaudeInstall({ pkgRoot: PKG_ROOT, homeDir: tmpHome });
+    expect(r.skillsInstalled).toBe(first.skillsInstalled - 2);
+    expect(fs.readFileSync(path.join(skillsDir, a), 'utf-8')).toBe('a file where a dir is expected');
+    expect(r.verifySkill).toBe('installed'); // 뒤 단계까지 진행됨
+  });
+});

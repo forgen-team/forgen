@@ -13,7 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`forgen install` / npm postinstall 이 사용자가 만든 `forgen-*` 스킬을 지우던 것.** dev-guide 스킬의 stale 정리가 이름만 보고
   디렉토리를 재귀 삭제했다 (`install claude` 는 `forgen-*` 전부, `install codex`/postinstall 은 `forgen-(react|vue|node|go)-*`).
   이제 forgen 소유만 정리한다: 패키지가 현재 제공하는 이름, 또는 `SKILL.md` 가 `…/assets/dev-guide/…` 를 가리키는 심링크(이전
-  버전이 설치한 것). 삭제도 `SKILL.md` 한 파일과 빈 디렉토리만.
+  버전이 설치한 것). 삭제도 `SKILL.md` 한 파일과 빈 디렉토리만. 설치는 이미 있는 것을 덮어쓰지 않는다 — 심링크된 스킬
+  디렉토리(dotfiles 등)를 따라 들어가 쓰지 않고, 한 스킬 자리가 막혀 있어도 나머지 설치는 계속한다.
+- AGENTS.md 블록 처리: 마커가 한 줄을 통째로 차지할 때만 블록 경계로 본다. 본문에 마커 문자열을 인용한 문서에서 인용 줄부터
+  실제 블록 끝까지를 덮어쓰거나 지울 수 있었다.
 - **forgen-eval**: `workerStatus()` 가 "Worker is not running" 을 실행 중으로 판정하던 것. claude-mem recall 이 `sqlite3` CLI 에만
   의존해 CLI 가 없는 머신에서는 조용히 비어 있던 것(forgen+mem arm 이 forgen-only 와 같아짐) — `node:sqlite` 우선 + CLI 폴백,
   둘 다 없으면 run 경고. `CLAUDE_MEM_TESTED_VERSION` 이 12.4.8 에 머물러 매 실행 version-mismatch 경고가 나던 것.
@@ -23,7 +26,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   설정 디렉토리의 `forgen-agents-md.json` 에 기록하고, uninstall 이 기록된 경로 전부 + 실행한 cwd 를 정리한 뒤 기록을 지운다.
   (0.5.9 이전 설치분은 기록이 없어 여전히 cwd 만 정리된다.)
 - **OpenCode uninstall.** forgen-managed plugin 제거(설치 때 백업한 사용자 plugin 이 있으면 되돌림), config(JSONC) 의
-  `mcp.forgen-compound` 를 forgen 시그니처일 때만 surgical 제거(주석/포맷 보존, 파싱 불가면 건드리지 않음), AGENTS.md 블록.
+  `mcp.forgen-compound` 를 forgen 시그니처일 때만 제거(다른 키·서버의 값은 보존, 인접 주석/포맷은 바뀔 수 있음; 파싱 불가면
+  건드리지 않음), AGENTS.md 블록. plugin 소유는 첫 줄의 `// forgen-managed` 로만 판정한다.
+- uninstall 이 쓰지 못한 AGENTS.md(읽기 전용 등)는 오류로 알리고 기록에 남겨 다음 실행에서 다시 시도한다.
 
 ### Changed
 - **claude-mem 13.12.4 → 13.28.0** (forgen-eval 테스트베드 핀, Dependabot #136). 0.5.7 에서 "재측정 필요" 로 보류했으나 근거가
@@ -32,7 +37,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   쿼리 동작.
 
 ### Verified
-- vitest 3231 통과 + forgen-eval 72 통과 (신규: 실 SQLite DB 로 recall 계약, worker 판정, 핀 일치 강제; 사용자 스킬 보존;
+- fresh-context critic 리뷰: MAJOR 2 · MINOR 10 → 반영 또는 한계로 명시(ADR-016). 리뷰어의 재현 환경(심링크된 스킬 디렉토리)을
+  CLI `install both` 와 postinstall 에 다시 돌려 사용자 파일이 그대로임을 확인.
+- vitest 3242 통과 + forgen-eval 72 통과 (신규: 실 SQLite DB 로 recall 계약, worker 판정, 핀 일치 강제; 사용자 스킬 보존;
   AGENTS.md 기록/정리; OpenCode uninstall).
 - 격리 HOME 실행: 실 claude-mem 13.28.0 워커에 대해 빌드된 recall 경로가 시드한 observation 본문을 돌려주고, 워커 on/off 판정이
   맞음. CLI `install both` + `install opencode` 를 두 프로젝트에서 실행한 뒤 다른 디렉토리에서 `uninstall --force` —

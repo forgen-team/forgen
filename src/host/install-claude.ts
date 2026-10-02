@@ -19,7 +19,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { generateHooksJson } from '../hooks/hooks-generator.js';
-import { hasManagedSkillMarker, removeOwnedDevGuideSkills } from './managed-marker.js';
+import { hasManagedSkillMarker, installSkillFile, removeOwnedDevGuideSkills } from './managed-marker.js';
 
 export interface ClaudeInstallOptions {
   pkgRoot: string;
@@ -327,31 +327,10 @@ function installDevGuideSkills(opts: { pkgRoot: string; skillsDir: string; dryRu
   // 이전엔 `forgen-*` 디렉토리를 이름만 보고 재귀 삭제해 사용자가 만든 스킬까지 지웠다 (ADR-016 0.5.9).
   const removed = removeOwnedDevGuideSkills(skillsDir, pkgRoot);
 
-  // Install each skill via symlink → cpSync fallback (mirrors plugin cache pattern)
+  // 설치 — 이미 있는 것(사용자 심링크 디렉토리, 남아 있는 SKILL.md)은 덮어쓰지 않는다.
   let installed = 0;
   for (const { name, src } of entries) {
-    const targetDir = path.join(skillsDir, name);
-    fs.mkdirSync(targetDir, { recursive: true });
-    const targetFile = path.join(targetDir, 'SKILL.md');
-
-    let linked = false;
-    let symlinkErr: unknown = null;
-    try {
-      fs.symlinkSync(src, targetFile, 'file');
-      linked = true;
-    } catch (e) {
-      symlinkErr = e;
-    }
-    if (!linked && symlinkErr) {
-      const code = (symlinkErr as NodeJS.ErrnoException).code ?? 'UNKNOWN';
-      process.stderr.write(
-        `[forgen] symlink ${src} → ${targetFile} failed (${code}); falling back to copyFile.\n`,
-      );
-    }
-    if (!linked) {
-      fs.copyFileSync(src, targetFile);
-    }
-    installed += 1;
+    if (installSkillFile(src, skillsDir, name)) installed += 1;
   }
 
   return { skillsPath: skillsDir, skillsInstalled: installed, skillsRemoved: removed };

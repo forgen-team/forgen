@@ -219,8 +219,27 @@ cwd 의 AGENTS.md 블록을 쓰지만, `forgen uninstall` 은 0.5.6 에서 notif
    cwd 만 정리된다(정직 표기).
 3. **OpenCode uninstall 부재.** `planOpencodeUninstall`: forgen-managed 마커가 있는 `plugins/forgen.ts` 제거(설치 때 백업한
    사용자 plugin `.bak` 이 있으면 되돌림), config(JSONC) 의 `mcp.forgen-compound` 를 forgen 시그니처(`dist/mcp/server.js` +
-   `--host=opencode`)일 때만 surgical 제거(주석/포맷 보존, 파싱 불가면 건드리지 않음), AGENTS.md 블록.
+   `--host=opencode`)일 때만 제거(다른 키·서버의 값은 보존 — forgen 항목에 붙은 주석과 주변 포맷은 바뀔 수 있다. 파싱 불가면
+   건드리지 않음), AGENTS.md 블록.
 
 **claude-mem 13.28.0 (Dependabot #136)**: 0.5.7 에서 "재현성 핀이라 재측정 필요" 로 보류했으나 근거가 약했다 — 저장소의 측정
 리포트는 claude-mem 버전에 묶여 있지 않고, forgen-eval 이 의존하는 것은 CLI 계약이다. 격리 HOME 에 13.12.4 와 13.28.0 을 설치해
 계약(version/start/status/stop, search 출력, DB 컬럼, 비매칭 쿼리 동작)이 동일함을 실측하고 반영했다.
+
+**리뷰 반영 (critic 4라운드)**:
+- **M1 (신규 회귀, 미출시)**: stale 정리는 심링크된 스킬 디렉토리를 건너뛰는데 바로 뒤 설치 루프가 그 링크를 따라 들어가
+  `copyFileSync`/`rmSync` 로 사용자 dotfiles 의 `SKILL.md`(와 그것이 가리키는 파일)를 덮어쓰거나 지웠다. → 설치는 **이미 있는
+  것을 절대 덮어쓰지 않는다** (`installSkillFile`: 심링크 디렉토리는 건너뛰고, 남아 있는 `SKILL.md` 는 건드리지 않으며, 한 스킬의
+  실패가 나머지를 막지 않는다). install-claude / install-codex / postinstall 세 곳 공통.
+- **M2**: forgen-eval 의 새 테스트가 `node:sqlite` 를 정적 import 해 Node 20 CI 에서 로드 실패 → 동적 import + skip, 워크플로는
+  Node 22.
+- AGENTS.md: 쓰지 못한 경로는 오류로 보고하고 기록에 남긴다(다음 uninstall 이 재시도). 블록 경계는 마커가 한 줄을 통째로
+  차지할 때만 인정 — 본문에 마커 문자열을 인용한 줄부터 실제 END 까지를 지우거나 덮어쓰던 것(install 의 upsert 포함) 수정.
+  블록이 여럿이면 전부 제거.
+- OpenCode: plugin 소유는 **첫 줄**의 `// forgen-managed` 로만 판정, forgen-managed 내용의 `.bak` 은 되돌리지 않음,
+  `opencode.jsonc` 와 `opencode.json` 둘 다 확인, MCP 편집 결과를 재파싱해 기대와 다르면 쓰지 않음.
+
+**남은 한계**: (1) 복사 폴백으로 설치된 dev-guide 스킬(Windows 기본)은 패키지에서 이름이 바뀌거나 빠지면 forgen 이 알아볼
+방법이 없어 남는다 — 지금까지 dev-guide 스킬의 이름 변경/삭제는 없었다. (2) 사용자가 예전에 직접 만들어 둔
+`plugins/forgen.ts.bak` 은 설치가 만든 백업과 구분하지 못해 uninstall 이 되돌린다(내용이 forgen-managed 가 아닐 때).
+(3) OpenCode config 의 `.bak`(설치 때 만든 백업)은 남긴다.

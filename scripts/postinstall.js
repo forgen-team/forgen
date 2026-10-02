@@ -799,6 +799,25 @@ function removeOwnedDevGuideSkills(skillsDir, devGuideRoot) {
   return removed;
 }
 
+/**
+ * dev-guide 스킬 한 개 설치 (src/host/managed-marker.ts installSkillFile 과 같은 규칙).
+ * 이미 있는 것은 덮어쓰지 않는다: 심링크된 스킬 디렉토리는 따라 들어가지 않고, 남아 있는 SKILL.md 는 건드리지 않는다
+ * (rmSync/cpSync 는 심링크를 관통해 사용자 dotfiles 의 파일을 지우거나 덮어쓴다). 반환: 설치했는가.
+ */
+function installSkillFile(src, skillsDir, name) {
+  const dir = join(skillsDir, name);
+  const file = join(dir, 'SKILL.md');
+  try {
+    try { if (lstatSync(dir).isSymbolicLink()) return false; } catch { /* 없음 */ }
+    mkdirSync(dir, { recursive: true });
+    try { lstatSync(file); return false; } catch { /* 없음 — 설치 */ }
+    try { symlinkSync(src, file, 'file'); } catch { copyFileSync(src, file); }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function installDevGuideSkills(home) {
   const devGuideRoot = join(PKG_ROOT, 'assets', 'dev-guide');
   if (!existsSync(devGuideRoot)) {
@@ -825,19 +844,8 @@ function installDevGuideSkills(home) {
         const skillFile = join(skillSrc, 'SKILL.md');
         if (!existsSync(skillFile)) continue;
 
-        // 대상: ~/.claude/skills/forgen-<stack>-<skill>/SKILL.md
-        const dstDir = join(userSkillsDir, `forgen-${stack}-${skill}`);
-        mkdirSync(dstDir, { recursive: true });
-        const dst = join(dstDir, 'SKILL.md');
-
-        // symlink → fallback cpSync
-        try {
-          if (existsSync(dst)) rmSync(dst);
-          symlinkSync(skillFile, dst, 'file');
-        } catch {
-          cpSync(skillFile, dst);
-        }
-        installed++;
+        // 대상: ~/.claude/skills/forgen-<stack>-<skill>/SKILL.md (이미 있는 사용자 것은 덮어쓰지 않는다)
+        if (installSkillFile(skillFile, userSkillsDir, `forgen-${stack}-${skill}`)) installed++;
       }
     }
   }
@@ -880,18 +888,8 @@ function installDevGuideSkillsToCodex(home) {
         const skillFile = join(stackDir, skill, 'SKILL.md');
         if (!existsSync(skillFile)) continue;
 
-        const dstDir = join(codexSkillsDir, `forgen-${stack}-${skill}`);
-        mkdirSync(dstDir, { recursive: true });
-        const dst = join(dstDir, 'SKILL.md');
-
-        // symlink → fallback cpSync
-        try {
-          if (existsSync(dst)) rmSync(dst);
-          symlinkSync(skillFile, dst, 'file');
-        } catch {
-          cpSync(skillFile, dst);
-        }
-        installed++;
+        // 이미 있는 사용자 것은 덮어쓰지 않는다
+        if (installSkillFile(skillFile, codexSkillsDir, `forgen-${stack}-${skill}`)) installed++;
       }
     }
   }

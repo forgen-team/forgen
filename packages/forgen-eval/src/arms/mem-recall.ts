@@ -9,7 +9,7 @@
  *
  * claude-mem 과의 계약 (13.12.4 / 13.28.0 에서 실측 동일):
  *   - `claude-mem search <q>` stdout = `{"content":[{"type":"text","text":"…| #12 | … |…"}]}`
- *     (observation 은 `#N`, session summary 는 `#S N`)
+ *     (observation 은 `#N`, session summary 는 `#SN` — 공백이 끼어도 허용한다)
  *   - DB: `observations(id,title,narrative,text)`, `session_summaries(id,request,learned,completed)`
  */
 
@@ -32,7 +32,7 @@ export function parseSearchHits(searchOut: string, topN = 2): MemHit[] {
   }
   const rawText = parsed?.content?.[0]?.text ?? '';
   if (!rawText) return [];
-  // Match table rows: `| #NNN | ... |` or `| #S NNN | ... |`. Digits only → SQL-safe.
+  // Match table rows: `| #NNN | ... |` or `| #SNNN | ... |` (공백 허용). Digits only → SQL-safe.
   const seen = new Set<string>();
   const hits: MemHit[] = [];
   for (const m of rawText.matchAll(/\|\s*#(S?)\s*(\d+)\s*\|/g)) {
@@ -53,7 +53,7 @@ function sqlFor(hit: MemHit): string {
 
 type SqliteModule = { DatabaseSync: new (p: string, o?: { readOnly?: boolean }) => { prepare(sql: string): { get(): unknown }; close(): void } };
 
-/** Node 22.5+ 내장 sqlite. 없으면 null (구버전 Node → sqlite3 CLI 폴백). */
+/** 내장 sqlite — Node 22.13+ 에서 플래그 없이 사용 가능. 없으면 null (→ sqlite3 CLI 폴백). */
 function builtinSqlite(): SqliteModule | null {
   try {
     const get = (process as unknown as { getBuiltinModule?: (id: string) => unknown }).getBuiltinModule;

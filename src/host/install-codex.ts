@@ -18,7 +18,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { generateHooksJson } from '../hooks/hooks-generator.js';
 import { HOOK_REGISTRY } from '../hooks/hook-registry.js';
-import { hasManagedSkillMarker, isManagedAgentToml, removeOwnedDevGuideSkills } from './managed-marker.js';
+import { hasManagedSkillMarker, installSkillFile, isManagedAgentToml, removeOwnedDevGuideSkills } from './managed-marker.js';
 
 export interface CodexInstallOptions {
   /** forgen package root (build 산출물 dist/ 의 부모). 기본: 호출 시 process.cwd(). */
@@ -1065,21 +1065,10 @@ function installDevGuideSkillsToCodex(opts: { pkgRoot: string; codexHome: string
   // stale 정리 — forgen 이 설치한 dev-guide 스킬만 (사용자가 만든 `forgen-<stack>-*` 스킬은 보존, ADR-016 0.5.9)
   const removed = removeOwnedDevGuideSkills(codexSkillsDir, opts.pkgRoot);
 
-  // Install via symlink → copyFileSync fallback
+  // 설치 — 이미 있는 것(사용자 심링크 디렉토리, 남아 있는 SKILL.md)은 덮어쓰지 않는다.
   let installed = 0;
   for (const { name, src } of entries) {
-    const dstDir = path.join(codexSkillsDir, name);
-    fs.mkdirSync(dstDir, { recursive: true });
-    const dst = path.join(dstDir, 'SKILL.md');
-    let linked = false;
-    try {
-      fs.symlinkSync(src, dst, 'file');
-      linked = true;
-    } catch { /* fallback */ }
-    if (!linked) {
-      fs.copyFileSync(src, dst);
-    }
-    installed++;
+    if (installSkillFile(src, codexSkillsDir, name)) installed++;
   }
 
   return { devGuideSkillsPath: codexSkillsDir, devGuideSkillsInstalled: installed, devGuideSkillsRemoved: removed };
@@ -1193,25 +1182,31 @@ export function upsertForgenRulesInAgentsMd(opts: { agentsMdPath: string; pkgRoo
     current = fs.readFileSync(agentsMdPath, 'utf-8');
   }
 
-  // Phase 3 critic fix #1: RegExp lastIndex 위험 회피 — g flag 제거 + 매번 새 RegExp.
-  const reMarker = new RegExp(`${escapeRegex(AGENTS_MD_BEGIN)}[\\s\\S]*?${escapeRegex(AGENTS_MD_END)}`);
-  const hasBlock = reMarker.test(current);
+  // 블록 경계는 마커가 한 줄을 통째로 차지할 때만 인정한다 (본문에 마커 문자열을 인용한 줄과 구분 —
+  // 이전의 문자열 정규식은 인용된 BEGIN 부터 실제 END 까지를 블록으로 보고 그 사이의 사용자 글을 덮어썼다).
+  const lines = current.split('\n');
+  const blocks = findAgentsBlocks(lines);
+  const blockLines = block.split('\n');
 
-  // Phase 3 critic fix #2: AGENTS.md self-heal — begin marker 만 있고 end 손상 시
-  // 누적 방지. begin 부터 파일 끝까지 + AGENTS_MD_END 미존재 = 손상으로 판단,
-  // begin 부터 파일 끝까지를 *전부* 새 block 으로 교체.
   let newContent: string;
-  if (hasBlock) {
-    newContent = current.replace(reMarker, block);
+  if (blocks.length > 0) {
+    // 첫 블록 자리에 새 블록, 나머지 중복 블록은 제거
+    const drop = new Set<number>();
+    for (const b of blocks) for (let i = b.begin; i <= b.end; i += 1) drop.add(i);
+    const out: string[] = [];
+    lines.forEach((l, i) => {
+      if (i === blocks[0].begin) out.push(...blockLines);
+      if (!drop.has(i)) out.push(l);
+    });
+    newContent = out.join('\n');
   } else {
-    const beginIdx = current.indexOf(AGENTS_MD_BEGIN);
-    const endIdx = current.indexOf(AGENTS_MD_END);
-    if (beginIdx !== -1 && endIdx === -1) {
-      // 손상: begin 만 있음 → begin 부터 끝까지 교체 (self-heal)
-      newContent = `${current.slice(0, beginIdx).replace(/\s+$/, '')}\n\n${block}\n`;
+    // self-heal: BEGIN 줄만 있고 END 가 없으면(손상) BEGIN 부터 파일 끝까지를 새 블록으로 교체 — 누적 방지.
+    const beginIdx = lines.findIndex((l) => l.trim() === AGENTS_MD_BEGIN);
+    if (beginIdx !== -1) {
+      newContent = `${lines.slice(0, beginIdx).join('\n').replace(/\s+$/, '')}\n\n${block}\n`.replace(/^\n+/, '');
     } else {
-      // 깨끗한 신규 또는 둘 다 없음 → 끝에 append
-      newContent = `${current.replace(/\s+$/, '')}${current.length > 0 ? '\n\n' : ''}${block}\n`;
+      // 깨끗한 신규 → 끝에 append
+      newContent = `${current.replace(/\s+$/, '')}${current.trim().length > 0 ? '\n\n' : ''}${block}\n`;
     }
   }
 
@@ -1252,37 +1247,67 @@ export function clearAgentsMdInstalls(hostDir: string): void {
   try { fs.unlinkSync(path.join(hostDir, AGENTS_MD_REGISTRY)); } catch { /* 없음 */ }
 }
 
-/** 기록된 경로 + 지금의 cwd 경로에서 forgen 블록을 걷어낸다. 반환: 실제로 정리한 파일 경로. */
-export function removeForgenRulesEverywhere(opts: { hostDir: string; cwdAgentsMdPath: string; dryRun: boolean }): string[] {
-  const candidates = [...new Set([...readAgentsMdInstalls(opts.hostDir), path.resolve(opts.cwdAgentsMdPath)])];
+/**
+ * 기록된 경로 + 지금의 cwd 경로에서 forgen 블록을 걷어낸다.
+ * 쓰지 못한 경로(읽기 전용 등)는 `failed` 로 돌려주고 **기록에 남긴다** — 다음 uninstall 이 다시 시도할 수 있게.
+ */
+export function removeForgenRulesEverywhere(opts: { hostDir: string; cwdAgentsMdPath: string; dryRun: boolean }): { cleaned: string[]; failed: Array<{ path: string; error: string }> } {
+  const recorded = readAgentsMdInstalls(opts.hostDir);
+  const candidates = [...new Set([...recorded, path.resolve(opts.cwdAgentsMdPath)])];
   const cleaned: string[] = [];
+  const failed: Array<{ path: string; error: string }> = [];
   for (const p of candidates) {
     try {
       if (removeForgenRulesFromAgentsMd({ agentsMdPath: p, dryRun: opts.dryRun }).removed) cleaned.push(p);
-    } catch { /* 읽기 전용 등 — 나머지는 계속 */ }
+    } catch (e) {
+      failed.push({ path: p, error: e instanceof Error ? e.message : String(e) });
+    }
   }
-  if (!opts.dryRun) clearAgentsMdInstalls(opts.hostDir);
-  return cleaned;
+  if (!opts.dryRun) {
+    const keep = recorded.filter((p) => failed.some((f) => f.path === p));
+    if (keep.length === 0) clearAgentsMdInstalls(opts.hostDir);
+    else {
+      try { fs.writeFileSync(path.join(opts.hostDir, AGENTS_MD_REGISTRY), `${JSON.stringify({ paths: keep }, null, 2)}\n`, 'utf-8'); } catch { /* best-effort */ }
+    }
+  }
+  return { cleaned, failed };
 }
 
-/** AGENTS.md 의 forgen 블록 제거 (uninstall). 블록뿐이던 파일은 삭제한다. */
+/** 마커가 *한 줄을 통째로* 차지할 때만 블록 경계로 본다 — 본문에 마커 문자열을 인용한 줄과 구분. */
+function findAgentsBlocks(lines: string[]): Array<{ begin: number; end: number }> {
+  const blocks: Array<{ begin: number; end: number }> = [];
+  let begin = -1;
+  lines.forEach((l, i) => {
+    const t = l.trim();
+    if (t === AGENTS_MD_BEGIN && begin === -1) begin = i;
+    else if (t === AGENTS_MD_END && begin !== -1) { blocks.push({ begin, end: i }); begin = -1; }
+  });
+  return blocks;
+}
+
+/**
+ * AGENTS.md 의 forgen 블록 제거 (uninstall). 블록뿐이던 파일은 삭제한다.
+ * BEGIN/END 마커가 각각 한 줄로, 순서대로 있을 때만 동작한다 (블록이 여러 개면 전부 제거).
+ * 읽을 수 없으면 no-op, 쓸 수 없으면 throw — 호출부가 보고한다.
+ */
 export function removeForgenRulesFromAgentsMd(opts: { agentsMdPath: string; dryRun: boolean }): { removed: boolean; fileDeleted: boolean } {
   let current: string;
   try { current = fs.readFileSync(opts.agentsMdPath, 'utf-8'); } catch { return { removed: false, fileDeleted: false }; }
-  const re = new RegExp(`\\n*${escapeRegex(AGENTS_MD_BEGIN)}[\\s\\S]*?${escapeRegex(AGENTS_MD_END)}\\n?`);
-  if (!re.test(current)) return { removed: false, fileDeleted: false };
-  const rest = current.replace(re, '\n').replace(/^\n+/, '');
+  const lines = current.split('\n');
+  const blocks = findAgentsBlocks(lines);
+  if (blocks.length === 0) return { removed: false, fileDeleted: false };
+  const drop = new Set<number>();
+  for (const b of blocks) for (let i = b.begin; i <= b.end; i += 1) drop.add(i);
+  const kept = trimEofBlankLines(deleteLines(lines, drop));
+  while (kept.length > 1 && kept[0].trim() === '') kept.shift();
+  const rest = kept.join('\n');
   const empty = rest.trim().length === 0;
   // 심링크면 링크를 지우지 않고 대상 파일에 써 넣는다 (링크만 지우면 대상에 블록이 남는다).
   const isLink = fs.lstatSync(opts.agentsMdPath).isSymbolicLink();
   const deleteFile = empty && !isLink;
   if (!opts.dryRun) {
     if (deleteFile) fs.unlinkSync(opts.agentsMdPath);
-    else fs.writeFileSync(opts.agentsMdPath, empty ? '' : (rest.endsWith('\n') ? rest : `${rest}\n`), 'utf-8');
+    else fs.writeFileSync(opts.agentsMdPath, empty ? '' : rest, 'utf-8');
   }
   return { removed: true, fileDeleted: deleteFile };
-}
-
-function escapeRegex(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }

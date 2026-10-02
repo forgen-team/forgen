@@ -147,7 +147,8 @@ export function planOpencodeInstall(opts: OpencodeInstallOptions): OpencodeInsta
     // 기존 plugin 이 forgen-managed 가 아니면(사용자 소유) 백업.
     if (!dryRun && fs.existsSync(pluginPath)) {
       const existing = fs.readFileSync(pluginPath, 'utf-8');
-      if (!existing.includes(PLUGIN_MARKER)) {
+      // 첫 줄이 `// forgen-managed` 인 것만 forgen 소유 (본문에 문자열이 있다는 것만으로는 아님) — 그 외는 백업.
+      if (!existing.split('\n', 1)[0].trimStart().startsWith(`// ${PLUGIN_MARKER}`)) {
         const bak = `${pluginPath}.bak`;
         fs.copyFileSync(pluginPath, bak);
         result.pluginBackupPath = bak;

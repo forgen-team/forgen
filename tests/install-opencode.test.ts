@@ -203,3 +203,61 @@ describe('uninstall-opencode (ADR-016 0.5.9)', () => {
     expect(planOpencodeUninstall(opts({ opencodeConfigDir: path.join(TMP, 'nope') })).present).toBe(false);
   });
 });
+
+describe('uninstall-opencode — 0.5.9 critic', () => {
+  beforeEach(() => {
+    fs.rmSync(TMP, { recursive: true, force: true });
+    fs.mkdirSync(TMP, { recursive: true });
+  });
+  afterEach(() => fs.rmSync(TMP, { recursive: true, force: true }));
+
+  it('m4: 본문에 "forgen-managed" 문자열이 있을 뿐인 사용자 plugin 은 지우지 않는다 (첫 줄 마커만 소유)', () => {
+    const pluginPath = path.join(CFG, 'plugins', 'forgen.ts');
+    fs.mkdirSync(path.dirname(pluginPath), { recursive: true });
+    const mine = '// NOT forgen-managed: my fork of the forgen plugin\nexport default {};\n';
+    fs.writeFileSync(pluginPath, mine);
+    const r = planOpencodeUninstall(opts());
+    expect(r.pluginRemoved).toBe(false);
+    expect(fs.readFileSync(pluginPath, 'utf-8')).toBe(mine);
+    // install 은 그것을 사용자 파일로 보고 백업한다
+    expect(planOpencodeInstall(opts()).pluginBackupPath).toBe(`${pluginPath}.bak`);
+    expect(fs.readFileSync(`${pluginPath}.bak`, 'utf-8')).toBe(mine);
+  });
+
+  it('m5: forgen-managed 내용의 .bak 은 "사용자 원본" 이 아니다 — 되돌리지 않는다', () => {
+    const inst = planOpencodeInstall(opts());
+    fs.copyFileSync(inst.pluginPath, `${inst.pluginPath}.bak`);
+    const r = planOpencodeUninstall(opts());
+    expect([r.pluginRemoved, r.pluginRestoredFromBackup]).toEqual([true, false]);
+    expect(fs.existsSync(inst.pluginPath)).toBe(false);
+  });
+
+  it('m6: opencode.json 에 설치한 뒤 opencode.jsonc 가 생겨도 MCP 항목을 찾아 지운다', () => {
+    planOpencodeInstall(opts());
+    fs.writeFileSync(path.join(CFG, 'opencode.jsonc'), '{\n  // newer config\n  "theme": "dark"\n}\n');
+    const r = planOpencodeUninstall(opts());
+    expect(r.mcpRemoved).toBe(true);
+    expect(JSON.parse(fs.readFileSync(path.join(CFG, 'opencode.json'), 'utf-8')).mcp).toBeUndefined();
+    expect(fs.readFileSync(path.join(CFG, 'opencode.jsonc'), 'utf-8')).toContain('// newer config');
+  });
+
+  it('m3: 중복 mcp 키처럼 편집 결과가 기대와 다르면 아무것도 쓰지 않는다 (다른 서버를 잃지 않는다)', () => {
+    const forgen = { type: 'local', command: ['node', '/p/dist/mcp/server.js', '--host=opencode'], enabled: true };
+    const dup = `{ "mcp": { "a": { "type": "local", "command": ["x"] } }, "mcp": { "forgen-compound": ${JSON.stringify(forgen)} } }`;
+    const r = removeOpencodeMcp(dup);
+    if (r.removed) {
+      // 편집이 안전하게 적용된 경우: 다른 서버가 남아 있어야 한다
+      expect(r.content).toContain('"a"');
+    } else {
+      expect(r.content).toBe(dup);
+    }
+    expect(r.content.includes('"a"')).toBe(true);
+  });
+
+  it('m2: 다른 키와 서버의 값은 그대로다 (인접 주석/포맷은 바뀔 수 있다)', () => {
+    const before = '{\n  "theme": "dark",\n  "mcp": {\n    "first": { "type": "local", "command": ["a"] },\n    "forgen-compound": { "type": "local", "command": ["node", "/p/dist/mcp/server.js", "--host=opencode"], "enabled": true },\n    "last": { "type": "remote", "url": "https://x" }\n  },\n  "model": "m"\n}\n';
+    const r = removeOpencodeMcp(before);
+    expect(r.removed).toBe(true);
+    expect(parseJsonc(r.content)).toEqual({ theme: 'dark', mcp: { first: { type: 'local', command: ['a'] }, last: { type: 'remote', url: 'https://x' } }, model: 'm' });
+  });
+});

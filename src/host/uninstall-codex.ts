@@ -227,8 +227,10 @@ export function planCodexUninstall(opts: CodexUninstallOptions): CodexUninstallR
   // 4) AGENTS.md — 설치 때 기록된 프로젝트 전부 + 지금의 cwd (0.5.9 이전 설치분은 기록이 없어 cwd 만)
   step('AGENTS.md', () => {
     const cwdAgentsMdPath = opts.agentsMdPath ?? resolveAgentsMdPath(opts.pkgRoot);
-    result.agentsMdCleanedPaths = removeForgenRulesEverywhere({ hostDir: codexHome, cwdAgentsMdPath, dryRun });
-    result.agentsMdCleaned = result.agentsMdCleanedPaths.length > 0;
+    const r = removeForgenRulesEverywhere({ hostDir: codexHome, cwdAgentsMdPath, dryRun });
+    result.agentsMdCleanedPaths = r.cleaned;
+    result.agentsMdCleaned = r.cleaned.length > 0;
+    for (const f of r.failed) result.errors.push(`AGENTS.md ${f.path}: ${f.error} (kept in the install record — fix and re-run uninstall)`);
   });
 
   return result;

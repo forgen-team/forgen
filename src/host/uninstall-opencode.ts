@@ -3,13 +3,14 @@
  *
  * `forgen install opencode` 가 쓴 것을 되돌린다: `plugins/forgen.ts`, config(JSONC) 의 `mcp.forgen-compound`,
  * AGENTS.md 블록. 사용자 소유물(마커 없는 plugin, 같은 이름의 다른 MCP 서버, 파싱 불가 config)은 건드리지 않는다.
+ * MCP 제거는 다른 키와 값을 보존하지만, forgen 항목에 붙어 있던 주석과 주변 포맷은 바뀔 수 있다.
  */
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { applyEdits, modify, parse as parseJsonc } from 'jsonc-parser';
 import { removeForgenRulesEverywhere, resolveAgentsMdPath } from './install-codex.js';
-import { MCP_SERVER_NAME, PLUGIN_FILENAME, PLUGIN_MARKER, resolveConfigFilePath, resolveOpencodeConfigDir } from './install-opencode.js';
+import { MCP_SERVER_NAME, PLUGIN_FILENAME, PLUGIN_MARKER, resolveOpencodeConfigDir } from './install-opencode.js';
 
 export interface OpencodeUninstallOptions {
   pkgRoot: string;
@@ -42,7 +43,7 @@ function isForgenMcpEntry(entry: unknown): boolean {
     && command.includes('--host=opencode');
 }
 
-/** config 텍스트에서 `mcp.forgen-compound` 를 surgical 제거 (주석/포맷 보존). `mcp` 가 비면 그 키도 제거. */
+/** config 텍스트에서 `mcp.forgen-compound` 를 제거. 다른 키·서버는 보존, `mcp` 가 비면 그 키도 제거. */
 export function removeOpencodeMcp(currentText: string): { content: string; removed: boolean; unparseable: boolean } {
   if (currentText.trim().length === 0) return { content: currentText, removed: false, unparseable: false };
   const errors: { error: number; offset: number; length: number }[] = [];
@@ -54,7 +55,25 @@ export function removeOpencodeMcp(currentText: string): { content: string; remov
   const opts = { formattingOptions: { insertSpaces: true, tabSize: 2 } };
   let out = applyEdits(currentText, modify(currentText, ['mcp', MCP_SERVER_NAME], undefined, opts));
   if (Object.keys(parsed.mcp ?? {}).length === 1) out = applyEdits(out, modify(out, ['mcp'], undefined, opts));
+
+  // 쓰기 전 검증: forgen 항목만 사라지고 다른 키/서버는 그대로여야 한다. (중복 `mcp` 키 같은 퇴화 입력에서
+  // 편집기가 다른 객체를 건드릴 수 있다 — 그러면 아무것도 쓰지 않는다.)
+  const after = parseJsonc(out, [], { allowTrailingComma: true }) as { mcp?: Record<string, unknown> } | undefined;
+  const expected = JSON.parse(JSON.stringify(parsed)) as { mcp?: Record<string, unknown> };
+  if (expected.mcp) {
+    delete expected.mcp[MCP_SERVER_NAME];
+    if (Object.keys(expected.mcp).length === 0) delete expected.mcp;
+  }
+  if (JSON.stringify(after) !== JSON.stringify(expected)) return { content: currentText, removed: false, unparseable: true };
   return { content: out, removed: true, unparseable: false };
+}
+
+/**
+ * plugin 파일이 forgen 것인가: **첫 줄**이 `// forgen-managed` 로 시작해야 한다 (배포 자산의 형태).
+ * 본문 어딘가에 문자열이 있다는 것만으로는 소유로 보지 않는다 (`// NOT forgen-managed: my fork` 같은 사용자 파일 보호).
+ */
+function isManagedPlugin(content: string): boolean {
+  return content.split('\n', 1)[0].trimStart().startsWith(`// ${PLUGIN_MARKER}`);
 }
 
 export function planOpencodeUninstall(opts: OpencodeUninstallOptions): OpencodeUninstallResult {
@@ -79,30 +98,35 @@ export function planOpencodeUninstall(opts: OpencodeUninstallOptions): OpencodeU
   step('plugin', () => {
     const pluginPath = path.join(configDir, 'plugins', PLUGIN_FILENAME);
     if (!fs.existsSync(pluginPath)) return;
-    if (fs.lstatSync(pluginPath).isSymbolicLink() || !fs.readFileSync(pluginPath, 'utf-8').includes(PLUGIN_MARKER)) return;
+    if (fs.lstatSync(pluginPath).isSymbolicLink() || !isManagedPlugin(fs.readFileSync(pluginPath, 'utf-8'))) return;
     const bak = `${pluginPath}.bak`;
     result.pluginRemoved = true;
-    result.pluginRestoredFromBackup = fs.existsSync(bak);
+    // `.bak` 은 설치가 사용자 plugin 을 백업한 것일 때만 되돌린다 — forgen-managed 내용이면 사용자 원본이 아니다.
+    result.pluginRestoredFromBackup = fs.existsSync(bak) && !isManagedPlugin(fs.readFileSync(bak, 'utf-8'));
     if (dryRun) return;
     if (result.pluginRestoredFromBackup) fs.renameSync(bak, pluginPath);
     else fs.unlinkSync(pluginPath);
   });
 
-  // 2) MCP
-  step('config', () => {
-    const configPath = resolveConfigFilePath(configDir);
-    if (!fs.existsSync(configPath)) return;
-    const current = fs.readFileSync(configPath, 'utf-8');
-    const r = removeOpencodeMcp(current);
-    result.mcpRemoved = r.removed;
-    result.mcpSkippedUnparseable = r.unparseable;
-    if (!dryRun && r.removed) fs.writeFileSync(configPath, r.content, 'utf-8');
-  });
+  // 2) MCP — opencode.jsonc 와 opencode.json 둘 다 본다 (설치 후에 .jsonc 가 생겼을 수 있다)
+  for (const name of ['opencode.jsonc', 'opencode.json']) {
+    step(name, () => {
+      const configPath = path.join(configDir, name);
+      if (!fs.existsSync(configPath)) return;
+      const current = fs.readFileSync(configPath, 'utf-8');
+      const r = removeOpencodeMcp(current);
+      if (r.removed) result.mcpRemoved = true;
+      if (r.unparseable) result.mcpSkippedUnparseable = true;
+      if (!dryRun && r.removed) fs.writeFileSync(configPath, r.content, 'utf-8');
+    });
+  }
 
   // 3) AGENTS.md — 설치 때 기록된 프로젝트 전부 + 지금의 cwd
   step('AGENTS.md', () => {
     const cwdAgentsMdPath = opts.agentsMdPath ?? resolveAgentsMdPath(opts.pkgRoot);
-    result.agentsMdCleanedPaths = removeForgenRulesEverywhere({ hostDir: configDir, cwdAgentsMdPath, dryRun });
+    const r = removeForgenRulesEverywhere({ hostDir: configDir, cwdAgentsMdPath, dryRun });
+    result.agentsMdCleanedPaths = r.cleaned;
+    for (const f of r.failed) result.errors.push(`AGENTS.md ${f.path}: ${f.error} (kept in the install record — fix and re-run uninstall)`);
   });
 
   return result;
