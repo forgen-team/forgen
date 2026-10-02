@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import yaml from 'js-yaml';
+import * as yaml from 'js-yaml';
 
 const { TEST_HOME } = vi.hoisted(() => ({
   TEST_HOME: `/tmp/forgen-test-weakness-${process.pid}`,

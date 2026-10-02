@@ -1,6 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import yaml from 'js-yaml';
+import * as yaml from 'js-yaml';
 import { SOLUTION_QUARANTINE_PATH, STATE_DIR } from '../core/paths.js';
 import { diagnoseFrontmatter } from './solution-format.js';
 import { createLogger } from '../core/logger.js';

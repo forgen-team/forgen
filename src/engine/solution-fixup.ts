@@ -1,6 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import yaml from 'js-yaml';
+import * as yaml from 'js-yaml';
 import { DEFAULT_EVIDENCE } from './solution-format.js';
 import { diagnoseFromRawContent } from './solution-quarantine.js';
 import { createLogger } from '../core/logger.js';

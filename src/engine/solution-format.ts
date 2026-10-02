@@ -1,4 +1,4 @@
-import yaml from 'js-yaml';
+import * as yaml from 'js-yaml';
 
 // ── Types ──
 
@@ -235,7 +235,7 @@ export function parseSolutionV3(content: string): SolutionV3 | null {
 export function serializeSolutionV3(solution: SolutionV3): string {
   const yamlStr = yaml.dump(solution.frontmatter, {
     lineWidth: -1,
-    quotingType: '"',
+    quoteStyle: 'double',
     schema: yaml.JSON_SCHEMA,
   });
   return `---\n${yamlStr}---\n\n## Context\n${solution.context}\n\n## Content\n${solution.content}\n`;
