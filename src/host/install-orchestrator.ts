@@ -28,6 +28,10 @@ export interface OrchestratorOptions {
   pkgRoot: string;
   dryRun?: boolean;
   registerMcp?: boolean;
+  /** ADR-016 D1: Codex config.toml notify 폴백 등록 (default true). */
+  registerNotify?: boolean;
+  /** ADR-016 D3: Claude user-level `verify` 스킬 설치 (default true). */
+  installVerifySkill?: boolean;
 }
 
 export interface OrchestratorResult {
@@ -117,10 +121,10 @@ export async function runInstall(opts: OrchestratorOptions): Promise<Orchestrato
   const registerMcp = opts.registerMcp ?? true;
 
   if (target === 'claude' || target === 'both') {
-    result.claude = planClaudeInstall({ pkgRoot: opts.pkgRoot, dryRun, registerMcp });
+    result.claude = planClaudeInstall({ pkgRoot: opts.pkgRoot, dryRun, registerMcp, installVerifySkill: opts.installVerifySkill });
   }
   if (target === 'codex' || target === 'both') {
-    result.codex = planCodexInstall({ pkgRoot: opts.pkgRoot, dryRun, registerMcp });
+    result.codex = planCodexInstall({ pkgRoot: opts.pkgRoot, dryRun, registerMcp, registerNotify: opts.registerNotify });
   }
   // W3-3: opencode 는 명시 타겟일 때만 설치('both' 는 claude+codex primary-pair 유지).
   if (target === 'opencode') {
@@ -142,6 +146,12 @@ export function renderResult(result: OrchestratorResult, dryRun: boolean): strin
     lines.push(`    settings.json hooks: ${result.claude.hooksInjected}`);
     lines.push(`    MCP: ${result.claude.mcpAlreadyPresent ? 'already present' : (result.claude.mcpRegistered ? 'registered' : 'skipped')}`);
     lines.push(`    skills: ${result.claude.skillsInstalled ?? 0} installed → ${result.claude.skillsPath ?? ''}`);
+    const verifyLine: Record<typeof result.claude.verifySkill, string> = {
+      installed: 'installed → ~/.claude/skills/verify (Claude runs it right before non-docs commits)',
+      'user-owned': 'skipped — you already have your own `verify` skill (kept as is)',
+      skipped: 'skipped (--no-verify-skill)',
+    };
+    lines.push(`    verify skill: ${verifyLine[result.claude.verifySkill]}`);
   }
   if (result.codex) {
     lines.push('');
@@ -156,8 +166,20 @@ export function renderResult(result: OrchestratorResult, dryRun: boolean): strin
     if (t.total > 0 && t.trusted === t.total) {
       lines.push(`    hook trust: ${t.trusted}/${t.total} trusted${t.ignoredByCodex.length ? ` (+${t.ignoredByCodex.length} Claude-only event ignored by Codex)` : ''}`);
     } else {
-      lines.push(`    hook trust: ${t.trusted}/${t.total} trusted — ${t.untrusted.length} hook(s) need review. Codex skips untrusted hooks: run \`/hooks\` inside codex and trust the forgen entries.`);
+      const pending = [...t.modified.map((k) => `${k} (modified)`), ...t.untrusted.map((k) => `${k} (new)`)];
+      lines.push(`    hook trust: ${t.trusted}/${t.total} trusted — ${pending.length} hook(s) need review: ${pending.slice(0, 6).join(', ')}${pending.length > 6 ? ', …' : ''}`);
+      lines.push('      Codex skips these until approved: run `/hooks` inside codex and trust the forgen entries.');
+      if (t.modified.some((k) => k.startsWith('session_start:'))) {
+        lines.push('      ⚠ session_start is pending — the <forgen-rules> block is NOT injected into Codex sessions until you approve it.');
+      }
     }
+    const notifyLine: Record<typeof result.codex.notify, string> = {
+      installed: 'registered (turn-complete fallback — runs even while hooks are untrusted)',
+      'already-present': 'already present',
+      'user-defined': 'skipped — your config.toml already defines `notify` (kept as is). To chain forgen: notify = ["node", "<pkgRoot>/dist/host/codex-notify.js", "--", <your argv…>]',
+      skipped: 'skipped (--no-notify)',
+    };
+    lines.push(`    notify: ${notifyLine[result.codex.notify]}`);
   }
   if (result.opencode) {
     lines.push('');

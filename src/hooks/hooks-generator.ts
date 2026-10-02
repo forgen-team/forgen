@@ -24,6 +24,8 @@ interface HookCommand {
   type: 'command';
   command: string;
   timeout: number;
+  /** Codex 전용 (ADR-016 D2). Claude 산출물에는 넣지 않는다. */
+  additionalContextLimit?: number;
 }
 
 interface HookMatcher {
@@ -138,7 +140,11 @@ export function generateHooksJson(options?: GenerateOptions): HooksJson {
       matcher,
       hooks: matcherEntries.map(h => {
         const command = buildHookCommand(pluginRoot, h.script, runtime);
-        return { type: 'command' as const, command, timeout: h.timeout };
+        const handler: HookCommand = { type: 'command', command, timeout: h.timeout };
+        if (runtime === 'codex' && typeof h.codex?.additionalContextLimit === 'number') {
+          handler.additionalContextLimit = h.codex.additionalContextLimit;
+        }
+        return handler;
       }),
     }));
   }

@@ -10,6 +10,7 @@
  *   3. Settings hooks injection: ~/.claude/settings.json 의 hooks 머지 (forgen entry idempotent)
  *   4. MCP register: ~/.claude.json 에 mcpServers.forgen-compound 추가
  *   5. Dev-guide skills: ~/.claude/skills/forgen-<stack>-<skill>/ 설치 (forgen-managed only)
+ *   6. verify skill: ~/.claude/skills/verify/ 설치 (ADR-016 D3 — 사용자 소유면 보존)
  *
  * 사용자 비-forgen 자산 보존 + 재실행 idempotent.
  */
@@ -27,7 +28,18 @@ export interface ClaudeInstallOptions {
   dryRun?: boolean;
   /** MCP forgen-compound 등록 여부 (default true). */
   registerMcp?: boolean;
+  /** ADR-016 D3: user-level `verify` 스킬 설치 여부 (default true). */
+  installVerifySkill?: boolean;
 }
+
+/** ADR-016 D3 — `~/.claude/skills/verify` 설치 결과. */
+export type VerifySkillStatus =
+  /** forgen-managed 스킬을 새로 썼거나 갱신함 */
+  | 'installed'
+  /** 사용자가 직접 만든 `verify` 스킬이 있어 건드리지 않음 */
+  | 'user-owned'
+  /** --no-verify-skill 또는 자산 부재 */
+  | 'skipped';
 
 export interface ClaudeInstallResult {
   homeDir: string;
@@ -42,6 +54,7 @@ export interface ClaudeInstallResult {
   skillsPath: string;
   skillsInstalled: number;
   skillsRemoved: number;
+  verifySkill: VerifySkillStatus;
 }
 
 const PLUGIN_KEY = 'forgen@forgen-local';
@@ -350,6 +363,46 @@ function installDevGuideSkills(opts: { pkgRoot: string; skillsDir: string; dryRu
   return { skillsPath: skillsDir, skillsInstalled: installed, skillsRemoved: removed };
 }
 
+// ── 6. verify skill (ADR-016 D3) ───────────────────────────────────────
+
+/** frontmatter 직후에 forgen-managed 마커가 있는 SKILL.md 만 forgen 소유로 본다. */
+const MANAGED_SKILL_RE = /^---\n[\s\S]*?\n---\n\s*<!-- forgen-managed -->/;
+
+/** `<skillsDir>/verify` 가 사용자 소유인가 (심링크 / 마커 없는 SKILL.md / SKILL.md 없이 다른 파일만 있음). */
+export function isUserOwnedVerifySkill(skillsDir: string): boolean {
+  const dir = path.join(skillsDir, 'verify');
+  try {
+    if (fs.lstatSync(dir).isSymbolicLink()) return true;
+  } catch {
+    return false; // 없음
+  }
+  const file = path.join(dir, 'SKILL.md');
+  try {
+    if (fs.lstatSync(file).isSymbolicLink()) return true;
+    return !MANAGED_SKILL_RE.test(fs.readFileSync(file, 'utf-8'));
+  } catch {
+    // SKILL.md 없음 — 디렉토리에 다른 것이 있으면 사용자가 만들던 것
+    try { return fs.readdirSync(dir).length > 0; } catch { return true; }
+  }
+}
+
+/**
+ * Claude Code 2.1.286+ 는 project/user 스킬에 `verify` 가 있으면 커밋 직전에 실행하라고 모델에 안내한다
+ * (플러그인 스킬 `forgen:verify` 는 해당 없음). 그래서 user 레벨에 un-namespaced 로 설치한다.
+ * 사용자 소유 스킬은 절대 덮어쓰지 않는다.
+ */
+function installVerifySkill(opts: { pkgRoot: string; skillsDir: string; dryRun: boolean }): VerifySkillStatus {
+  const src = path.join(opts.pkgRoot, 'assets', 'claude', 'skills', 'verify', 'SKILL.md');
+  if (!fs.existsSync(src)) return 'skipped';
+  if (isUserOwnedVerifySkill(opts.skillsDir)) return 'user-owned';
+  if (opts.dryRun) return 'installed';
+  const dir = path.join(opts.skillsDir, 'verify');
+  fs.mkdirSync(dir, { recursive: true });
+  // 심링크가 아니라 복사 — 마커로 소유를 판정하고, npm 경로가 바뀌어도 깨지지 않게.
+  fs.copyFileSync(src, path.join(dir, 'SKILL.md'));
+  return 'installed';
+}
+
 // ── public ─────────────────────────────────────────────────────────────
 
 export function planClaudeInstall(opts: ClaudeInstallOptions): ClaudeInstallResult {
@@ -376,6 +429,9 @@ export function planClaudeInstall(opts: ClaudeInstallOptions): ClaudeInstallResu
     ? registerMcpInClaudeJson({ pkgRoot: opts.pkgRoot, claudeJsonPath, dryRun })
     : { registered: false, alreadyPresent: false };
   const skills = installDevGuideSkills({ pkgRoot: opts.pkgRoot, skillsDir, dryRun });
+  const verifySkill: VerifySkillStatus = (opts.installVerifySkill ?? true)
+    ? installVerifySkill({ pkgRoot: opts.pkgRoot, skillsDir, dryRun })
+    : 'skipped';
 
   return {
     homeDir,
@@ -390,5 +446,6 @@ export function planClaudeInstall(opts: ClaudeInstallOptions): ClaudeInstallResu
     skillsPath: skills.skillsPath,
     skillsInstalled: skills.skillsInstalled,
     skillsRemoved: skills.skillsRemoved,
+    verifySkill,
   };
 }

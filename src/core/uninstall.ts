@@ -104,6 +104,22 @@ function cleanSlashCommands(): void {
   }
 }
 
+/** ADR-016 D3 — ~/.claude/skills/verify 제거 (forgen-managed 마커가 있는 것만; 사용자 스킬은 보존) */
+export function cleanVerifySkill(homeDir: string = os.homedir()): boolean {
+  const dir = path.join(homeDir, '.claude', 'skills', 'verify');
+  const file = path.join(dir, 'SKILL.md');
+  try {
+    if (fs.lstatSync(dir).isSymbolicLink() || fs.lstatSync(file).isSymbolicLink()) return false;
+    const content = fs.readFileSync(file, 'utf-8');
+    if (!/^---\n[\s\S]*?\n---\n\s*<!-- forgen-managed -->/.test(content)) return false;
+    fs.unlinkSync(file);
+    try { if (fs.readdirSync(dir).length === 0) fs.rmdirSync(dir); } catch { /* ignore */ }
+    return true;
+  } catch {
+    return false; // 없음
+  }
+}
+
 /** 사용자에게 y/n 확인 */
 function confirm(message: string): Promise<boolean> {
   return new Promise((resolve) => {
@@ -325,7 +341,7 @@ export async function handleUninstall(cwd: string, options: { force?: boolean; p
   console.log('  2. Delete .claude/agents/ch-*.md agent files');
   console.log('  3. Delete .claude/rules/ rule files (project-context, routing, forge-*)');
   console.log('  4. Remove forgen block from CLAUDE.md');
-  console.log('  5. Remove slash commands (~/.claude/commands/forgen/)');
+  console.log('  5. Remove slash commands (~/.claude/commands/forgen/) and the forgen-managed verify skill (~/.claude/skills/verify/)');
   console.log('  6. Remove plugin artifacts (cache, installed_plugins.json, plugin directory)');
   if (options.purge) {
     console.log('  7. --purge: Delete ~/.forgen/ entirely (rules, me/, state/, solutions/, behavior/)');
@@ -355,6 +371,7 @@ export async function handleUninstall(cwd: string, options: { force?: boolean; p
   cleanCompoundRules(cwd);
   cleanClaudeMd(cwd);
   cleanSlashCommands();
+  if (cleanVerifySkill()) console.log('  ✓ Removed forgen verify skill (~/.claude/skills/verify/)');
   cleanPluginArtifacts();
 
   if (options.purge) {

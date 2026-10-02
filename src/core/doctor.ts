@@ -83,7 +83,14 @@ async function renderCodexHookTrust(): Promise<void> {
     } else if (t.noStateRecorded) {
       console.log(`  △ ${t.total} forgen hooks registered, Codex trust 기록 없음 — codex 안에서 /hooks 로 승인 (미승인 훅은 skip 됨)`);
     } else {
-      console.log(`  ✗ ${t.untrusted.length}/${t.total} forgen hooks untrusted (${t.untrusted.slice(0, 4).join(', ')}${t.untrusted.length > 4 ? ', …' : ''}) — codex 안에서 /hooks 로 승인`);
+      const pending = [...t.modified.map((k) => `${k} modified`), ...t.untrusted.map((k) => `${k} new`)];
+      console.log(`  ✗ ${pending.length}/${t.total} forgen hooks skipped by Codex (${pending.slice(0, 4).join(', ')}${pending.length > 4 ? ', …' : ''}) — codex 안에서 /hooks 로 승인`);
+    }
+    // ADR-016 D1 — notify 폴백이 관측한 "턴은 끝났는데 forgen 훅이 돌지 않음"
+    const { readCodexHooksSilent } = await import('../host/codex-notify.js');
+    const silent = readCodexHooksSilent();
+    if (silent) {
+      console.log(`  ✗ notify 폴백 관측: 최근 Codex 턴 ${silent.count}회에서 forgen 훅 미발화 (마지막 ${silent.detectedAt}, session ${silent.sessionId.slice(0, 8)}) — /hooks 승인 필요`);
     }
   } catch { /* fail-open */ }
 }

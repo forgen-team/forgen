@@ -496,12 +496,14 @@ export function effectiveCooldownMs(
   return grew ? AUTO_COMPOUND_COOLDOWN_MS : AUTO_COMPOUND_BARREN_COOLDOWN_MS;
 }
 
-async function maybeSpawnAutoCompound(
+export async function maybeSpawnAutoCompound(
   sessionId: string,
   transcriptPath: string | undefined,
   promptCount: number,
-): Promise<void> {
-  if (!transcriptPath || promptCount < 10) return;
+  /** ADR-016 D1: notify 폴백은 훅 env(FORGEN_CWD) 없이 돌므로 페이로드의 cwd 를 넘긴다. */
+  cwdOverride?: string,
+): Promise<boolean> {
+  if (!transcriptPath || promptCount < 10) return false;
 
   const markerPath = path.join(STATE_DIR, 'last-auto-compound.json');
   try {
@@ -517,12 +519,12 @@ async function maybeSpawnAutoCompound(
     if (parsed.sessionId === sessionId) {
       const last = parsed.completedAt ? Date.parse(parsed.completedAt) : 0;
       const cooldown = effectiveCooldownMs(parsed, promptCount);
-      if (Number.isFinite(last) && Date.now() - last < cooldown) return;
+      if (Number.isFinite(last) && Date.now() - last < cooldown) return false;
     }
   } catch { /* first time or corrupt — proceed */ }
 
   const { spawn: spawnProcess } = await import('node:child_process');
-  const cwd = process.env.FORGEN_CWD ?? process.env.COMPOUND_CWD ?? process.cwd();
+  const cwd = cwdOverride ?? process.env.FORGEN_CWD ?? process.env.COMPOUND_CWD ?? process.cwd();
 
   // 기본: 번들된 auto-compound-runner. 프로덕션 빌드는 이 경로만 실행.
   const defaultRunner = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'core', 'auto-compound-runner.js');
@@ -553,7 +555,7 @@ async function maybeSpawnAutoCompound(
   const { claimAutoCompoundInflight, releaseAutoCompoundInflight } = await import('../core/spawn.js');
   if (!claimAutoCompoundInflight(sessionId)) {
     log.debug('Stop-triggered auto-compound skip: 세션 in-flight');
-    return;
+    return false;
   }
   try {
     const child = spawnProcess('node', [runnerPath, cwd, transcriptPath, sessionId, String(promptCount)], {
@@ -562,9 +564,11 @@ async function maybeSpawnAutoCompound(
     });
     child.unref();
     log.debug(`Stop-triggered auto-compound 시작: ${sessionId} (${promptCount} prompts)`);
+    return true;
   } catch (e) {
     releaseAutoCompoundInflight(sessionId); // spawn 실패 → 재시도 가능
     log.debug('Stop-triggered auto-compound spawn 실패', e);
+    return false;
   }
 }
 

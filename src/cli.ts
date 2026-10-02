@@ -190,19 +190,23 @@ const commands: Command[] = [
   },
   {
     name: 'install',
-    description: 'Install forgen into a host. Usage: forgen install [claude|codex|opencode|both] [--dry-run] [--no-mcp]',
+    description: 'Install forgen into a host. Usage: forgen install [claude|codex|opencode|both] [--dry-run] [--no-mcp] [--no-notify] [--no-verify-skill]',
     handler: async (args) => {
       const knownSubs = new Set(['claude', 'codex', 'opencode', 'both']);
       const target = args[0] && knownSubs.has(args[0]) ? args[0] : args[0]?.startsWith('--') ? undefined : args[0];
       if (target !== undefined && !knownSubs.has(target)) {
-        console.log('Usage:\n  forgen install [claude|codex|opencode|both] [--dry-run] [--no-mcp]\n\n  No arg → interactive 3-choice (Claude/Codex/Both). opencode: 명시 타겟(P1 실험적).');
+        console.log('Usage:\n  forgen install [claude|codex|opencode|both] [--dry-run] [--no-mcp] [--no-notify] [--no-verify-skill]\n\n  No arg → interactive 3-choice (Claude/Codex/Both). opencode: 명시 타겟(P1 실험적).\n  --no-notify: Codex config.toml 에 notify 폴백을 등록하지 않음.\n  --no-verify-skill: Claude ~/.claude/skills/verify 를 설치하지 않음.');
         return;
       }
       const dryRun = args.includes('--dry-run');
       const registerMcp = !args.includes('--no-mcp');
       const { runInstall, renderResult, resolvePkgRootFromBinary } = await import('./host/install-orchestrator.js');
       const pkgRoot = resolvePkgRootFromBinary(import.meta.url);
-      const result = await runInstall({ target, pkgRoot, dryRun, registerMcp });
+      const result = await runInstall({
+        target, pkgRoot, dryRun, registerMcp,
+        registerNotify: !args.includes('--no-notify'),
+        installVerifySkill: !args.includes('--no-verify-skill'),
+      });
       if (result === null) {
         console.log('\n  [forgen] Install skipped.');
         return;

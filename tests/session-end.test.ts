@@ -40,3 +40,23 @@ describe('session-end countUserMessagesBounded', () => {
     fs.rmSync(dir, { recursive: true, force: true });
   });
 });
+
+describe('session-end main — Codex rollout (ADR-016 D2)', () => {
+  it('FORGEN_RUNTIME=codex 면 rollout 의 실제 프롬프트 수(event_msg/user_message)로 판정한다', async () => {
+    const { countCodexUserPrompts } = await import('../src/host/codex-rollout.js');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'forgen-session-end-codex-'));
+    const p = path.join(dir, 'rollout-2026-10-02T03-19-17-01a0fa9f-935c-77c1-929f-58c6f496b18c.jsonl');
+    const lines = [JSON.stringify({ type: 'session_meta', payload: { id: 'x' } })];
+    for (let i = 0; i < 11; i += 1) {
+      lines.push(JSON.stringify({ type: 'event_msg', payload: { type: 'user_message', message: `p${i}` } }));
+      lines.push(JSON.stringify({ type: 'response_item', payload: { type: 'function_call_output', output: 'y'.repeat(60_000) } }));
+    }
+    fs.writeFileSync(p, `${lines.join('\n')}\n`);
+    // Claude 용 카운터는 Codex 스키마를 세지 못한다 (그래서 전용 카운터가 필요)
+    expect(countUserMessagesBounded(p)).toBe(0);
+    const n = countCodexUserPrompts(p);
+    expect(n).toBe(11);
+    expect(shouldRunSessionEndCompound({ session_id: 's', transcript_path: p, cwd: dir, reason: 'other' }, n)).toBe(true);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+});

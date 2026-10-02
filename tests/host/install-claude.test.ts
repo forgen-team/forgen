@@ -9,7 +9,8 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { planClaudeInstall } from '../../src/host/install-claude.js';
+import { isUserOwnedVerifySkill, planClaudeInstall } from '../../src/host/install-claude.js';
+import { cleanVerifySkill } from '../../src/core/uninstall.js';
 
 const PKG_ROOT = process.cwd();
 
@@ -172,5 +173,75 @@ describe('planClaudeInstall', () => {
     // 사용자 스킬은 건드리지 않음
     expect(fs.existsSync(path.join(ownSkillDir, 'SKILL.md'))).toBe(true);
     expect(fs.readFileSync(path.join(ownSkillDir, 'SKILL.md'), 'utf-8')).toBe('# My Own Skill\n');
+  });
+});
+
+describe('ADR-016 D3: user-level verify skill', () => {
+  const skillFile = () => path.join(tmpHome, '.claude', 'skills', 'verify', 'SKILL.md');
+
+  it('~/.claude/skills/verify/SKILL.md 를 forgen-managed 마커와 함께 설치 (name: verify, un-namespaced)', () => {
+    const r = planClaudeInstall({ pkgRoot: PKG_ROOT, homeDir: tmpHome });
+    expect(r.verifySkill).toBe('installed');
+    const content = fs.readFileSync(skillFile(), 'utf-8');
+    expect(content).toMatch(/^---\nname: verify\ndescription: .+\n---\n\n<!-- forgen-managed -->/);
+    // 심링크가 아니라 복사본이어야 한다 (마커로 소유 판정)
+    expect(fs.lstatSync(skillFile()).isSymbolicLink()).toBe(false);
+    // 프로젝트 자체 레시피 우선 + no-mock 증거 규칙이 본문에 있다
+    expect(content).toContain('.claude/skills/verify/SKILL.md');
+    expect(content).toMatch(/mocks or stubs/);
+    expect(content).toMatch(/\*\*refuted\*\*/);
+  });
+
+  it('재설치는 idempotent, dev-guide stale 정리가 verify 를 지우지 않는다', () => {
+    planClaudeInstall({ pkgRoot: PKG_ROOT, homeDir: tmpHome });
+    const first = fs.readFileSync(skillFile(), 'utf-8');
+    const r2 = planClaudeInstall({ pkgRoot: PKG_ROOT, homeDir: tmpHome });
+    expect(r2.verifySkill).toBe('installed');
+    expect(fs.readFileSync(skillFile(), 'utf-8')).toBe(first);
+  });
+
+  it('사용자가 만든 verify 스킬(마커 없음)은 덮어쓰지 않는다', () => {
+    fs.mkdirSync(path.dirname(skillFile()), { recursive: true });
+    const mine = '---\nname: verify\ndescription: mine\n---\n\nrun `make check`\n';
+    fs.writeFileSync(skillFile(), mine);
+    const r = planClaudeInstall({ pkgRoot: PKG_ROOT, homeDir: tmpHome });
+    expect(r.verifySkill).toBe('user-owned');
+    expect(fs.readFileSync(skillFile(), 'utf-8')).toBe(mine);
+  });
+
+  it('사용자 심링크 디렉토리 / SKILL.md 없이 다른 파일만 있는 디렉토리도 사용자 소유로 본다', () => {
+    const skillsDir = path.join(tmpHome, '.claude', 'skills');
+    const elsewhere = path.join(tmpHome, 'my-verify');
+    fs.mkdirSync(elsewhere, { recursive: true });
+    fs.mkdirSync(skillsDir, { recursive: true });
+    fs.symlinkSync(elsewhere, path.join(skillsDir, 'verify'), 'dir');
+    expect(planClaudeInstall({ pkgRoot: PKG_ROOT, homeDir: tmpHome }).verifySkill).toBe('user-owned');
+    expect(fs.existsSync(path.join(elsewhere, 'SKILL.md'))).toBe(false);
+
+    fs.unlinkSync(path.join(skillsDir, 'verify'));
+    fs.mkdirSync(path.join(skillsDir, 'verify'));
+    fs.writeFileSync(path.join(skillsDir, 'verify', 'notes.md'), 'wip');
+    expect(isUserOwnedVerifySkill(skillsDir)).toBe(true);
+    fs.unlinkSync(path.join(skillsDir, 'verify', 'notes.md'));
+    expect(isUserOwnedVerifySkill(skillsDir)).toBe(false); // 빈 디렉토리는 설치 가능
+  });
+
+  it('installVerifySkill:false 와 dry-run 은 파일을 쓰지 않는다', () => {
+    expect(planClaudeInstall({ pkgRoot: PKG_ROOT, homeDir: tmpHome, installVerifySkill: false }).verifySkill).toBe('skipped');
+    expect(fs.existsSync(skillFile())).toBe(false);
+    expect(planClaudeInstall({ pkgRoot: PKG_ROOT, homeDir: tmpHome, dryRun: true }).verifySkill).toBe('installed');
+    expect(fs.existsSync(skillFile())).toBe(false);
+  });
+
+  it('uninstall 대칭: forgen-managed 만 제거, 사용자 스킬은 보존', () => {
+    planClaudeInstall({ pkgRoot: PKG_ROOT, homeDir: tmpHome });
+    expect(cleanVerifySkill(tmpHome)).toBe(true);
+    expect(fs.existsSync(path.dirname(skillFile()))).toBe(false);
+    expect(cleanVerifySkill(tmpHome)).toBe(false); // 이미 없음
+
+    fs.mkdirSync(path.dirname(skillFile()), { recursive: true });
+    fs.writeFileSync(skillFile(), '---\nname: verify\ndescription: mine\n---\nmine\n');
+    expect(cleanVerifySkill(tmpHome)).toBe(false);
+    expect(fs.existsSync(skillFile())).toBe(true);
   });
 });

@@ -12,6 +12,7 @@
  * - dryRun 시 파일을 쓰지 않고 결과만 반환 (테스트 + preview 용).
  */
 
+import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -30,7 +31,20 @@ export interface CodexInstallOptions {
   releaseMode?: boolean;
   /** AGENTS.md 위치 override (default: pkgRoot 기준 자동 resolve). 격리 테스트용. */
   agentsMdPath?: string;
+  /** ADR-016 D1: config.toml 에 forgen notify 폴백 등록 여부 (default true). */
+  registerNotify?: boolean;
 }
+
+/** ADR-016 D1 — config.toml `notify` 등록 결과. */
+export type CodexNotifyStatus =
+  /** forgen 블록을 새로 썼거나 갱신함 */
+  | 'installed'
+  /** 이미 동일한 forgen 블록이 있음 */
+  | 'already-present'
+  /** 사용자가 직접 정의한 `notify` 가 있어 건드리지 않음 (단일 argv 라 병합 불가) */
+  | 'user-defined'
+  /** --no-notify */
+  | 'skipped';
 
 export interface CodexInstallResult {
   codexHome: string;
@@ -59,6 +73,8 @@ export interface CodexInstallResult {
   hookTrust: CodexHookTrustAudit;
   /** ADR-014 D2: config.toml `[features] multi_agent = true` 여부 (false 면 ch-* 에이전트 spawn 불가 → 안내) */
   multiAgentEnabled: boolean;
+  /** ADR-016 D1: config.toml `notify` 폴백 등록 결과 */
+  notify: CodexNotifyStatus;
 }
 
 export interface CodexHookTrustAudit {
@@ -66,16 +82,23 @@ export interface CodexHookTrustAudit {
   total: number;
   /** Codex 가 모르는 이벤트라 조용히 무시되는 forgen 엔트리 (`<event>:<i>:<j>`) — trust 대상이 아님 */
   ignoredByCodex: string[];
-  /** config.toml `[hooks.state."<hooks.json>:<event>:<i>:<j>"]` 에 trusted_hash 가 있는 수 */
+  /** trusted_hash 기록이 있고 현재 핸들러의 해시와 일치하는 수 (Codex 가 실제로 실행하는 훅) */
   trusted: number;
   /** 신뢰 기록이 없는 hook 키 (`<event>:<i>:<j>`) */
   untrusted: string[];
+  /**
+   * ADR-016 D2: 신뢰 기록은 있으나 핸들러가 바뀌어 해시가 어긋난 hook 키. Codex 는 `/hooks` 재승인
+   * 전까지 이 훅도 skip 한다 (이전엔 키 존재만 봐서 "trusted" 로 오표시).
+   */
+  modified: string[];
   /** config.toml 자체가 없거나 hooks.state 가 전혀 없으면 true (Codex 가 아직 한 번도 훅을 review 안 함) */
   noStateRecorded: boolean;
 }
 
 const MCP_MARKER_BEGIN = '# >>> forgen-managed-mcp';
 const MCP_MARKER_END = '# <<< forgen-managed-mcp';
+const NOTIFY_MARKER_BEGIN = '# >>> forgen-managed-notify';
+const NOTIFY_MARKER_END = '# <<< forgen-managed-notify';
 const FORGEN_SKILL_MARKER = '<!-- forgen-managed -->';
 const AGENTS_MD_BEGIN = '<!-- >>> forgen-managed-rules -->';
 const AGENTS_MD_END = '<!-- <<< forgen-managed-rules -->';
@@ -142,6 +165,59 @@ function upsertMcpBlock(currentToml: string, pkgRoot: string): { content: string
   return { content: `${trimmed}${sep}${block}\n`, alreadyPresent: false };
 }
 
+// ── ADR-016 D1: notify 폴백 (config.toml top-level `notify`) ───────────
+
+/** forgen notify 바이너리 argv 접두 (`--` 뒤는 사용자가 수동으로 붙인 체인 프로그램). */
+function forgenNotifyArgv(pkgRoot: string): string[] {
+  return ['node', path.join(pkgRoot, 'dist', 'host', 'codex-notify.js')];
+}
+
+/**
+ * config.toml 에 forgen notify 블록을 upsert.
+ *
+ * - Codex 의 `notify` 는 top-level 단일 argv 다. 사용자가 이미 정의했으면 **건드리지 않는다** — 그리고
+ *   forgen 블록이 남아 있으면 제거한다 (중복 키 = config.toml 파싱 실패 → Codex 기동 불가).
+ * - top-level 키는 첫 테이블 헤더 앞에 와야 하므로 블록은 항상 파일 최상단에 둔다.
+ * - 사용자가 forgen 블록의 argv 뒤에 `"--", "<prog>", …` 로 자기 notifier 를 체인해 뒀으면 그 꼬리를 보존.
+ */
+export function upsertNotifyBlock(currentToml: string, pkgRoot: string): { content: string; status: CodexNotifyStatus } {
+  const blockRe = new RegExp(`${NOTIFY_MARKER_BEGIN}[\\s\\S]*?${NOTIFY_MARKER_END}\\n?`);
+  const existingBlock = currentToml.match(blockRe)?.[0] ?? null;
+  const withoutBlock = existingBlock ? currentToml.replace(blockRe, '') : currentToml;
+
+  // 보수적 판정: 블록 밖 어디든 `notify =` 줄이 있으면 사용자 정의로 본다 (프로필 테이블 안이어도 skip —
+  // 폴백을 못 넣는 쪽이 config 를 깨뜨리는 쪽보다 낫다).
+  if (/^[ \t]*notify[ \t]*=/m.test(withoutBlock)) {
+    return { content: withoutBlock, status: 'user-defined' };
+  }
+
+  let chainTail: string[] = [];
+  if (existingBlock) {
+    const line = existingBlock.match(/^notify[ \t]*=[ \t]*(\[.*\])[ \t]*$/m)?.[1];
+    try {
+      const argv = line ? (JSON.parse(line) as unknown) : null;
+      if (Array.isArray(argv) && argv.every((a) => typeof a === 'string')) {
+        const sep = argv.indexOf('--');
+        if (sep !== -1) chainTail = argv.slice(sep) as string[];
+      }
+    } catch { /* 사용자가 JSON 비호환으로 고친 줄 — 체인 보존 불가, 기본 argv 로 재작성 */ }
+  }
+
+  const argv = [...forgenNotifyArgv(pkgRoot), ...chainTail];
+  const block = [
+    NOTIFY_MARKER_BEGIN,
+    '# forgen turn-complete fallback (ADR-016): works even while forgen hooks are untrusted.',
+    '# To chain your own notifier, append:  "--", "<program>", "<args…>"  (kept across re-install).',
+    `notify = ${JSON.stringify(argv)}`,
+    NOTIFY_MARKER_END,
+    '',
+  ].join('\n');
+
+  const rest = withoutBlock.replace(/^\n+/, '');
+  const content = rest.length > 0 ? `${block}\n${rest}` : block;
+  return { content, status: content === currentToml ? 'already-present' : 'installed' };
+}
+
 interface HooksFile {
   description?: string;
   hooks: Record<string, Array<unknown>>;
@@ -202,24 +278,31 @@ export function planCodexInstall(opts: CodexInstallOptions): CodexInstallResult 
   const registerMcp = opts.registerMcp ?? true;
   let mcpAlreadyPresent = false;
   let mcpRegistered = false;
-  let mcpContentToWrite: string | null = null;
+  const currentToml = fs.existsSync(configTomlPath) ? fs.readFileSync(configTomlPath, 'utf-8') : '';
+  let configToml = currentToml;
 
   if (registerMcp) {
-    const currentToml = fs.existsSync(configTomlPath)
-      ? fs.readFileSync(configTomlPath, 'utf-8')
-      : '';
-    const { content, alreadyPresent } = upsertMcpBlock(currentToml, opts.pkgRoot);
+    const { content, alreadyPresent } = upsertMcpBlock(configToml, opts.pkgRoot);
     mcpAlreadyPresent = alreadyPresent;
     mcpRegistered = !alreadyPresent;
-    mcpContentToWrite = content;
+    configToml = content;
   }
+
+  // 4b) ADR-016 D1: notify 폴백 (사용자 notify 가 있으면 보존)
+  let notify: CodexNotifyStatus = 'skipped';
+  if (opts.registerNotify ?? true) {
+    const r = upsertNotifyBlock(configToml, opts.pkgRoot);
+    notify = r.status;
+    configToml = r.content;
+  }
+  const configTomlToWrite: string | null = configToml !== currentToml ? configToml : null;
 
   // 5) 실제 쓰기 (dryRun 이면 skip) — hooks.json + config.toml
   if (!opts.dryRun) {
     fs.mkdirSync(codexHome, { recursive: true });
     fs.writeFileSync(hooksPath, `${JSON.stringify(finalHooksFile, null, 2)}\n`, 'utf-8');
-    if (mcpContentToWrite !== null) {
-      fs.writeFileSync(configTomlPath, mcpContentToWrite, 'utf-8');
+    if (configTomlToWrite !== null) {
+      fs.writeFileSync(configTomlPath, configTomlToWrite, 'utf-8');
     }
   }
 
@@ -256,12 +339,10 @@ export function planCodexInstall(opts: CodexInstallOptions): CodexInstallResult 
     configTomlPath,
     pkgRoot: opts.pkgRoot,
     hooksFile: opts.dryRun ? (existing ?? finalHooksFile) : finalHooksFile,
-    configToml: mcpContentToWrite ?? (fs.existsSync(configTomlPath) ? fs.readFileSync(configTomlPath, 'utf-8') : ''),
+    configToml: opts.dryRun ? currentToml : configToml,
   });
 
-  const multiAgentEnabled = isCodexMultiAgentEnabled(
-    mcpContentToWrite ?? (fs.existsSync(configTomlPath) ? fs.readFileSync(configTomlPath, 'utf-8') : ''),
-  );
+  const multiAgentEnabled = isCodexMultiAgentEnabled(configToml);
 
   return {
     codexHome,
@@ -284,6 +365,7 @@ export function planCodexInstall(opts: CodexInstallOptions): CodexInstallResult 
     agentsRemoved: codexAgents.removed,
     hookTrust,
     multiAgentEnabled,
+    notify,
   };
 }
 
@@ -310,11 +392,84 @@ export function codexHookEventKey(event: string): string {
   return event.replace(/(?<!^)([A-Z])/g, '_$1').toLowerCase();
 }
 
+/** `additionalContextLimit` 을 인정하는 이벤트 (codex-rs/hooks/src/engine/discovery.rs). */
+const CODEX_CONTEXT_LIMIT_EVENTS: ReadonlySet<string> = new Set([
+  'PreToolUse', 'PostToolUse', 'SessionStart', 'UserPromptSubmit', 'SubagentStart',
+]);
+/** matcher 를 해시에서 제외하는 이벤트 (Codex 가 matcher 를 무시). */
+const CODEX_NO_MATCHER_EVENTS: ReadonlySet<string> = new Set(['UserPromptSubmit', 'Stop', 'Interrupt']);
+const CODEX_DEFAULT_CONTEXT_LIMIT = 2500;
+
+/** 키 정렬 + compact JSON (codex-rs/config/src/fingerprint.rs `canonical_json`). */
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  if (value && typeof value === 'object') {
+    const obj = value as Record<string, unknown>;
+    return `{${Object.keys(obj).sort().map((k) => `${JSON.stringify(k)}:${canonicalJson(obj[k])}`).join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
 /**
- * hooks.json 의 forgen 엔트리 각각에 대해 config.toml 의
- * `[hooks.state."<hooksPath>:<event>:<groupIdx>:<hookIdx>"]` 섹션(trusted_hash) 존재를 대조한다.
- * trusted_hash 자체는 검증하지 않는다 — Codex 가 변경된 훅을 review 전까지 skip 하는 정책을
- * forgen 이 우회하지 않기 위해, *기록 유무* 만 가시화한다 (ADR-014 D4).
+ * ADR-016 D2 — Codex 0.153.4 의 hook trust 해시 재현 (`hook_hash`, discovery.rs).
+ *
+ * 해시는 *핸들러 단위*: `{event_name, matcher?, hooks:[정규화된 핸들러 1개]}` 의 canonical JSON sha256.
+ * 정규화: timeout 은 기본값/clamp 적용 후 항상 포함, async 항상 포함, statusMessage 는 있을 때만,
+ * additionalContextLimit 은 허용 이벤트에서 기본값(2500)이 아닐 때만. 파일 경로·인덱스·미지 필드는 불포함.
+ * `type:"command"` 가 아니면 null (forgen 은 command 훅만 쓴다).
+ */
+export function codexHookTrustHash(
+  event: string,
+  matcher: unknown,
+  handler: { type?: unknown; command?: unknown; timeout?: unknown; async?: unknown; statusMessage?: unknown; additionalContextLimit?: unknown },
+): string | null {
+  if (handler.type !== 'command' || typeof handler.command !== 'string') return null;
+  const rawTimeout = typeof handler.timeout === 'number' ? handler.timeout : undefined;
+  const timeout = event === 'SessionEnd' || event === 'Interrupt'
+    ? Math.min(3, Math.max(1, rawTimeout ?? 1))
+    : Math.max(1, rawTimeout ?? 600);
+  const normalized: Record<string, unknown> = {
+    type: 'command',
+    command: handler.command,
+    timeout,
+    async: handler.async === true && event !== 'SessionEnd',
+  };
+  if (typeof handler.statusMessage === 'string') normalized.statusMessage = handler.statusMessage;
+  if (
+    typeof handler.additionalContextLimit === 'number' &&
+    CODEX_CONTEXT_LIMIT_EVENTS.has(event) &&
+    handler.additionalContextLimit !== CODEX_DEFAULT_CONTEXT_LIMIT
+  ) {
+    normalized.additionalContextLimit = handler.additionalContextLimit;
+  }
+  const identity: Record<string, unknown> = { event_name: codexHookEventKey(event), hooks: [normalized] };
+  if (!CODEX_NO_MATCHER_EVENTS.has(event) && typeof matcher === 'string') identity.matcher = matcher;
+  return `sha256:${crypto.createHash('sha256').update(canonicalJson(identity)).digest('hex')}`;
+}
+
+/** config.toml 의 `[hooks.state."<key>"]` 섹션 → trusted_hash (없으면 null). */
+function parseCodexHookState(toml: string): Map<string, string | null> {
+  const state = new Map<string, string | null>();
+  const lines = toml.split('\n');
+  let current: string | null = null;
+  for (const line of lines) {
+    const header = line.match(/^\[hooks\.state\."([^"]+)"\]\s*$/);
+    if (header) { current = header[1]; state.set(current, null); continue; }
+    if (/^\s*\[/.test(line)) { current = null; continue; }
+    if (current === null) continue;
+    const hash = line.match(/^\s*trusted_hash\s*=\s*"([^"]*)"/);
+    if (hash) state.set(current, hash[1]);
+  }
+  return state;
+}
+
+/**
+ * hooks.json 의 forgen 엔트리 각각을 config.toml 의
+ * `[hooks.state."<hooksPath>:<event>:<groupIdx>:<hookIdx>"] trusted_hash` 와 대조한다 (ADR-014 D4).
+ *
+ * ADR-016 D2: 이전엔 *기록 유무* 만 봤다 — 그래서 핸들러가 바뀌어 Codex 가 `modified` 로 skip 하는 훅을
+ * "trusted" 로 오표시했다. 이제 Codex 와 같은 해시를 계산해 trusted / modified / untrusted 를 구분한다.
+ * 읽기 전용 대조이며 trusted_hash 를 쓰지 않는다 — Codex 의 review 정책을 우회하지 않는다.
  */
 export function auditCodexHookTrust(opts: {
   hooksPath: string;
@@ -325,24 +480,18 @@ export function auditCodexHookTrust(opts: {
 }): CodexHookTrustAudit {
   const hooksFile = opts.hooksFile ?? readJsonFile<HooksFile>(opts.hooksPath);
   const toml = opts.configToml ?? (fs.existsSync(opts.configTomlPath) ? fs.readFileSync(opts.configTomlPath, 'utf-8') : '');
-
-  const stateKeys = new Set<string>();
-  const re = /^\[hooks\.state\."([^"]+)"\]\s*$/gm;
-  let m: RegExpExecArray | null = re.exec(toml);
-  while (m !== null) {
-    stateKeys.add(m[1]);
-    m = re.exec(toml);
-  }
+  const state = parseCodexHookState(toml);
 
   let total = 0;
   let trusted = 0;
   const untrusted: string[] = [];
+  const modified: string[] = [];
   const ignoredByCodex: string[] = [];
   const events = (hooksFile?.hooks ?? {}) as Record<string, unknown[]>;
   for (const [event, groups] of Object.entries(events)) {
     if (!Array.isArray(groups)) continue;
     groups.forEach((group, gi) => {
-      const g = group as { hooks?: Array<{ command?: string }> };
+      const g = group as { matcher?: unknown; hooks?: Array<Record<string, unknown>> };
       if (!Array.isArray(g.hooks)) return;
       g.hooks.forEach((h, hi) => {
         const isForgen = typeof h.command === 'string' &&
@@ -351,12 +500,14 @@ export function auditCodexHookTrust(opts: {
         const key = `${codexHookEventKey(event)}:${gi}:${hi}`;
         if (!CODEX_SUPPORTED_HOOK_EVENTS.has(event)) { ignoredByCodex.push(key); return; }
         total += 1;
-        if (stateKeys.has(`${opts.hooksPath}:${key}`)) trusted += 1;
-        else untrusted.push(key);
+        const recorded = state.get(`${opts.hooksPath}:${key}`);
+        if (recorded === undefined || recorded === null) { untrusted.push(key); return; }
+        if (recorded === codexHookTrustHash(event, g.matcher, h)) trusted += 1;
+        else modified.push(key);
       });
     });
   }
-  return { total, trusted, untrusted, ignoredByCodex, noStateRecorded: stateKeys.size === 0 };
+  return { total, trusted, untrusted, modified, ignoredByCodex, noStateRecorded: state.size === 0 };
 }
 
 // ── ADR-014 D2: Codex custom agents (~/.codex/agents/ch-*.toml) ──────

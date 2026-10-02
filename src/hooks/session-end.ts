@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Forgen — SessionEnd Hook (ADR-015 C-G6, Claude Code 전용)
+ * Forgen — SessionEnd Hook (ADR-015 C-G6 Claude, ADR-016 D2 Codex)
  *
  * Claude Code `SessionEnd` (reason: clear|resume|logout|prompt_input_exit|other, 기본 예산 1.5s)
  * 에서 이전 세션 transcript 를 auto-compound 러너에 넘긴다. 기존 트리거(Stop / PreCompact /
@@ -10,8 +10,10 @@
  *
  * - 예산(기본 1.5s, registry timeout 3s 로 상향) 안에 끝나야 하므로: stdin 파싱 → user 메시지 수
  *   (앞 200KB 만 읽음, 대용량 transcript 보호) → detached spawn.
- * - Codex 에는 등록하지 않는다 (hooks.json 바이트 동일성 = 훅 신뢰 유지). Codex 의 SessionEnd 는
- *   hooks.json 변경이 필요한 다음 메이저에서 함께 추가.
+ * - Codex 0.153+ 에도 등록한다 (ADR-016 D2). Codex 의 SessionEnd 는 stdin 이
+ *   `session_id`/`transcript_path`/`cwd`/`reason`(항상 "other") 이고 stdout 을 무시하며 타임아웃을 1~3s 로
+ *   clamp 한다 — 같은 "bounded count → detached spawn" 경로가 그대로 맞는다. trust 해시가 핸들러 단위라
+ *   새 이벤트 추가는 기존 훅의 신뢰를 깨지 않는다 (이 훅 1개만 `/hooks` 승인 필요).
  * - fail-open: 어떤 실패도 종료를 막지 않는다.
  */
 
@@ -80,7 +82,15 @@ export async function main(): Promise<void> {
     const transcript = input.transcript_path ?? '';
     let count = 0;
     if (transcript && fs.existsSync(transcript)) {
-      try { count = countUserMessagesBounded(transcript); } catch (e) { log.debug('user message count 실패', e); }
+      try {
+        // ADR-016 D2: Codex rollout 은 스키마가 달라 전용 카운터 (실제 사용자 프롬프트만, raw 바이트 스캔).
+        if (process.env.FORGEN_RUNTIME === 'codex') {
+          const { countCodexUserPrompts } = await import('../host/codex-rollout.js');
+          count = countCodexUserPrompts(transcript);
+        } else {
+          count = countUserMessagesBounded(transcript);
+        }
+      } catch (e) { log.debug('user message count 실패', e); }
     }
     if (shouldRunSessionEndCompound(input, count)) {
       const cwd = input.cwd ?? process.cwd();
