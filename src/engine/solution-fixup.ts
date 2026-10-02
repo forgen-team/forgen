@@ -102,7 +102,7 @@ function tryFix(content: string, initialErrors: string[]): FixAttempt {
   const body = trimmed.slice(endIdx + 3);
   let fm: Record<string, unknown>;
   try {
-    const parsed = yaml.load(fmRaw, { schema: yaml.JSON_SCHEMA });
+    const parsed = yaml.load(fmRaw, { schema: yaml.CORE_SCHEMA });
     if (parsed == null || typeof parsed !== 'object') {
       return { changed: false, added, remaining: initialErrors, content };
     }

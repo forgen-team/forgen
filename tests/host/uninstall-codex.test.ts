@@ -188,6 +188,115 @@ describe('planCodexUninstall', () => {
     expect(renderCodexUninstall(r)).toEqual([]);
   });
 
+  it('uninstall → 재설치: 자리표시 그룹을 다시 채워 forgen 훅이 원래 인덱스(= 승인된 trust 키)로 돌아간다', () => {
+    const inst = install();
+    const hooks = readHooks(inst.hooksPath);
+    for (const ev of ['UserPromptSubmit', 'Stop', 'PreToolUse']) hooks.hooks[ev].push(userGroup() as G);
+    fs.writeFileSync(inst.hooksPath, `${JSON.stringify(hooks, null, 2)}\n`);
+    // 사용자가 forgen 훅 + 다른 도구 훅을 전부 승인해 둔 상태
+    const state: string[] = [];
+    for (const [ev, groups] of Object.entries(hooks.hooks)) {
+      groups.forEach((g, gi) => g.hooks.forEach((h, hi) => state.push(`[hooks.state."${inst.hooksPath}:${codexHookEventKey(ev)}:${gi}:${hi}"]`, `trusted_hash = "${codexHookTrustHash(ev, g.matcher, h)}"`, '')));
+    }
+    fs.appendFileSync(inst.configTomlPath, `\n${state.join('\n')}`);
+    const before = fs.readFileSync(inst.hooksPath, 'utf-8');
+
+    uninstall();
+    const again = install();
+    // 이벤트별 그룹 배열이 uninstall 전과 같다 (자리표시가 남지 않고, 인덱스가 그대로). 이벤트 키 순서는
+    // 달라질 수 있지만 Codex trust 키에는 영향이 없다.
+    expect(readHooks(again.hooksPath).hooks).toEqual(JSON.parse(before).hooks);
+    expect(again.preservedUserHookCount).toBe(3); // 자리표시를 사용자 훅으로 세지 않는다
+    expect(again.hookTrust.trusted).toBe(again.hookTrust.total); // 재승인 없이 전부 trusted
+  });
+
+  it('섞인 배치(user, forgen, user, forgen)에서도 사용자 그룹 인덱스를 지킨다', () => {
+    const f = (n: string) => ({ matcher: '*', hooks: [{ type: 'command', command: ADAPTER(n) }] });
+    const u = (n: string) => ({ hooks: [{ type: 'command', command: `echo ${n}` }] });
+    const r = stripForgenHooks({ hooks: { Stop: [u('a'), f('context-guard'), u('b'), f('stop-guard')] } }, PKG_ROOT);
+    expect(r.next?.hooks.Stop).toEqual([u('a'), { hooks: [] }, u('b')]);
+    expect(r.placeholders).toBe(1);
+  });
+
+  it('소유 판정 오탐 방지: 다른 프로젝트의 dist/hooks 스크립트나 pkgRoot 접두 경로는 지우지 않는다', () => {
+    const foreign = [
+      { hooks: [{ type: 'command', command: 'node /home/me/otherproj/dist/hooks/pre-commit.js' }] },
+      { hooks: [{ type: 'command', command: `${PKG_ROOT}-fork/hook.sh` }] },
+    ];
+    const r = stripForgenHooks({ hooks: { PreToolUse: foreign } }, PKG_ROOT);
+    expect(r.removed).toBe(0);
+    expect(r.next?.hooks.PreToolUse).toEqual(foreign);
+  });
+
+  it('사용자 파일 보호: 본문에 `---` + 마커를 인용한 스킬, forgen-<stack>-* 이름의 사용자 스킬, 마커 접두만 같은 에이전트', () => {
+    const inst = install();
+    const quoting = path.join(inst.skillsPath, 'my-notes');
+    fs.mkdirSync(quoting);
+    const quotingBody = '---\nname: my-notes\ndescription: x\n---\n\nHow forgen marks files:\n\n---\n<!-- forgen-managed -->\n';
+    fs.writeFileSync(path.join(quoting, 'SKILL.md'), quotingBody);
+    const mine = path.join(inst.skillsPath, 'forgen-react-mine');
+    fs.mkdirSync(mine);
+    fs.writeFileSync(path.join(mine, 'SKILL.md'), '---\nname: forgen-react-mine\ndescription: mine\n---\nmine');
+    fs.writeFileSync(path.join(inst.agentsPath, 'ch-custom.toml'), '# forgen-managed-by-me\nname = "ch-custom"\n');
+
+    const r = uninstall();
+    expect(fs.readdirSync(inst.skillsPath).sort()).toEqual(['forgen-react-mine', 'my-notes']);
+    expect(fs.readFileSync(path.join(quoting, 'SKILL.md'), 'utf-8')).toBe(quotingBody);
+    expect(fs.readdirSync(inst.agentsPath)).toEqual(['ch-custom.toml']);
+    expect(r.skillsRemoved).toBe(inst.skillsInstalled + inst.devGuideSkillsInstalled);
+    expect(uninstall().skillsRemoved).toBe(0); // 두 번째 실행에서 다시 세지 않는다
+  });
+
+  it('손편집된 notify 블록은 남기고 알린다, 체인된 notifier 는 되돌려 놓는다', () => {
+    const inst = install();
+    const toml = fs.readFileSync(inst.configTomlPath, 'utf-8');
+    const multi = toml.replace(/^notify = .*$/m, 'notify = [\n  "node", "/p/dist/host/codex-notify.js",\n  "--", "say", "done",\n]');
+    fs.writeFileSync(inst.configTomlPath, multi);
+    const r1 = uninstall();
+    expect([r1.notifyRemoved, r1.notifyCustomLeft, r1.mcpRemoved]).toEqual([false, true, true]);
+    const left = fs.readFileSync(inst.configTomlPath, 'utf-8');
+    expect(left).toContain('"--", "say", "done",'); // 배열이 온전히 남아 TOML 이 깨지지 않는다
+    expect(left).toContain('# >>> forgen-managed-notify');
+    expect(renderCodexUninstall(r1).join('\n')).toMatch(/hand-edited/);
+
+    fs.writeFileSync(inst.configTomlPath, toml.replace(/^notify = .*$/m, 'notify = ["node","/p/dist/host/codex-notify.js","--","say","done"]'));
+    const r2 = uninstall();
+    expect(r2.notifyChainRestored).toEqual(['say', 'done']);
+    expect(fs.readFileSync(inst.configTomlPath, 'utf-8')).toBe('notify = ["say","done"]\n');
+  });
+
+  it('MCP 블록: 배열 테이블 하위(`[[mcp_servers.forgen-compound.x]]`)도 함께 지우고, 이름만 비슷한 서버는 남긴다', () => {
+    const inst = install();
+    const toml = fs.readFileSync(inst.configTomlPath, 'utf-8').replace(
+      '# <<< forgen-managed-mcp',
+      '\n[[mcp_servers.forgen-compound.things]]\nx = 1\n\n[mcp_servers.forgen-compound-2]\ncommand = "other"\n# <<< forgen-managed-mcp',
+    );
+    fs.writeFileSync(inst.configTomlPath, toml);
+    uninstall();
+    expect(fs.readFileSync(inst.configTomlPath, 'utf-8')).toBe('[mcp_servers.forgen-compound-2]\ncommand = "other"\n');
+  });
+
+  it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)('한 단계가 실패해도 나머지 정리는 계속하고 실패를 보고한다', () => {
+    const inst = install();
+    fs.chmodSync(inst.hooksPath, 0o444);
+    fs.chmodSync(codexHome, 0o555); // hooks.json 삭제 불가
+    let r;
+    try { r = uninstall(); } finally { fs.chmodSync(codexHome, 0o755); }
+    expect(r.errors.some((e) => e.startsWith('hooks.json:'))).toBe(true);
+    expect(r.agentsRemoved).toBe(inst.agentsInstalled); // 뒤 단계는 진행됨
+    expect(r.skillsRemoved).toBeGreaterThan(0);
+    expect(renderCodexUninstall(r).join('\n')).toMatch(/✗ Codex cleanup — hooks\.json/);
+  });
+
+  it('hooks.json 이 JSON 이 아니면 건드리지 않고 알린다', () => {
+    const inst = install();
+    fs.writeFileSync(inst.hooksPath, '{ not json');
+    const r = uninstall();
+    expect(r.errors[0]).toMatch(/^hooks\.json: not valid JSON/);
+    expect(fs.readFileSync(inst.hooksPath, 'utf-8')).toBe('{ not json');
+    expect(r.mcpRemoved).toBe(true);
+  });
+
   it('install → uninstall → install 왕복 후 감사 결과가 신규 설치와 같다', () => {
     install();
     uninstall();

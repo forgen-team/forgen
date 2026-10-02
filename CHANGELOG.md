@@ -7,6 +7,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.7] — 2026-10-02 — `forgen uninstall` 의 Codex 정리 · 의존성 메이저 업그레이드
+
+### Added
+- **`forgen uninstall` 이 Codex 등록분도 되돌린다 (ADR-016 D4).** hooks.json 의 forgen 훅, config.toml 의 MCP/notify 블록,
+  forgen-managed `skills/` · `agents/ch-*.toml`, cwd 의 AGENTS.md 블록을 제거한다. 이전엔 Codex 쪽이 그대로 남아
+  패키지를 지우면 Codex 가 매 훅 이벤트마다 사라진 스크립트를 실행하려 했다.
+  - **다른 도구의 훅 신뢰를 지킨다.** Codex 의 trust 키는 그룹 인덱스 기반이라 forgen 그룹을 지워 인덱스가 당겨지면
+    뒤따르는 훅이 재승인 전까지 조용히 skip 된다. 그런 위치에는 빈 그룹(`{"hooks": []}`)을 남겨 인덱스를 유지한다
+    (Codex 0.153.4 `hooks/list` 로 확인: 경고 없음, 뒤 그룹 trusted 유지). forgen 은 `[hooks.state]` 를 고쳐 쓰지 않는다.
+  - 사용자가 만든 스킬/에이전트/마커 없는 MCP 테이블/자기 `notify`, Codex 가 블록 사이에 써 넣은 설정은 보존.
+    forgen notify 뒤에 체인해 둔 사용자 notifier 는 그 argv 만으로 `notify` 를 되돌려 놓는다.
+  - uninstall 후 재설치하면 빈 그룹 자리를 다시 채워 forgen 훅이 원래 인덱스(= 이미 승인된 trust 키)로 돌아간다.
+  - 각 단계는 독립 — 하나가 실패(읽기 전용 파일, 깨진 hooks.json)해도 나머지는 진행하고 실패를 출력한다.
+  - 한계: 다른 프로젝트의 AGENTS.md 블록(실행한 cwd 것만 정리), `forgen install opencode` 산출물, 낡은 `[hooks.state]`
+    항목, 빈 디렉토리/빈 config.toml 은 남는다.
+- `forgen uninstall` 의 Claude 쪽 누락 보강: `~/.claude.json` 의 `forgen-compound` MCP 등록(install 은 여기에 쓰는데 uninstall 은
+  settings.json 만 정리했다), 패키지가 제공한 dev-guide 스킬(`~/.claude/skills/forgen-<stack>-<skill>`).
+
+### Fixed
+- **손으로 여러 줄로 고친 forgen notify 블록을 제거(`--no-notify`, uninstall)하면 config.toml 이 깨지던 결함 (0.5.6).**
+  배열의 첫 줄만 지우고 나머지를 남겨 Codex 가 기동하지 못했다. 이제 그런 블록은 건드리지 않고 알린다.
+- **훅 소유 판정이 너무 넓던 것.** command 에 `dist/hooks/<아무이름>.js` 가 있거나 forgen 설치 경로를 *부분문자열* 로
+  포함하면 forgen 훅으로 봤다 — 다른 프로젝트의 `…/dist/hooks/pre-commit.js` 나 `<pkgRoot>-fork/…` 가 재설치 시 교체
+  대상이 될 수 있었다. 이제 forgen 설치 경로의 `dist/` 아래, codex-adapter 경유, registry 에 있는 forgen 훅 이름일 때만.
+- 소유 마커 판정 강화: SKILL.md 는 frontmatter *바로 뒤* 의 마커만 인정(본문의 `---` 뒤 마커 인용을 오인하던 것),
+  agent TOML 은 첫 줄이 정확히 `# forgen-managed` 일 때만.
+- `~/.claude.json` / settings.json 을 다시 쓸 때 기존 파일 권한(0600)과 심링크를 보존 (이전엔 0644 로 넓어지고 심링크가
+  일반 파일로 바뀌었다).
+- `forgen status` 점수: 총점을 표시되는 항목 점수의 합으로 계산 (반올림 순서 때문에 항목 합과 총점이 1 어긋날 수 있었다).
+
+### Changed — dependencies
+- **js-yaml 4 → 5** (런타임 의존성). v5 ESM 빌드는 default export 가 없어 namespace import 로 전환, dump 옵션
+  `quotingType` → `quoteStyle`, 타입 내장으로 `@types/js-yaml` 제거. **스키마를 `JSON_SCHEMA` → `CORE_SCHEMA` 로 변경**:
+  v5 의 `JSON_SCHEMA` 는 strict JSON 이라 v4 가 읽던 `confidence: .5`, `supersedes: ~`, `True` 등을 문자열로 읽어
+  솔루션이 조용히 탈락한다. `CORE_SCHEMA` 가 v4 와 같은 해석을 준다 (회귀 테스트 추가). 실 솔루션/룰 frontmatter 87개에서
+  v4 와 파싱·직렬화 결과 바이트 동일. 남는 차이: `1_000`, `0b11` 형태는 v5 에서 문자열로 읽히고 따옴표 없이 직렬화된다
+  (forgen 이 쓰는 값에는 나타나지 않는 형태).
+- **TypeScript 5.9 → 7.0** (dev). TS 6+ 는 `@types/*` 를 자동 포함하지 않아 tsconfig 에 `"types": ["node"]` 명시.
+  TS 7 의 `tsc` 는 Node 20.0 에서 실행되지 않으므로 CI 의 훅 포터빌리티 잡을 "Node 22 로 빌드 → 대상 Node 로 로드" 로 분리
+  (배포물은 빌드된 dist 이므로 사용자 영향 없음).
+- **vitest 4 → 5** + `@vitest/coverage-v8` 5 (dev, 함께 올려야 함).
+- `@modelcontextprotocol/sdk` 1.31.0, `zod` 4.6.5, `@types/node` 26.6.4, `@biomejs/biome` 2.5.15, `npm audit fix`
+  (advisory 13 → 0), `actions/setup-node` v7.
+
+### Docs
+- `packages/forgen-eval/reports/persistence/` 원시 리포트 6건 커밋 — `docs/release/v0.5.0-persistence-delta.md` 가 재현
+  근거로 인용하던 파일이 저장소에 없었다.
+
+### Verified
+- vitest 3204 통과 (신규: Codex uninstall 왕복·신뢰 인덱스 보존·config 보존·소유 판정 오탐·손편집 notify 블록,
+  Claude 쪽 MCP/dev-guide 정리·권한/심링크 보존, js-yaml 스칼라 해석).
+- 격리 `HOME` 에서 CLI `install both` → `uninstall --force` 왕복: forgen 이 등록한 훅/블록/스킬/에이전트가 제거되고, 다른
+  도구 훅은 실 Codex `hooks/list` 에서 uninstall 후에도 `trusted`, `codex mcp list` 가 config 를 정상 파싱 (손편집된
+  여러 줄 notify 블록이 있는 경우 포함).
+- fresh-context critic 리뷰: MAJOR 2 · MINOR 12 → 위 Fixed/Changed 에 반영 또는 한계로 명시. 리뷰어가 확인한 것: TS 7 빌드의
+  `.js` 227개가 TS 5.9 빌드와 바이트 동일, 실 `~/.codex` 사본에서 uninstall 후 다른 도구 훅 8개 trusted 유지.
+- CI: ubuntu/macOS/arm 테스트 + Node 20.0.0~22 훅 로드 14개 검사 통과.
+- 0.5.6 을 이 머신의 실 `~/.codex` 에 설치한 뒤 실 Codex 세션 1회: Stop 훅 발화·alive 마커 갱신, silent 플래그 없음.
+
+
 ## [0.5.6] — 2026-10-02 — Codex notify 폴백 · 훅 번들(재승인 2건) · Claude verify 스킬 (ADR-016)
 
 > **Codex 사용자 — 재승인 필요**: 업그레이드 후 `forgen install codex` 를 다시 실행하면 훅 2개

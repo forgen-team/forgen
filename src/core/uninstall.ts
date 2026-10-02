@@ -3,6 +3,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import * as readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
+import { hasManagedSkillMarker, listDevGuideSkillNames, removeSkillFile } from '../host/managed-marker.js';
 import {
   SETTINGS_PATH,
   acquireLock,
@@ -111,8 +112,7 @@ export function cleanVerifySkill(homeDir: string = os.homedir()): boolean {
   const file = path.join(dir, 'SKILL.md');
   try {
     if (fs.lstatSync(dir).isSymbolicLink() || fs.lstatSync(file).isSymbolicLink()) return false;
-    const content = fs.readFileSync(file, 'utf-8');
-    if (!/^---\n[\s\S]*?\n---\n\s*<!-- forgen-managed -->/.test(content)) return false;
+    if (!hasManagedSkillMarker(fs.readFileSync(file, 'utf-8'))) return false;
     fs.unlinkSync(file);
     try { if (fs.readdirSync(dir).length === 0) fs.rmdirSync(dir); } catch { /* ignore */ }
     return true;
@@ -121,20 +121,15 @@ export function cleanVerifySkill(homeDir: string = os.homedir()): boolean {
   }
 }
 
-/** ADR-016 D4 — `~/.claude/skills/forgen-<stack>-<skill>/` dev-guide 스킬 제거 (install 이 이름 패턴으로 소유). */
-export function cleanDevGuideSkills(homeDir: string = os.homedir()): number {
+/**
+ * ADR-016 D4 — `~/.claude/skills/forgen-<stack>-<skill>/` dev-guide 스킬 제거.
+ * 패키지가 실제로 제공하는 이름만 지운다 (사용자가 만든 `forgen-react-mine` 같은 스킬은 보존).
+ */
+export function cleanDevGuideSkills(pkgRoot: string, homeDir: string = os.homedir()): number {
   const skillsDir = path.join(homeDir, '.claude', 'skills');
   let removed = 0;
-  let entries: string[];
-  try { entries = fs.readdirSync(skillsDir); } catch { return 0; }
-  for (const name of entries) {
-    if (!/^forgen-(react|vue|node|go)-/.test(name)) continue;
-    const dir = path.join(skillsDir, name);
-    try {
-      if (fs.lstatSync(dir).isSymbolicLink() || !fs.statSync(dir).isDirectory()) continue;
-      try { fs.unlinkSync(path.join(dir, 'SKILL.md')); } catch { /* 없음 */ }
-      if (fs.readdirSync(dir).length === 0) { fs.rmdirSync(dir); removed += 1; }
-    } catch { /* best-effort */ }
+  for (const name of listDevGuideSkillNames(pkgRoot)) {
+    if (removeSkillFile(skillsDir, name, false)) removed += 1;
   }
   return removed;
 }
@@ -384,7 +379,7 @@ export async function handleUninstall(cwd: string, options: { force?: boolean; p
   console.log('  4. Remove forgen block from CLAUDE.md');
   console.log('  5. Remove slash commands (~/.claude/commands/forgen/) and the forgen-managed verify skill (~/.claude/skills/verify/)');
   console.log('  6. Remove plugin artifacts (cache, installed_plugins.json, plugin directory), dev-guide skills, and the forgen-compound MCP entry in ~/.claude.json');
-  console.log('  7. Codex (if ~/.codex exists): forgen hooks in hooks.json, the MCP/notify blocks in config.toml, forgen skills, ch-*.toml agents, and the AGENTS.md block — hooks and files from other tools are kept');
+  console.log('  7. Codex (if $CODEX_HOME or ~/.codex exists): forgen hooks in hooks.json, the MCP/notify blocks in config.toml, forgen skills, ch-*.toml agents, and the AGENTS.md block — hooks and files from other tools are kept');
   if (options.purge) {
     console.log('  8. --purge: Delete ~/.forgen/ entirely (rules, me/, state/, solutions/, behavior/)');
     console.log('     WARNING: this erases all accumulated corrections, rules, drift, and lifecycle history.');
@@ -414,13 +409,13 @@ export async function handleUninstall(cwd: string, options: { force?: boolean; p
   cleanClaudeMd(cwd);
   cleanSlashCommands();
   if (cleanVerifySkill()) console.log('  ✓ Removed forgen verify skill (~/.claude/skills/verify/)');
-  const devGuide = cleanDevGuideSkills();
+  const pkgRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+  const devGuide = cleanDevGuideSkills(pkgRoot);
   if (devGuide > 0) console.log(`  ✓ Removed ${devGuide} dev-guide skill(s) (~/.claude/skills/forgen-*)`);
   if (cleanClaudeJsonMcp()) console.log('  ✓ Removed forgen-compound MCP server from ~/.claude.json');
   // ADR-016 D4 — Codex 에 등록한 것도 되돌린다 (다른 도구의 훅과 그 신뢰는 보존)
   try {
     const { planCodexUninstall, renderCodexUninstall } = await import('../host/uninstall-codex.js');
-    const pkgRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
     for (const line of renderCodexUninstall(planCodexUninstall({ pkgRoot }))) console.log(line);
   } catch (e) {
     console.error('  ✗ Codex cleanup failed:', e instanceof Error ? e.message : String(e));

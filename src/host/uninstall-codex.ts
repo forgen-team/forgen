@@ -16,18 +16,15 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import {
   AGENT_NAME_PREFIX,
-  AGENT_TOML_MARKER,
   codexHookEventKey,
-  DEV_GUIDE_SKILL_PATTERN,
-  FORGEN_SKILL_MARKER_RE,
   type HooksFile,
   isForgenHookCommand,
-  readJsonFile,
   removeForgenRulesFromAgentsMd,
   removeMcpBlock,
   removeNotifyBlock,
   resolveAgentsMdPath,
 } from './install-codex.js';
+import { hasManagedSkillMarker, isManagedAgentToml, listDevGuideSkillNames, removeSkillFile } from './managed-marker.js';
 
 export interface CodexUninstallOptions {
   /** forgen package root — 훅 command 소유 판정에 쓴다 (스크립트 시그니처 fallback 이 있어 정확도 비의존). */
@@ -54,9 +51,15 @@ export interface CodexUninstallResult {
   hooksFileDeleted: boolean;
   mcpRemoved: boolean;
   notifyRemoved: boolean;
+  /** forgen notify 블록이 손편집돼(여러 줄 배열 등) 안전하게 지울 수 없어 그대로 둠 */
+  notifyCustomLeft: boolean;
+  /** 블록에 체인돼 있던 사용자 notifier argv — 그것만으로 `notify` 를 되돌려 놓았다 */
+  notifyChainRestored: string[];
   skillsRemoved: number;
   agentsRemoved: number;
   agentsMdCleaned: boolean;
+  /** 단계별 실패 (한 단계가 실패해도 나머지는 진행한다) */
+  errors: string[];
 }
 
 const FORGEN_HOOKS_DESCRIPTION_RE = /^forgen Codex hooks \(managed/;
@@ -113,32 +116,21 @@ export function stripForgenHooks(file: HooksFile, pkgRoot: string): {
   return { next, removed, preserved, placeholders, reindexed };
 }
 
-function removeManagedSkills(skillsDir: string, dryRun: boolean): number {
+function removeManagedSkills(skillsDir: string, pkgRoot: string, dryRun: boolean): number {
   let removed = 0;
   let entries: string[];
   try { entries = fs.readdirSync(skillsDir); } catch { return 0; }
+  // dev-guide 스킬은 이름 패턴이 아니라 패키지가 실제로 제공하는 이름으로 소유를 판정한다.
+  const devGuideNames = listDevGuideSkillNames(pkgRoot);
   for (const name of entries) {
-    const dir = path.join(skillsDir, name);
-    try {
-      if (fs.lstatSync(dir).isSymbolicLink() || !fs.statSync(dir).isDirectory()) continue;
-      const skillFile = path.join(dir, 'SKILL.md');
-      if (DEV_GUIDE_SKILL_PATTERN.test(name)) {
-        // dev-guide 스킬: install 이 이름 패턴으로 소유한다 (SKILL.md 는 패키지로의 심링크 또는 복사본)
-        if (!dryRun) {
-          try { fs.unlinkSync(skillFile); } catch { /* 없음 */ }
-          if (fs.readdirSync(dir).length === 0) fs.rmdirSync(dir);
-        }
-        removed += 1;
-        continue;
-      }
-      if (fs.lstatSync(skillFile).isSymbolicLink()) continue;
-      if (!FORGEN_SKILL_MARKER_RE.test(fs.readFileSync(skillFile, 'utf-8'))) continue; // 사용자 작성
-      if (!dryRun) {
-        fs.unlinkSync(skillFile);
-        if (fs.readdirSync(dir).length === 0) fs.rmdirSync(dir);
-      }
-      removed += 1;
-    } catch { /* SKILL.md 없음 등 — 건드리지 않는다 */ }
+    const skillFile = path.join(skillsDir, name, 'SKILL.md');
+    let owned = devGuideNames.has(name);
+    if (!owned) {
+      try {
+        owned = !fs.lstatSync(skillFile).isSymbolicLink() && hasManagedSkillMarker(fs.readFileSync(skillFile, 'utf-8'));
+      } catch { owned = false; }
+    }
+    if (owned && removeSkillFile(skillsDir, name, dryRun)) removed += 1;
   }
   return removed;
 }
@@ -152,7 +144,7 @@ function removeManagedAgents(agentsDir: string, dryRun: boolean): number {
     const p = path.join(agentsDir, entry);
     try {
       if (fs.lstatSync(p).isSymbolicLink()) continue;
-      if (!fs.readFileSync(p, 'utf-8').slice(0, 64).startsWith(AGENT_TOML_MARKER)) continue;
+      if (!isManagedAgentToml(fs.readFileSync(p, 'utf-8'))) continue;
       if (!dryRun) fs.unlinkSync(p);
       removed += 1;
     } catch { /* best-effort */ }
@@ -173,48 +165,67 @@ export function planCodexUninstall(opts: CodexUninstallOptions): CodexUninstallR
     hooksFileDeleted: false,
     mcpRemoved: false,
     notifyRemoved: false,
+    notifyCustomLeft: false,
+    notifyChainRestored: [],
     skillsRemoved: 0,
     agentsRemoved: 0,
     agentsMdCleaned: false,
+    errors: [],
   };
   if (!result.present) return result;
 
+  // 각 단계는 독립이다 — 하나가 실패(읽기 전용 파일 등)해도 나머지 정리는 계속한다.
+  const step = (label: string, fn: () => void): void => {
+    try { fn(); } catch (e) { result.errors.push(`${label}: ${e instanceof Error ? e.message : String(e)}`); }
+  };
+
   // 1) hooks.json
-  const hooksPath = path.join(codexHome, 'hooks.json');
-  const hooksFile = readJsonFile<HooksFile>(hooksPath);
-  if (hooksFile && typeof hooksFile === 'object' && hooksFile.hooks && typeof hooksFile.hooks === 'object') {
-    const stripped = stripForgenHooks(hooksFile, opts.pkgRoot);
+  step('hooks.json', () => {
+    const hooksPath = path.join(codexHome, 'hooks.json');
+    if (!fs.existsSync(hooksPath)) return;
+    let hooksFile: unknown;
+    try {
+      hooksFile = JSON.parse(fs.readFileSync(hooksPath, 'utf-8'));
+    } catch {
+      throw new Error('not valid JSON — left untouched (remove forgen entries by hand)');
+    }
+    const hooks = (hooksFile as { hooks?: unknown } | null)?.hooks;
+    if (!hooks || typeof hooks !== 'object' || Array.isArray(hooks)) return;
+    const stripped = stripForgenHooks(hooksFile as HooksFile, opts.pkgRoot);
     result.hooksRemoved = stripped.removed;
     result.userHooksPreserved = stripped.preserved;
     result.placeholderGroups = stripped.placeholders;
     result.userHooksReindexed = stripped.reindexed;
-    if (stripped.removed > 0) {
-      result.hooksFileDeleted = stripped.next === null;
-      if (!dryRun) {
-        if (stripped.next === null) fs.unlinkSync(hooksPath);
-        else fs.writeFileSync(hooksPath, `${JSON.stringify(stripped.next, null, 2)}\n`, 'utf-8');
-      }
-    }
-  }
+    if (stripped.removed === 0) return;
+    result.hooksFileDeleted = stripped.next === null;
+    if (dryRun) return;
+    if (stripped.next === null) fs.unlinkSync(hooksPath);
+    else fs.writeFileSync(hooksPath, `${JSON.stringify(stripped.next, null, 2)}\n`, 'utf-8');
+  });
 
   // 2) config.toml — MCP / notify 블록
-  const configTomlPath = path.join(codexHome, 'config.toml');
-  if (fs.existsSync(configTomlPath)) {
+  step('config.toml', () => {
+    const configTomlPath = path.join(codexHome, 'config.toml');
+    if (!fs.existsSync(configTomlPath)) return;
     const current = fs.readFileSync(configTomlPath, 'utf-8');
     const mcp = removeMcpBlock(current);
     const notify = removeNotifyBlock(mcp.content);
     result.mcpRemoved = mcp.removed;
     result.notifyRemoved = notify.removed;
+    result.notifyCustomLeft = notify.custom;
+    result.notifyChainRestored = notify.restoredChain;
     if (!dryRun && notify.content !== current) fs.writeFileSync(configTomlPath, notify.content, 'utf-8');
-  }
+  });
 
   // 3) skills / agents
-  result.skillsRemoved = removeManagedSkills(path.join(codexHome, 'skills'), dryRun);
-  result.agentsRemoved = removeManagedAgents(path.join(codexHome, 'agents'), dryRun);
+  step('skills', () => { result.skillsRemoved = removeManagedSkills(path.join(codexHome, 'skills'), opts.pkgRoot, dryRun); });
+  step('agents', () => { result.agentsRemoved = removeManagedAgents(path.join(codexHome, 'agents'), dryRun); });
 
   // 4) AGENTS.md (cwd 의 git root)
-  const agentsMdPath = opts.agentsMdPath ?? resolveAgentsMdPath(opts.pkgRoot);
-  result.agentsMdCleaned = removeForgenRulesFromAgentsMd({ agentsMdPath, dryRun }).removed;
+  step('AGENTS.md', () => {
+    const agentsMdPath = opts.agentsMdPath ?? resolveAgentsMdPath(opts.pkgRoot);
+    result.agentsMdCleaned = removeForgenRulesFromAgentsMd({ agentsMdPath, dryRun }).removed;
+  });
 
   return result;
 }
@@ -233,9 +244,20 @@ export function renderCodexUninstall(r: CodexUninstallResult): string[] {
     }
   }
   if (r.mcpRemoved) lines.push('  ✓ Removed forgen-compound MCP block from Codex config.toml');
-  if (r.notifyRemoved) lines.push('  ✓ Removed forgen notify block from Codex config.toml');
+  if (r.notifyRemoved) {
+    lines.push(r.notifyChainRestored.length > 0
+      ? `  ✓ Removed forgen notify wrapper from Codex config.toml — your chained notifier is kept: notify = ${JSON.stringify(r.notifyChainRestored)}`
+      : '  ✓ Removed forgen notify block from Codex config.toml');
+  }
+  if (r.notifyCustomLeft) {
+    lines.push('  ⚠ The forgen notify block in Codex config.toml was hand-edited (multi-line) — left in place. Remove the lines between the forgen-managed-notify markers yourself.');
+  }
   if (r.skillsRemoved > 0) lines.push(`  ✓ Removed ${r.skillsRemoved} forgen skill(s) from ${path.join(r.codexHome, 'skills')}`);
   if (r.agentsRemoved > 0) lines.push(`  ✓ Removed ${r.agentsRemoved} ch-*.toml agent(s) from ${path.join(r.codexHome, 'agents')}`);
   if (r.agentsMdCleaned) lines.push('  ✓ Removed forgen block from AGENTS.md');
+  for (const e of r.errors) lines.push(`  ✗ Codex cleanup — ${e}`);
+  if (lines.length > 0) {
+    lines.push('    note: AGENTS.md blocks in other projects where you ran `forgen install codex` are not touched — run `forgen uninstall` there or delete the forgen-managed-rules block.');
+  }
   return lines;
 }

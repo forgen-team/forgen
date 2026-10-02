@@ -183,7 +183,7 @@ export function parseFrontmatterOnly(content: string): SolutionFrontmatter | nul
     const anchorCount = (raw.match(/(?<=\s|^)&\w+/g) ?? []).length;
     if (anchorCount > 3) return null;
 
-    const parsed = yaml.load(raw, { schema: yaml.JSON_SCHEMA });
+    const parsed = yaml.load(raw, { schema: yaml.CORE_SCHEMA });
     if (!validateFrontmatter(parsed)) return null;
 
     return parsed;
@@ -236,7 +236,7 @@ export function serializeSolutionV3(solution: SolutionV3): string {
   const yamlStr = yaml.dump(solution.frontmatter, {
     lineWidth: -1,
     quoteStyle: 'double',
-    schema: yaml.JSON_SCHEMA,
+    schema: yaml.CORE_SCHEMA,
   });
   return `---\n${yamlStr}---\n\n## Context\n${solution.context}\n\n## Content\n${solution.content}\n`;
 }
