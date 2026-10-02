@@ -187,3 +187,16 @@ cwd 의 AGENTS.md 블록을 쓰지만, `forgen uninstall` 은 0.5.6 에서 notif
 **검증**: 이 머신의 실 config 사본에 적용 — 재설치 diff 는 고아 END 마커 한 줄의 이동뿐(hooks.state 31개 보존, 두 번째 실행은
 바이트 동일), 제거 후 forgen 항목 0건, 두 결과 모두 Codex 0.160.0 `codex mcp list` 가 정상 파싱. Codex 0.160.0 의 훅 출력
 스키마 11종은 0.153.4 사본과 동일, trust 해시도 동일(실머신 22/22 일치), 실세션에서 SessionStart(룰 주입)·Stop·SessionEnd 발화 확인.
+
+**리뷰 반영 (critic 3라운드, 실 Codex 0.160 로 재현된 것)**:
+- **C1** CRLF 파일에서 제거 후 마지막이 bare `\r` 로 끝나 Codex 가 로드 실패 → 파일 끝 개행은 남기고 앞의 빈 줄을 버린다.
+- **M1** `codex mcp add <다른 서버>` 가 mcp_servers 를 통째로 다시 쓰며 BEGIN 마커를 없앤다 → 마커만으로는 소유를 알 수 없다.
+  소유 판정을 "헤더 바로 위의 BEGIN 마커 **또는** forgen 만 쓰는 내용 시그니처(`…/dist/mcp/server.js` + `--host=codex`,
+  notify 는 `…/dist/host/codex-notify.js`)" 로 바꿨다. 파일 어딘가의 마커만으로는 사용자 테이블을 forgen 것으로 보지 않는다.
+  `removed` 는 실제로 테이블/notify 줄을 지웠을 때만 true.
+- **M2** forgen 테이블 뒤, 다음 헤더 위의 주석은 그 헤더의 장식이다 → 본문에서 제외 (install 이 옮기지 않고 uninstall 이 지우지 않음).
+- Codex 가 forgen 블록 안의 `notify` 값을 사용자의 notifier 로 바꿨으면 그 값은 사용자 것 — 마커/주석만 걷어낸다.
+- 같은 서버의 다른 TOML 표기(따옴표·공백 헤더, inline table, dotted key)가 있으면 중복 정의를 append 하지 않는다.
+- 여러 줄 문자열/배열 안의 줄은 헤더·마커·키로 보지 않는다 (삼중따옴표와 대괄호 균형만 추적하는 가벼운 분류기 — 완전한
+  TOML 파서는 아니다).
+- 검증: 리뷰어의 케이스 68건 + 퍼징 14,000건(LF/CRLF/BOM, 마커 무작위 배치)에서 로드 불가 출력·사용자 데이터 변경·비멱등 0건.

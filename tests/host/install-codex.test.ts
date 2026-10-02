@@ -266,7 +266,7 @@ describe('planCodexInstall', () => {
 
 // ── ADR-014 (v0.5.3): Codex agents TOML + skill adaptation + hook trust audit ──
 
-import { adaptSkillBodyForCodex, auditCodexHookTrust, codexHookEventKey, codexHookTrustHash, isCodexMultiAgentEnabled, isForgenHookCommand, removeNotifyBlock, renderCodexAgentToml, upsertNotifyBlock } from '../../src/host/install-codex.js';
+import { adaptSkillBodyForCodex, auditCodexHookTrust, codexHookEventKey, codexHookTrustHash, isCodexMultiAgentEnabled, isForgenHookCommand, removeMcpBlock, removeNotifyBlock, renderCodexAgentToml, upsertNotifyBlock } from '../../src/host/install-codex.js';
 
 type TrustFixtureRow = [event: string, matcher: string, handler: { type: 'command'; command: string; timeout: number }, expected: string];
 /** Codex 0.153.4 가 실머신에서 기록한 trusted_hash (2026-10-02 `~/.codex/config.toml`). */
@@ -617,7 +617,7 @@ describe('ADR-016 D1: config.toml notify 폴백', () => {
 
   it('블록 안에 사용자가 붙인 체인 꼬리("--", prog…)는 재설치 후에도 보존', () => {
     const r1 = upsertNotifyBlock('', PKG_ROOT);
-    const chained = r1.content.replace(/^notify = .*$/m, `notify = ${JSON.stringify(['node', '/old/path/codex-notify.js', '--', 'terminal-notifier', '-title', 'codex'])}`);
+    const chained = r1.content.replace(/^notify = .*$/m, `notify = ${JSON.stringify(['node', '/old/path/dist/host/codex-notify.js', '--', 'terminal-notifier', '-title', 'codex'])}`);
     const r2 = upsertNotifyBlock(chained, PKG_ROOT);
     expect(r2.status).toBe('installed'); // 경로가 갱신됨
     expect(r2.content).toContain(`notify = ${JSON.stringify(['node', NOTIFY_JS, '--', 'terminal-notifier', '-title', 'codex'])}`);
@@ -907,5 +907,194 @@ describe('Codex 가 마커를 재배치한 config.toml (0.160 실머신 형태, 
     expect(toml.match(/forgen-managed-mcp/g)).toHaveLength(2);
     expect(toml.match(/^\[mcp_servers\.forgen-compound\]$/gm)).toHaveLength(1);
     expect(fs.readFileSync(install().configTomlPath, 'utf-8')).toBe(toml);
+  });
+});
+
+describe('config.toml 블록 — 0.5.8 critic 회귀 (CRLF·마커 소실·사용자 주석)', () => {
+  let codexHome: string;
+  beforeEach(() => { codexHome = tmpDir('codex-058-'); });
+  afterEach(() => { fs.rmSync(codexHome, { recursive: true, force: true }); });
+  const cfg = () => path.join(codexHome, 'config.toml');
+  const install = (extra: Record<string, unknown> = {}) => planCodexInstall({ pkgRoot: PKG_ROOT, codexHome, agentsMdPath: path.join(codexHome, 'AGENTS.md'), ...extra });
+  const uninstall = async () => (await import('../../src/host/uninstall-codex.js')).planCodexUninstall({ pkgRoot: PKG_ROOT, codexHome, agentsMdPath: path.join(codexHome, 'AGENTS.md') });
+  const SERVER_JS = path.join(PKG_ROOT, 'dist', 'mcp', 'server.js');
+  /** bare CR(뒤에 LF 가 없는 CR)이 있으면 Codex 가 config 를 로드하지 못한다 */
+  const hasBareCR = (t: string) => /\r(?!\n)/.test(t);
+
+  it('C1: CRLF 파일 install → uninstall 이 원본과 바이트 동일 (bare CR 로 끝나지 않는다)', async () => {
+    const original = 'model = "x"\r\n\r\n[features]\r\nmulti_agent = true\r\n';
+    fs.writeFileSync(cfg(), original);
+    install();
+    expect(hasBareCR(fs.readFileSync(cfg(), 'utf-8'))).toBe(false);
+    await uninstall();
+    expect(fs.readFileSync(cfg(), 'utf-8')).toBe(original);
+  });
+
+  it('C1: CRLF + 고아 END 마커가 빈 줄 뒤 파일 끝에 있어도 bare CR 을 남기지 않는다', () => {
+    fs.writeFileSync(cfg(), 'a = 1\r\n\r\n# <<< forgen-managed-mcp\r\n');
+    install({ registerNotify: false });
+    const t = fs.readFileSync(cfg(), 'utf-8');
+    expect(hasBareCR(t)).toBe(false);
+    expect(t.match(/forgen-managed-mcp/g)).toHaveLength(2);
+  });
+
+  it('m5: CRLF + 마지막 줄 개행 없음', () => {
+    fs.writeFileSync(cfg(), `# >>> forgen-managed-mcp\r\n[mcp_servers.forgen-compound]\r\ncommand = "node"\r\nargs = ["/old/dist/mcp/server.js", "--host=codex"]`);
+    install();
+    expect(hasBareCR(fs.readFileSync(cfg(), 'utf-8'))).toBe(false);
+    expect(hasBareCR(removeNotifyBlock('# >>> forgen-managed-notify\r\nnotify = ["node","/p/dist/host/codex-notify.js","--","say"]').content)).toBe(false);
+  });
+
+  it('M1: `codex mcp add` 가 BEGIN 마커를 없애고 END 만 남겨도 forgen 테이블을 알아본다 (args 시그니처)', async () => {
+    // Codex 가 mcp_servers 를 통째로 다시 쓴 뒤의 형태: 주석(BEGIN)은 사라지고 END 만 파일 끝에 남는다.
+    fs.writeFileSync(cfg(), [
+      '[mcp_servers.forgen-compound]',
+      'command = "node"',
+      'args = ["/old/prefix/dist/mcp/server.js", "--host=codex"]',
+      '',
+      '[mcp_servers.newsrv]',
+      'command = "echo"',
+      'args = ["hi"]',
+      '# <<< forgen-managed-mcp',
+      '',
+    ].join('\n'));
+    const r = install({ registerNotify: false });
+    const t = fs.readFileSync(cfg(), 'utf-8');
+    expect(r.mcpRegistered).toBe(true); // 경로가 갱신됐다
+    expect(t).toContain(`args = [${JSON.stringify(SERVER_JS)}, "--host=codex"]`);
+    expect(t).not.toContain('/old/prefix');
+    expect(t).toMatch(/# >>> forgen-managed-mcp\n\[mcp_servers\.forgen-compound\]\ncommand = "node"\nargs = .*\n# <<< forgen-managed-mcp\n\n\[mcp_servers\.newsrv\]/);
+    expect(t.match(/forgen-managed-mcp/g)).toHaveLength(2);
+
+    const u = await uninstall();
+    expect(u.mcpRemoved).toBe(true);
+    expect(fs.readFileSync(cfg(), 'utf-8')).toBe('[mcp_servers.newsrv]\ncommand = "echo"\nargs = ["hi"]\n');
+  });
+
+  it('M1: 테이블이 forgen 것이 아니면(시그니처 없음) 고아 마커만 치우고 removed=false — 지웠다고 거짓 보고하지 않는다', () => {
+    const mine = '[mcp_servers.forgen-compound]\ncommand = "python"\nargs = ["/mine/server.py"]\n# <<< forgen-managed-mcp\n';
+    const r = removeMcpBlock(mine);
+    expect(r.removed).toBe(false);
+    expect(r.content).toBe('[mcp_servers.forgen-compound]\ncommand = "python"\nargs = ["/mine/server.py"]\n');
+    // install 도 그 테이블을 건드리지 않는다
+    fs.writeFileSync(cfg(), mine);
+    install({ registerNotify: false });
+    expect(fs.readFileSync(cfg(), 'utf-8')).toContain('args = ["/mine/server.py"]');
+    expect(fs.readFileSync(cfg(), 'utf-8').match(/\[mcp_servers\.forgen-compound\]/g)).toHaveLength(1);
+  });
+
+  it('M2: forgen 테이블 뒤, 다음 헤더 위의 주석은 그 헤더의 것이다 — install 이 옮기지 않고 uninstall 이 지우지 않는다', async () => {
+    const original = [
+      '# <<< forgen-managed-mcp',
+      '# >>> forgen-managed-mcp',
+      '[mcp_servers.forgen-compound]',
+      'command = "node"',
+      `args = [${JSON.stringify(SERVER_JS)}, "--host=codex"]`,
+      '',
+      '[mcp_servers.forgen-compound.env]',
+      'A = "1"',
+      '# >>> othertool-managed',
+      '[othertool]',
+      'x = 1',
+      '# <<< othertool-managed',
+      '',
+      '# IMPORTANT user comment about tui',
+      '[tui]',
+      'theme = "dark"',
+      '',
+    ].join('\n');
+    fs.writeFileSync(cfg(), original);
+    install({ registerNotify: false });
+    const t = fs.readFileSync(cfg(), 'utf-8');
+    expect(t).toContain('# IMPORTANT user comment about tui\n[tui]');
+    expect(t).toContain('# >>> othertool-managed\n[othertool]');
+    await uninstall();
+    expect(fs.readFileSync(cfg(), 'utf-8')).toBe([
+      '# >>> othertool-managed',
+      '[othertool]',
+      'x = 1',
+      '# <<< othertool-managed',
+      '',
+      '# IMPORTANT user comment about tui',
+      '[tui]',
+      'theme = "dark"',
+      '',
+    ].join('\n'));
+  });
+
+  it.each([
+    ['[mcp_servers."forgen-compound"]\ncommand = "x"\n'],
+    ['[ mcp_servers.forgen-compound ]\ncommand = "x"\n'],
+    ['[mcp_servers]\nforgen-compound = { command = "x" }\n'],
+    ['[mcp_servers]\nforgen-compound.command = "x"\n'],
+    ['mcp_servers.forgen-compound.command = "x"\n'],
+  ])('m4: 같은 서버의 다른 TOML 표기 %j — 중복 정의를 append 하지 않는다', (user) => {
+    fs.writeFileSync(cfg(), user);
+    install({ registerNotify: false });
+    expect(fs.readFileSync(cfg(), 'utf-8')).toBe(user);
+  });
+
+  it('m1: BEGIN 과 notify 줄 사이에 다른 줄이 끼어도 forgen notify 줄을 시그니처로 알아본다', () => {
+    const edited = [
+      '# >>> forgen-managed-notify',
+      '# forgen turn-complete fallback (ADR-016): works even while forgen hooks are untrusted.',
+      '# my note',
+      '',
+      'notify = ["node","/old/dist/host/codex-notify.js"]',
+      '# <<< forgen-managed-notify',
+      'model = "x"',
+      '',
+    ].join('\n');
+    const up = upsertNotifyBlock(edited, PKG_ROOT);
+    expect(up.status).toBe('installed');
+    expect(up.content.match(/^notify\s*=/gm)).toHaveLength(1);
+    expect(up.content).not.toContain('/old/dist');
+    expect(up.content).toContain('# my note'); // 사용자 주석은 남는다
+    const rm = removeNotifyBlock(edited);
+    expect(rm.removed).toBe(true);
+    expect(rm.content).toBe('# my note\n\nmodel = "x"\n');
+  });
+
+  it('m2/m3: 마커만 남은 경우는 정리하되 removed=false; Codex 가 블록 안의 값을 사용자의 notifier 로 바꿨으면 그 값은 보존', () => {
+    const endOnly = removeNotifyBlock('model = "x"\n# <<< forgen-managed-notify\n');
+    expect(endOnly).toEqual({ content: 'model = "x"\n', removed: false, custom: false, restoredChain: [] });
+
+    const replaced = [
+      '# >>> forgen-managed-notify',
+      '# forgen turn-complete fallback (ADR-016): works even while forgen hooks are untrusted.',
+      '# To chain your own notifier, append:  "--", "<program>", "<args…>"  (kept across re-install).',
+      'notify = ["my-notifier", "arg"]',
+      '# <<< forgen-managed-notify',
+      '',
+    ].join('\n');
+    const up = upsertNotifyBlock(replaced, PKG_ROOT);
+    expect(up.status).toBe('user-defined');
+    expect(up.content).toBe('notify = ["my-notifier", "arg"]\n');
+    const rm = removeNotifyBlock(replaced);
+    expect(rm.removed).toBe(false);
+    expect(rm.content).toBe('notify = ["my-notifier", "arg"]\n');
+  });
+
+  it('재배치 형태에서 오래된 경로의 args 를 갱신한다', () => {
+    fs.writeFileSync(cfg(), [
+      '[hooks.state."/h:stop:0:0"]',
+      'trusted_hash = "sha256:aa"',
+      '',
+      '# <<< forgen-managed-mcp',
+      '',
+      '[hooks.state."/h:stop:1:0"]',
+      'trusted_hash = "sha256:bb"',
+      '',
+      '# >>> forgen-managed-mcp',
+      '[mcp_servers.forgen-compound]',
+      'command = "node"',
+      'args = ["/old/prefix/dist/mcp/server.js", "--host=codex"]',
+      '',
+    ].join('\n'));
+    const r = install({ registerNotify: false });
+    expect(r.mcpRegistered).toBe(true);
+    const t = fs.readFileSync(cfg(), 'utf-8');
+    expect(t).toContain(JSON.stringify(SERVER_JS));
+    expect(t.match(/^\[hooks\.state/gm)).toHaveLength(2);
   });
 });
