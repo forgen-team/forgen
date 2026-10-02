@@ -797,3 +797,115 @@ describe('훅 소유 판정 (critic 2026-10-02: 부분문자열/임의 dist/hook
     expect(isForgenHookCommand(command, PKG_ROOT)).toBe(expected);
   });
 });
+
+describe('Codex 가 마커를 재배치한 config.toml (0.160 실머신 형태, 2026-10-02)', () => {
+  // Codex(toml_edit)는 주석을 "다음 테이블의 장식" 으로 취급한다. `/hooks` 승인 후 실제로 관측된 형태:
+  // BEGIN 마커는 forgen 테이블과 함께 파일 끝으로 가고, END 마커는 앞쪽 hooks.state 테이블 위에 고아로 남는다.
+  const NOTIFY_JS = path.join(PKG_ROOT, 'dist', 'host', 'codex-notify.js');
+  const SERVER_JS = path.join(PKG_ROOT, 'dist', 'mcp', 'server.js');
+  const rearranged = [
+    '# >>> forgen-managed-notify',
+    '# forgen turn-complete fallback (ADR-016): works even while forgen hooks are untrusted.',
+    '# To chain your own notifier, append:  "--", "<program>", "<args…>"  (kept across re-install).',
+    `notify = ${JSON.stringify(['node', NOTIFY_JS])}`,
+    '# <<< forgen-managed-notify',
+    '',
+    'model = "gpt-5.5"',
+    '',
+    '[features]',
+    'multi_agent = true',
+    '',
+    '[hooks.state]',
+    '',
+    '[hooks.state."/h/hooks.json:stop:0:0"]',
+    'trusted_hash = "sha256:aa"',
+    '',
+    '# <<< forgen-managed-mcp',
+    '',
+    '[hooks.state."/h/hooks.json:stop:1:0"]',
+    'trusted_hash = "sha256:bb"',
+    '',
+    '# >>> forgen-managed-mcp',
+    '[mcp_servers.forgen-compound]',
+    'command = "node"',
+    `args = [${JSON.stringify(SERVER_JS)}, "--host=codex"]`,
+    '',
+  ].join('\n');
+
+  let codexHome: string;
+  beforeEach(() => {
+    codexHome = tmpDir('codex-rearranged-');
+    fs.writeFileSync(path.join(codexHome, 'config.toml'), rearranged);
+  });
+  afterEach(() => { fs.rmSync(codexHome, { recursive: true, force: true }); });
+  const install = (extra: Record<string, unknown> = {}) => planCodexInstall({ pkgRoot: PKG_ROOT, codexHome, agentsMdPath: path.join(codexHome, 'AGENTS.md'), ...extra });
+
+  it('재설치: 테이블을 중복시키지 않고, 고아 END 를 걷어 마커를 테이블 위아래로 정규화하며, 다른 내용은 그대로 둔다', () => {
+    const r = install();
+    const toml = fs.readFileSync(r.configTomlPath, 'utf-8');
+    expect(toml.match(/^\[mcp_servers\.forgen-compound\]$/gm)).toHaveLength(1);
+    expect(toml.match(/forgen-managed-mcp/g)).toHaveLength(2);
+    expect(toml.match(/^notify\s*=/gm)).toHaveLength(1);
+    expect(toml).toMatch(/# >>> forgen-managed-mcp\n\[mcp_servers\.forgen-compound\]\ncommand = "node"\nargs = .*\n# <<< forgen-managed-mcp\n$/);
+    // 사용자/Codex 내용은 순서 그대로
+    const strip = (t: string) => t.split('\n').filter((l) => !l.includes('forgen-managed-mcp') && l.trim() !== '').join('\n');
+    expect(strip(toml)).toBe(strip(rearranged));
+    expect(r.multiAgentEnabled).toBe(true);
+    // 정규화된 뒤에는 바이트 동일 (idempotent)
+    const again = install();
+    expect(again.mcpAlreadyPresent).toBe(true);
+    expect(again.notify).toBe('already-present');
+    expect(fs.readFileSync(again.configTomlPath, 'utf-8')).toBe(toml);
+  });
+
+  it('uninstall: 재배치된 형태에서도 forgen 테이블·notify·마커를 전부 걷어내고 hooks.state 는 남긴다', async () => {
+    const { planCodexUninstall } = await import('../../src/host/uninstall-codex.js');
+    const r = planCodexUninstall({ pkgRoot: PKG_ROOT, codexHome, agentsMdPath: path.join(codexHome, 'AGENTS.md') });
+    expect([r.mcpRemoved, r.notifyRemoved]).toEqual([true, true]);
+    expect(fs.readFileSync(path.join(codexHome, 'config.toml'), 'utf-8')).toBe([
+      'model = "gpt-5.5"',
+      '',
+      '[features]',
+      'multi_agent = true',
+      '',
+      '[hooks.state]',
+      '',
+      '[hooks.state."/h/hooks.json:stop:0:0"]',
+      'trusted_hash = "sha256:aa"',
+      '',
+      '[hooks.state."/h/hooks.json:stop:1:0"]',
+      'trusted_hash = "sha256:bb"',
+      '',
+    ].join('\n'));
+  });
+
+  it('notify: END 마커가 사라졌거나 멀리 옮겨져도 forgen 줄을 찾아 갱신/제거한다', () => {
+    const noEnd = rearranged.replace('# <<< forgen-managed-notify\n', '');
+    const up = upsertNotifyBlock(noEnd.replace(NOTIFY_JS, '/old/dist/host/codex-notify.js'), PKG_ROOT);
+    expect(up.status).toBe('installed');
+    expect(up.content.match(/^notify\s*=/gm)).toHaveLength(1);
+    expect(up.content).toContain(JSON.stringify(['node', NOTIFY_JS]));
+    const rm = removeNotifyBlock(noEnd);
+    expect(rm.removed).toBe(true);
+    expect(rm.content).not.toMatch(/notify\s*=|forgen-managed-notify|forgen turn-complete/);
+    expect(rm.content.startsWith('model = "gpt-5.5"\n')).toBe(true);
+
+    // END 가 테이블들 뒤로 옮겨진 경우: 사이의 내용을 재배열하지 않는다
+    const farEnd = `${noEnd}\n# <<< forgen-managed-notify\n`;
+    const up2 = upsertNotifyBlock(farEnd, PKG_ROOT);
+    expect(up2.content.indexOf('model = "gpt-5.5"')).toBeLessThan(up2.content.indexOf('[features]'));
+    expect(up2.content.match(/forgen-managed-notify/g)).toHaveLength(2);
+    expect(upsertNotifyBlock(up2.content, PKG_ROOT).status).toBe('already-present');
+  });
+
+  it('사용자가 forgen 테이블만 지우고 마커가 남은 경우: 고아 마커를 걷어내고 새 블록을 한 번만 쓴다', () => {
+    const orphan = rearranged.split('\n').filter((l) => !/^\[mcp_servers\.forgen-compound\]|^command = |^args = /.test(l)).join('\n');
+    fs.writeFileSync(path.join(codexHome, 'config.toml'), orphan);
+    const r = install();
+    const toml = fs.readFileSync(r.configTomlPath, 'utf-8');
+    expect(r.mcpRegistered).toBe(true);
+    expect(toml.match(/forgen-managed-mcp/g)).toHaveLength(2);
+    expect(toml.match(/^\[mcp_servers\.forgen-compound\]$/gm)).toHaveLength(1);
+    expect(fs.readFileSync(install().configTomlPath, 'utf-8')).toBe(toml);
+  });
+});

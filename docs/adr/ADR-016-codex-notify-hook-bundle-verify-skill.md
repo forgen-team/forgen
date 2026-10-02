@@ -167,3 +167,23 @@ cwd 의 AGENTS.md 블록을 쓰지만, `forgen uninstall` 은 0.5.6 에서 notif
 단계별 오류 격리, 재설치 시 자리표시 그룹 재사용. 남은 한계: MCP 블록 처리는 TOML 파서가 아니다 — forgen 테이블 하위의
 여러 줄 문자열 안에 `[` 로 시작하는 줄이 있으면 잘못 자를 수 있다(실사용에서 나오기 어려운 형태); OpenCode 등록분 정리 없음;
 `forgen-<stack>-*` 이름의 사용자 스킬은 **install** 의 stale 정리가 여전히 지운다(기존 동작, 별도 정리 필요).
+
+## Addendum (2026-10-02, v0.5.8) — 마커는 범위가 아니라 표식이다
+
+**관측 (실머신, Codex 0.160.0)**: 사용자가 `/hooks` 로 훅을 승인하자 Codex 가 config.toml 을 다시 쓰면서 forgen MCP 블록의
+마커가 뒤집혔다 — `# >>> forgen-managed-mcp` 는 forgen 테이블과 함께 파일 끝으로 가고, `# <<< forgen-managed-mcp` 는 앞쪽
+`[hooks.state…]` 테이블 위에 고아로 남았다 (toml_edit 는 주석을 "다음 테이블의 장식" 으로 취급하고, 테이블을 재배치할 수 있다).
+0.5.6/0.5.7 의 "BEGIN 부터 다음 END 까지" 탐색은 이 형태에서 블록을 찾지 못한다: 재설치는 안전하게 no-op 이지만(같은 테이블이
+있으면 append 하지 않음) **uninstall 이 MCP 서버 등록을 지우지 못한다.**
+
+**결정**: 마커를 범위로 쓰지 않는다. 마커는 "forgen 이 쓴 것" 이라는 표식이고, 실제 범위는 TOML 구조로 정한다.
+- MCP: `[mcp_servers.forgen-compound]` 헤더부터 다음 테이블 헤더(또는 마커) 직전까지가 forgen 테이블. 파일 어디든 BEGIN 마커가
+  하나라도 있으면 forgen 소유, 마커가 전혀 없으면 사용자 관리(건드리지 않음). 설치는 마커를 전부 걷어 테이블 바로 위아래에
+  다시 두고 `command`/`args` 만 갱신한다. 제거는 테이블·하위 테이블·모든 마커 줄을 지운다.
+- notify: BEGIN 마커 뒤(forgen 주석만 사이에 두고) 처음 나오는 `notify` 줄이 forgen 것. END 마커는 어디에 있든(또는 없어도)
+  무방하다.
+- 나머지 줄은 순서를 포함해 그대로 둔다. 줄을 지운 자리의 겹친 빈 줄만 하나로 줄인다.
+
+**검증**: 이 머신의 실 config 사본에 적용 — 재설치 diff 는 고아 END 마커 한 줄의 이동뿐(hooks.state 31개 보존, 두 번째 실행은
+바이트 동일), 제거 후 forgen 항목 0건, 두 결과 모두 Codex 0.160.0 `codex mcp list` 가 정상 파싱. Codex 0.160.0 의 훅 출력
+스키마 11종은 0.153.4 사본과 동일, trust 해시도 동일(실머신 22/22 일치), 실세션에서 SessionStart(룰 주입)·Stop·SessionEnd 발화 확인.

@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.8] — 2026-10-02 — Codex 가 재배치한 마커에서도 설치·제거가 정확하게 (Codex 0.160 확인)
+
+### Fixed
+- **Codex 가 config.toml 을 다시 쓰면서 forgen 마커를 뒤집어 놓은 형태에서 `forgen uninstall` 이 MCP 서버 등록을 지우지
+  못하던 것 (0.5.7).** 실머신에서 `/hooks` 승인 후 관측: `# >>> forgen-managed-mcp` 는 forgen 테이블과 함께 파일 끝으로 가고
+  `# <<< forgen-managed-mcp` 는 앞쪽에 고아로 남는다. 이제 마커를 *범위* 가 아니라 *표식* 으로만 쓰고, 범위는 TOML 구조
+  (테이블 헤더 ~ 다음 헤더, notify 한 줄)로 정한다. 재설치는 고아 마커를 걷어 테이블 위아래로 정규화하고, 제거는 테이블·하위
+  테이블·모든 마커 줄을 지운다. notify 블록도 END 마커가 옮겨지거나 사라져도 동작한다.
+- 사용자가 forgen MCP 테이블만 지우고 마커가 남은 경우, 재설치가 고아 마커를 정리하고 블록을 한 번만 쓴다.
+
+### Verified
+- vitest 3208 통과 (신규: 실머신에서 채취한 재배치 형태의 설치/제거/정규화/idempotence).
+- 이 머신의 실 `~/.codex/config.toml` 사본에 적용: 재설치 diff 는 고아 END 마커 한 줄 이동뿐(hooks.state 31개 보존),
+  제거 후 forgen 항목 0건, 두 결과 모두 Codex 0.160.0 이 정상 파싱.
+- **Codex 0.160.0 호환 확인**: 훅 출력 스키마 11종이 vendoring 한 0.153.4 사본과 동일, trust 해시 일치(실머신 22/22 trusted,
+  Codex `hooks/list` 30/30), 실세션에서 SessionStart(룰 블록 주입, 스필 없음)·UserPromptSubmit·Stop·SessionEnd 훅 발화, 오류 0건.
+
+
 ## [0.5.7] — 2026-10-02 — `forgen uninstall` 의 Codex 정리 · 의존성 메이저 업그레이드
 
 ### Added
