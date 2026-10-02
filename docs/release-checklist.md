@@ -38,7 +38,10 @@
 
 ## 발행
 
-- [ ] `npm publish` (pre-packaged dist/ 포함 확인)
+- [ ] 태그 푸시가 `Release` 워크플로우(`.github/workflows/release.yml`)를 트리거 → npm Trusted Publishing(OIDC)으로 발행. `gh run list --workflow release.yml` 로 성공 확인 후 `npm view @wooojin/forgen version`
+  - 전제: npmjs.com 패키지 Settings → Trusted Publisher 에 `forgen-team/forgen` + `release.yml` 등록 (`npm publish` 허용)
+  - 재발행/누락 태그: `gh workflow run release.yml -f ref=v<버전>`
+  - 로컬 `npm publish` 는 계정 2FA 가 켜져 있어야 함 (없으면 403)
 - [ ] GitHub Release 노트 — CHANGELOG 해당 섹션 copy
 - [ ] ADR 표에서 해당 릴리즈가 landing 한 Status 확인
 

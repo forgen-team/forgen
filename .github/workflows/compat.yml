@@ -8,6 +8,8 @@ on:
       - 'src/core/harness.ts'
       - 'src/hooks/**'
       - 'src/core/settings-lock.ts'
+      - '.github/workflows/compat.yml'
+  workflow_dispatch:
 
 jobs:
   compat:
@@ -16,7 +18,9 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
         with:
-          node-version: 20
+          node-version: 22  # package.json engines: >=22
       - run: npm ci
       - run: npm run build
+      - name: Regenerate hooks/hooks.json (release-mode, deterministic)
+        run: node scripts/prepack-hooks.cjs
       - run: npx vitest run tests/claude-code-compat.test.ts

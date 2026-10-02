@@ -3,22 +3,39 @@ on:
   push:
     tags:
       - 'v*'
+  # 수동 발행: 태그 시점의 워크플로우가 깨져 있던 릴리스(v0.5.3~v0.5.5)를 main 의 워크플로우로 발행.
+  # npm trusted publisher 는 이 파일명(release.yml)으로 등록한다.
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Tag to publish (e.g. v0.5.5)'
+        required: true
 
 jobs:
   release:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write
+      id-token: write  # npm Trusted Publishing (OIDC) — 토큰/2FA 없이 발행, provenance 자동 첨부
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          fetch-depth: 0  # tests/git-stats.test.ts 가 실 git log 30 일 윈도우를 분석
       - uses: actions/setup-node@v6
         with:
           node-version: 22
           registry-url: 'https://registry.npmjs.org'
+          package-manager-cache: false
+      # Trusted Publishing 은 npm >= 11.5.1 필요 (Node 22 번들은 10.x)
+      - run: npm install -g npm@^11.5.1
+      - name: Verify tag matches package.json version
+        env:
+          REF_NAME: ${{ inputs.ref || github.ref_name }}
+        run: test "v$(node -p "require('./package.json').version")" = "$REF_NAME"
       - run: npm ci
       - run: npm run build
+      - name: Regenerate hooks/hooks.json (release-mode, deterministic)
+        run: node scripts/prepack-hooks.cjs
       - run: npm test
-      - run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NODE_AUTH_TOKEN }}
+      - run: npm publish --access public
