@@ -334,11 +334,12 @@ export function registerTools(server: McpServer): void {
           .describe('Correction type: fix-now (immediate), prefer-from-now (long-term), avoid-this (strong avoidance)'),
         message: z.string().describe('What the user wants changed — the correction in natural language'),
         target: z.string().describe('What is being corrected — the specific behavior, pattern, or output'),
+        user_quote: z.string().optional().describe('The user\'s own words that prompted this correction, verbatim (not paraphrased). Shown back to the user as "what you said" when the rule later blocks or applies. Omit if you cannot quote verbatim.'),
         axis_hint: z.enum(['quality_safety', 'autonomy', 'judgment_philosophy', 'communication_style']).nullable()
           .describe('Which personalization axis this correction relates to (null if unclear)'),
       },
     },
-    async ({ session_id, kind, message, target, axis_hint }) => {
+    async ({ session_id, kind, message, target, axis_hint, user_quote }) => {
       try {
         // v1 session_id를 환경변수에서 가져옴 (하네스가 설정)
         const effectiveSessionId = session_id || process.env.FORGEN_SESSION_ID || 'unknown';
@@ -357,12 +358,17 @@ export function registerTools(server: McpServer): void {
           ? '\n(참고: <private> 범위는 기록에서 제외됨)'
           : '';
 
+        // ADR-017 D0: 사용자 원문도 <private> 필터. 통째로 private 이면 저장하지 않는다.
+        const cleanQuote = typeof user_quote === 'string' && user_quote.trim() && !isFullyPrivate(user_quote)
+          ? stripPrivate(user_quote).cleaned.trim()
+          : '';
         const result = processCorrection({
           session_id: effectiveSessionId,
           kind: kind as CorrectionKind,
           message: cleanMessage,
           target: cleanTarget,
           axis_hint: axis_hint as 'quality_safety' | 'autonomy' | 'judgment_philosophy' | 'communication_style' | null,
+          ...(cleanQuote ? { user_quote: cleanQuote } : {}),
         });
 
         // Outcome tracking (Phase 1): attribute this correction to any

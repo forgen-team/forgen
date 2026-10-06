@@ -7,6 +7,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { STATE_DIR } from './paths.js';
+import { isRealBlock } from '../engine/lifecycle/signals.js';
 
 const isTTY = process.stdout.isTTY;
 const C = {
@@ -67,7 +68,9 @@ function formatTime(iso: string): string {
 }
 
 export async function handleExplain(args: string[]): Promise<void> {
-  const violations = readViolations();
+  // ADR-017 D1: `--blocks` 는 실세션의 실제 차단만 보여준다(테스트 유래 'default' 세션·
+  // advise(correction)·명시 우회 제외). 원시 로그는 `forgen inspect`.
+  const violations = readViolations().filter((v) => isRealBlock(v as { kind?: unknown; session_id?: unknown }));
 
   if (violations.length === 0) {
     console.log(`\n  ${C.green}No blocks recorded.${C.reset} forgen hasn't blocked Claude yet.\n`);

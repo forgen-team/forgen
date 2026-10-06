@@ -87,7 +87,7 @@ describe('pre-tool-use enforce_via dispatcher (ADR-001 Mech-A PreToolUse)', () =
     }
   });
 
-  it('FORGEN_USER_CONFIRMED=1 → our rule deny passes, audit 엔트리(kind:correction)만 기록', () => {
+  it('FORGEN_USER_CONFIRMED=1 → our rule deny passes, audit 엔트리(kind:bypass_confirmed)만 기록 (ADR-017 D1)', () => {
     const home = makeHome([ruleWithPreToolUse()]);
     try {
       const target = ['r', 'm', ' -', 'rf'].join('') + ' /tmp/forgen-test-target';
@@ -98,14 +98,14 @@ describe('pre-tool-use enforce_via dispatcher (ADR-001 Mech-A PreToolUse)', () =
       }, { FORGEN_USER_CONFIRMED: '1' });
       expect(proc.status).toBe(0);
 
-      // H3 audit: L1-pre-test rule 의 deny 는 발생하지 않지만 우회 audit 로그는 kind='correction' 으로 기록.
+      // H3 audit → ADR-017: 우회 audit 로그는 kind='bypass_confirmed' (메타가드 advise 'correction' 과 분리, T3 입력).
       const vpath = path.join(home, '.forgen', 'state', 'enforcement', 'violations.jsonl');
       if (fs.existsSync(vpath)) {
         const entries = fs.readFileSync(vpath, 'utf-8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l));
         for (const e of entries) {
           if (e.rule_id === 'L1-pre-test') {
             // L1-pre-test 관련 엔트리가 있다면 반드시 audit (correction) 만 허용, deny 는 금지.
-            expect(e.kind).toBe('correction');
+            expect(e.kind).toBe('bypass_confirmed');
             expect(e.message_preview).toMatch(/FORGEN_USER_CONFIRMED=1 bypass/);
           }
         }

@@ -10,6 +10,7 @@ import * as path from 'node:path';
 import { loadAllRules } from '../store/rule-store.js';
 import { loadAllEvidence } from '../store/evidence-store.js';
 import { STATE_DIR, ME_DIR } from './paths.js';
+import { isRealBlock, isConfirmedBypass, isSyntheticSession } from '../engine/lifecycle/signals.js';
 import { computeFixFeatRatio, formatFixRatio } from './git-stats.js';
 
 // v0.4.1 격리 fix: 이전에는 os.homedir() 직접 사용해서 FORGEN_HOME env 로
@@ -95,13 +96,20 @@ export interface StatsSnapshot {
   correctionsTotal: number;
   corrections7d: number;
   blocks7d: number;
+  /** ADR-017 §2 원칙 1: 집계에서 제외된 합성 세션(default/unknown) 기록 수 — 누락을 가시화. */
+  syntheticExcluded7d: number;
   acks7d: number;
   bypass7d: number;
   drift7d: number;
   retired7d: number;
   lastExtraction: string;
   assistToday: {
+    /** 후보가 1개 이상 나온 실세션(hook) recall. */
     recallHits: number;
+    /** 오늘 hook 경로 recall 시도 전체(후보 0건 포함). */
+    recallAttempts: number;
+    /** 오늘 mcp(compound-search) 경로 호출 수 — 테스트 격리(2026-10-06) 이후엔 실 호출. 별도 표기. */
+    recallMcp: number;
     surfaced: number;
     referenced: number;
     extractedToday: number;
@@ -139,12 +147,20 @@ function computeAssistToday(): StatsSnapshot['assistToday'] {
   startOfDay.setHours(0, 0, 0, 0);
   const cutoffMs = startOfDay.getTime();
 
-  // recall hits: match-eval-log 의 오늘 entries
+  // ADR-017 §1.5a: 이전엔 match-eval-log 의 오늘 entry 수 전체를 "Recall hits" 로 셌다 —
+  // 후보 0건·mcp 쿼리·vitest 픽스처(7d 773건 중 351건)까지 포함돼 "25회 recall 에 0 surfaced"
+  // 라는 틀린 그림을 만들었다. hit = source:hook 이고 후보 ≥1. attempts = hook 전체.
   const matchLog = readJsonl(path.join(STATE_DIR, 'match-eval-log.jsonl'));
   let recallHits = 0;
+  let recallAttempts = 0;
+  let recallMcp = 0;
   for (const e of matchLog) {
     const ts = typeof e.ts === 'string' ? Date.parse(e.ts) : NaN;
-    if (Number.isFinite(ts) && ts >= cutoffMs) recallHits++;
+    if (!Number.isFinite(ts) || ts < cutoffMs) continue;
+    if (e.source === 'mcp') { recallMcp++; continue; }
+    if (e.source !== 'hook') continue;
+    recallAttempts++;
+    if (Array.isArray(e.candidates) && e.candidates.length > 0) recallHits++;
   }
 
   // surfaced + referenced — 같은 스트림 1회 loop 로.
@@ -170,7 +186,7 @@ function computeAssistToday(): StatsSnapshot['assistToday'] {
     }
   } catch { /* fail-open */ }
 
-  return { recallHits, surfaced, referenced, extractedToday };
+  return { recallHits, recallAttempts, recallMcp, surfaced, referenced, extractedToday };
 }
 
 /** v0.4.1: forge-profile 에서 고도화 지표 추출. 파일 없거나 깨지면 undefined. */
@@ -218,17 +234,18 @@ export function computeStats(): StatsSnapshot {
   // content 의 quote 본문까지 raw 매칭해서 bypass 로 오기록. 실 관찰: L1-no-rm-rf
   // -unconfirmed bypass 20건 중 Write/Edit 15건. stats 표시는 **실 실행 맥락** 인
   // Bash/Agent/기타만 집계 — 앞으로의 시계열 일관성 + 과거 noise 제거.
-  const bypassRaw = readJsonl(path.join(ENFORCEMENT_DIR, 'bypass.jsonl'));
-  const bypass = bypassRaw.filter((e) => e.tool !== 'Write' && e.tool !== 'Edit');
+  // ADR-017 D1: bypass.jsonl(자연어 휴리스틱)은 더 이상 읽지 않는다 — 실측 전량 오탐, 실 우회 0건.
+  // "Bypass" 는 FORGEN_USER_CONFIRMED=1 명시 우회(kind:'bypass_confirmed')만 센다.
+  const bypass = violations.filter(isConfirmedBypass);
   const drift = readJsonl(path.join(ENFORCEMENT_DIR, 'drift.jsonl'));
   const acks = readJsonl(path.join(ENFORCEMENT_DIR, 'acknowledgments.jsonl'));
 
   // R9-PA2: violations 는 'block' (stop-guard/post-tool) + 'deny' (pre-tool Mech-A)
-  // + 'correction' (user bypass audit) 혼재. 사용자 관점에서 "Block" 은 앞의 2종이며
+  // + 'correction' (메타가드 advise) + 'bypass_confirmed' (사용자 명시 우회) 혼재. 사용자 관점에서 "Block" 은 앞의 2종이며
   // correction 은 제외해야 ack ratio 가 의미를 갖는다. legacy-undefined 엔트리도 포함.
-  const realBlocks = violations.filter((e) =>
-    e.kind === 'block' || e.kind === 'deny' || e.kind === undefined,
-  );
+  // ADR-017 §2 원칙 2: session_id 'default'/'unknown'(훅이 session 없이 호출 — 실측 전부 테스트
+  // 유래) 도 제외. 기준은 signals.isRealBlock 하나로 통일(explain/lifecycle 과 동일).
+  const realBlocks = violations.filter(isRealBlock);
 
   return {
     activeRules,
@@ -236,6 +253,7 @@ export function computeStats(): StatsSnapshot {
     correctionsTotal,
     corrections7d,
     blocks7d: countWithin(realBlocks, 7),
+    syntheticExcluded7d: countWithin(violations.filter((e) => isSyntheticSession(e.session_id)), 7),
     acks7d: countWithin(acks, 7),
     bypass7d: countWithin(bypass, 7),
     drift7d: countWithin(drift, 7),
@@ -380,13 +398,14 @@ export function renderStats(s: StatsSnapshot): string {
     : '';
   lines.push(`    Blocks              ${padNum(s.blocks7d)}    — times Claude was asked to retract ${ackRateLabel}`);
   lines.push(`    Acknowledgments     ${padNum(s.acks7d)}    — block → retract → pass loops`);
-  lines.push(`    Bypass              ${padNum(s.bypass7d)}    — user overrides`);
+  lines.push(`    Bypass (confirmed)  ${padNum(s.bypass7d)}    — FORGEN_USER_CONFIRMED=1 overrides (audited)`);
+  if (s.syntheticExcluded7d > 0) lines.push(`    Excluded            ${padNum(s.syntheticExcluded7d)}    — session-less records (tests/probes), not counted above`);
   lines.push(`    Drift events        ${padNum(s.drift7d)}    — stuck-loop force-approves`);
   lines.push(`    Retired rules       ${padNum(s.retired7d)}    — superseded or timed out`);
   lines.push('');
   // H3: Assist 축 — enforcement 옆에 나란히 가시화.
   lines.push('  Today (assist)');
-  lines.push(`    Recall hits         ${padNum(s.assistToday.recallHits)}    — compound 매칭 시도 수`);
+  lines.push(`    Recall hits         ${padNum(s.assistToday.recallHits)}    — 후보가 나온 recall (hook 시도 ${s.assistToday.recallAttempts} · mcp ${s.assistToday.recallMcp})`);
   lines.push(`    Surfaced            ${padNum(s.assistToday.surfaced)}    — 실제 주입된 솔루션 수`);
   const ratio = s.assistToday.surfaced > 0
     ? ` (${Math.round(100 * s.assistToday.referenced / s.assistToday.surfaced)}% referenced)`

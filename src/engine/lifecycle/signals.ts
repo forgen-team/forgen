@@ -57,6 +57,31 @@ export function readJsonlSafe<T>(p: string): T[] {
   }
 }
 
+/**
+ * ADR-017 §2 원칙 2: 훅이 session_id 없이 호출되면 'default'/'unknown' 폴백이 기록된다.
+ * 실세션(Claude·Codex 모두 session_id 전달)에서는 나오지 않으며, 실측상 전부 테스트가
+ * dist 훅을 spawn 한 흔적이었다(7d 차단 108건 중 78건). 모든 집계에서 제외한다.
+ */
+export const SYNTHETIC_SESSION_IDS: ReadonlySet<string> = new Set(['default', 'unknown', '']);
+
+export function isSyntheticSession(sessionId: unknown): boolean {
+  return typeof sessionId !== 'string' || SYNTHETIC_SESSION_IDS.has(sessionId);
+}
+
+/** 사용자 관점의 "차단": block/deny (+legacy undefined). correction/bypass_confirmed 는 아님. */
+export function isBlockKind(kind: unknown): boolean {
+  return kind === 'block' || kind === 'deny' || kind === undefined;
+}
+
+/** 실세션에서 일어난 실제 차단만. stats/explain/lifecycle 이 공유하는 단일 기준. */
+export function isRealBlock(e: { kind?: unknown; session_id?: unknown }): boolean {
+  return isBlockKind(e.kind) && !isSyntheticSession(e.session_id);
+}
+
+export function isConfirmedBypass(e: { kind?: unknown; session_id?: unknown }): boolean {
+  return e.kind === 'bypass_confirmed' && !isSyntheticSession(e.session_id);
+}
+
 export function recordViolation(entry: Omit<ViolationEntry, 'at'>): void {
   try {
     fs.mkdirSync(ENFORCEMENT_DIR, { recursive: true });
@@ -92,8 +117,15 @@ export interface SignalInputs {
 
 export function collectSignals(rule: Rule, inputs: SignalInputs = {}): RuleSignals {
   const now = inputs.now ?? Date.now();
-  const violations = inputs.violations ?? readJsonlSafe<ViolationEntry>(VIOLATIONS_PATH);
-  const bypass = inputs.bypass ?? readJsonlSafe<BypassEntry>(BYPASS_PATH);
+  const allViolations = inputs.violations ?? readJsonlSafe<ViolationEntry>(VIOLATIONS_PATH);
+  // ADR-017 D1/D2: T2 는 실제 차단만 센다 — 이전엔 kind 필터가 없어 메타가드 advise(correction)
+  // 와 테스트 유래(default 세션) 기록이 위반으로 집계돼 flag 를 조기 발화시켰다.
+  const violations = allViolations.filter(isRealBlock);
+  // T3 입력은 bypass.jsonl(자연어 휴리스틱 — 실측 100% 오탐, ADR-017 §1.1)이 아니라
+  // 사용자 명시 우회(kind:'bypass_confirmed')다. `inputs.bypass` 는 하위 호환으로 남기되 읽지 않는다.
+  const bypass: BypassEntry[] = allViolations
+    .filter(isConfirmedBypass)
+    .map((v) => ({ at: v.at, rule_id: v.rule_id, session_id: v.session_id, tool: v.source, pattern_preview: v.message_preview ?? '' }));
 
   // exact match only — M fix: startsWith 으로 prefix 교차 오염되던 부분 제거.
   const matchesRule = (ruleId: string): boolean => ruleId === rule.rule_id;

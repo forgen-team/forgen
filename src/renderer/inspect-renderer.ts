@@ -74,7 +74,9 @@ export function renderRules(rules: Rule[]): string {
   if (active.length > 0) {
     lines.push(`── Active rules (${active.length}) ──`);
     for (const r of active) {
-      lines.push(`  [${r.category}/${r.strength}] ${r.render_key} — ${r.policy}`);
+      // ADR-017 (critic): T2/T3 가 올린 flag 는 이전에 어디에도 안 보였다 — 여기서 가시화.
+      const flag = r.lifecycle?.phase === 'flagged' ? ' ⚑ flagged (repeated violations/overrides — review)' : '';
+      lines.push(`  [${r.category}/${r.strength}] ${r.render_key} — ${r.policy}${flag}`);
       lines.push(`    source: ${r.source} | evidence: ${r.evidence_refs.length}`);
     }
   }

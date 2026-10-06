@@ -72,6 +72,8 @@ interface SpikeRule {
   verifier: VerifierSpec;
   block_message?: string;
   system_tag?: string;
+  /** ADR-017 D0: 출처 인용용 — store 룰에서만 채워짐(project-scope 룰 포함, 재읽기 없음). */
+  origin?: { source: Rule['source']; evidence_refs: string[]; policy: string };
 }
 
 interface ScenariosFile {
@@ -142,6 +144,7 @@ export function rulesFromStore(rules: Rule[]): SpikeRule[] {
         },
         block_message: spec.block_message,
         system_tag: spec.system_tag,
+        origin: { source: rule.source, evidence_refs: rule.evidence_refs ?? [], policy: rule.policy },
       });
     }
   }
@@ -581,7 +584,7 @@ export async function main(): Promise<void> {
     if (process.env.FORGEN_USER_CONFIRMED === '1') {
       recordViolation({
         rule_id: hit.id, session_id: sessionId, source: 'stop-guard',
-        kind: 'correction',
+        kind: 'bypass_confirmed', // ADR-017 D1: 사용자 명시 우회 전용 kind (T3 입력)
         message_preview: `[FORGEN_USER_CONFIRMED=1 bypass] ${lastMessage.slice(0, 100)}`,
       });
       console.log(approveWithOptionalExtractionNotice());
@@ -600,7 +603,16 @@ export async function main(): Promise<void> {
 
     // G8 + R4-UX1 + R7-U1/U2: 브랜드 prefix + 사람-읽기 동사 기반 override 힌트.
     // pre-tool-use 와 일관된 FORGEN_USER_CONFIRMED=1 탈출구 + 영구 비활성화 CLI 노출.
-    const reasonWithHint = `[forgen:stop-guard/${hit.id.slice(0, 8)}] ${reason}
+    // ADR-017 D0: 룰의 출처 교정(날짜·문장)을 인용 — "내가 그렇게 말했지"를 차단 순간에 보이게.
+    // block 경로에서만 동적 import (approve 경로의 Stop 훅 지연에 0 비용 — critic SEV-2-b).
+    const origin = await (async (): Promise<string> => {
+      try {
+        if (!hit.origin) return '';
+        const { originLine } = await import('../store/rule-origin.js');
+        return originLine(hit.origin);
+      } catch { return ''; }
+    })();
+    const reasonWithHint = `[forgen:stop-guard/${hit.id.slice(0, 8)}] ${reason}${origin ? `\n${origin}` : ''}
 
 (Override this turn: set FORGEN_USER_CONFIRMED=1 (audited). Disable rule permanently: \`forgen suppress-rule ${hit.id}\`. See recent blocks: \`forgen status --blocks\`.)`;
 

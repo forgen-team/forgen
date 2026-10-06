@@ -1,4 +1,21 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, afterAll, vi } from 'vitest';
+
+// ADR-017 §1.5a: 이 파일의 searchSolutions 호출이 프로덕션 ~/.forgen/state/match-eval-log.jsonl 에
+// 픽스처 쿼리를 기록해 왔다(7d 773건 중 351건). paths.ts 가 모듈 로드 시 FORGEN_HOME 을 읽으므로
+// import 보다 먼저(hoisted) 격리 홈을 지정한다.
+const { ISOLATED_HOME, PREV_FORGEN_HOME } = vi.hoisted(() => {
+  const fsH = require('node:fs') as typeof import('node:fs');
+  const pathH = require('node:path') as typeof import('node:path');
+  const osH = require('node:os') as typeof import('node:os');
+  const prev = process.env.FORGEN_HOME;
+  const home = fsH.mkdtempSync(pathH.join(osH.tmpdir(), 'forgen-test-isolated-home-'));
+  process.env.FORGEN_HOME = home;
+  return { ISOLATED_HOME: home, PREV_FORGEN_HOME: prev };
+});
+afterAll(() => {
+  fs.rmSync(ISOLATED_HOME, { recursive: true, force: true });
+  if (PREV_FORGEN_HOME === undefined) delete process.env.FORGEN_HOME; else process.env.FORGEN_HOME = PREV_FORGEN_HOME;
+});
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';

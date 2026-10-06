@@ -1,10 +1,12 @@
 /**
  * T3 — 사용자 반복 우회 (user_bypass).
  *
- * 트리거 조건 (ADR-002):
- *   7d 내 bypass_count ≥ 5 → suppress (일시 비활성 + 7일 후 자동 재활성)
+ * 트리거 조건 (ADR-002, R6-P1 로 suppress→flag 약화):
+ *   7d 내 bypass_7d ≥ 5 → flag (사용자 주의 환기)
  *
- * bypass 기록은 post-tool-use 측 확장이 bypass.jsonl 에 append (별도 wiring).
+ * 입력 (ADR-017 D1, 2026-10-06): bypass_7d 는 violations.jsonl 의 kind:'bypass_confirmed'
+ * (FORGEN_USER_CONFIRMED=1 명시 우회) 만 센다. 과거 bypass.jsonl 자연어 휴리스틱(전량 오탐)은 폐기.
+ * 의미: "사용자가 같은 룰을 7일에 5번 명시적으로 우회했다 → 룰이 틀렸을 가능성, 검토 요청".
  */
 
 import type { Rule } from '../../store/types.js';
@@ -35,7 +37,7 @@ export function detect(input: T3Input): LifecycleEvent[] {
       kind: 't3_user_bypass',
       rule_id: rule.rule_id,
       evidence: {
-        source: 'bypass-log',
+        source: 'violations:bypass_confirmed',
         refs: [],
         metrics: { bypass_7d: s.bypass_7d },
       },

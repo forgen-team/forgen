@@ -439,18 +439,24 @@ async function main(): Promise<void> {
         if (requiresFlag && !confirmed) {
           recordViolation({ rule_id: rule.rule_id, session_id: sessionId, source: 'pre-tool-guard', kind: 'deny', message_preview: command.slice(0, 120) });
           const baseMsg = spec.block_message ?? `[${rule.rule_id}] policy violation: ${rule.policy.slice(0, 120)}`;
+          // ADR-017 D0: 룰의 출처 교정 인용.
+          const origin = await (async (): Promise<string> => {
+            try { const { originLine } = await import('../store/rule-origin.js'); return originLine(rule); } catch { return ''; }
+          })();
           // G8: override 힌트 — FORGEN_USER_CONFIRMED=1 으로 사용자 명시 승인 가능, 감사 로그 기록됨.
-          const msgWithHint = `${baseMsg}\n\n(override: set FORGEN_USER_CONFIRMED=1 (bypass will be audited in violations.jsonl))`;
+          const msgWithHint = `${baseMsg}${origin ? `\n${origin}` : ''}\n\n(override: set FORGEN_USER_CONFIRMED=1 (bypass will be audited in violations.jsonl))`;
           console.log(denyOrObserve('pre-tool-use', msgWithHint));
           return;
         }
         if (requiresFlag && confirmed) {
           // H3: 우회 감사 — FORGEN_USER_CONFIRMED 으로 Mech-A 를 우회할 때마다 violation 로그에
-          // kind='correction' 으로 기록. T3 bypass 누적 대신 별도 채널로 운영자가 monitoring 가능.
+          // (ADR-017: kind='bypass_confirmed' — T3 의 유일한 입력. 아래 주석의 'correction' 은 구 의미.)
           recordViolation({
             rule_id: rule.rule_id, session_id: sessionId,
             source: 'pre-tool-guard',
-            kind: 'correction', // 'correction' = 사용자 명시 우회, rule 위반이지만 의도된 것
+            // ADR-017 D1: 사용자 명시 우회 전용 kind. (이전 'correction' 은 메타가드 advise 와 섞여
+            // "사용자 우회 87건"으로 둔갑했다.) T3 의 유일한 입력.
+            kind: 'bypass_confirmed',
             message_preview: `[FORGEN_USER_CONFIRMED=1 bypass] ${command.slice(0, 120)}`,
           });
         }

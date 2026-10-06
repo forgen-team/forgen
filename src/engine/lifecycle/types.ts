@@ -59,7 +59,11 @@ export interface ViolationEntry {
   rule_id: string;
   session_id: string;
   source: 'stop-guard' | 'subagent-stop-guard' | 'pre-tool-guard' | 'post-tool-guard' | 'evidence-store' | 'manual';
-  kind: 'block' | 'deny' | 'correction';
+  /**
+   * block/deny = 실제 차단. correction = 메타가드 advise(기록만). bypass_confirmed = 사용자가
+   * FORGEN_USER_CONFIRMED=1 로 명시 우회(ADR-017 D1 — T3 의 유일한 입력).
+   */
+  kind: 'block' | 'deny' | 'correction' | 'bypass_confirmed';
   message_preview?: string;
 }
 

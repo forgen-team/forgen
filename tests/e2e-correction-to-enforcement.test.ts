@@ -140,7 +140,7 @@ describe('E2E: correction → rule with enforce_via → live enforcement', () =>
     expect(out.decision).toBeUndefined();
   });
 
-  it('T3 bypass detection: rule 에 반대되는 패턴을 Write/Edit 에 넣으면 bypass.jsonl 기록', () => {
+  it('T3 (ADR-017): rule 에 반대되는 패턴을 Write 에 넣어도 bypass.jsonl 을 더 이상 쓰지 않는다', () => {
     // 1) 교정: ".then 쓰지 마라"
     processCorrection({
       session_id: 'e2e-sess-then',
@@ -170,12 +170,8 @@ describe('E2E: correction → rule with enforce_via → live enforcement', () =>
     });
     expect(proc.status).toBe(0);
 
-    // 3) bypass.jsonl 에 기록 확인
+    // 3) 자연어 휴리스틱 bypass 는 폐기됨(실측 전량 오탐) — 파일 자체가 생기지 않는다.
     const bypassPath = path.join(TEST_HOME, '.forgen', 'state', 'enforcement', 'bypass.jsonl');
-    expect(fs.existsSync(bypassPath)).toBe(true);
-    const entries = fs.readFileSync(bypassPath, 'utf-8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l));
-    const hit = entries.find((e) => e.rule_id === rule!.rule_id);
-    expect(hit).toBeDefined();
-    expect(hit.tool).toBe('Write');
+    expect(fs.existsSync(bypassPath)).toBe(false);
   });
 });

@@ -314,6 +314,11 @@ export interface CorrectionRequest {
   message: string;
   target: string;
   axis_hint: 'quality_safety' | 'autonomy' | 'judgment_philosophy' | 'communication_style' | null;
+  /**
+   * ADR-017 D0 (2026-10-06): 사용자 발화 **원문** (모델이 정리한 message 와 구분). 있을 때만
+   * 차단 메시지가 "당신의 말" 로 인용한다. <private> 필터 후 저장.
+   */
+  user_quote?: string;
 }
 
 export interface CorrectionResult {
