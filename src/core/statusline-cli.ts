@@ -239,11 +239,12 @@ export async function handleStatuslineWith(payload: StdinPayload, nowMs: number 
     cacheSessionModel(sanitizeId(payload.session_id), payload.model.id);
   }
 
-  // (2) D5 샘플 기록 — 매 호출. 압축은 크기·정적 조건을 만족할 때만(compactSamples 내부 가드).
+  // (2) D5 샘플 기록 — 매 호출. 압축은 **append 앞**에서(critic r2: append 직후면 mtime 이 항상 신선해
+  // 정적 가드가 영원히 막혔다). 크기 ≥256KB·60초 정적일 때만 재작성, 2% 확률.
   const samples = samplesFromPayload(payload.rate_limits, nowMs);
   if (samples.length > 0) {
-    appendSamples(samples);
     if (Math.random() < 0.02) compactSamples(undefined, nowMs);
+    appendSamples(samples);
   }
 
   // (3) 렌더 — 1줄 매번, 2줄 15초 캐시

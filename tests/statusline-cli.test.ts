@@ -34,7 +34,7 @@ vi.mock('../src/store/rule-store.js', () => ({
 
 const { renderStatusline, buildUserLine, cachePathFor, handleStatuslineWith } = await import('../src/core/statusline-cli.js');
 const { STATE_DIR } = await import('../src/core/paths.js');
-const { appendSamples, SAMPLES_PATH } = await import('../src/core/rate-limit-forecast.js');
+const { appendSamples, SAMPLES_PATH, SAMPLE_TTL_MS, COMPACT_MIN_BYTES } = await import('../src/core/rate-limit-forecast.js');
 
 const strip = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, '');
 const NOW = Date.parse('2026-10-06T12:00:00Z');
@@ -174,5 +174,26 @@ describe('statusline 2줄 렌더', () => {
     expect(fs.existsSync(cachePathFor('sess-A'))).toBe(true);
     // 샘플은 호출마다 기록 — 5h + 7d × 2회
     expect(fs.readFileSync(SAMPLES_PATH, 'utf-8').trim().split('\n')).toHaveLength(4);
+  });
+
+  it('프로덕션 경로(handleStatuslineWith)에서 압축이 실제로 일어난다 — 크고 정적인 파일 + 2% 분기 (critic r2 ⑦)', async () => {
+    const stale = JSON.stringify({ w: 'five_hour', t: Date.now() - SAMPLE_TTL_MS - 1, used: 1, resets_at: null });
+    fs.mkdirSync(path.dirname(SAMPLES_PATH), { recursive: true });
+    fs.writeFileSync(SAMPLES_PATH, `${Array.from({ length: Math.ceil(COMPACT_MIN_BYTES / (stale.length + 1)) + 1 }, () => stale).join('\n')}\n`);
+    const quiet = (Date.now() - 120_000) / 1000;
+    fs.utimesSync(SAMPLES_PATH, quiet, quiet);
+    const before = fs.statSync(SAMPLES_PATH).size;
+    const rnd = vi.spyOn(Math, 'random').mockReturnValue(0); // 2% 분기 강제
+    const orig = console.log; console.log = () => {};
+    try { await handleStatuslineWith(fullPayload, Date.now()); } finally { rnd.mockRestore(); console.log = orig; }
+    const after = fs.readFileSync(SAMPLES_PATH, 'utf-8').trim().split('\n');
+    expect(fs.statSync(SAMPLES_PATH).size).toBeLessThan(before);
+    expect(after).toHaveLength(2); // TTL 지난 줄 전부 제거 + 이번 호출 5h/7d 샘플 2개
+  });
+
+  it('FORGEN_HOME 격리에서 모델 캐시가 실 홈이 아니라 STATE_DIR 에 쓰인다 (critic r2 ⑧)', async () => {
+    const orig = console.log; console.log = () => {};
+    try { await handleStatuslineWith(fullPayload, NOW); } finally { console.log = orig; }
+    expect(fs.existsSync(path.join(STATE_DIR, 'current-model-sess-A.json'))).toBe(true);
   });
 });

@@ -128,6 +128,7 @@ const ROTATABLE_LOGS = [
   'prompt-history.jsonl',
   'usage-telemetry.jsonl',
   'rate-limit-misses.jsonl',
+  'rate-limit-samples.jsonl', // ADR-017 D5: 10MB 백스톱 (7d TTL 압축과 양립)
 ];
 const DEFAULT_MAX_LOG_BYTES = 10 * 1024 * 1024; // 10MB
 
