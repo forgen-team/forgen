@@ -52,6 +52,25 @@ export async function handleSuppressRule(args: string[]): Promise<void> {
   console.log(`  Re-activate with: forgen activate-rule ${rule.rule_id}`);
 }
 
+/**
+ * ADR-017 D1: enforce_mode 전환. `advise` = 차단 대신 기록만(precision 자동 강등과 같은 상태),
+ * `enforce` = 차단 복귀(자동 강등 해제 — 사용자 명시). 하드 룰은 advise 로 내릴 수 없다.
+ */
+export async function handleEnforceMode(args: string[], mode: 'block' | 'advise'): Promise<void> {
+  const { loadAllRules, saveRule } = await import('../store/rule-store.js');
+  const prefix = args[0];
+  if (!prefix) { console.log(`usage: forgen rule ${mode === 'advise' ? 'advise' : 'enforce'} <id-or-prefix>`); return; }
+  const matches = loadAllRules().filter((r) => r.rule_id.startsWith(prefix) && r.status === 'active');
+  if (matches.length === 0) { console.log(`no active rule matching ${prefix}`); return; }
+  if (matches.length > 1) { console.log(`ambiguous prefix ${prefix} → ${matches.map((r) => r.rule_id.slice(0, 8)).join(', ')}`); return; }
+  const rule = matches[0];
+  if (mode === 'advise' && rule.strength === 'hard') { console.log(`✗ [forgen] hard rule ${rule.rule_id.slice(0, 8)} cannot be set to advise`); return; }
+  const prev = rule.enforce_mode ?? 'block';
+  rule.enforce_mode = mode;
+  saveRule(rule);
+  console.log(`✓ [forgen] ${rule.rule_id.slice(0, 8)} enforce_mode: ${prev} → ${mode}${mode === 'block' ? ' (차단 복귀 — 자동 강등 해제)' : ' (기록만, 차단 안 함)'}`);
+}
+
 export async function handleActivateRule(args: string[]): Promise<void> {
   const partial = args[0];
   if (!partial) {

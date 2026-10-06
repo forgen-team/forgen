@@ -10,7 +10,7 @@ import * as path from 'node:path';
 import { loadAllRules } from '../store/rule-store.js';
 import { loadAllEvidence } from '../store/evidence-store.js';
 import { STATE_DIR, ME_DIR } from './paths.js';
-import { isRealBlock, isConfirmedBypass, isSyntheticSession } from '../engine/lifecycle/signals.js';
+import { isRealBlock, isConfirmedBypass, isSyntheticSession, precisionByRule, readVerdicts } from '../engine/lifecycle/signals.js';
 import { computeFixFeatRatio, formatFixRatio } from './git-stats.js';
 
 // v0.4.1 격리 fix: 이전에는 os.homedir() 직접 사용해서 FORGEN_HOME env 로
@@ -19,6 +19,8 @@ const ENFORCEMENT_DIR = path.join(STATE_DIR, 'enforcement');
 const LIFECYCLE_DIR = path.join(STATE_DIR, 'lifecycle');
 const SOLUTIONS_DIR = path.join(ME_DIR, 'solutions');
 
+const C_DIM = '\x1b[2m';
+const C_RESET = '\x1b[0m';
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 function readJsonl(p: string): Array<Record<string, unknown>> {
@@ -130,6 +132,8 @@ export interface StatsSnapshot {
   };
   /** v0.5.0: 7일간 가장 많이 발동된 규칙 top-3 */
   topRules7d: Array<{ name: string; count: number }>;
+  /** ADR-017 D1: 룰별 precision(7d) — 판정 출처 무관 유효 판정 기준. */
+  precision7d: Array<{ rule_id: string; correct: number; false_positive: number; unjudged: number; precision: number | null }>;
   /** v0.5.0: 이번주 vs 지난주 변화량 */
   weeklyTrend: {
     blocksThisWeek: number;
@@ -263,6 +267,7 @@ export function computeStats(): StatsSnapshot {
     philosophy: computePhilosophy(),
     solutionHealth: computeSolutionHealth(),
     topRules7d: computeTopRules7d(realBlocks),
+    precision7d: [...precisionByRule(violations as never, readVerdicts(), 7).values()].sort((a, b) => (b.correct + b.false_positive + b.unjudged) - (a.correct + a.false_positive + a.unjudged)).slice(0, 8),
     weeklyTrend: computeWeeklyTrend(realBlocks),
   };
 }
@@ -328,7 +333,10 @@ function computeTopRules7d(violations: Array<Record<string, unknown>>): StatsSna
   for (const v of violations) {
     const ts = typeof v.at === 'string' ? Date.parse(v.at) : NaN;
     if (!Number.isFinite(ts) || ts < cutoff) continue;
-    const rule = typeof v.rule === 'string' ? v.rule
+    // ADR-017 D1 (critic 관찰): 이전엔 rule_id 를 보지 않아 'pre-tool-guard' 같은 source 로 집계돼
+    // 룰별 precision 과 조인되지 않았다. rule_id 우선.
+    const rule = typeof v.rule_id === 'string' ? v.rule_id
+      : typeof v.rule === 'string' ? v.rule
       : typeof v.guard === 'string' ? v.guard
       : typeof v.source === 'string' ? v.source
       : 'unknown';
@@ -448,12 +456,17 @@ export function renderStats(s: StatsSnapshot): string {
     lines.push('');
   }
 
-  // v0.5.0: Top rules (7d)
+  // v0.5.0: Top rules (7d) + ADR-017 D1 precision
   if (s.topRules7d.length > 0) {
-    lines.push('  Top rules (7d)');
+    lines.push('  Top rules (7d)                 precision (judged / unjudged)');
+    const pmap = new Map(s.precision7d.map((p) => [p.rule_id, p]));
     for (const r of s.topRules7d) {
-      lines.push(`    ${padNum(r.count)}x  ${r.name}`);
+      const p = pmap.get(r.name);
+      const prec = !p ? '' : p.precision === null ? `  —  (0 / ${p.unjudged})` : `  ${Math.round(p.precision * 100)}%  (${p.correct + p.false_positive} / ${p.unjudged})`;
+      lines.push(`    ${padNum(r.count)}x  ${r.name.padEnd(28).slice(0, 28)}${prec}`);
     }
+    const unjudged = s.precision7d.reduce((n, p) => n + p.unjudged, 0);
+    if (unjudged > 0) lines.push(`    ${C_DIM}unjudged ${unjudged} — 자동 판정(Haiku) 은 compound consent 가 켜져 있을 때만 돕니다: forgen compound consent on${C_RESET}`);
     lines.push('');
   }
 

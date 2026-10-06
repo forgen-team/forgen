@@ -19,7 +19,7 @@ describe('cli - command structure', () => {
     return [...source.matchAll(/name:\s*'([^']+)'/g)]
       .map((match) => match[1])
       .filter((name) => name !== 'string')
-      .slice(0, 16); // top-level (Wave 1: status+dev 통합, onboarding→forge --onboarding)
+      .slice(0, 17); // top-level (Wave 1: status+dev 통합, onboarding→forge --onboarding; ADR-017: +block)
   }
 
   it('CLI 모듈이 로드 가능하다', async () => {
@@ -35,6 +35,7 @@ describe('cli - command structure', () => {
       'forge',
       'compound',
       'skill',
+      'block',
       'status',
       'learn',
       'statusline',

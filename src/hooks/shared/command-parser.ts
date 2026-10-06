@@ -62,3 +62,47 @@ export function preprocessForMatch(cmd: string, target: MatchTarget | undefined)
   if (!target || target === 'raw') return cmd;
   return maskQuotedContent(cmd);
 }
+
+/** 임시 경로 접두 — 삭제해도 사용자 파일이 아닌 곳. Claude Code scratchpad(/tmp/claude-*) 포함. */
+const TEMP_PREFIXES = ['/tmp/', '/var/tmp/', '/var/folders/', '/private/tmp/', '/dev/shm/'];
+
+/**
+ * ADR-017 §6-2 (오너 결정): "확인 없는 rm -rf 금지" 하드 룰은 Claude 가 **자기 임시 작업 폴더**를
+ * 지우는 경우까지 막았다(7d 실 차단 14건 중 13건). 같은 명령 안의 직전 대입(`S=/tmp/x; rm -rf $S`,
+ * `rm -rf "$S/v1dbg"`)을 한 단계 치환해 rm -rf 대상이 **전부** 임시 경로이면 true.
+ * 하나라도 비임시(홈·프로젝트·루트) 또는 해석 불가(치환 안 되는 변수, 빈 대상)면 false — 보수적.
+ */
+export function isTempOnlyRm(cmd: string): boolean {
+  if (!cmd) return false;
+  // 1) 같은 명령의 단순 대입 수집: NAME=/path 또는 NAME="/path" / NAME=$TMPDIR/… (한 단계)
+  const vars = new Map<string, string>([['TMPDIR', process.env.TMPDIR?.replace(/\/+$/, '') || '/tmp']]);
+  const assignRe = /(?:^|[;&|\n]\s*|\s)([A-Za-z_][A-Za-z0-9_]*)=(?:"([^"]*)"|'([^']*)'|([^\s;&|]+))/g;
+  for (const m of cmd.matchAll(assignRe)) {
+    const raw = m[2] ?? m[3] ?? m[4] ?? '';
+    vars.set(m[1], expand(raw, vars));
+  }
+  // 2) rm -rf / -fr / -r -f 대상 추출
+  const rmRe = /\brm\s+(?:-[a-zA-Z]*r[a-zA-Z]*\s+|-[a-zA-Z]+\s+)+([^;&|\n]+)/g;
+  let found = false;
+  for (const m of cmd.matchAll(rmRe)) {
+    const targets = m[1].trim().split(/\s+/).filter((t) => t && !t.startsWith('-'));
+    if (targets.length === 0) return false;
+    for (const t of targets) {
+      found = true;
+      const resolved = expand(t.replace(/^["']|["']$/g, ''), vars);
+      if (resolved.includes('$')) return false; // 미해석 변수
+      if (!TEMP_PREFIXES.some((p) => resolved.startsWith(p))) return false;
+      // 접두만 지우는 경우(/tmp 자체, /tmp/) 는 제외
+      const rest = resolved.replace(/^\/(?:private\/)?(?:var\/)?(?:tmp|folders|dev\/shm)\/?/, '');
+      if (rest.length === 0) return false;
+    }
+  }
+  return found;
+}
+
+function expand(s: string, vars: Map<string, string>): string {
+  return s.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)/g, (whole, a, b) => {
+    const v = vars.get(a ?? b);
+    return v === undefined ? whole : v;
+  });
+}

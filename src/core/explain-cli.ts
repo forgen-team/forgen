@@ -7,7 +7,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { STATE_DIR } from './paths.js';
-import { isRealBlock } from '../engine/lifecycle/signals.js';
+import { isRealBlock, effectiveVerdicts, readReceipt } from '../engine/lifecycle/signals.js';
 
 const isTTY = process.stdout.isTTY;
 const C = {
@@ -30,6 +30,8 @@ interface ViolationEntry {
   kind?: string;
   reason?: string;
   reason_preview?: string;
+  violation_id?: string;
+  matched?: string;
   message_preview?: string;
   pattern_preview?: string;
   tool?: string;
@@ -81,6 +83,7 @@ export async function handleExplain(args: string[]): Promise<void> {
   const targets = violations.slice(-count);
 
   const acks = readAcknowledgments();
+  const verdicts = effectiveVerdicts();
 
   for (const v of targets) {
     const ruleId = v.rule_id ?? v.rule ?? v.guard ?? 'unknown';
@@ -109,6 +112,27 @@ export async function handleExplain(args: string[]): Promise<void> {
       console.log(`    ${C.dim}${line}${C.reset}`);
     }
     console.log(`  ${C.cyan}Resolved:${C.reset} ${wasAcked ? `${C.green}Yes — Claude retracted and resubmitted with evidence${C.reset}` : `${C.yellow}No acknowledgment found${C.reset}`}`);
+    // ADR-017 D1 영수증: id · 매칭 프래그먼트 · 판정 · 전문 발췌(24h 내)
+    const vid = typeof v.violation_id === 'string' ? v.violation_id : '';
+    if (vid) {
+      const verdict = verdicts.get(vid);
+      const vLabel = !verdict ? `${C.yellow}unjudged${C.reset}`
+        : verdict.verdict === 'correct' ? `${C.green}correct (정탐)${C.reset} by ${verdict.by}`
+        : verdict.verdict === 'false_positive' ? `${C.red}false_positive (오탐)${C.reset} by ${verdict.by}`
+        : `${C.yellow}unsure${C.reset} by ${verdict.by}`;
+      console.log(`  ${C.cyan}Receipt:${C.reset} ${vid.slice(0, 8)}  verdict: ${vLabel}${verdict?.reason ? ` — ${C.dim}${verdict.reason.slice(0, 100)}${C.reset}` : ''}`);
+      if (typeof v.matched === 'string' && v.matched) console.log(`  ${C.cyan}Matched:${C.reset} ${C.dim}${v.matched.slice(0, 140)}${C.reset}`);
+      const receipt = readReceipt(vid);
+      if (receipt) {
+        console.log(`  ${C.cyan}Context:${C.reset}`);
+        const m = typeof v.matched === 'string' ? v.matched.replace(/…$/, '').slice(0, 40) : '';
+        const lines = receipt.split('\n');
+        let at = m ? lines.findIndex((l) => l.includes(m)) : -1;
+        if (at < 0) at = 0;
+        for (const line of lines.slice(Math.max(0, at - 1), at + 2)) console.log(`    ${C.dim}${line.slice(0, 160)}${C.reset}`);
+      }
+      console.log(`  ${C.dim}Judge:   forgen block ${vid.slice(0, 8)} --ok | --fp${C.reset}`);
+    }
     console.log('');
     console.log(`  ${C.dim}To suppress this rule: forgen suppress-rule ${ruleId}${C.reset}`);
     console.log(`  ${C.dim}To bypass one turn:    set FORGEN_USER_CONFIRMED=1${C.reset}`);

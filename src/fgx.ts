@@ -20,7 +20,7 @@ const args = process.argv.slice(2);
 const FORGEN_SUBCOMMANDS = new Set([
   // Wave 1 통합(feature-audit 2026-07-21): status(←stats/health/dashboard/me/
   // recall/explain/last-block/watch), dev(←probe-workflow/parity/migrate/regress-map).
-  'forge', 'compound', 'skill', 'status', 'learn', 'statusline',
+  'forge', 'compound', 'skill', 'block', 'status', 'learn', 'statusline',
   'config', 'mcp', 'init', 'install', 'maintenance', 'dev',
   'notepad', 'inspect', 'doctor', 'uninstall', 'rule',
   'classify-enforce', 'rule-meta-scan', 'lifecycle-scan',

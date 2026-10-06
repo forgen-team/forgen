@@ -65,6 +65,34 @@ export interface ViolationEntry {
    */
   kind: 'block' | 'deny' | 'correction' | 'bypass_confirmed';
   message_preview?: string;
+  // ── ADR-017 D1 영수증 필드 (전부 optional — 구 리더 호환) ──
+  /** 영수증 식별자. `forgen block <id> --ok|--fp` 와 verdicts.jsonl 조인 키. */
+  violation_id?: string;
+  /** 어느 패턴/프래그먼트가 매칭됐는가 (최대 160자). */
+  matched?: string;
+  target_kind?: 'command' | 'response' | 'file';
+  /** 전문 sha256 앞 16자 — 전문은 receipts/<id>.txt 에 24h TTL 로만 보관. */
+  target_hash?: string;
+}
+
+export type Verdict = 'correct' | 'false_positive' | 'unsure';
+
+export interface VerdictEntry {
+  at: string;
+  violation_id: string;
+  rule_id: string;
+  verdict: Verdict;
+  /** 사람 > 모델. user 판정은 auto 를 덮어쓴다. */
+  by: 'auto' | 'user';
+  reason?: string;
+}
+
+/** D2: Stop 에서 실제 평가된 룰의 결과 (통과/위반). violations.jsonl 과 분리 — T2·explain 오염 방지. */
+export interface CheckEntry {
+  at: string;
+  session_id: string;
+  rule_id: string;
+  result: 'pass' | 'violation';
 }
 
 export interface BypassEntry {

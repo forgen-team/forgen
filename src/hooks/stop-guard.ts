@@ -37,7 +37,7 @@ import { recordHookTiming } from './shared/hook-timing.js';
 import { isHookEnabled } from './hook-config.js';
 import { loadActiveRules } from '../store/rule-store.js';
 import type { Rule, EnforceSpec } from '../store/types.js';
-import { recordViolation, rotateIfBig } from '../engine/lifecycle/signals.js';
+import { recordViolation, recordCheck, rotateIfBig } from '../engine/lifecycle/signals.js';
 import { compileSafeRegex, safeRegexTest } from './shared/safe-regex.js';
 
 const HOOK_NAME = 'stop-guard';
@@ -74,6 +74,8 @@ interface SpikeRule {
   system_tag?: string;
   /** ADR-017 D0: 출처 인용용 — store 룰에서만 채워짐(project-scope 룰 포함, 재읽기 없음). */
   origin?: { source: Rule['source']; evidence_refs: string[]; policy: string };
+  /** ADR-017 D1: precision 강등 모드. 'advise' 면 차단 대신 기록(kind:'correction'). */
+  enforce_mode?: 'block' | 'advise';
 }
 
 interface ScenariosFile {
@@ -145,6 +147,7 @@ export function rulesFromStore(rules: Rule[]): SpikeRule[] {
         block_message: spec.block_message,
         system_tag: spec.system_tag,
         origin: { source: rule.source, evidence_refs: rule.evidence_refs ?? [], policy: rule.policy },
+        enforce_mode: rule.enforce_mode,
       });
     }
   }
@@ -302,16 +305,22 @@ function artifactFresh(relOrAbs: string, maxAgeS: number): boolean {
 export function evaluateStop(
   lastAssistantMessage: string,
   rules: SpikeRule[]
-): { action: 'approve'; hit: null } | { action: 'block'; hit: SpikeRule; reason: string } {
+): { action: 'approve'; hit: null; passed: string[]; advised: Array<{ rule: SpikeRule; reason: string }> }
+ | { action: 'block'; hit: SpikeRule; reason: string; passed: string[]; advised: Array<{ rule: SpikeRule; reason: string }> } {
+  // ADR-017 D2: 실제 평가돼 통과한 룰(passed)과, D1 advise 강등으로 차단 대신 기록만 하는 룰(advised)을 함께 반환.
+  const passed: string[] = [];
+  const advised: Array<{ rule: SpikeRule; reason: string }> = [];
   for (const rule of rules) {
     if (rule.hook !== 'Stop') continue;
     if (!messageTriggersRule(lastAssistantMessage, rule)) continue;
     const result = evaluateVerifier(rule);
     if (result.violated) {
-      return { action: 'block', hit: rule, reason: result.reason };
+      if (rule.enforce_mode === 'advise') { advised.push({ rule, reason: result.reason }); continue; }
+      return { action: 'block', hit: rule, reason: result.reason, passed, advised };
     }
+    passed.push(rule.id);
   }
-  return { action: 'approve', hit: null };
+  return { action: 'approve', hit: null, passed, advised };
 }
 
 interface BlockCounterState {
@@ -544,14 +553,20 @@ export async function main(): Promise<void> {
       const results = runMetaGuards({ lastMessage, recentTools, minMeasurements: 1, completionGuardMode });
 
       for (const r of results) {
-        recordViolation({
-          rule_id: `builtin:${r.shortId}`,
-          session_id: sessionId,
-          source: 'stop-guard',
-          kind: r.kind,
-          message_preview: lastMessage.slice(0, 120),
-        });
+        const violationId = recordViolation(
+          {
+            rule_id: `builtin:${r.shortId}`,
+            session_id: sessionId,
+            source: 'stop-guard',
+            kind: r.kind,
+            message_preview: lastMessage.slice(0, 120),
+            matched: r.reason.slice(0, 160),
+            target_kind: 'response',
+          },
+          r.kind === 'block' ? { receipt_text: lastMessage } : {},
+        );
         if (r.kind !== 'block') continue;
+        try { const { spawnBlockJudge } = await import('../engine/block-judge.js'); spawnBlockJudge(violationId, sessionId); } catch { /* fail-open */ }
         const reasonText = `[forgen:stop-guard/${r.shortId}] ${r.reason}
 
 (Override this turn: set FORGEN_USER_CONFIRMED=1 (audited).)`;
@@ -569,6 +584,12 @@ export async function main(): Promise<void> {
     const result = evaluateStop(lastMessage, rules);
     const sessionId = input?.session_id ?? 'unknown';
 
+    // ADR-017 D2: 실제 평가된 룰의 통과를 checks.jsonl 에 기록(violations 와 분리). D1: advise 강등 룰의
+    // 위반은 kind:'correction' 으로 기록만 하고 차단하지 않는다.
+    for (const id of result.passed) recordCheck({ session_id: sessionId, rule_id: id, result: 'pass' });
+    for (const a of result.advised) {
+      recordViolation({ rule_id: a.rule.id, session_id: sessionId, source: 'stop-guard', kind: 'correction', message_preview: lastMessage.slice(0, 120), matched: a.reason.slice(0, 160), target_kind: 'response' });
+    }
     if (result.action === 'approve') {
       // R9-PA2: 같은 session 에 pending block 이 있었다면 retract→pass 루프가
       // 실제 작동한 것 — acknowledgment 이벤트로 기록. block-count 는 cleanup.
@@ -578,6 +599,7 @@ export async function main(): Promise<void> {
     }
 
     const { hit, reason } = result;
+    recordCheck({ session_id: sessionId, rule_id: hit.id, result: 'violation' });
 
     // R7-U1: FORGEN_USER_CONFIRMED=1 으로 사용자가 명시적 우회 → audit 기록 후 approve.
     // pre-tool-use 와 동일한 탈출 경로 일관성 확보.
@@ -593,13 +615,19 @@ export async function main(): Promise<void> {
 
     // T2 signal: block 은 rule 위반 증거 — violations.jsonl 에 기록.
     // (stuck-loop force approve 는 아래에서 처리되므로 실제 block 시에만 기록)
-    recordViolation({
-      rule_id: hit.id,
-      session_id: sessionId,
-      source: 'stop-guard',
-      kind: 'block',
-      message_preview: lastMessage.slice(0, 120),
-    });
+    const violationId = recordViolation(
+      {
+        rule_id: hit.id,
+        session_id: sessionId,
+        source: 'stop-guard',
+        kind: 'block',
+        message_preview: lastMessage.slice(0, 120),
+        matched: reason.slice(0, 160),
+        target_kind: 'response',
+      },
+      { receipt_text: lastMessage },
+    );
+    try { const { spawnBlockJudge } = await import('../engine/block-judge.js'); spawnBlockJudge(violationId, sessionId); } catch { /* fail-open */ }
 
     // G8 + R4-UX1 + R7-U1/U2: 브랜드 prefix + 사람-읽기 동사 기반 override 힌트.
     // pre-tool-use 와 일관된 FORGEN_USER_CONFIRMED=1 탈출구 + 영구 비활성화 CLI 노출.
@@ -614,7 +642,7 @@ export async function main(): Promise<void> {
     })();
     const reasonWithHint = `[forgen:stop-guard/${hit.id.slice(0, 8)}] ${reason}${origin ? `\n${origin}` : ''}
 
-(Override this turn: set FORGEN_USER_CONFIRMED=1 (audited). Disable rule permanently: \`forgen suppress-rule ${hit.id}\`. See recent blocks: \`forgen status --blocks\`.)`;
+(Override this turn: set FORGEN_USER_CONFIRMED=1 (audited). Disable rule permanently: \`forgen suppress-rule ${hit.id}\`. See recent blocks: \`forgen status --blocks\`. 오탐이면: \`forgen block ${violationId.slice(0, 8)} --fp\`)`;
 
     const count = incrementBlockCount(sessionId, hit.id);
     const threshold = getStuckLoopThreshold();

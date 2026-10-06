@@ -405,9 +405,9 @@ async function main(): Promise<void> {
   try {
     const [
       { loadActiveRules },
-      { recordViolation },
+      { recordViolation, matchedFragment },
       { compileSafeRegex, safeRegexTest },
-      { preprocessForMatch },
+      { preprocessForMatch, isTempOnlyRm },
     ] = await Promise.all([
       import('../store/rule-store.js'),
       import('../engine/lifecycle/signals.js'),
@@ -434,17 +434,31 @@ async function main(): Promise<void> {
         const matchTarget = (v.params?.match_target ?? 'raw') as 'raw' | 'masked' | 'command_tokens';
         const target = preprocessForMatch(command, matchTarget);
         if (!safeRegexTest(re.regex, target)) continue;
+        // ADR-017 §6-2 (오너 결정): rm -rf 류 룰이 Claude 의 임시 작업 폴더(/tmp/claude-*/… 등) 삭제에
+        // 걸린 경우는 막지 않는다 — 같은 명령 안의 변수 대입까지 한 단계 해석해 대상이 전부 임시 경로일 때만.
+        if (pattern.includes('rm') && isTempOnlyRm(command)) { log.debug(`rule ${rule.rule_id}: temp-only rm — exempt`); continue; }
         const requiresFlag = v.params?.requires_flag;
         const confirmed = process.env.FORGEN_USER_CONFIRMED === '1';
+        const matchedFrag = matchedFragment(re.regex, target);
+        // ADR-017 D1: precision 강등된 룰(enforce_mode 'advise')은 차단 대신 기록만.
+        if (requiresFlag && !confirmed && rule.enforce_mode === 'advise') {
+          recordViolation({ rule_id: rule.rule_id, session_id: sessionId, source: 'pre-tool-guard', kind: 'correction', message_preview: command.slice(0, 120), matched: matchedFrag, target_kind: 'command' });
+          console.log(approveWithWarning(`<compound-tool-warning>\n[Forgen] (advise) ${spec.block_message ?? rule.policy.slice(0, 120)} — 이 룰은 오탐률이 높아 차단 대신 안내만 합니다.\n</compound-tool-warning>`));
+          return;
+        }
         if (requiresFlag && !confirmed) {
-          recordViolation({ rule_id: rule.rule_id, session_id: sessionId, source: 'pre-tool-guard', kind: 'deny', message_preview: command.slice(0, 120) });
+          const violationId = recordViolation(
+            { rule_id: rule.rule_id, session_id: sessionId, source: 'pre-tool-guard', kind: 'deny', message_preview: command.slice(0, 120), matched: matchedFrag, target_kind: 'command' },
+            { receipt_text: command },
+          );
+          try { const { spawnBlockJudge } = await import('../engine/block-judge.js'); spawnBlockJudge(violationId, sessionId); } catch { /* fail-open */ }
           const baseMsg = spec.block_message ?? `[${rule.rule_id}] policy violation: ${rule.policy.slice(0, 120)}`;
           // ADR-017 D0: 룰의 출처 교정 인용.
           const origin = await (async (): Promise<string> => {
             try { const { originLine } = await import('../store/rule-origin.js'); return originLine(rule); } catch { return ''; }
           })();
           // G8: override 힌트 — FORGEN_USER_CONFIRMED=1 으로 사용자 명시 승인 가능, 감사 로그 기록됨.
-          const msgWithHint = `${baseMsg}${origin ? `\n${origin}` : ''}\n\n(override: set FORGEN_USER_CONFIRMED=1 (bypass will be audited in violations.jsonl))`;
+          const msgWithHint = `${baseMsg}${origin ? `\n${origin}` : ''}\n\n(override: set FORGEN_USER_CONFIRMED=1 (bypass will be audited in violations.jsonl). 오탐이면: forgen block ${violationId.slice(0, 8)} --fp)`;
           console.log(denyOrObserve('pre-tool-use', msgWithHint));
           return;
         }

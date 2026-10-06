@@ -343,7 +343,7 @@ async function main(): Promise<void> {
       try {
         const [
           { loadActiveRules },
-          { recordViolation },
+          { recordViolation, matchedFragment },
           { compileSafeRegex, safeRegexTest },
           { preprocessForMatch },
         ] = await Promise.all([
@@ -370,12 +370,17 @@ async function main(): Promise<void> {
             const matchTarget = (v.params?.match_target ?? 'raw') as 'raw' | 'masked' | 'command_tokens';
             const mechTarget = preprocessForMatch(target, matchTarget);
             if (!safeRegexTest(re.regex, mechTarget)) continue;
-            recordViolation({
-              rule_id: rule.rule_id, session_id: sessionId,
-              source: 'post-tool-guard',
-              kind: 'block',
-              message_preview: target.slice(0, 120),
-            });
+            recordViolation(
+              {
+                rule_id: rule.rule_id, session_id: sessionId,
+                source: 'post-tool-guard',
+                kind: 'block',
+                message_preview: target.slice(0, 120),
+                matched: matchedFragment(re.regex, mechTarget),
+                target_kind: toolName === 'Bash' ? 'command' : 'file',
+              },
+              { receipt_text: target },
+            );
             messages.push(
               `<compound-rule-violation>\n[Forgen] Rule ${rule.rule_id.slice(0, 8)} pattern matched in ${toolName} output.\n${spec.block_message ?? rule.policy.slice(0, 120)}\n</compound-rule-violation>`
             );
