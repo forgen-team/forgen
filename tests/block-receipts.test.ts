@@ -129,4 +129,33 @@ describe('block-judge', () => {
     expect(loadRule(hard.rule_id)?.enforce_mode).toBeUndefined();
     expect(judge.maybeDemote(soft.rule_id)).toBe(false); // 이미 advise → no-op
   });
+  it('캡은 in-flight 마커를 포함한다 — 판정이 끝나기 전 연속 차단에서 폭주 금지 (critic SEV-1)', () => {
+    const now = Date.now();
+    const vio = Array.from({ length: 12 }, (_, i) => ({ at: new Date(now).toISOString(), rule_id: 'r', session_id: 's1', source: 'stop-guard' as const, kind: 'block' as const, violation_id: `v${i}` }));
+    const inflight10 = vio.slice(0, 10).map((v) => v.violation_id as string);
+    expect(judge.withinJudgeCaps('s1', now, [], vio, inflight10)).toBe(false);
+    expect(judge.withinJudgeCaps('s1', now, [], vio, inflight10.slice(0, 9))).toBe(true);
+    // 실제 마커 파일: markInflight → 집계, clearInflight → 제거
+    judge.markInflight('v0');
+    expect(judge.withinJudgeCaps('s1', now, [], vio, undefined)).toBe(true);
+    for (let i = 1; i < 10; i++) judge.markInflight(`v${i}`);
+    expect(judge.withinJudgeCaps('s1', now, [], vio, undefined)).toBe(false);
+    for (let i = 0; i < 10; i++) judge.clearInflight(`v${i}`);
+    expect(judge.withinJudgeCaps('s1', now, [], vio, undefined)).toBe(true);
+  });
+});
+
+describe('redactForReceipt — 영수증 추가 마스킹 (critic SEV-2)', () => {
+  it('DB_PASS·mysql -p·sshpass·헤더·URL userinfo·JWT·PEM 본문', () => {
+    const r = sig.redactForReceipt([
+      'export DB_PASS=hunter2 && mysql -uroot -pS3cret db',
+      'sshpass -p topsecret ssh x',
+      'curl -H "Authorization: Basic dXNlcjpwYXNz" -H "X-API-Key: abcdef123456" https://user:pw123@host/x',
+      'TOKEN=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c',
+      '-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA\n-----END RSA PRIVATE KEY-----',
+    ].join('\n'));
+    for (const leak of ['hunter2', 'S3cret', 'topsecret', 'dXNlcjpwYXNz', 'abcdef123456', 'pw123', 'eyJhbGciOiJIUzI1NiJ9', 'MIIEowIBAAKCAQEA']) expect(r).not.toContain(leak);
+    expect(r).toContain('[REDACTED');
+    expect(r).toContain('ssh x'); // 비밀 아닌 부분은 보존
+  });
 });

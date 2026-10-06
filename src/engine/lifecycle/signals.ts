@@ -14,6 +14,24 @@ import * as path from 'node:path';
 import type { Rule } from '../../store/types.js';
 import * as crypto from 'node:crypto';
 import { redactSecrets } from '../../hooks/secret-filter.js'; // ESM main guard 있음 — import 부작용 없음
+
+/**
+ * 영수증·로그용 추가 마스킹 (critic D1 SEV-2): secret-filter 의 공개 키 패턴만으로는 `DB_PASS=…`, mysql -p<값>,
+ * sshpass -p, Basic/X-API-Key 헤더, URL userinfo, 무접두 JWT, PEM 본문이 평문으로 남아 Haiku 로 egress 된다.
+ * 과잉 마스킹은 영수증 가독성만 깎지만 누락은 유출이므로 넓게 잡는다.
+ */
+export function redactForReceipt(text: string): string {
+  // PEM 은 secret-filter 보다 먼저 — secret-filter 가 BEGIN 헤더 줄만 치환하면 본문(base64)이 평문으로 남는다.
+  let t = text.replace(/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g, '[REDACTED:PEM]');
+  t = redactSecrets(t).redacted;
+  t = t.replace(/\[REDACTED:[^\]]*\][\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g, '[REDACTED:PEM]');
+  t = t.replace(/\b(eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,})/g, '[REDACTED:JWT]');
+  t = t.replace(/(\b[A-Za-z_][A-Za-z0-9_]*(?:pass(?:word|wd)?|pwd|secret|token|api[_-]?key|auth|credential)[A-Za-z0-9_]*\s*[=:]\s*)(["']?)[^\s"'&;]+\2/gi, '$1$2[REDACTED]$2');
+  t = t.replace(/((?:mysql|mariadb|mysqldump|sshpass|psql)\b[^\n;|&]*?\s-p)(?!assword)\s*(\S+)/gi, '$1[REDACTED]');
+  t = t.replace(/((?:Authorization|X-API-Key|X-Auth-Token|Proxy-Authorization)\s*:\s*)(?:Basic|Bearer|Token)?\s*\S+/gi, '$1[REDACTED]');
+  t = t.replace(/(:\/\/[^\s/:@]+:)[^\s/@]+(@)/g, '$1[REDACTED]$2');
+  return t;
+}
 import type { RuleSignals, ViolationEntry, BypassEntry, VerdictEntry, CheckEntry } from './types.js';
 import { STATE_DIR as FORGEN_STATE_DIR } from '../../core/paths.js';
 
@@ -122,14 +140,14 @@ export function recordViolation(entry: Omit<ViolationEntry, 'at'>, opts: RecordV
     const violation_id = entry.violation_id ?? crypto.randomUUID();
     const full: ViolationEntry = { at: new Date().toISOString(), violation_id, ...entry };
     // 로그에 남는 프래그먼트/미리보기도 secret 마스킹 — 영수증만 가리고 로그에 키가 남으면 의미 없다.
-    if (typeof full.matched === 'string') full.matched = redactSecrets(full.matched).redacted;
-    if (typeof full.message_preview === 'string') full.message_preview = redactSecrets(full.message_preview).redacted;
+    if (typeof full.matched === 'string') full.matched = redactForReceipt(full.matched);
+    if (typeof full.message_preview === 'string') full.message_preview = redactForReceipt(full.message_preview);
     if (typeof full.matched === 'string' && full.matched.length > MATCHED_MAX) full.matched = `${full.matched.slice(0, MATCHED_MAX - 1)}…`;
     if (opts.receipt_text) {
       full.target_hash = sha16(opts.receipt_text);
       try {
         fs.mkdirSync(RECEIPTS_DIR, { recursive: true, mode: 0o700 });
-        fs.writeFileSync(path.join(RECEIPTS_DIR, `${violation_id}.txt`), redactSecrets(opts.receipt_text).redacted, { mode: 0o600 });
+        fs.writeFileSync(path.join(RECEIPTS_DIR, `${violation_id}.txt`), redactForReceipt(opts.receipt_text), { mode: 0o600 });
         pruneReceipts(Date.now());
       } catch { /* 영수증 실패는 기록 자체를 막지 않는다 */ }
     }

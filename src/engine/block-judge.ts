@@ -22,7 +22,7 @@ import {
   readJsonlSafe, readReceipt, readVerdicts, setVerdict, precisionByRule,
 } from './lifecycle/signals.js';
 import type { ViolationEntry, Verdict } from './lifecycle/types.js';
-import { loadRule, saveRule } from '../store/rule-store.js';
+import { loadRule, saveRule, loadActiveRules } from '../store/rule-store.js';
 import { originLine } from '../store/rule-origin.js';
 import { isHaikuCompoundEnabled } from '../core/compound-consent.js';
 
@@ -33,6 +33,37 @@ export const DEMOTE_MIN_JUDGED = 5;
 export const DEMOTE_PRECISION_BELOW = 0.5;
 
 const VIOLATIONS_PATH = path.join(STATE_DIR, 'enforcement', 'violations.jsonl');
+/** critic D1 SEV-1: 캡은 완료된 판정만 세면 연속 차단에서 폭주한다 → 부모가 spawn 전에 동기적으로 in-flight 마커를 쓴다. */
+const INFLIGHT_DIR = path.join(STATE_DIR, 'enforcement', 'judge-inflight');
+export const INFLIGHT_STALE_MS = 5 * 60 * 1000;
+
+function inflightIds(now: number): string[] {
+  try {
+    if (!fs.existsSync(INFLIGHT_DIR)) return [];
+    const out: string[] = [];
+    for (const n of fs.readdirSync(INFLIGHT_DIR)) {
+      const p = path.join(INFLIGHT_DIR, n);
+      try {
+        if (now - fs.statSync(p).mtimeMs > INFLIGHT_STALE_MS) { fs.unlinkSync(p); continue; }
+        out.push(n);
+      } catch { /* skip */ }
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+export function markInflight(violationId: string): void {
+  try { fs.mkdirSync(INFLIGHT_DIR, { recursive: true, mode: 0o700 }); fs.writeFileSync(path.join(INFLIGHT_DIR, violationId), ''); } catch { /* best-effort */ }
+}
+export function clearInflight(violationId: string): void {
+  try { fs.unlinkSync(path.join(INFLIGHT_DIR, violationId)); } catch { /* skip */ }
+}
+
+/** 룰 조회 — me 뿐 아니라 project scope 도(critic: loadRule 은 ME_RULES 만 봐서 policy 대신 id 가 프롬프트에 들어갔다). */
+function findRule(ruleId: string) {
+  return loadRule(ruleId) ?? loadActiveRules().find((r) => r.rule_id === ruleId) ?? null;
+}
 
 export interface JudgeInput {
   violation: ViolationEntry;
@@ -66,14 +97,16 @@ export function buildJudgePrompt(input: JudgeInput): string {
   ].filter((l) => l !== '').join('\n');
 }
 
+/** 매칭 프래그먼트 주변 ±3줄(ADR D1), 총 maxLen 자 상한. 매칭을 못 찾으면 앞부분만. */
 export function excerptAround(text: string, matched: string, maxLen: number): string {
   if (!text) return '';
-  if (text.length <= maxLen) return text;
+  const lines = text.split('\n');
   const core = matched.replace(/…$/, '').slice(0, 60);
-  const idx = core ? text.indexOf(core) : -1;
-  if (idx < 0) return `${text.slice(0, maxLen)}\n…(이하 생략)`;
-  const start = Math.max(0, idx - Math.floor(maxLen / 2));
-  return `${start > 0 ? '…' : ''}${text.slice(start, start + maxLen)}${start + maxLen < text.length ? '…' : ''}`;
+  let at = core ? lines.findIndex((l) => l.includes(core)) : -1;
+  if (at < 0) at = 0;
+  const picked = lines.slice(Math.max(0, at - 3), at + 4).join('\n');
+  const trimmed = picked.length > maxLen ? `${picked.slice(0, maxLen)}…` : picked;
+  return (at > 3 ? '…\n' : '') + trimmed + (at + 4 < lines.length ? '\n…' : '');
 }
 
 /** 모델 출력 파싱 — JSON 한 줄을 찾는다. 실패하면 unsure. */
@@ -91,14 +124,16 @@ export function parseJudgeOutput(raw: string): JudgeOutput {
 }
 
 /** 비용 상한 확인 — by:'auto' 판정 수 기준. */
-export function withinJudgeCaps(sessionId: string, now: number = Date.now(), verdicts = readVerdicts(), violations?: ViolationEntry[]): boolean {
+export function withinJudgeCaps(sessionId: string, now: number = Date.now(), verdicts = readVerdicts(), violations?: ViolationEntry[], inflight: string[] = inflightIds(now)): boolean {
   const dayCutoff = now - 24 * 3600 * 1000;
   const auto = verdicts.filter((v) => v.by === 'auto');
-  const today = auto.filter((v) => Date.parse(v.at) >= dayCutoff).length;
+  const judgedIds = new Set(auto.map((v) => v.violation_id));
+  const inflightNew = inflight.filter((id) => !judgedIds.has(id));
+  const today = auto.filter((v) => Date.parse(v.at) >= dayCutoff).length + inflightNew.length;
   if (today >= JUDGE_CAP_PER_DAY) return false;
   const vio = violations ?? readJsonlSafe<ViolationEntry>(VIOLATIONS_PATH);
   const sessionIds = new Set(vio.filter((v) => v.session_id === sessionId && v.violation_id).map((v) => v.violation_id as string));
-  const thisSession = auto.filter((v) => sessionIds.has(v.violation_id)).length;
+  const thisSession = auto.filter((v) => sessionIds.has(v.violation_id)).length + inflightNew.filter((id) => sessionIds.has(id)).length;
   return thisSession < JUDGE_CAP_PER_SESSION;
 }
 
@@ -120,10 +155,11 @@ export async function judgeViolation(violationId: string, deps: {
   const v = findViolation(violationId);
   if (!v || !(v.kind === 'block' || v.kind === 'deny')) return null;
   const consent = deps.consent ?? isHaikuCompoundEnabled;
-  if (!consent()) return null;
-  if (!withinJudgeCaps(v.session_id, deps.now)) return null;
+  if (!consent()) { clearInflight(violationId); return null; }
+  // 캡은 부모(spawnBlockJudge)가 in-flight 포함으로 이미 확인 — 자식은 자신의 마커를 제외하고 재확인.
+  if (!withinJudgeCaps(v.session_id, deps.now, readVerdicts(), undefined, inflightIds(deps.now ?? Date.now()).filter((id) => id !== violationId))) { clearInflight(violationId); return null; }
   const receipt = readReceipt(violationId) ?? v.message_preview ?? '';
-  const rule = v.rule_id.startsWith('builtin:') ? null : loadRule(v.rule_id);
+  const rule = v.rule_id.startsWith('builtin:') ? null : findRule(v.rule_id);
   const rulePolicy = rule?.policy ?? builtinPolicy(v.rule_id);
   const origin = rule ? originLine(rule) : '';
   const prompt = buildJudgePrompt({ violation: v, rulePolicy, originLine: origin, receipt });
@@ -135,7 +171,8 @@ export async function judgeViolation(violationId: string, deps: {
     out = { verdict: 'unsure', reason: `judge failed: ${(e as Error).message.slice(0, 80)}` };
   }
   setVerdict({ violation_id: violationId, rule_id: v.rule_id, verdict: out.verdict, by: 'auto', reason: out.reason });
-  if (out.verdict !== 'unsure' && rule) maybeDemote(rule.rule_id, deps.now);
+  clearInflight(violationId);
+  if (out.verdict !== 'unsure' && rule && rule.scope === 'me') maybeDemote(rule.rule_id, deps.now);
   return out.verdict;
 }
 
@@ -154,7 +191,7 @@ async function defaultExec(prompt: string): Promise<string> {
 
 /**
  * precision 강등: 7d 판정 ≥ DEMOTE_MIN_JUDGED 이고 precision < DEMOTE_PRECISION_BELOW 이면 enforce_mode='advise'.
- * 하드 룰·builtin 제외(ADR-017 D1). 이미 advise 면 no-op. 복귀는 사용자 명시(`forgen rule <id> --enforce`).
+ * 하드 룰·builtin 제외(ADR-017 D1). 이미 advise 면 no-op. 복귀는 사용자 명시(`forgen rule enforce <id>`).
  */
 export function maybeDemote(ruleId: string, now: number = Date.now()): boolean {
   const rule = loadRule(ruleId);
@@ -184,6 +221,7 @@ export function spawnBlockJudge(violationId: string, sessionId: string): boolean
     if (!withinJudgeCaps(sessionId)) return false;
     const script = path.join(path.dirname(new URL(import.meta.url).pathname), 'block-judge-cli.js');
     if (!fs.existsSync(script)) return false;
+    markInflight(violationId); // spawn 전 동기 기록 → 연속 차단에서 캡 즉시 반영
     const child = spawn(process.execPath, [script, violationId], {
       detached: true, stdio: 'ignore', env: { ...process.env, FORGEN_NESTED_RUN: '1' },
     });

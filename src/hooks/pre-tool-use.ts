@@ -393,6 +393,8 @@ async function main(): Promise<void> {
   const toolName = data.tool_name ?? data.toolName ?? '';
   const toolInput = data.tool_input ?? data.toolInput ?? {};
   const sessionId = data.session_id ?? 'default';
+  // ADR-017 §6-2: 상대 경로 rm 대상 해석용 (Claude Code 훅 stdin 의 cwd).
+  const hookCwd = typeof (data as { cwd?: unknown }).cwd === 'string' ? String((data as { cwd?: string }).cwd) : undefined;
 
   // ADR-008 / codex-integration.md — Codex `approval_policy=auto` 에서
   // PermissionRequest 가 dispatch 안 되는 갭 보완. 모든 tool call 을
@@ -407,7 +409,7 @@ async function main(): Promise<void> {
       { loadActiveRules },
       { recordViolation, matchedFragment },
       { compileSafeRegex, safeRegexTest },
-      { preprocessForMatch, isTempOnlyRm },
+      { preprocessForMatch, isTempOnlyRm, isSuspiciousRm },
     ] = await Promise.all([
       import('../store/rule-store.js'),
       import('../engine/lifecycle/signals.js'),
@@ -436,7 +438,9 @@ async function main(): Promise<void> {
         if (!safeRegexTest(re.regex, target)) continue;
         // ADR-017 §6-2 (오너 결정): rm -rf 류 룰이 Claude 의 임시 작업 폴더(/tmp/claude-*/… 등) 삭제에
         // 걸린 경우는 막지 않는다 — 같은 명령 안의 변수 대입까지 한 단계 해석해 대상이 전부 임시 경로일 때만.
-        if (pattern.includes('rm') && isTempOnlyRm(command)) { log.debug(`rule ${rule.rule_id}: temp-only rm — exempt`); continue; }
+        // critic D1 SEV-1: 예외는 **매칭된 토큰 자체가 rm** 일 때만 (pattern.includes('rm') 은 terraform 룰까지 껐다).
+        const matchTok = re.regex.exec(target)?.[0] ?? '';
+        if (/^\s*rm\b/.test(matchTok) && !isSuspiciousRm(command) && isTempOnlyRm(command, hookCwd)) { log.debug(`rule ${rule.rule_id}: temp-only rm — exempt`); continue; }
         const requiresFlag = v.params?.requires_flag;
         const confirmed = process.env.FORGEN_USER_CONFIRMED === '1';
         const matchedFrag = matchedFragment(re.regex, target);
@@ -479,6 +483,18 @@ async function main(): Promise<void> {
   } catch (e) { log.debug('enforce_via[PreToolUse] dispatch 실패', e); }
 
   // Bash 도구: 위험 명령어 감지 (빌트인 safety net)
+  // critic D1: `rm -rf /tmp/../home`, `/tmp/{a,../..}`, `/tmp/*` 는 빌트인 /tmp lookahead 를 우회한다 → 먼저 차단.
+  try {
+    const cmd0 = typeof (toolInput as { command?: unknown }).command === 'string' ? String((toolInput as { command: string }).command) : '';
+    if (toolName === 'Bash' && cmd0) {
+      const { isSuspiciousRm, preprocessForMatch } = await import('./shared/command-parser.js');
+      // heredoc 본문·따옴표 안 문자열(문서/테스트 소스에 적힌 예시)은 실행되는 명령이 아니다 → masked 로 검사.
+      if (isSuspiciousRm(preprocessForMatch(cmd0, 'masked'))) {
+        console.log(denyOrObserve('pre-tool-use', `[Forgen] Dangerous command blocked: recursive rm with path traversal/glob under a temp path\nCommand: ${cmd0.slice(0, 200)}`));
+        return;
+      }
+    }
+  } catch { /* fail-open */ }
   const check = checkDangerousCommand(toolName, toolInput);
   if (check.action === 'block') {
     console.log(denyOrObserve('pre-tool-use', `[Forgen] Dangerous command blocked: ${check.description}\nCommand: ${check.command}`));
