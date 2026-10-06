@@ -172,8 +172,8 @@ Fable · ~/workspace/forgen(main*) · ctx 42%/1M · 5h 63% → 15:40 소진 (리
 관련 룰 3 · 검사 4 통과 · 차단 1 (판정?) · 학습 0
 ```
 - 1줄(사용자): 모델 · 경로/브랜치 · 컨텍스트 %(창 크기 표기, 1M이면 `/1M`) · 5h/7d 한도와 소진 예측(D5) · 비용. 색: 한도 ≥80% 노랑, ≥95% 빨강. `exceeds_200k_tokens`면 ctx 옆 `⚠200k`.
-- 2줄(forgen): D2의 관련 룰/검사 통과, 이 세션 차단 수와 미판정 표시(`(판정?)` = D1 영수증 대기), surfaced 수. 운영자 지표(recall, ROI↓, 이모지 분포, CLAUDE.md/MCP/hook 카운트)는 **삭제** — `forgen status`로 이동.
-- `StdinPayload`에 공식 필드 타입 추가. 캐시: **세션별 캐시 파일**(`statusline-cache-<session_id>.txt`)로 분리 — 전역 단일 캐시는 다중 세션에서 남의 컨텍스트 %를 보여준다(critic). 샘플 기록(D5)은 기존 모델 캐시 기록과 같은 자리(캐시 판정 앞, `:246-250`)에서 수행. 세션 캐시 파일은 state-gc가 24h 후 정리.
+- 2줄(forgen): D2의 관련 룰/검사 통과, 이 세션 차단 수와 미판정 표시(`(판정?)` = D1 영수증 대기), surfaced 수. 운영자 지표(recall, ROI↓, 이모지 분포)는 `forgen status`에 이미 있으므로 statusline 에서 **삭제**. CLAUDE.md/MCP/hook 카운트는 어느 뷰로도 옮기지 않고 **삭제**(MCP 카운트는 틀린 값이었고, 나머지는 요청이 없었다 — critic 정정: "옮겼다"는 사실이 아니었음). `rate_limits.spend_limit`(게이트웨이 전용)은 **지원하지 않음**.
+- `StdinPayload`에 공식 필드 타입 추가. 캐시(critic 2라운드): 1줄(사용자)은 **매 호출 렌더**(ctx% 가 메시지마다 바뀌어 지문 캐시는 무력), 2줄(forgen, computeStats ~150ms)만 **세션별 15초 TTL 캐시**(`statusline-cache-<session_id>.txt`). 전역 단일 캐시는 다중 세션에서 남의 컨텍스트 %를 보여주므로 폐기, 구 `statusline-cache.txt` 도 state-gc 가 정리. 샘플 기록(D5)은 매 호출. **라이브 전제 정정(critic)**: `settings.json` 의 `statusLine.command` 는 `forgen statusline` = 글로벌 npm 패키지 → ship(글로벌 재설치) 전까지 statusline 은 구버전이 돈다(훅만 워크스페이스 dist). 실세션 관측은 ship 후 수행.
 - ADR-010 §2b가 남긴 `buildUsageLine` "native /usage로 이동" 1회 공지(`:164-178`)는 제거 — 본 ADR이 그 결정을 부분 supersede.
 - 데이터 없을 때(API 키 사용자 등 `rate_limits` 부재): 해당 세그먼트 생략, 자리 채우기 금지.
 
@@ -186,7 +186,7 @@ Fable · ~/workspace/forgen(main*) · ctx 42%/1M · 5h 63% → 15:40 소진 (리
 
 **무엇을**
 - statusline 호출마다 `{t, five_hour.used, five_hour.resets_at, seven_day.used, seven_day.resets_at}`를 `state/rate-limit-samples.jsonl`에 append (계정 단위 한도라 세션 혼합 무방; 7일 TTL 로테이션).
-- 기울기: 5h는 최근 30분 창, 7d는 최근 24시간 창, 지수이동평균(α=0.3)으로 평활. **창 리셋 조건**(공식 문서 2026-10-06 확인: five_hour는 `resets_at`을 가진 창, 지나면 창 객체가 사라졌다 재등장하고 초기엔 `used_percentage`가 null일 수 있음): `resets_at` 변화 · 창 객체 부재→재등장 · 사용률 하락 · `used_percentage` null → 이전 샘플 폐기, null 샘플은 기록하지 않음.
+- 기울기 (critic SEV-1 반영): 지수이동평균은 폐기 — 계단형(API 응답 시점 점프)·불균일 간격 데이터에서 27배 과대 추정(30분 정체 후 20초 +1% → 54%/h 경보). **창 안 양끝점 기울기** `(used_last − used_first)/(t_last − t_first)` 로 교체(시간 가중, 점프 순서 무관). 창별 최소 시간 폭 5h 15분 / 7d 2시간, 창 내 총 증가 < 1%p(양자화 잡음)면 숨김. 표시 게이트: **현재 페이로드에 그 창이 수치로 있을 때만** 출력 — 파일 샘플은 기울기 전용(리셋 순간 CC 가 창을 drop 하고 재실행하므로, 파일만 보면 리셋 전 최고치가 뜬다). `resets_at` 경과 창 숨김. **창 리셋 조건**(공식 문서 2026-10-06 확인: five_hour는 `resets_at`을 가진 창, 지나면 창 객체가 사라졌다 재등장하고 초기엔 `used_percentage`가 null일 수 있음): `resets_at` 변화 · 창 객체 부재→재등장 · 사용률 하락 · `used_percentage` null → 이전 샘플 폐기, null 샘플은 기록하지 않음.
 - 기록은 **한 줄 단일 `appendFileSync`**로, 읽기는 파싱 실패 라인 무시(`signals.ts:44-57` `readJsonlSafe` 패턴) — Claude Code가 statusline 스크립트를 중간에 취소하면(공식: "cancels the in-flight script") 잘린 줄이 생긴다.
 - 갱신은 이벤트 구동(assistant 메시지마다)이라 **유휴 중엔 샘플이 안 쌓인다** — `refreshInterval`(≥1s) 설정을 forgen install이 넣을지는 오너 결정(§6-7). 넣지 않으면 유휴 복귀 직후 예측이 숨겨지는 것이 정상 동작.
 - 출력: 예상 100% 도달 시각 `T_exhaust`. `T_exhaust < resets_at`면 "→ HH:MM 소진 (리셋 HH:MM)" 노랑/빨강, 아니면 "여유 (리셋 시 예상 N%)".
@@ -249,6 +249,18 @@ Fable · ~/workspace/forgen(main*) · ctx 42%/1M · 5h 63% → 15:40 소진 (리
 - 체감 KPI(2주 후 `forgen status`에 표시): 미판정 차단 비율, 룰별 precision, 관련 룰 ≥1인 턴 비율, statusline 소진 예측 적중(예측 vs 실제 리셋 전 100% 도달 여부).
 
 ---
+
+## 7b. 구현 진행 (2026-10-06, 브랜치 feat/adr-017-trust-receipts)
+
+| 항목 | 상태 | 커밋/비고 |
+|---|---|---|
+| 프로필 score 공식 + reclass 스탬프 + 라벨 정정 | 완료 | 9e6ee17 — critic 반영(스탬프 불변식, locale 라벨, hasOwn) |
+| D0 출처 인용 | 완료 | 4e46a31 — critic 반영: summary 는 모델 문장이라 날짜·kind 만, `user_quote` 신설, sanitize, 동적 import |
+| D1 1단계 집계 정직화·테스트 격리 | 완료 | 4e46a31 — Blocks 108→33, Bypass 179→0, Recall hits/attempts/mcp 분리, Excluded 가시화, 전체 suite 실행 시 실 로그 증가 0 |
+| D4/D5 statusline 2줄 + 소진 예측 | 구현 완료, critic 2라운드 반영 | REJECT(SEV-1 3건: 비라이브·stale 샘플 표시·EMA 과대) → 양끝점 기울기·표시 게이트·2줄 캐시 분리·압축 가드로 수정. 실세션 관측은 ship 후 |
+| D1 2단계 영수증·자동 판정·precision·scratchpad 예외 | 구현 완료, critic 대기 | violation_id·matched·target_hash·receipts/(24h, secret 마스킹 — 로그의 matched/preview 도 마스킹)·verdicts.jsonl(user>auto)·`forgen block <id> --ok/--fp`·Haiku 심판(consent·캡·unsure)·advise 강등(하드/builtin 제외)·`isTempOnlyRm`(같은 명령 변수 1단계 치환, 보수적)·checks.jsonl 통과 기록 |
+| D2 관련 룰 | 구현 완료 | `rule-relevance`(임계: 일반 용어 2개 또는 식별자급 1개 — 영문 ≥6자/**한글 ≥3음절**(지시의 '6자'는 한글에 비현실적이라 조정), 공통어 제외) + `turn-rules-<session>.json`(프롬프트 해시만, 원문 저장 안 함, 주입 0바이트) + statusline "관련 룰 N" + `status --turn`(원 교정 연결). 실측: "한국어로 답해줘"→1(응답 언어 룰), "fgx --codex"→0, "병렬 에이전트로 설계 검증해"→16(D3 병합 전 중복). 성능 warm 4.4ms/룰 100개. Stop 검사 통과는 `checks.jsonl`(D1 커밋) |
+| D3 채굴 룰 병합 | 구현 완료 | 격리 복사본 실측 **채굴 30 → 7**(병합 18, explicit 링크 9), 활성 45 → 22, 멱등, unmerge 왕복. explicit evidence_refs/strength 불변(ADR-013 유지), `mined_observations` 로 관측 수 표시. 판단: 클러스터링은 **category 경계 유지**(무시하면 전이 연결로 10+19 두 덩어리로 섞임 — ADR 예상 ≤5 는 미달, 7). τ=0.3 에서 오탐 링크 1건(어휘 "사용자가 명시적으로" 중복) — dry-run 기본이라 오너가 걸러냄; explicit 링크 τ 상향(0.4)은 후속 결정. 실 적용(`rules merge-mined --apply`)은 ship 후 오너 확인 하에 |
 
 ## 8. 구현 순서 (합의 후)
 
