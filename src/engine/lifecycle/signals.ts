@@ -258,11 +258,6 @@ export function matchedFragment(re: RegExp, text: string): string {
   }
 }
 
-/** @deprecated ADR-017: 유지만 — 호출지 없음. */
-function _legacyRecordViolationShape(entry: Omit<ViolationEntry, 'at'>): ViolationEntry {
-  return { at: new Date().toISOString(), ...entry };
-}
-void _legacyRecordViolationShape;
 
 export function recordBypass(entry: Omit<BypassEntry, 'at'>): void {
   try {

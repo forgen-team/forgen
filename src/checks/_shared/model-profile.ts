@@ -20,7 +20,6 @@
 
 import * as fs from 'node:fs';
 import { STATE_DIR } from '../../core/paths.js';
-import * as os from 'node:os';
 import * as path from 'node:path';
 
 export type CompletionGuardMode = 'block' | 'advise';

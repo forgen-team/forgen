@@ -133,10 +133,15 @@ describe('dist pre-tool-use — L1 rm -rf 룰 (격리 HOME)', () => {
     const home = seed();
     const p = path.join(home, '.forgen', 'me', 'rules', 'L1.json');
     fs.writeFileSync(p, JSON.stringify({ ...JSON.parse(fs.readFileSync(p, 'utf-8')), strength: 'default', enforce_mode: 'advise' }));
-    const r = run(home, `${RM} /home/ubuntu/.cache/probe`);
+    // 빌트인 위험패턴(/·~ 접두)에 걸리지 않는 상대 경로 — L1 룰(rm\s+-rf)만 매칭 → advise 경로
+    const r = run(home, `${RM} build-cache`);
     expect(r.hookSpecificOutput?.permissionDecision).not.toBe('deny');
+    expect(JSON.stringify(r)).toContain('(advise)');
     const v = fs.readFileSync(path.join(home, '.forgen', 'state', 'enforcement', 'violations.jsonl'), 'utf-8').trim().split('\n').map((l) => JSON.parse(l));
     expect(v[0].kind).toBe('correction');
+    // ship-review MAJOR: advise 룰이 매칭돼도 나머지 검사(빌트인 위험 명령)는 계속된다
+    const builtin = run(home, `${RM} /home/ubuntu/.cache/probe && ${RM} /`);
+    expect(builtin.hookSpecificOutput?.permissionDecision).toBe('deny');
   });
   it.skipIf(!exists)('예외는 매칭 토큰이 rm 일 때만 — 패턴에 "rm" 이 포함된 무관 룰(terraform)은 꺼지지 않는다 (critic SEV-1)', () => {
     const home = seed();

@@ -267,7 +267,7 @@ export function computeStats(): StatsSnapshot {
     philosophy: computePhilosophy(),
     solutionHealth: computeSolutionHealth(),
     topRules7d: computeTopRules7d(realBlocks),
-    precision7d: [...precisionByRule(violations as never, readVerdicts(), 7).values()].sort((a, b) => (b.correct + b.false_positive + b.unjudged) - (a.correct + a.false_positive + a.unjudged)).slice(0, 8),
+    precision7d: [...precisionByRule(violations as unknown as import('../engine/lifecycle/types.js').ViolationEntry[], readVerdicts(), 7).values()].sort((a, b) => (b.correct + b.false_positive + b.unjudged) - (a.correct + a.false_positive + a.unjudged)).slice(0, 8),
     weeklyTrend: computeWeeklyTrend(realBlocks),
   };
 }
@@ -459,11 +459,13 @@ export function renderStats(s: StatsSnapshot): string {
   // v0.5.0: Top rules (7d) + ADR-017 D1 precision
   if (s.topRules7d.length > 0) {
     lines.push('  Top rules (7d)                 precision (judged / unjudged)');
+    const adviseRules = new Set(loadAllRules().filter((r) => r.enforce_mode === 'advise').map((r) => r.rule_id));
     const pmap = new Map(s.precision7d.map((p) => [p.rule_id, p]));
     for (const r of s.topRules7d) {
       const p = pmap.get(r.name);
       const prec = !p ? '' : p.precision === null ? `  —  (0 / ${p.unjudged})` : `  ${Math.round(p.precision * 100)}%  (${p.correct + p.false_positive} / ${p.unjudged})`;
-      lines.push(`    ${padNum(r.count)}x  ${r.name.padEnd(28).slice(0, 28)}${prec}`);
+      const advise = adviseRules.has(r.name) ? '  [advise]' : '';
+      lines.push(`    ${padNum(r.count)}x  ${r.name.padEnd(28).slice(0, 28)}${prec}${advise}`);
     }
     const unjudged = s.precision7d.reduce((n, p) => n + p.unjudged, 0);
     if (unjudged > 0) lines.push(`    ${C_DIM}unjudged ${unjudged} — 자동 판정(Haiku) 은 compound consent 가 켜져 있을 때만 돕니다: forgen compound consent on${C_RESET}`);

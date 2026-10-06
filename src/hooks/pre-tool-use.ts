@@ -404,6 +404,8 @@ async function main(): Promise<void> {
   // ADR-001 Mech-A PreToolUse dispatcher — 사용자가 정의한 rule 이 빌트인 위험-명령 감지보다 먼저.
   // 이렇게 해야 rule.block_message (맥락 있는 안내) 가 제네릭 "Dangerous command blocked" 대신 노출됨.
   // fail-open: 예외는 hook 차단 안 함.
+  // ADR-017 D1: advise 강등 룰의 안내 메시지 — 차단 판정이 모두 끝난 뒤 승인 응답에 합쳐 출력한다.
+  const advisories: string[] = [];
   try {
     const [
       { loadActiveRules },
@@ -447,8 +449,15 @@ async function main(): Promise<void> {
         // ADR-017 D1: precision 강등된 룰(enforce_mode 'advise')은 차단 대신 기록만.
         if (requiresFlag && !confirmed && rule.enforce_mode === 'advise') {
           recordViolation({ rule_id: rule.rule_id, session_id: sessionId, source: 'pre-tool-guard', kind: 'correction', message_preview: command.slice(0, 120), matched: matchedFrag, target_kind: 'command' });
-          console.log(approveWithWarning(`<compound-tool-warning>\n[Forgen] (advise) ${spec.block_message ?? rule.policy.slice(0, 120)} — 이 룰은 오탐률이 높아 차단 대신 안내만 합니다.\n</compound-tool-warning>`));
-          return;
+          // ship-review MAJOR: 여기서 return 하면 같은 명령의 나머지 룰(하드 포함)과 빌트인 위험 검사를 건너뛴다 → 모아서 마지막에 경고.
+          let why = '';
+          try {
+            const { lastDemotion } = await import('../engine/block-judge.js');
+            const d = lastDemotion(rule.rule_id);
+            if (d) why = ` (${d.at.slice(0, 10)} 7d 판정 ${d.judged}건 중 오탐률 ${Math.round((1 - d.precision) * 100)}% → 안내 모드)`;
+          } catch { /* fail-open */ }
+          advisories.push(`[Forgen] (advise) ${spec.block_message ?? rule.policy.slice(0, 120)}${why} — 차단 대신 안내만 합니다. 복귀: forgen rule enforce ${rule.rule_id.slice(0, 8)}`);
+          continue;
         }
         if (requiresFlag && !confirmed) {
           const violationId = recordViolation(
@@ -500,14 +509,15 @@ async function main(): Promise<void> {
     console.log(denyOrObserve('pre-tool-use', `[Forgen] Dangerous command blocked: ${check.description}\nCommand: ${check.command}`));
     return;
   }
+  const withAdvisories = (body: string): string => (advisories.length ? `${advisories.map((x) => `<compound-tool-warning>\n${x}\n</compound-tool-warning>`).join('\n')}${body ? `\n${body}` : ''}` : body);
   if (check.action === 'warn') {
-    console.log(approveWithWarning(`<compound-tool-warning>\n[Forgen] ⚠ Dangerous command detected: ${check.description}\nProceed with caution.\n</compound-tool-warning>`));
+    console.log(approveWithWarning(withAdvisories(`<compound-tool-warning>\n[Forgen] ⚠ Dangerous command detected: ${check.description}\nProceed with caution.\n</compound-tool-warning>`)));
     return;
   }
 
   // Output size guard: warn when Grep is used without head_limit
   if (toolName === 'Grep' && !toolInput?.head_limit) {
-    console.log(approveWithWarning(`<compound-tool-warning>\n[Forgen] Grep without head_limit may produce large output. Set head_limit or pipe through | head -n to limit output size.\n</compound-tool-warning>`));
+    console.log(approveWithWarning(withAdvisories(`<compound-tool-warning>\n[Forgen] Grep without head_limit may produce large output. Set head_limit or pipe through | head -n to limit output size.\n</compound-tool-warning>`)));
     return;
   }
 
@@ -522,11 +532,12 @@ async function main(): Promise<void> {
   if (shouldShowReminderIO()) {
     const reminders = getActiveReminders();
     if (reminders.length > 0) {
-      console.log(approveWithWarning(`<compound-reminder>\n${reminders.join('\n')}\n</compound-reminder>`));
+      console.log(approveWithWarning(withAdvisories(`<compound-reminder>\n${reminders.join('\n')}\n</compound-reminder>`)));
       return;
     }
   }
 
+  if (advisories.length) { console.log(approveWithWarning(withAdvisories(''))); return; }
   console.log(approve());
   } finally {
     recordHookTiming('pre-tool-use', Date.now() - _hookStart, 'PreToolUse');
