@@ -22,6 +22,8 @@ import { STATE_DIR, OUTCOMES_DIR } from './paths.js';
 /** Filename prefixes that identify session-scoped ephemeral files. */
 const SESSION_SCOPED_PREFIXES = [
   'active-agents-',
+  'statusline-cache', // ADR-017 D4: 세션별 statusline 캐시 (+ 구 전역 statusline-cache.txt 도 정리)
+  'turn-rules-', // ADR-017 D2: 세션별 턴 관련 룰
   'checkpoint-',
   'injection-cache-',
   'modified-files-',

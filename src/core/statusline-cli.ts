@@ -1,14 +1,21 @@
 /**
- * forgen statusline — Claude Code statusLine 명령
+ * forgen statusline — Claude Code statusLine 명령 (ADR-017 D4/D5 재설계, 2026-10-06)
  *
- * Claude Code는 statusLine.command를 주기적으로 호출하고 stdin에 JSON을 전달함.
- * 이 명령은 compact multi-line 형식으로 HUD 정보를 출력함.
+ * Claude Code 는 assistant 메시지마다(300ms 디바운스) statusLine.command 를 호출하고 stdin 에 JSON 을
+ * 준다 (공식: code.claude.com/docs/en/statusline — context_window / rate_limits / cost / model / workspace).
  *
- * Line 1: 모델 | cwd | git branch
- * Line 2: (TODO: context/usage — stdin spec 미확인으로 생략)
- * Line 3: CLAUDE.md count | rules count | MCPs count | hooks count
- * Line 4: (TODO: tool counts — 추적 인프라 없음)
- * Line 5: (TODO: active task — 추적 인프라 없음)
+ * 2줄 고정:
+ *   1줄 (사용자): 모델 · 경로(브랜치) · ctx 42%/1M · 5h 63% → 15:40 소진 (리셋 16:20) · 7d 21% → 리셋 … 여유 · $1.23
+ *   2줄 (forgen): 관련 룰 3 · 이 세션 차단 1 · 7d 차단 33 · surfaced 0   (turn-rules 파일 없으면 '룰 N' = 활성 수)
+ *
+ * 원칙 (ADR-017 §2): 출처 없는 숫자는 표시하지 않는다. 데이터가 없으면 세그먼트를 생략한다(자리 채우기 금지).
+ * 이전 3~4줄의 운영자 지표(recall/ROI/이모지 분포)는 `forgen status` 에 있고, CLAUDE.md·MCP·hook 카운트는
+ * **삭제**했다(MCP 카운트는 settings.json 만 읽어 0 으로 틀렸고, 어느 뷰에도 없다 — critic 정정). 사용량
+ * 세그먼트는 ADR-010 §2b 로 철수했으나 본 ADR 이 그 결정을 부분 supersede 한다(CC 가 stdin 으로 직접 제공).
+ *
+ * 캐시(critic SEV-2 반영): 1줄(사용자)은 매 호출 렌더(0.1s 이하). 2줄(forgen, computeStats 전체 스캔
+ * ~150ms)은 **세션별 별도 캐시 15초 TTL** — ctx% 가 메시지마다 바뀌어도 2줄 비용은 15초에 1회.
+ * 샘플 기록(D5)과 모델 캐시는 캐시와 무관하게 매 호출 수행.
  */
 
 import * as fs from 'node:fs';
@@ -17,33 +24,47 @@ import * as os from 'node:os';
 import { execSync } from 'node:child_process';
 import { loadActiveRules } from '../store/rule-store.js';
 import { STATE_DIR } from './paths.js';
-import { classifySolutions } from './lifecycle-classifier.js';
 import { computeStats } from './stats-cli.js';
-import { loadRoiDemotions } from '../engine/roi-demotion.js';
+import { isRealBlock } from '../engine/lifecycle/signals.js';
+import { sanitizeId } from '../hooks/shared/sanitize-id.js';
+import { readTurnRules } from '../engine/rule-relevance.js';
+import {
+  samplesFromPayload, appendSamples, readSamples, compactSamples, forecastAll, fmtForecast,
+  type RateLimitsPayload, type Forecast,
+} from './rate-limit-forecast.js';
 
-// 0.4.6 perf #13 — statusline 출력을 5초 캐싱.
-// claude statusLine 은 짧은 간격으로 재호출되는데 매번 git/find/rule-store 를
-// 실행하면 ~100ms 누적. CACHE_TTL_MS 동안 동일 출력 재사용.
-const STATUSLINE_CACHE_PATH = path.join(STATE_DIR, 'statusline-cache.txt');
-const CACHE_TTL_MS = 5_000;
+const FORGEN_LINE_TTL_MS = 15_000;
 
 // ANSI codes
 const DIM = '\x1b[2m';
 const CYAN = '\x1b[36m';
 const GREEN = '\x1b[32m';
 const YELLOW = '\x1b[33m';
+const RED = '\x1b[31m';
 const BOLD = '\x1b[1m';
 const RESET = '\x1b[0m';
 
-interface StdinPayload {
+const SEP = `${DIM} · ${RESET}`;
+
+/** 공식 statusline stdin 스키마의 부분집합 (2026-10 확인). 전부 optional — 구버전/다른 플랜은 비어 있을 수 있다. */
+export interface StdinPayload {
   session_id?: string;
   model?: { id?: string; display_name?: string };
-  workspace?: { current_dir?: string };
+  workspace?: { current_dir?: string; project_dir?: string };
+  context_window?: {
+    total_input_tokens?: number;
+    total_output_tokens?: number;
+    context_window_size?: number;
+    used_percentage?: number | null;
+    remaining_percentage?: number | null;
+  };
+  rate_limits?: RateLimitsPayload | null;
+  cost?: { total_cost_usd?: number; total_duration_ms?: number };
+  exceeds_200k_tokens?: boolean;
   [key: string]: unknown;
 }
 
-function readStdinJson(): StdinPayload {
-  // stdin이 TTY면 파이프 입력 없음 → 빈 payload로 fallback
+export function readStdinJson(): StdinPayload {
   if (process.stdin.isTTY) return {};
   try {
     const raw = fs.readFileSync('/dev/stdin', 'utf-8').trim();
@@ -56,229 +77,176 @@ function readStdinJson(): StdinPayload {
 
 function getGitBranch(cwd: string): string {
   try {
-    const branch = execSync('git rev-parse --abbrev-ref HEAD', {
-      cwd,
-      stdio: ['ignore', 'pipe', 'ignore'],
-      timeout: 2000,
-    })
-      .toString()
-      .trim();
+    const branch = execSync('git rev-parse --abbrev-ref HEAD', { cwd, stdio: ['ignore', 'pipe', 'ignore'], timeout: 2000 }).toString().trim();
     const isDirty = (() => {
       try {
-        const status = execSync('git status --porcelain', {
-          cwd,
-          stdio: ['ignore', 'pipe', 'ignore'],
-          timeout: 2000,
-        }).toString().trim();
-        return status.length > 0;
-      } catch {
-        return false;
-      }
+        return execSync('git status --porcelain', { cwd, stdio: ['ignore', 'pipe', 'ignore'], timeout: 2000 }).toString().trim().length > 0;
+      } catch { return false; }
     })();
-    return `git:(${branch}${isDirty ? '*' : ''})`;
+    return `${branch}${isDirty ? '*' : ''}`;
   } catch {
     return '';
   }
 }
 
-function getSettingsJson(claudeDir: string): Record<string, unknown> {
-  const settingsPath = path.join(claudeDir, 'settings.json');
-  if (!fs.existsSync(settingsPath)) return {};
+const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
+
+/** 한도/컨텍스트 공통 색: ≥95 빨강, ≥80 노랑, 그 외 기본. */
+function pctColor(pct: number): string {
+  if (pct >= 95) return RED;
+  if (pct >= 80) return YELLOW;
+  return '';
+}
+function colored(text: string, color: string): string {
+  return color ? `${color}${text}${RESET}` : text;
+}
+
+function fmtWindowSize(size: number | undefined): string {
+  if (!isNum(size) || size <= 0) return '';
+  if (size >= 1_000_000) return `/${Math.round(size / 1_000_000)}M`;
+  return `/${Math.round(size / 1000)}k`;
+}
+
+/** 1줄: 사용자 정보. 데이터 없는 세그먼트는 생략. */
+export function buildUserLine(payload: StdinPayload, cwd: string, forecasts: Partial<Record<'five_hour' | 'seven_day', Forecast>>, nowMs: number): string {
+  const parts: string[] = [];
+  parts.push(`${BOLD}${CYAN}${payload.model?.display_name ?? 'Claude'}${RESET}`);
+
+  const branch = getGitBranch(cwd);
+  const cwdDisplay = cwd.replace(os.homedir(), '~');
+  parts.push(`${DIM}${cwdDisplay}${RESET}${branch ? `${GREEN}(${branch})${RESET}` : ''}`);
+
+  const cw = payload.context_window;
+  const warn200k = payload.exceeds_200k_tokens ? `${YELLOW}⚠200k${RESET}` : '';
+  if (cw && isNum(cw.used_percentage)) {
+    const pct = Math.round(cw.used_percentage);
+    parts.push(`${colored(`ctx ${pct}%${fmtWindowSize(cw.context_window_size)}`, pctColor(pct))}${warn200k ? ` ${warn200k}` : ''}`);
+  } else if (warn200k) {
+    parts.push(warn200k); // used_percentage 가 null(세션 초반)이어도 경고는 유지
+  }
+
+  for (const w of ['five_hour', 'seven_day'] as const) {
+    const f = forecasts[w];
+    if (!f) continue;
+    const text = fmtForecast(f, nowMs);
+    // 리셋 전 소진 예상이면 사용률과 무관하게 최소 노랑.
+    const color = f.exhaustsBeforeReset ? (pctColor(f.used) || YELLOW) : pctColor(f.used);
+    parts.push(colored(text, color));
+  }
+
+  if (payload.cost && isNum(payload.cost.total_cost_usd)) {
+    parts.push(`${DIM}$${payload.cost.total_cost_usd.toFixed(2)}${RESET}`);
+  }
+  return parts.join(SEP);
+}
+
+/** 2줄: forgen 정보. 전부 실측 카운터(computeStats = status 와 같은 기준). 실패 시 생략. */
+export function buildForgenLine(sessionId: string | undefined): string | null {
   try {
-    return JSON.parse(fs.readFileSync(settingsPath, 'utf-8')) as Record<string, unknown>;
+    const rules = (() => { try { return loadActiveRules().length; } catch { return null; } })();
+    // ADR-017 D2: 이 세션의 최신 턴 관련 룰 수(solution-injector 가 기록). 파일 부재·손상이면 활성 룰 수로 폴백.
+    const turnRelevant = (() => { try { return sessionId ? readTurnRules(sessionId)?.rules.length ?? null : null; } catch { return null; } })();
+    const s = computeStats();
+    const sessionBlocks = sessionId ? countSessionBlocks(sessionId) : null;
+    const parts: string[] = [];
+    if (turnRelevant !== null) parts.push(`${DIM}관련 룰${RESET} ${turnRelevant}`);
+    else if (rules !== null) parts.push(`${DIM}룰${RESET} ${rules}`);
+    if (sessionBlocks !== null) parts.push(`${DIM}이 세션 차단${RESET} ${sessionBlocks > 0 ? colored(String(sessionBlocks), YELLOW) : '0'}`);
+    parts.push(`${DIM}7d 차단${RESET} ${s.blocks7d}`);
+    parts.push(`${DIM}surfaced${RESET} ${s.assistToday.surfaced}`);
+    return parts.join(SEP);
   } catch {
-    return {};
+    return null;
   }
 }
 
-function countMcps(settings: Record<string, unknown>): number {
-  const mcpServers = settings.mcpServers as Record<string, unknown> | undefined;
-  if (!mcpServers || typeof mcpServers !== 'object') return 0;
-  return Object.keys(mcpServers).length;
-}
-
-function countHooks(settings: Record<string, unknown>): number {
-  const hooks = settings.hooks as Record<string, unknown[]> | undefined;
-  if (!hooks || typeof hooks !== 'object') return 0;
-  return Object.values(hooks).reduce<number>((acc, matchers) => {
-    if (!Array.isArray(matchers)) return acc;
-    return acc + matchers.length;
-  }, 0);
-}
-
-function countClaudeMd(cwd: string): number {
+function countSessionBlocks(sessionId: string): number {
   try {
-    const result = execSync('find . -maxdepth 2 -name CLAUDE.md', {
-      cwd,
-      stdio: ['ignore', 'pipe', 'ignore'],
-      timeout: 3000,
-    }).toString().trim();
-    if (!result) return 0;
-    return result.split('\n').filter(Boolean).length;
+    const p = path.join(STATE_DIR, 'enforcement', 'violations.jsonl');
+    if (!fs.existsSync(p)) return 0;
+    let n = 0;
+    for (const line of fs.readFileSync(p, 'utf-8').split('\n')) {
+      if (!line.includes(sessionId)) continue; // 빠른 선별
+      try {
+        const e = JSON.parse(line) as { session_id?: string; kind?: string };
+        if (e.session_id === sessionId && isRealBlock(e)) n++;
+      } catch { /* skip */ }
+    }
+    return n;
   } catch {
     return 0;
   }
 }
 
-function buildLine1(payload: StdinPayload, cwd: string): string {
-  const modelName = payload.model?.display_name ?? 'Claude';
-  const gitBranch = getGitBranch(cwd);
-  const cwdDisplay = cwd.replace(os.homedir(), '~');
-  const parts = [`${BOLD}${CYAN}${modelName}${RESET}`];
-  parts.push(`${DIM}${cwdDisplay}${RESET}`);
-  if (gitBranch) parts.push(`${GREEN}${gitBranch}${RESET}`);
-  return parts.join(`  ${DIM}|${RESET}  `);
+// ── 세션별 2줄(forgen) 캐시 ──
+
+export function cachePathFor(sessionId: string | undefined): string {
+  return path.join(STATE_DIR, `statusline-cache-${sessionId ? sanitizeId(sessionId) : 'nosession'}.txt`);
 }
 
-/** Build lifecycle line: "🔥X 🟡X 🥶X 💀X 🌱X" — P3 신설. 0건이면 null */
-function buildLifecycleLine(): string | null {
+function readForgenLineCached(sessionId: string | undefined, nowMs: number): string | null {
+  const p = cachePathFor(sessionId);
   try {
-    const classified = classifySolutions();
-    if (classified.length === 0) return null;
-    const counts = { hot: 0, warm: 0, cold: 0, dead: 0, new: 0 };
-    for (const c of classified) counts[c.lifecycle]++;
-    const total = counts.hot + counts.warm + counts.cold + counts.dead + counts.new;
-    if (total === 0) return null;
-    return [
-      `${YELLOW}🔥${counts.hot}${RESET}`,
-      `${YELLOW}🟡${counts.warm}${RESET}`,
-      `${DIM}🥶${counts.cold}${RESET}`,
-      `${DIM}💀${counts.dead}${RESET}`,
-      `${DIM}🌱${counts.new}${RESET}`,
-    ].join(`  `);
+    const st = fs.statSync(p);
+    if (nowMs - st.mtimeMs >= FORGEN_LINE_TTL_MS) return null;
+    const body = fs.readFileSync(p, 'utf-8').replace(/\n$/, '');
+    return body || null;
   } catch {
     return null;
   }
 }
 
-/**
- * ADR-010 W2-2: 사용량 세그먼트("📊 N/5h · N/wk") 제거 — native /usage 가
- * plan limit 를 정확히 분해한다. 이관 사실을 딱 1회만 공지 (state flag).
- */
-function buildUsageLine(): string | null {
-  try {
-    const noticeFlag = path.join(STATE_DIR, 'usage-notice-shown');
-    if (!fs.existsSync(noticeFlag)) {
-      fs.mkdirSync(STATE_DIR, { recursive: true });
-      fs.writeFileSync(noticeFlag, new Date().toISOString());
-      return `${DIM}ℹ 사용량 표시는 native /usage 로 이동했습니다 (이 안내는 1회만 표시)${RESET}`;
-    }
-    return null;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * W1-2 (feature-audit 2026-07-21): forgen 가치 카운터 라인 — invisible 가치 가시화.
- * native 플랜/토큰 usage(→ /usage, W2에서 물러남)가 아니라 forgen *자체 활동량*을
- * 노출한다: recall 주입·surfaced·교정 캡처·ROI 강등·차단. 전부 computeStats()가 이미
- * 실측 중인 카운터라 조작 위험 0. computeStats 실패 시 라인 생략(fail-open).
- */
-export function buildValueLine(): string | null {
-  try {
-    let roiDemoted = 0;
-    try {
-      roiDemoted = Object.keys(loadRoiDemotions()).length;
-    } catch { /* roi store 없음 → 0 */ }
-
-    const s = computeStats();
-    const a = s.assistToday;
-    const parts = [
-      `${YELLOW}✦${RESET}`,
-      `${DIM}recall${RESET} ${a.recallHits}`,
-      `${DIM}surfaced${RESET} ${a.surfaced}`,
-      `${DIM}교정${RESET} +${s.corrections7d}${DIM}(7d)${RESET}`,
-      `${DIM}ROI↓${RESET} ${roiDemoted}`,
-      `${DIM}차단${RESET} ${s.blocks7d}${DIM}(7d)${RESET}`,
-    ];
-    return parts.join(`  ${DIM}·${RESET}  `);
-  } catch {
-    return null;
-  }
-}
-
-function buildLine3(claudeDir: string, cwd: string): string {
-  const settings = getSettingsJson(claudeDir);
-  const claudeMdCount = countClaudeMd(cwd);
-  const rulesCount = (() => {
-    try {
-      return loadActiveRules().length;
-    } catch {
-      return 0;
-    }
-  })();
-  const mcpCount = countMcps(settings);
-  const hookCount = countHooks(settings);
-
-  return [
-    `${YELLOW}${claudeMdCount} CLAUDE.md${RESET}`,
-    `${YELLOW}${rulesCount} rules${RESET}`,
-    `${YELLOW}${mcpCount} MCPs${RESET}`,
-    `${YELLOW}${hookCount} hooks${RESET}`,
-  ].join(`  ${DIM}|${RESET}  `);
-}
-
-/** 0.4.6 perf #13: cached output if fresh. */
-function readCacheIfFresh(): string | null {
-  try {
-    const stat = fs.statSync(STATUSLINE_CACHE_PATH);
-    if (Date.now() - stat.mtimeMs < CACHE_TTL_MS) {
-      return fs.readFileSync(STATUSLINE_CACHE_PATH, 'utf-8');
-    }
-  } catch { /* no cache or stale */ }
-  return null;
-}
-
-function writeCache(content: string): void {
+function writeForgenLineCache(sessionId: string | undefined, line: string): void {
   try {
     fs.mkdirSync(STATE_DIR, { recursive: true });
-    fs.writeFileSync(STATUSLINE_CACHE_PATH, content);
+    fs.writeFileSync(cachePathFor(sessionId), `${line}\n`);
   } catch { /* fail-open */ }
 }
 
+/**
+ * 렌더 — 1줄은 매번, 2줄은 세션별 15초 캐시. 파일 샘플은 기울기 전용이고 **표시는 현재 페이로드에 있는
+ * 창만** (critic SEV-1: 옛 샘플을 현재값처럼 보여주지 않는다).
+ * @param opts.currentAlreadyAppended handleStatuslineWith 가 이번 샘플을 파일에 이미 append 했으면 true
+ *        (중복 카운트 방지).
+ */
+export function renderStatusline(payload: StdinPayload, nowMs: number = Date.now(), opts: { useForgenCache?: boolean; currentAlreadyAppended?: boolean } = {}): string[] {
+  const cwd = payload.workspace?.current_dir ?? process.cwd();
+  const current = samplesFromPayload(payload.rate_limits, nowMs);
+  const history = readSamples(undefined, nowMs);
+  const all = opts.currentAlreadyAppended ? history : [...history, ...current];
+  const forecasts = forecastAll(all, nowMs, current);
+  const lines = [buildUserLine(payload, cwd, forecasts, nowMs)];
+  let forgenLine = opts.useForgenCache ? readForgenLineCached(payload.session_id, nowMs) : null;
+  if (forgenLine === null) {
+    forgenLine = buildForgenLine(payload.session_id);
+    if (forgenLine && opts.useForgenCache) writeForgenLineCache(payload.session_id, forgenLine);
+  }
+  if (forgenLine) lines.push(forgenLine);
+  return lines;
+}
+
 export async function handleStatusline(): Promise<void> {
-  // W4-3 (ADR-010): hook stdin 엔 모델 필드가 없으므로 statusline 이 세션별
-  // 모델을 캐시 → Stop/SubagentStop 가드가 per-model 프로필 조회에 사용.
-  // 리뷰 SEV-2: 이 기록은 반드시 5초 표시-캐시 early-return **앞**에 있어야
-  // 한다 — /model 로 세션 중 모델을 바꾸면 cache-hit 렌더가 payload 를 아예
-  // 안 읽어 stale 모델(잘못된 가드 모드)이 유지되는 창이 생긴다.
-  // 필드 부재(구버전 CC 등) 시 기록 안 함 = 가드는 'unknown' → block 유지.
-  const payload = readStdinJson();
+  await handleStatuslineWith(readStdinJson());
+}
+
+/** stdin 읽기를 분리한 본체 — 테스트는 페이로드를 직접 넣는다. */
+export async function handleStatuslineWith(payload: StdinPayload, nowMs: number = Date.now()): Promise<void> {
+
+  // (1) 세션별 모델 캐시 — Stop/SubagentStop 가드의 per-model 프로필 조회용. 캐시 판정 앞.
   if (payload.session_id && payload.model?.id) {
     const { cacheSessionModel } = await import('../checks/_shared/model-profile.js');
     const { sanitizeId } = await import('../hooks/shared/sanitize-id.js');
     cacheSessionModel(sanitizeId(payload.session_id), payload.model.id);
   }
 
-  // 캐시 hit 시 표시만 캐시에서 (5초 윈도우 내 동일 출력 가정).
-  // 라인 단위 cache → console.log 라인별 (테스트 호환).
-  const cached = readCacheIfFresh();
-  if (cached !== null) {
-    for (const line of cached.split('\n').filter(Boolean)) console.log(line);
-    return;
+  // (2) D5 샘플 기록 — 매 호출. 압축은 크기·정적 조건을 만족할 때만(compactSamples 내부 가드).
+  const samples = samplesFromPayload(payload.rate_limits, nowMs);
+  if (samples.length > 0) {
+    appendSamples(samples);
+    if (Math.random() < 0.02) compactSamples(undefined, nowMs);
   }
 
-  const cwd = payload.workspace?.current_dir ?? process.cwd();
-  const claudeDir = path.join(os.homedir(), '.claude');
-
-  const line1 = buildLine1(payload, cwd);
-  const line3 = buildLine3(claudeDir, cwd);
-  const usageLine = buildUsageLine();
-  const valueLine = buildValueLine(); // W1-2: forgen 가치 카운터
-  const lifecycleLine = buildLifecycleLine();
-
-  console.log(line1);
-  console.log(line3);
-  if (usageLine) console.log(usageLine);
-  if (valueLine) console.log(valueLine);
-  if (lifecycleLine) console.log(lifecycleLine);
-
-  // W2-2: 1회 공지(usageLine)는 캐시에 넣지 않는다 — 캐시 재생 시
-  // "1회만" 약속이 5초 창 동안 반복 위반되는 실측 버그 방지.
-  const cacheLines = [line1, line3];
-  if (valueLine) cacheLines.push(valueLine);
-  if (lifecycleLine) cacheLines.push(lifecycleLine);
-  const cacheBody = `${cacheLines.join('\n')}\n`;
-  writeCache(cacheBody);
+  // (3) 렌더 — 1줄 매번, 2줄 15초 캐시
+  const lines = renderStatusline(payload, nowMs, { useForgenCache: true, currentAlreadyAppended: samples.length > 0 });
+  for (const line of lines) console.log(line);
 }
