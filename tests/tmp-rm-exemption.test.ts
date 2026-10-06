@@ -56,6 +56,12 @@ describe('isTempOnlyRm — Claude 임시 루트(/tmp/claude-*) 한정, 보수적
       fs.rmSync(outside, { recursive: true, force: true });
     }
   });
+  it('임시 루트가 아직 존재하지 않아도(CI) 스크래치패드 경로는 true — 실존 조상(/tmp)의 realpath + 나머지로 판정', () => {
+    const missing = `/tmp/claude-${process.pid}-nonexistent-${Date.now()}`;
+    expect(fs.existsSync(missing)).toBe(false);
+    expect(isTempOnlyRm(`${RM} ${missing}/scratchpad/rc1`)).toBe(true);
+    expect(isTempOnlyRm(`S=${missing}/scratchpad; ${RM} $S`)).toBe(true);
+  });
   it('상대 경로는 stdin cwd / 같은 명령의 cd 로 해석 (오너 주 사례: cd 한 뒤 rm -rf .)', () => {
     expect(isTempOnlyRm(`${RM} rc2`, SP)).toBe(true);
     expect(isTempOnlyRm(`cd ${SP}/x && ${RM} .`)).toBe(true);

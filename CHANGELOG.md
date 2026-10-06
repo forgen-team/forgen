@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1] — 2026-10-06 — 핫픽스: 임시 경로 예외가 CI(루트 디렉터리 부재)에서 전부 false 이던 것 · self-gate 테스트 픽스처
+
+### Fixed
+- **`isTempOnlyRm` 의 symlink 검사가 임시 루트(`/tmp/claude-*`)가 아직 없는 환경에서 false 를 내던 것.** 가장 깊은 실존
+  조상이 `/tmp` 가 되면 그 realpath 만 보고 루트 밖으로 판정했다 — 로컬엔 디렉터리가 있어 통과했고 v0.6.0 의 Release
+  워크플로우(`npm test`)에서 6건 실패로 **npm 발행이 되지 않았다**(registry 는 0.5.9 유지). 실존 조상의 realpath 에
+  나머지 경로를 붙여 비교하도록 수정, 루트 부재 케이스 테스트 추가.
+- `tests/block-receipts.test.ts` 의 마스킹 검증 픽스처(PEM 헤더·JWT 모양 문자열)가 self-gate(secrets-leak) 정적 스캔에
+  걸려 v0.6.0 의 `forgen-self-gate` CI 가 실패했다(코드 결함 아님, 테스트 소스의 리터럴). 런타임에 조립하도록 바꿔
+  스캔을 통과시킨다. 동작 변경 없음.
+
 ## [0.6.0] — 2026-10-06 — 신뢰 영수증: 차단·룰·프로필·statusline 이 "왜/언제/얼마나" 를 보여준다 (ADR-017)
 
 오너 피드백 "교정·차단은 좋은데 체감이 안 된다" 에서 출발. 실측으로 드러난 문제 — 7d 차단 108건 중 78건이 테스트 유래,

@@ -121,13 +121,15 @@ export function isTempOnlyRm(cmd: string, cwd?: string): boolean {
       if (!roots.some((r) => abs.startsWith(r))) return false;
       // 루트 디렉터리 자체(/tmp/claude-1001 등)는 제외 — 하위만
       if (!roots.some((r) => abs.length > r.length && abs.slice(r.length).includes('/'))) return false;
-      // symlink 탈출: 가장 깊은 **실존 조상**의 realpath 가 임시 루트 아래여야 한다 (대상 자체가 아직 없어도).
+      // symlink 탈출: 가장 깊은 **실존 조상**의 realpath 에 나머지(미존재) 경로를 다시 붙인 결과가 임시 루트 아래여야
+      // 한다. (CI 처럼 /tmp/claude-* 가 아직 없으면 조상은 /tmp 이고, /tmp 의 realpath(+나머지)로 판정 — v0.6.0 의
+      // 릴리스 CI 가 바로 이 경우에 false 를 내 실패했다.)
       try {
         let probe = abs;
         while (probe !== '/' && !fs.existsSync(probe)) probe = probe.slice(0, probe.lastIndexOf('/')) || '/';
         if (probe !== '/') {
-          const real = fs.realpathSync(probe);
-          if (!roots.some((r) => real.startsWith(r) || `${real}/`.startsWith(r))) return false;
+          const realAbs = fs.realpathSync(probe) + abs.slice(probe.length);
+          if (!roots.some((r) => realAbs.startsWith(r))) return false;
         }
       } catch { return false; }
     }

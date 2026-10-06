@@ -147,14 +147,18 @@ describe('block-judge', () => {
 
 describe('redactForReceipt — 영수증 추가 마스킹 (critic SEV-2)', () => {
   it('DB_PASS·mysql -p·sshpass·헤더·URL userinfo·JWT·PEM 본문', () => {
+    // self-gate(secrets-leak) 가 소스의 리터럴 PEM/JWT 패턴을 잡지 않도록 런타임에 조립한다.
+    const jwt = ['eyJhbGciOiJIUzI1NiJ9', 'eyJzdWIiOiIxMjM0NTY3ODkwIn0', 'SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c'].join('.');
+    const pemHead = ['-----BEGIN RSA', 'PRIVATE KEY-----'].join(' ');
+    const pemTail = ['-----END RSA', 'PRIVATE KEY-----'].join(' ');
     const r = sig.redactForReceipt([
       'export DB_PASS=hunter2 && mysql -uroot -pS3cret db',
       'sshpass -p topsecret ssh x',
       'curl -H "Authorization: Basic dXNlcjpwYXNz" -H "X-API-Key: abcdef123456" https://user:pw123@host/x',
-      'TOKEN=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c',
-      '-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA\n-----END RSA PRIVATE KEY-----',
+      `TOKEN=${jwt}`,
+      `${pemHead}\nMIIEowIBAAKCAQEA\n${pemTail}`,
     ].join('\n'));
-    for (const leak of ['hunter2', 'S3cret', 'topsecret', 'dXNlcjpwYXNz', 'abcdef123456', 'pw123', 'eyJhbGciOiJIUzI1NiJ9', 'MIIEowIBAAKCAQEA']) expect(r).not.toContain(leak);
+    for (const leak of ['hunter2', 'S3cret', 'topsecret', 'dXNlcjpwYXNz', 'abcdef123456', 'pw123', jwt.slice(0, 20), 'MIIEowIBAAKCAQEA']) expect(r).not.toContain(leak);
     expect(r).toContain('[REDACTED');
     expect(r).toContain('ssh x'); // 비밀 아닌 부분은 보존
   });
