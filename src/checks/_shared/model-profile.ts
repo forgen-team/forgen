@@ -19,7 +19,7 @@
  */
 
 import * as fs from 'node:fs';
-import * as os from 'node:os';
+import { STATE_DIR } from '../../core/paths.js';
 import * as path from 'node:path';
 
 export type CompletionGuardMode = 'block' | 'advise';
@@ -39,13 +39,16 @@ export function guardModeForModel(modelId: string | null | undefined): Completio
   return MEASURED_ADVISE_RES.some(re => re.test(modelId)) ? 'advise' : 'block';
 }
 
-function cachePath(sessionId: string, home: string): string {
+function cachePath(sessionId: string, home?: string): string {
   // sessionId 는 호출측에서 sanitize 된 값이어야 함 (경로 주입 방지)
-  return path.join(home, '.forgen', 'state', `current-model-${sessionId}.json`);
+  // ADR-017 (critic): home 미지정이면 paths.ts STATE_DIR — FORGEN_HOME 격리를 존중한다. 이전엔
+  // os.homedir() 고정이라 격리 실행(테스트·에이전트)이 실 ~/.forgen/state 에 current-model-*.json 을 흘렸다.
+  if (home) return path.join(home, '.forgen', 'state', `current-model-${sessionId}.json`);
+  return path.join(STATE_DIR, `current-model-${sessionId}.json`);
 }
 
-/** statusline 이 세션별 모델을 기록 (fail-open) */
-export function cacheSessionModel(sessionId: string, modelId: string, home: string = os.homedir()): void {
+/** statusline 이 세션별 모델을 기록 (fail-open). `home` 은 테스트용 명시 경로. */
+export function cacheSessionModel(sessionId: string, modelId: string, home?: string): void {
   try {
     const p = cachePath(sessionId, home);
     fs.mkdirSync(path.dirname(p), { recursive: true });
@@ -54,7 +57,7 @@ export function cacheSessionModel(sessionId: string, modelId: string, home: stri
 }
 
 /** 가드가 세션별 모델 조회. 우선순위: FORGEN_MODEL env > statusline 캐시 > null */
-export function readSessionModel(sessionId: string, home: string = os.homedir()): string | null {
+export function readSessionModel(sessionId: string, home?: string): string | null {
   const envModel = process.env.FORGEN_MODEL;
   if (envModel && envModel.trim().length > 0) return envModel.trim();
   try {

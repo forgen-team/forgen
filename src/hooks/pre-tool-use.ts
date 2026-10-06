@@ -393,6 +393,8 @@ async function main(): Promise<void> {
   const toolName = data.tool_name ?? data.toolName ?? '';
   const toolInput = data.tool_input ?? data.toolInput ?? {};
   const sessionId = data.session_id ?? 'default';
+  // ADR-017 §6-2: 상대 경로 rm 대상 해석용 (Claude Code 훅 stdin 의 cwd).
+  const hookCwd = typeof (data as { cwd?: unknown }).cwd === 'string' ? String((data as { cwd?: string }).cwd) : undefined;
 
   // ADR-008 / codex-integration.md — Codex `approval_policy=auto` 에서
   // PermissionRequest 가 dispatch 안 되는 갭 보완. 모든 tool call 을
@@ -402,12 +404,14 @@ async function main(): Promise<void> {
   // ADR-001 Mech-A PreToolUse dispatcher — 사용자가 정의한 rule 이 빌트인 위험-명령 감지보다 먼저.
   // 이렇게 해야 rule.block_message (맥락 있는 안내) 가 제네릭 "Dangerous command blocked" 대신 노출됨.
   // fail-open: 예외는 hook 차단 안 함.
+  // ADR-017 D1: advise 강등 룰의 안내 메시지 — 차단 판정이 모두 끝난 뒤 승인 응답에 합쳐 출력한다.
+  const advisories: string[] = [];
   try {
     const [
       { loadActiveRules },
-      { recordViolation },
+      { recordViolation, matchedFragment },
       { compileSafeRegex, safeRegexTest },
-      { preprocessForMatch },
+      { preprocessForMatch, isTempOnlyRm, isSuspiciousRm },
     ] = await Promise.all([
       import('../store/rule-store.js'),
       import('../engine/lifecycle/signals.js'),
@@ -434,23 +438,52 @@ async function main(): Promise<void> {
         const matchTarget = (v.params?.match_target ?? 'raw') as 'raw' | 'masked' | 'command_tokens';
         const target = preprocessForMatch(command, matchTarget);
         if (!safeRegexTest(re.regex, target)) continue;
+        // ADR-017 §6-2 (오너 결정): rm -rf 류 룰이 Claude 의 임시 작업 폴더(/tmp/claude-*/… 등) 삭제에
+        // 걸린 경우는 막지 않는다 — 같은 명령 안의 변수 대입까지 한 단계 해석해 대상이 전부 임시 경로일 때만.
+        // critic D1 SEV-1: 예외는 **매칭된 토큰 자체가 rm** 일 때만 (pattern.includes('rm') 은 terraform 룰까지 껐다).
+        const matchTok = re.regex.exec(target)?.[0] ?? '';
+        if (/^\s*rm\b/.test(matchTok) && !isSuspiciousRm(command) && isTempOnlyRm(command, hookCwd)) { log.debug(`rule ${rule.rule_id}: temp-only rm — exempt`); continue; }
         const requiresFlag = v.params?.requires_flag;
         const confirmed = process.env.FORGEN_USER_CONFIRMED === '1';
+        const matchedFrag = matchedFragment(re.regex, target);
+        // ADR-017 D1: precision 강등된 룰(enforce_mode 'advise')은 차단 대신 기록만.
+        if (requiresFlag && !confirmed && rule.enforce_mode === 'advise') {
+          recordViolation({ rule_id: rule.rule_id, session_id: sessionId, source: 'pre-tool-guard', kind: 'correction', message_preview: command.slice(0, 120), matched: matchedFrag, target_kind: 'command' });
+          // ship-review MAJOR: 여기서 return 하면 같은 명령의 나머지 룰(하드 포함)과 빌트인 위험 검사를 건너뛴다 → 모아서 마지막에 경고.
+          let why = '';
+          try {
+            const { lastDemotion } = await import('../engine/block-judge.js');
+            const d = lastDemotion(rule.rule_id);
+            if (d) why = ` (${d.at.slice(0, 10)} 7d 판정 ${d.judged}건 중 오탐률 ${Math.round((1 - d.precision) * 100)}% → 안내 모드)`;
+          } catch { /* fail-open */ }
+          advisories.push(`[Forgen] (advise) ${spec.block_message ?? rule.policy.slice(0, 120)}${why} — 차단 대신 안내만 합니다. 복귀: forgen rule enforce ${rule.rule_id.slice(0, 8)}`);
+          continue;
+        }
         if (requiresFlag && !confirmed) {
-          recordViolation({ rule_id: rule.rule_id, session_id: sessionId, source: 'pre-tool-guard', kind: 'deny', message_preview: command.slice(0, 120) });
+          const violationId = recordViolation(
+            { rule_id: rule.rule_id, session_id: sessionId, source: 'pre-tool-guard', kind: 'deny', message_preview: command.slice(0, 120), matched: matchedFrag, target_kind: 'command' },
+            { receipt_text: command },
+          );
+          try { const { spawnBlockJudge } = await import('../engine/block-judge.js'); spawnBlockJudge(violationId, sessionId); } catch { /* fail-open */ }
           const baseMsg = spec.block_message ?? `[${rule.rule_id}] policy violation: ${rule.policy.slice(0, 120)}`;
+          // ADR-017 D0: 룰의 출처 교정 인용.
+          const origin = await (async (): Promise<string> => {
+            try { const { originLine } = await import('../store/rule-origin.js'); return originLine(rule); } catch { return ''; }
+          })();
           // G8: override 힌트 — FORGEN_USER_CONFIRMED=1 으로 사용자 명시 승인 가능, 감사 로그 기록됨.
-          const msgWithHint = `${baseMsg}\n\n(override: set FORGEN_USER_CONFIRMED=1 (bypass will be audited in violations.jsonl))`;
+          const msgWithHint = `${baseMsg}${origin ? `\n${origin}` : ''}\n\n(override: set FORGEN_USER_CONFIRMED=1 (bypass will be audited in violations.jsonl). 오탐이면: forgen block ${violationId.slice(0, 8)} --fp)`;
           console.log(denyOrObserve('pre-tool-use', msgWithHint));
           return;
         }
         if (requiresFlag && confirmed) {
           // H3: 우회 감사 — FORGEN_USER_CONFIRMED 으로 Mech-A 를 우회할 때마다 violation 로그에
-          // kind='correction' 으로 기록. T3 bypass 누적 대신 별도 채널로 운영자가 monitoring 가능.
+          // (ADR-017: kind='bypass_confirmed' — T3 의 유일한 입력. 아래 주석의 'correction' 은 구 의미.)
           recordViolation({
             rule_id: rule.rule_id, session_id: sessionId,
             source: 'pre-tool-guard',
-            kind: 'correction', // 'correction' = 사용자 명시 우회, rule 위반이지만 의도된 것
+            // ADR-017 D1: 사용자 명시 우회 전용 kind. (이전 'correction' 은 메타가드 advise 와 섞여
+            // "사용자 우회 87건"으로 둔갑했다.) T3 의 유일한 입력.
+            kind: 'bypass_confirmed',
             message_preview: `[FORGEN_USER_CONFIRMED=1 bypass] ${command.slice(0, 120)}`,
           });
         }
@@ -459,19 +492,32 @@ async function main(): Promise<void> {
   } catch (e) { log.debug('enforce_via[PreToolUse] dispatch 실패', e); }
 
   // Bash 도구: 위험 명령어 감지 (빌트인 safety net)
+  // critic D1: `rm -rf /tmp/../home`, `/tmp/{a,../..}`, `/tmp/*` 는 빌트인 /tmp lookahead 를 우회한다 → 먼저 차단.
+  try {
+    const cmd0 = typeof (toolInput as { command?: unknown }).command === 'string' ? String((toolInput as { command: string }).command) : '';
+    if (toolName === 'Bash' && cmd0) {
+      const { isSuspiciousRm, preprocessForMatch } = await import('./shared/command-parser.js');
+      // heredoc 본문·따옴표 안 문자열(문서/테스트 소스에 적힌 예시)은 실행되는 명령이 아니다 → masked 로 검사.
+      if (isSuspiciousRm(preprocessForMatch(cmd0, 'masked'))) {
+        console.log(denyOrObserve('pre-tool-use', `[Forgen] Dangerous command blocked: recursive rm with path traversal/glob under a temp path\nCommand: ${cmd0.slice(0, 200)}`));
+        return;
+      }
+    }
+  } catch { /* fail-open */ }
   const check = checkDangerousCommand(toolName, toolInput);
   if (check.action === 'block') {
     console.log(denyOrObserve('pre-tool-use', `[Forgen] Dangerous command blocked: ${check.description}\nCommand: ${check.command}`));
     return;
   }
+  const withAdvisories = (body: string): string => (advisories.length ? `${advisories.map((x) => `<compound-tool-warning>\n${x}\n</compound-tool-warning>`).join('\n')}${body ? `\n${body}` : ''}` : body);
   if (check.action === 'warn') {
-    console.log(approveWithWarning(`<compound-tool-warning>\n[Forgen] ⚠ Dangerous command detected: ${check.description}\nProceed with caution.\n</compound-tool-warning>`));
+    console.log(approveWithWarning(withAdvisories(`<compound-tool-warning>\n[Forgen] ⚠ Dangerous command detected: ${check.description}\nProceed with caution.\n</compound-tool-warning>`)));
     return;
   }
 
   // Output size guard: warn when Grep is used without head_limit
   if (toolName === 'Grep' && !toolInput?.head_limit) {
-    console.log(approveWithWarning(`<compound-tool-warning>\n[Forgen] Grep without head_limit may produce large output. Set head_limit or pipe through | head -n to limit output size.\n</compound-tool-warning>`));
+    console.log(approveWithWarning(withAdvisories(`<compound-tool-warning>\n[Forgen] Grep without head_limit may produce large output. Set head_limit or pipe through | head -n to limit output size.\n</compound-tool-warning>`)));
     return;
   }
 
@@ -486,11 +532,12 @@ async function main(): Promise<void> {
   if (shouldShowReminderIO()) {
     const reminders = getActiveReminders();
     if (reminders.length > 0) {
-      console.log(approveWithWarning(`<compound-reminder>\n${reminders.join('\n')}\n</compound-reminder>`));
+      console.log(approveWithWarning(withAdvisories(`<compound-reminder>\n${reminders.join('\n')}\n</compound-reminder>`)));
       return;
     }
   }
 
+  if (advisories.length) { console.log(approveWithWarning(withAdvisories(''))); return; }
   console.log(approve());
   } finally {
     recordHookTiming('pre-tool-use', Date.now() - _hookStart, 'PreToolUse');

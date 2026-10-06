@@ -152,6 +152,11 @@ export interface Rule {
    */
   enforce_via?: EnforceSpec[];
   /**
+   * ADR-017 D1: precision 자동 강등. 'advise' 면 Mech-A/B 가 차단 대신 기록(kind:'correction')만 한다.
+   * 하드 룰(strength 'hard')과 builtin 은 자동으로 'advise' 가 되지 않는다. 미지정 = 'block'.
+   */
+  enforce_mode?: 'block' | 'advise';
+  /**
    * Lifecycle 상태. optional — 기존 rule 은 load 시 phase='active' 로 auto-initialize.
    * ADR-002 §Data Model.
    */
@@ -162,6 +167,20 @@ export interface Rule {
    * 통합 rule 쪽에는 설정되지 않는다(원본에만). ADR-010 W3-2.
    */
   clustered_into?: string;
+  /**
+   * ADR-017 D3: 채굴(behavior_inference) 룰과 explicit 룰이 같은 개념일 때의 *링크*.
+   * 흡수가 아니다 — evidence_refs/strength 는 양쪽 모두 불변(ADR-013 불변식).
+   *  - explicit 룰 쪽: 이 룰과 같은 개념으로 링크된 채굴 rule_id 목록.
+   *  - 채굴 룰 쪽: 링크 대상 explicit rule_id(1개). status 'superseded' + clustered_into 와 함께
+   *    설정되어 렌더에서 숨겨지고 `forgen rule unmerge` 로 복원된다.
+   */
+  related_to?: string[];
+  /**
+   * ADR-017 D3: explicit 룰에만 설정. 이 룰과 같은 개념이 이후 세션에서 *채굴*로 관측된 횟수
+   * (링크된 채굴 룰의 evidence 수 + 사전 중복 검사에서 흡수된 채굴 evidence 수).
+   * evidence_refs 에 합산하지 않으므로 strength 산출에 영향을 주지 않는다.
+   */
+  mined_observations?: number;
 }
 
 // ── Evidence ──
@@ -314,6 +333,11 @@ export interface CorrectionRequest {
   message: string;
   target: string;
   axis_hint: 'quality_safety' | 'autonomy' | 'judgment_philosophy' | 'communication_style' | null;
+  /**
+   * ADR-017 D0 (2026-10-06): 사용자 발화 **원문** (모델이 정리한 message 와 구분). 있을 때만
+   * 차단 메시지가 "당신의 말" 로 인용한다. <private> 필터 후 저장.
+   */
+  user_quote?: string;
 }
 
 export interface CorrectionResult {

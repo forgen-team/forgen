@@ -40,6 +40,8 @@ export function processCorrection(req: CorrectionRequest): CorrectionResult {
       axis_hint: req.axis_hint,
       // avoid-this는 현재 설정과 반대 방향의 교정 → mismatch 감지용
       direction: req.kind === 'avoid-this' ? 'opposite' : 'same',
+      // ADR-017 D0: 사용자 발화 원문(있을 때만). rule-origin 이 "당신의 말" 인용에 사용.
+      ...(req.user_quote ? { user_quote: req.user_quote } : {}),
     },
   });
   appendEvidence(evidence); // T1 lifecycle trigger fires here for explicit_correction

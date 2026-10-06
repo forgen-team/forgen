@@ -4,13 +4,21 @@
  * dist/ 디렉토리의 컴파일된 JS를 spawn하여 stdin/stdout 파이프로 테스트합니다.
  * 응답 포맷: { continue: boolean, hookSpecificOutput?: { ... } }
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterAll } from 'vitest';
 import { spawn } from 'node:child_process';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
+import * as os from 'node:os';
 
 const PROJECT_ROOT = path.resolve(import.meta.dirname, '..');
 const DIST_HOOKS = path.join(PROJECT_ROOT, 'dist', 'hooks');
+
+// ADR-017 §1.1: 이 파일이 dist 훅을 **실 HOME** 으로 spawn 해 프로덕션
+// ~/.forgen/state/enforcement/violations.jsonl 에 `rm -rf /` 프로브를 session 'default' 로
+// 기록해 왔다(7d 차단 108건 중 78건). 격리 HOME 으로 spawn — 빌트인 위험패턴은 룰 파일 없이도
+// 차단되므로 아래 기대값은 그대로 성립한다.
+const TEST_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'forgen-hook-pipeline-home-'));
+afterAll(() => { fs.rmSync(TEST_HOME, { recursive: true, force: true }); });
 
 // ── 헬퍼 ──
 
@@ -38,7 +46,7 @@ function runHook(hookFile: string, input: object, timeoutMs = 10000): Promise<Ho
       env: {
         ...process.env,
         COMPOUND_CWD: PROJECT_ROOT,
-        HOME: process.env.HOME ?? '/tmp',
+        HOME: TEST_HOME,
       },
     });
 

@@ -17,7 +17,8 @@ import { classify, applyProposal } from '../engine/enforce-classifier.js';
 import { detect as detectT1 } from '../engine/lifecycle/trigger-t1-correction.js';
 import { foldEvents } from '../engine/lifecycle/orchestrator.js';
 import { appendLifecycleEvents } from '../engine/lifecycle/meta-reclassifier.js';
-import { laplaceConfidence, strengthForConfidence } from '../engine/correction-clustering.js';
+import { findMostSimilarRule, laplaceConfidence, strengthForConfidence } from '../engine/correction-clustering.js';
+import { recordMinedObservation } from '../engine/correction-cluster-runner.js';
 import { withFileLockSync } from '../hooks/shared/file-lock.js';
 
 function evidencePath(evidenceId: string): string {
@@ -196,7 +197,12 @@ const AUTO_MINED_PREFIX = 'auto:';
 const AUTO_MINED_TTL_MS = 21 * 24 * 60 * 60 * 1000; // 21일
 const AUTO_MINED_MAX_LIVE = 30;
 
-/** 채굴(behavior_inference) 룰 은퇴: TTL 초과 + 총량 상한 초과분(오래된 순). */
+/**
+ * 채굴(behavior_inference) 룰 은퇴: TTL 초과 + 총량 상한 초과분(오래된 순).
+ * ADR-017 D3 캡 재정의: 총량 상한은 *개념(클러스터) 수* 기준 — loadActiveRules() 가 status
+ * 'active' 만 반환하므로 병합/링크로 superseded 된 원본은 상한 계산에서 자연히 제외되고,
+ * 통합 룰 1개가 개념 1개로 집계된다. (status 필터를 넓히면 이 보장이 깨진다.)
+ */
 function retireStaleAutoMinedRules(now: number): void {
   const auto = loadActiveRules().filter(
     (r) => r.scope === 'me' && r.source === 'behavior_inference' && r.render_key?.startsWith(AUTO_MINED_PREFIX),
@@ -263,6 +269,35 @@ export function promoteSessionCandidates(sessionId: string): number {
       // evidence 를 영구히 반환하므로, 이 마커가 없으면 재-sweep 마다 같은 evidence 가
       // 무한 재처리된다.
       const alreadyConsumed = (candidate.candidate_rule_refs ?? []).length > 0;
+
+      // ADR-017 D3 — 채굴 경로 사전 중복 검사(render_key 조회 *앞*): 같은 개념의 active 룰이
+      // 이미 있으면 새 render_key 변형으로 룰을 늘리지 않는다. 의미 매칭은 클러스터링과
+      // 같은 term 매칭(policySimilarity ≥ τ)을 재사용한다.
+      //   - 채굴 룰과 매칭 → 그 룰의 evidence_refs 에 추가(strength 'default' 고정).
+      //   - explicit 룰과 매칭 → 룰을 만들지 않고 explicit 의 mined_observations 만 +1
+      //     (evidence_refs 합산 금지 — ADR-013 불변식).
+      // 같은 evidence 의 재관측(alreadyConsumed)은 아래 기존 경로와 동일하게 no-op.
+      if (autoMined && !alreadyConsumed) {
+        const activeMe = loadActiveRules().filter((r) => r.scope === 'me');
+        const match = findMostSimilarRule(candidate.summary, activeMe);
+        if (match) {
+          const hit = match.rule;
+          if (hit.source === 'behavior_inference') {
+            const evidenceRefs = hit.evidence_refs.includes(candidate.evidence_id)
+              ? hit.evidence_refs
+              : [...hit.evidence_refs, candidate.evidence_id];
+            saveRule({ ...hit, evidence_refs: evidenceRefs, strength: 'default' });
+            promoted++;
+          } else {
+            recordMinedObservation(hit, 1);
+          }
+          saveEvidence({
+            ...candidate,
+            candidate_rule_refs: [...(candidate.candidate_rule_refs ?? []), hit.rule_id],
+          });
+          continue;
+        }
+      }
 
       // (A) render_key upsert identity — status 무관 기존 rule 조회. TTL/cap 로
       // retire(status='removed')된 render_key 도 여기서 발견되어 "재생성"이 아니라

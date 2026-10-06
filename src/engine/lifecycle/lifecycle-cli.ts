@@ -8,7 +8,7 @@
 import * as path from 'node:path';
 import { loadAllRules, saveRule } from '../../store/rule-store.js';
 import { STATE_DIR } from '../../core/paths.js';
-import { collectSignals, readJsonlSafe } from './signals.js';
+import { collectSignals, readJsonlSafe, isConfirmedBypass, isSyntheticSession } from './signals.js';
 import { detect as detectT2 } from './trigger-t2-violation.js';
 import { detect as detectT3 } from './trigger-t3-bypass.js';
 import { detect as detectT4 } from './trigger-t4-decay.js';
@@ -22,7 +22,7 @@ import {
   appendLifecycleEvents,
 } from './meta-reclassifier.js';
 import { foldEvents } from './orchestrator.js';
-import type { LifecycleEvent, RuleSignals, ViolationEntry, BypassEntry } from './types.js';
+import type { LifecycleEvent, RuleSignals, ViolationEntry, } from './types.js';
 
 const LIFECYCLE_DIR = path.join(STATE_DIR, 'lifecycle');
 
@@ -39,13 +39,14 @@ export async function handleLifecycleScan(args: string[]): Promise<void> {
   const violations = readJsonlSafe<ViolationEntry>(
     path.join(STATE_DIR, 'enforcement', 'violations.jsonl')
   );
-  const bypass = readJsonlSafe<BypassEntry>(
-    path.join(STATE_DIR, 'enforcement', 'bypass.jsonl')
-  );
+  // ADR-017 D1: bypass.jsonl(자연어 휴리스틱, 전량 오탐)은 더 이상 읽지 않는다. T3 입력은
+  // violations 의 kind:'bypass_confirmed'(사용자 명시 우회) 뿐이며 collectSignals 가 거기서 뽑는다.
+  const bypassConfirmed = violations.filter(isConfirmedBypass).length;
+  const syntheticExcluded = violations.filter((v) => isSyntheticSession(v.session_id)).length;
   const drift = readDriftEntries();
 
   const signals = new Map<string, RuleSignals>();
-  for (const r of rules) signals.set(r.rule_id, collectSignals(r, { violations, bypass, now }));
+  for (const r of rules) signals.set(r.rule_id, collectSignals(r, { violations, now }));
 
   const events: LifecycleEvent[] = [
     ...detectT2({ rules, signals, ts: now }),
@@ -58,7 +59,7 @@ export async function handleLifecycleScan(args: string[]): Promise<void> {
   const promotionCandidates = scanSignalsForPromotion({ rules, signals, ts: now });
 
   console.log(`\n  Lifecycle Scan — ${rules.length} rule(s)  (${apply ? 'APPLY' : 'dry-run'})\n`);
-  console.log(`  Signals: violations.jsonl=${violations.length}  bypass.jsonl=${bypass.length}  drift.jsonl=${drift.length}\n`);
+  console.log(`  Signals: violations.jsonl=${violations.length} (synthetic-session excluded ${syntheticExcluded})  bypass_confirmed=${bypassConfirmed}  drift.jsonl=${drift.length}\n`);
 
   if (events.length === 0 && demotionCandidates.length === 0 && promotionCandidates.length === 0) {
     console.log('  No lifecycle events. System stable.\n');

@@ -22,6 +22,8 @@ import { STATE_DIR, OUTCOMES_DIR } from './paths.js';
 /** Filename prefixes that identify session-scoped ephemeral files. */
 const SESSION_SCOPED_PREFIXES = [
   'active-agents-',
+  'statusline-cache', // ADR-017 D4: 세션별 statusline 캐시 (+ 구 전역 statusline-cache.txt 도 정리)
+  'turn-rules-', // ADR-017 D2: 세션별 턴 관련 룰
   'checkpoint-',
   'injection-cache-',
   'modified-files-',
@@ -126,6 +128,7 @@ const ROTATABLE_LOGS = [
   'prompt-history.jsonl',
   'usage-telemetry.jsonl',
   'rate-limit-misses.jsonl',
+  'rate-limit-samples.jsonl', // ADR-017 D5: 10MB 백스톱 (7d TTL 압축과 양립)
 ];
 const DEFAULT_MAX_LOG_BYTES = 10 * 1024 * 1024; // 10MB
 

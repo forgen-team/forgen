@@ -19,6 +19,7 @@ forgen 의 중요한 아키텍처 결정을 기록합니다. 각 ADR 은 컨텍�
 | [ADR-014](./ADR-014-codex-parity-rules-agents.md) | Codex 동등화 2차 — 개인화 룰 주입(SessionStart) · ch-* 커스텀 에이전트 TOML · 훅 신뢰 감사 (v0.5.3) | Implemented | 2026-10-01 | Type 2 |
 | [ADR-015](./ADR-015-host-feature-gap-2026-10.md) | 최신 Claude Code 2.1.286 / Codex 0.153 대비 갭 — Stop block 사영 결함 수정 · SessionEnd · 중첩 실행 가드 · 스킬 frontmatter (v0.5.3) + 백로그 | Implemented | 2026-10-01 | Type 2 |
 | [ADR-016](./ADR-016-codex-notify-hook-bundle-verify-skill.md) | Codex `notify` 폴백 · 훅 번들(SessionEnd·컨텍스트 스필 해제·죽은 이벤트 제거, 재승인 2건) · trust 해시 감사 · Claude `verify` 스킬 (v0.5.6) | Implemented | 2026-10-02 | Type 2 |
+| [ADR-017](./ADR-017-trust-receipts-statusline.md) | 신뢰 영수증 — 차단 영수증·오탐 되먹임 · 룰 병합 · 적용 룰 가시화 · statusline 재설계(컨텍스트/한도/소진 예측) | Implemented (v0.6.0) | 2026-10-06 | Type 2 |
 
 ## 상태 정의
 - **Proposed**: 제안됨, 승인 대기

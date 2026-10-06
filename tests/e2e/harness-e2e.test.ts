@@ -13,11 +13,28 @@
  *   6. Settings Injection — hooks.json → settings.json 머지
  *   7. MCP Tool Integration — compound 도구가 실제 데이터로 동작
  */
-import { describe, it, expect, beforeAll, beforeEach, afterEach, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterEach, afterAll, vi } from 'vitest';
 import { spawn } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
+
+// ADR-017 §1.5a: 이 파일의 **in-process** 호출(searchSolutions 등)이 src/core/paths.ts 의 실 홈을
+// 통해 프로덕션 ~/.forgen/state/match-eval-log.jsonl 에 픽스처 쿼리를 써 왔다. paths.ts 는 모듈
+// 로드 시 FORGEN_HOME 을 읽으므로 import 보다 먼저(hoisted) 샌드박스 홈을 만들고 가리킨다.
+// spawn 자식은 ...process.env 로 같은 FORGEN_HOME 을 물려받아 E2E_TEST_HOME/.forgen 과 일치한다.
+const { HOISTED_E2E_HOME, PREV_FORGEN_HOME } = vi.hoisted(() => {
+  const fsH = require('node:fs') as typeof import('node:fs');
+  const pathH = require('node:path') as typeof import('node:path');
+  const osH = require('node:os') as typeof import('node:os');
+  const prev = process.env.FORGEN_HOME;
+  const home = fsH.mkdtempSync(pathH.join(osH.tmpdir(), 'forgen-e2e-home-'));
+  process.env.FORGEN_HOME = pathH.join(home, '.forgen');
+  return { HOISTED_E2E_HOME: home, PREV_FORGEN_HOME: prev };
+});
+afterAll(() => {
+  if (PREV_FORGEN_HOME === undefined) delete process.env.FORGEN_HOME; else process.env.FORGEN_HOME = PREV_FORGEN_HOME;
+});
 
 const PROJECT_ROOT = path.resolve(import.meta.dirname, '../..');
 const DIST_HOOKS = path.join(PROJECT_ROOT, 'dist', 'hooks');
@@ -37,7 +54,7 @@ const DIST_HOOKS = path.join(PROJECT_ROOT, 'dist', 'hooks');
  * The dir is created once before the suite and removed after so each run
  * starts fresh and leaves nothing behind.
  */
-const E2E_TEST_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'forgen-e2e-home-'));
+const E2E_TEST_HOME = HOISTED_E2E_HOME;
 
 // ── Shared Helpers ──
 

@@ -19,7 +19,7 @@ import * as crypto from 'node:crypto';
 import { FORGEN_HOME, ME_DIR, ME_RULES, ME_BEHAVIOR, V1_RECOMMENDATIONS_DIR, V1_SESSIONS_DIR, STATE_DIR, V1_RAW_LOGS_DIR, ME_SOLUTIONS, SESSIONS_DIR } from './paths.js';
 import { checkLegacyProfile, runLegacyCutover } from './legacy-detector.js';
 import { detectRuntimeCapability } from './runtime-detector.js';
-import { backupCorruptProfile, loadProfile, profileExists } from '../store/profile-store.js';
+import { backupCorruptProfile, loadProfile, profileExists, recomputeIfNeverReclassified } from '../store/profile-store.js';
 import { loadActiveRules, cleanupStaleSessionRules, markRulesInjected } from '../store/rule-store.js';
 import { composeSession } from '../preset/preset-manager.js';
 import { renderRules, DEFAULT_CONTEXT } from '../renderer/rule-renderer.js';
@@ -89,6 +89,10 @@ export function bootstrapV1Session(): V1BootstrapResult {
       mismatch: null,
     };
   }
+
+  // ADR-017 §6-8: score 산출 로직이 없던 버전의 프로필(last_reclassification_at=null)은
+  // 세션 시작 시 1회 재계산. 이미 계산된 프로필은 no-op. fail-open.
+  try { recomputeIfNeverReclassified(); } catch { /* fail-open */ }
 
   const profile = loadProfile();
   if (!profile) {

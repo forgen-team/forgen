@@ -717,6 +717,18 @@ forgen rule activate <id>       # Re-activate a suppressed rule
 forgen rule scan [--apply]      # Run lifecycle triggers (promote/demote/retire)
 forgen rule health-scan         # Scan drift → Mech downgrade candidates
 forgen rule classify            # Propose enforce_via for legacy rules
+forgen rule merge-mined [--apply]  # Merge mined (auto:) rules among themselves; link same-concept ones to explicit rules (dry-run by default)
+forgen rule unmerge <id>        # Restore originals of a merged/linked rule
+forgen rule enforce|advise <id> # Restore blocking for an auto-demoted rule / record-only mode (hard rules refused)
+```
+
+### Trust receipts (v0.6.0)
+
+```bash
+forgen status --blocks [N]      # Recent real blocks with receipt: matched fragment, 24h context, verdict (auto/user)
+forgen block <id> --ok | --fp   # Judge a block (overrides the automatic Haiku verdict); feeds per-rule precision
+forgen status --turn            # Rules relevant to the current turn, each with the correction (date/kind/your words) it came from
+forgen statusline               # 2 lines: model · path(branch) · ctx % · 5h/7d limits + exhaustion forecast · $ / related rules · blocks · surfaced
 ```
 
 ### Knowledge management

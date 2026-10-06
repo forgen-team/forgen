@@ -12,7 +12,27 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { Rule } from '../../store/types.js';
-import type { RuleSignals, ViolationEntry, BypassEntry } from './types.js';
+import * as crypto from 'node:crypto';
+import { redactSecrets } from '../../hooks/secret-filter.js'; // ESM main guard 있음 — import 부작용 없음
+
+/**
+ * 영수증·로그용 추가 마스킹 (critic D1 SEV-2): secret-filter 의 공개 키 패턴만으로는 `DB_PASS=…`, mysql -p<값>,
+ * sshpass -p, Basic/X-API-Key 헤더, URL userinfo, 무접두 JWT, PEM 본문이 평문으로 남아 Haiku 로 egress 된다.
+ * 과잉 마스킹은 영수증 가독성만 깎지만 누락은 유출이므로 넓게 잡는다.
+ */
+export function redactForReceipt(text: string): string {
+  // PEM 은 secret-filter 보다 먼저 — secret-filter 가 BEGIN 헤더 줄만 치환하면 본문(base64)이 평문으로 남는다.
+  let t = text.replace(/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g, '[REDACTED:PEM]');
+  t = redactSecrets(t).redacted;
+  t = t.replace(/\[REDACTED:[^\]]*\][\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g, '[REDACTED:PEM]');
+  t = t.replace(/\b(eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,})/g, '[REDACTED:JWT]');
+  t = t.replace(/(\b[A-Za-z_][A-Za-z0-9_]*(?:pass(?:word|wd)?|pwd|secret|token|api[_-]?key|auth|credential)[A-Za-z0-9_]*\s*[=:]\s*)(["']?)[^\s"'&;]+\2/gi, '$1$2[REDACTED]$2');
+  t = t.replace(/((?:mysql|mariadb|mysqldump|sshpass|psql)\b[^\n;|&]*?\s-p)(?!assword)\s*(\S+)/gi, '$1[REDACTED]');
+  t = t.replace(/((?:Authorization|X-API-Key|X-Auth-Token|Proxy-Authorization)\s*:\s*)(?:Basic|Bearer|Token)?\s*\S+/gi, '$1[REDACTED]');
+  t = t.replace(/(:\/\/[^\s/:@]+:)[^\s/@]+(@)/g, '$1[REDACTED]$2');
+  return t;
+}
+import type { RuleSignals, ViolationEntry, BypassEntry, VerdictEntry, CheckEntry } from './types.js';
 import { STATE_DIR as FORGEN_STATE_DIR } from '../../core/paths.js';
 
 const ENFORCEMENT_DIR = path.join(FORGEN_STATE_DIR, 'enforcement');
@@ -57,19 +77,187 @@ export function readJsonlSafe<T>(p: string): T[] {
   }
 }
 
-export function recordViolation(entry: Omit<ViolationEntry, 'at'>): void {
+/**
+ * ADR-017 §2 원칙 2: 훅이 session_id 없이 호출되면 'default'/'unknown' 폴백이 기록된다.
+ * 실세션(Claude·Codex 모두 session_id 전달)에서는 나오지 않으며, 실측상 전부 테스트가
+ * dist 훅을 spawn 한 흔적이었다(7d 차단 108건 중 78건). 모든 집계에서 제외한다.
+ */
+export const SYNTHETIC_SESSION_IDS: ReadonlySet<string> = new Set(['default', 'unknown', '']);
+
+export function isSyntheticSession(sessionId: unknown): boolean {
+  return typeof sessionId !== 'string' || SYNTHETIC_SESSION_IDS.has(sessionId);
+}
+
+/** 사용자 관점의 "차단": block/deny (+legacy undefined). correction/bypass_confirmed 는 아님. */
+export function isBlockKind(kind: unknown): boolean {
+  return kind === 'block' || kind === 'deny' || kind === undefined;
+}
+
+/** 실세션에서 일어난 실제 차단만. stats/explain/lifecycle 이 공유하는 단일 기준. */
+export function isRealBlock(e: { kind?: unknown; session_id?: unknown }): boolean {
+  return isBlockKind(e.kind) && !isSyntheticSession(e.session_id);
+}
+
+export function isConfirmedBypass(e: { kind?: unknown; session_id?: unknown }): boolean {
+  return e.kind === 'bypass_confirmed' && !isSyntheticSession(e.session_id);
+}
+
+const RECEIPTS_DIR = path.join(ENFORCEMENT_DIR, 'receipts');
+const VERDICTS_PATH = path.join(ENFORCEMENT_DIR, 'verdicts.jsonl');
+const CHECKS_PATH = path.join(ENFORCEMENT_DIR, 'checks.jsonl');
+export const RECEIPT_TTL_MS = 24 * 3600 * 1000;
+export const MATCHED_MAX = 160;
+
+export interface RecordViolationOptions {
+  /** 영수증 전문(명령/응답/파일 본문). secret-filter 로 마스킹 후 receipts/<id>.txt 에 24h 보관. */
+  receipt_text?: string;
+}
+
+function sha16(text: string): string {
+  return crypto.createHash('sha256').update(text).digest('hex').slice(0, 16);
+}
+
+/** receipts/ 의 TTL 지난 파일 정리 — 기록 시마다 best-effort(최대 200개 확인). */
+function pruneReceipts(now: number): void {
+  try {
+    if (!fs.existsSync(RECEIPTS_DIR)) return;
+    const names = fs.readdirSync(RECEIPTS_DIR).slice(0, 200);
+    for (const n of names) {
+      const p = path.join(RECEIPTS_DIR, n);
+      try { if (now - fs.statSync(p).mtimeMs > RECEIPT_TTL_MS) fs.unlinkSync(p); } catch { /* skip */ }
+    }
+  } catch { /* skip */ }
+}
+
+/**
+ * 위반/차단 기록. ADR-017 D1: violation_id 를 발급해 반환하고, receipt_text 가 있으면 secret
+ * 마스킹 후 전문을 24h TTL 영수증으로 남긴다(로그엔 hash 만). 실패해도 예외 없이 '' 반환.
+ */
+export function recordViolation(entry: Omit<ViolationEntry, 'at'>, opts: RecordViolationOptions = {}): string {
   try {
     fs.mkdirSync(ENFORCEMENT_DIR, { recursive: true });
     rotateIfBig(VIOLATIONS_PATH);
-    const full: ViolationEntry = { at: new Date().toISOString(), ...entry };
+    const violation_id = entry.violation_id ?? crypto.randomUUID();
+    const full: ViolationEntry = { at: new Date().toISOString(), violation_id, ...entry };
+    // 로그에 남는 프래그먼트/미리보기도 secret 마스킹 — 영수증만 가리고 로그에 키가 남으면 의미 없다.
+    if (typeof full.matched === 'string') full.matched = redactForReceipt(full.matched);
+    if (typeof full.message_preview === 'string') full.message_preview = redactForReceipt(full.message_preview);
+    if (typeof full.matched === 'string' && full.matched.length > MATCHED_MAX) full.matched = `${full.matched.slice(0, MATCHED_MAX - 1)}…`;
+    if (opts.receipt_text) {
+      full.target_hash = sha16(opts.receipt_text);
+      try {
+        fs.mkdirSync(RECEIPTS_DIR, { recursive: true, mode: 0o700 });
+        fs.writeFileSync(path.join(RECEIPTS_DIR, `${violation_id}.txt`), redactForReceipt(opts.receipt_text), { mode: 0o600 });
+        pruneReceipts(Date.now());
+      } catch { /* 영수증 실패는 기록 자체를 막지 않는다 */ }
+    }
     fs.appendFileSync(VIOLATIONS_PATH, `${JSON.stringify(full)}\n`);
+    return violation_id;
   } catch (e) {
     // best-effort, 실패 시 debug 로그 (silent swallow 방지)
     if (process.env.FORGEN_DEBUG_SIGNALS === '1') {
       console.error(`[forgen:signals] recordViolation failed: ${(e as Error).message}`);
     }
+    return '';
   }
 }
+
+export function readReceipt(violationId: string): string | null {
+  if (!/^[A-Za-z0-9-]+$/.test(violationId)) return null;
+  try { return fs.readFileSync(path.join(RECEIPTS_DIR, `${violationId}.txt`), 'utf-8'); } catch { return null; }
+}
+
+/** 판정 기록(append-only). 같은 violation_id 에 여러 줄이면 마지막이 유효하되 user > auto. */
+export function setVerdict(entry: Omit<VerdictEntry, 'at'>): void {
+  try {
+    fs.mkdirSync(ENFORCEMENT_DIR, { recursive: true });
+    rotateIfBig(VERDICTS_PATH);
+    fs.appendFileSync(VERDICTS_PATH, `${JSON.stringify({ at: new Date().toISOString(), ...entry })}\n`);
+  } catch { /* best-effort */ }
+}
+
+export function readVerdicts(): VerdictEntry[] {
+  return readJsonlSafe<VerdictEntry>(VERDICTS_PATH);
+}
+
+/** violation_id → 유효 판정 (user 가 있으면 user, 없으면 마지막 auto). */
+export function effectiveVerdicts(verdicts: VerdictEntry[] = readVerdicts()): Map<string, VerdictEntry> {
+  const m = new Map<string, VerdictEntry>();
+  for (const v of verdicts) {
+    const cur = m.get(v.violation_id);
+    if (cur?.by !== 'user' || v.by === 'user') m.set(v.violation_id, v);
+  }
+  return m;
+}
+
+export interface RulePrecision {
+  rule_id: string;
+  correct: number;
+  false_positive: number;
+  unjudged: number;
+  /** correct/(correct+false_positive); 판정 0건이면 null. */
+  precision: number | null;
+}
+
+/** 룰별 precision (실 차단만, 최근 N일). unsure 는 미판정으로 센다. */
+export function precisionByRule(violations: ViolationEntry[], verdicts: VerdictEntry[], days: number, now: number = Date.now()): Map<string, RulePrecision> {
+  const cutoff = now - days * 24 * 3600 * 1000;
+  const eff = effectiveVerdicts(verdicts);
+  const out = new Map<string, RulePrecision>();
+  for (const v of violations) {
+    if (!isRealBlock(v)) continue;
+    const t = Date.parse(v.at);
+    if (!Number.isFinite(t) || t < cutoff) continue;
+    const r = out.get(v.rule_id) ?? { rule_id: v.rule_id, correct: 0, false_positive: 0, unjudged: 0, precision: null };
+    const verdict = v.violation_id ? eff.get(v.violation_id)?.verdict : undefined;
+    if (verdict === 'correct') r.correct++;
+    else if (verdict === 'false_positive') r.false_positive++;
+    else r.unjudged++;
+    out.set(v.rule_id, r);
+  }
+  for (const r of out.values()) {
+    const judged = r.correct + r.false_positive;
+    r.precision = judged > 0 ? r.correct / judged : null;
+  }
+  return out;
+}
+
+/** D2: Stop 평가 결과 기록(통과 포함). violations.jsonl 과 분리. 7일 TTL 은 state-gc 가 담당. */
+export const CHECKS_TTL_MS = 7 * 24 * 3600 * 1000;
+
+export function recordCheck(entry: Omit<CheckEntry, 'at'>): void {
+  try {
+    fs.mkdirSync(ENFORCEMENT_DIR, { recursive: true });
+    rotateIfBig(CHECKS_PATH);
+    fs.appendFileSync(CHECKS_PATH, `${JSON.stringify({ at: new Date().toISOString(), ...entry })}\n`);
+    // 7일 TTL — 통과 기록은 턴마다 쌓이므로 1/50 확률로 압축(rotateIfBig 10MB 에 닿지 않게).
+    if (Math.random() < 0.02) pruneChecks();
+  } catch { /* best-effort */ }
+}
+
+export function pruneChecks(now: number = Date.now()): void {
+  try {
+    const keep = readJsonlSafe<CheckEntry>(CHECKS_PATH).filter((c) => now - Date.parse(c.at) < CHECKS_TTL_MS);
+    fs.writeFileSync(CHECKS_PATH, keep.map((c) => JSON.stringify(c)).join('\n') + (keep.length ? '\n' : ''));
+  } catch { /* best-effort */ }
+}
+
+export function readChecks(): CheckEntry[] {
+  return readJsonlSafe<CheckEntry>(CHECKS_PATH);
+}
+
+/** 정규식 매칭 프래그먼트 추출 — 영수증 `matched` 필드용. */
+export function matchedFragment(re: RegExp, text: string): string {
+  try {
+    const m = re.exec(text);
+    if (!m) return '';
+    const start = Math.max(0, m.index - 30);
+    return text.slice(start, m.index + m[0].length + 30).replace(/\s+/g, ' ').trim();
+  } catch {
+    return '';
+  }
+}
+
 
 export function recordBypass(entry: Omit<BypassEntry, 'at'>): void {
   try {
@@ -92,8 +280,15 @@ export interface SignalInputs {
 
 export function collectSignals(rule: Rule, inputs: SignalInputs = {}): RuleSignals {
   const now = inputs.now ?? Date.now();
-  const violations = inputs.violations ?? readJsonlSafe<ViolationEntry>(VIOLATIONS_PATH);
-  const bypass = inputs.bypass ?? readJsonlSafe<BypassEntry>(BYPASS_PATH);
+  const allViolations = inputs.violations ?? readJsonlSafe<ViolationEntry>(VIOLATIONS_PATH);
+  // ADR-017 D1/D2: T2 는 실제 차단만 센다 — 이전엔 kind 필터가 없어 메타가드 advise(correction)
+  // 와 테스트 유래(default 세션) 기록이 위반으로 집계돼 flag 를 조기 발화시켰다.
+  const violations = allViolations.filter(isRealBlock);
+  // T3 입력은 bypass.jsonl(자연어 휴리스틱 — 실측 100% 오탐, ADR-017 §1.1)이 아니라
+  // 사용자 명시 우회(kind:'bypass_confirmed')다. `inputs.bypass` 는 하위 호환으로 남기되 읽지 않는다.
+  const bypass: BypassEntry[] = allViolations
+    .filter(isConfirmedBypass)
+    .map((v) => ({ at: v.at, rule_id: v.rule_id, session_id: v.session_id, tool: v.source, pattern_preview: v.message_preview ?? '' }));
 
   // exact match only — M fix: startsWith 으로 prefix 교차 오염되던 부분 제거.
   const matchesRule = (ruleId: string): boolean => ruleId === rule.rule_id;

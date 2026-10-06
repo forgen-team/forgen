@@ -469,6 +469,17 @@ async function main(): Promise<void> {
 
   const sessionId = input.session_id ?? 'default';
 
+  // ADR-017 D2: 턴 단위 룰 관련도 → state/turn-rules-<session>.json (statusline "관련 룰 N" · status --turn).
+  // 프롬프트 주입에는 아무것도 보태지 않는다(토큰 비용 0). 원문 대신 sha256 앞 16자만 저장. 아래 어떤 early
+  // return 보다 앞에 두어 솔루션 매칭 결과와 무관하게 매 턴 기록된다. 전부 fail-open.
+  if (input.session_id) {
+    try {
+      const { relevantRules, writeTurnRules } = await import('../engine/rule-relevance.js');
+      const { loadActiveRules } = await import('../store/rule-store.js');
+      writeTurnRules(input.session_id, input.prompt, relevantRules(input.prompt, loadActiveRules()));
+    } catch (e) { log.debug('turn-rules 기록 실패', e); }
+  }
+
   // Observability P2: 직전 surfaced 솔루션과 현재 프롬프트 키워드 매칭 → acted_on emit
   await detectActOnFromPriorSurface(sessionId, input.prompt.toLowerCase());
 

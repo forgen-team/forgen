@@ -343,14 +343,12 @@ async function main(): Promise<void> {
       try {
         const [
           { loadActiveRules },
-          { recordViolation, recordBypass },
-          { scanForBypass },
+          { recordViolation, matchedFragment },
           { compileSafeRegex, safeRegexTest },
           { preprocessForMatch },
         ] = await Promise.all([
           import('../store/rule-store.js'),
           import('../engine/lifecycle/signals.js'),
-          import('../engine/lifecycle/bypass-detector.js'),
           import('./shared/safe-regex.js'),
           import('./shared/command-parser.js'),
         ]);
@@ -372,29 +370,28 @@ async function main(): Promise<void> {
             const matchTarget = (v.params?.match_target ?? 'raw') as 'raw' | 'masked' | 'command_tokens';
             const mechTarget = preprocessForMatch(target, matchTarget);
             if (!safeRegexTest(re.regex, mechTarget)) continue;
-            recordViolation({
-              rule_id: rule.rule_id, session_id: sessionId,
-              source: 'post-tool-guard',
-              kind: 'block',
-              message_preview: target.slice(0, 120),
-            });
+            recordViolation(
+              {
+                rule_id: rule.rule_id, session_id: sessionId,
+                source: 'post-tool-guard',
+                kind: 'block',
+                message_preview: target.slice(0, 120),
+                matched: matchedFragment(re.regex, mechTarget),
+                target_kind: toolName === 'Bash' ? 'command' : 'file',
+              },
+              { receipt_text: target },
+            );
             messages.push(
               `<compound-rule-violation>\n[Forgen] Rule ${rule.rule_id.slice(0, 8)} pattern matched in ${toolName} output.\n${spec.block_message ?? rule.policy.slice(0, 120)}\n</compound-rule-violation>`
             );
           }
         }
 
-        // T3 bypass detection — scanForBypass 는 rule.policy 자연어에서 패턴 추출이라
-        // match_target 개념 없음. Write/Edit 는 파일 본문이라 bypass-detector 의
-        // 자연어 휴리스틱이 false-positive 과다 (L1-no-rm-rf-unconfirmed bypass 20건
-        // 중 Write/Edit 15건이 실측). 이 경로만 masked. Bash 는 실제 실행된 명령이라
-        // raw 유지. Mech-A pattern_match 는 위에서 rule-per-rule 로 이미 처리.
-        const isFileContentTool = toolName === 'Write' || toolName === 'Edit';
-        const bypassTarget = isFileContentTool ? preprocessForMatch(target, 'masked') : target;
-        const candidates = scanForBypass({ rules, tool_name: toolName, tool_output: bypassTarget, session_id: sessionId });
-        for (const c of candidates) {
-          recordBypass({ rule_id: c.rule_id, session_id: c.session_id, tool: c.tool, pattern_preview: c.pattern_preview });
-        }
+        // ADR-017 D1 (2026-10-06): 자연어 휴리스틱 bypass 기록(scanForBypass → bypass.jsonl)을
+        // 중단. 실측 1,114건 전부 룰 policy 의 단어("먼저","Team","Fable")가 도구 출력에
+        // 등장한 오탐이었고 실 사용자 우회는 0건. T3 는 이제 FORGEN_USER_CONFIRMED 감사
+        // 기록(kind:'bypass_confirmed')만 입력으로 쓴다. bypass-detector 모듈과 기존
+        // bypass.jsonl 은 삭제하지 않는다(역사 보존) — 읽지 않을 뿐.
       } catch (e) { log.debug('enforce_via/bypass post-tool dispatch 실패', e); }
     }
   }

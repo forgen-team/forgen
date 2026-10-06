@@ -20,7 +20,7 @@ const FGX_BIN = path.join(PKG_ROOT, 'dist', 'fgx.js');
 // fgx.ts:21-28 의 인벤토리와 일치해야 함 — sync 가 무너지면 즉시 fail.
 const EXPECTED_SUBCOMMANDS = new Set([
   // Wave 1 통합: status(←9 status cmds), dev(←probe-workflow/parity/migrate/regress-map).
-  'forge', 'compound', 'skill', 'status', 'learn', 'statusline',
+  'forge', 'compound', 'skill', 'block', 'status', 'learn', 'statusline', 'rules',
   'config', 'mcp', 'init', 'install', 'maintenance', 'dev',
   'notepad', 'inspect', 'doctor', 'uninstall', 'rule',
   'classify-enforce', 'rule-meta-scan', 'lifecycle-scan',
@@ -72,11 +72,18 @@ describe('fgx 라우팅 실 실행 (dist 빌드 필요)', () => {
   // 단 실제 spawn 은 무거우니 routing 분기만 확인 (warning banner 출력 여부).
   it.skipIf(!distExists)('비-서브커맨드 인자 → Claude launcher 진입 (warning banner 표시)', () => {
     // SIGTERM 으로 빠르게 종료시켜 warning 만 캡처
+    // ADR-017 §1.5a: 이 케이스는 **실제 claude 바이너리**를 실 HOME 으로 띄웠다 — 실 ~/.claude 설정·
+    // forgen 훅이 로드돼 프로덕션 match-eval-log 에 "random-prompt-text" recall 이 기록되고, 인증이
+    // 있으면 API 호출까지 간다. 홈을 격리하면 인증·훅·설정이 없어 즉시 실패하지만, 검증 대상인
+    // warning banner 는 spawn 전에 fgx 가 출력하므로 기대값은 그대로다.
+    const isolatedHome = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'forgen-fgx-routing-home-'));
     const r = spawnSync('node', [FGX_BIN, 'random-prompt-text'], {
       encoding: 'utf-8',
       timeout: 3000,
+      env: { ...process.env, HOME: isolatedHome, FORGEN_HOME: path.join(isolatedHome, '.forgen'), CLAUDE_CONFIG_DIR: path.join(isolatedHome, '.claude') },
       // stdio 'pipe' 로 warning 캡처
     });
+    fs.rmSync(isolatedHome, { recursive: true, force: true });
     // 종료 코드는 무관 (Claude 가 없거나 spawn 실패해도 OK), warning 출력 확인
     expect(r.stderr + r.stdout).toContain('fgx: ALL permission checks are disabled');
   });

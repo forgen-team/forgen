@@ -159,15 +159,23 @@ describe('signals.collectSignals', () => {
     expect(s.violations_30d).toBe(2);
   });
 
-  it('aggregates bypass within 7d window', () => {
+  it('aggregates bypass within 7d window — ADR-017: bypass_confirmed violations 만, bypass.jsonl 입력은 무시', () => {
     const r = rule({ rule_id: 'rs-2' });
     const now = Date.parse('2026-04-22T00:00:00Z');
-    const bypass = [
+    const legacyBypass = [
       { at: new Date(now - 3 * 24 * 3600_000).toISOString(), rule_id: 'rs-2', session_id: 's1', tool: 'Bash', pattern_preview: 'x' },
-      { at: new Date(now - 10 * 24 * 3600_000).toISOString(), rule_id: 'rs-2', session_id: 's1', tool: 'Bash', pattern_preview: 'x' },
     ];
-    const s = collectSignals(r, { violations: [], bypass, now });
+    const violations = [
+      { at: new Date(now - 3 * 24 * 3600_000).toISOString(), rule_id: 'rs-2', session_id: 's1', source: 'pre-tool-guard' as const, kind: 'bypass_confirmed' as const },
+      { at: new Date(now - 10 * 24 * 3600_000).toISOString(), rule_id: 'rs-2', session_id: 's1', source: 'pre-tool-guard' as const, kind: 'bypass_confirmed' as const },
+      // 테스트 유래(default 세션) 와 advise(correction) 는 어느 집계에도 안 들어감
+      { at: new Date(now - 1 * 24 * 3600_000).toISOString(), rule_id: 'rs-2', session_id: 'default', source: 'pre-tool-guard' as const, kind: 'bypass_confirmed' as const },
+      { at: new Date(now - 1 * 24 * 3600_000).toISOString(), rule_id: 'rs-2', session_id: 's1', source: 'stop-guard' as const, kind: 'correction' as const },
+      { at: new Date(now - 1 * 24 * 3600_000).toISOString(), rule_id: 'rs-2', session_id: 'default', source: 'pre-tool-guard' as const, kind: 'deny' as const },
+    ];
+    const s = collectSignals(r, { violations, bypass: legacyBypass, now });
     expect(s.bypass_7d).toBe(1);
+    expect(s.violations_30d).toBe(0);
   });
 
   it('last_inject_days_ago falls back to updated_at when lifecycle.last_inject_at absent', () => {

@@ -12,7 +12,7 @@ import { loadAllRules, loadActiveRules } from '../store/rule-store.js';
 import { loadRecentEvidence, loadAllEvidence } from '../store/evidence-store.js';
 import { loadRecentSessions } from '../store/session-state-store.js';
 import * as inspect from '../renderer/inspect-renderer.js';
-import { ME_BEHAVIOR, ME_SOLUTIONS, STATE_DIR } from './paths.js';
+import { ME_SOLUTIONS, STATE_DIR } from './paths.js';
 import { safeReadJSON } from '../hooks/shared/atomic-write.js';
 
 export async function handleInspect(args: string[]): Promise<void> {
@@ -33,14 +33,16 @@ export async function handleInspect(args: string[]): Promise<void> {
       session: activeRules.filter(r => r.scope === 'session').length,
     };
 
-    const evidenceCount = (() => {
-      if (!fs.existsSync(ME_BEHAVIOR)) return 0;
-      return fs.readdirSync(ME_BEHAVIOR).filter(f => f.endsWith('.json')).length;
-    })();
+    // ADR-017 §1.5b: "corrections" 라벨은 explicit_correction 만 센다. 이전엔 전체 evidence
+    // (behavior_observation·session_summary 포함) 파일 수를 corrections 로 표시해 450 vs 247 오기.
+    const allEvidence = loadAllEvidence();
+    const evidenceCount = allEvidence.filter(e => e.type === 'explicit_correction').length;
+    const otherEvidenceCount = allEvidence.length - evidenceCount;
 
     const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
     const recentEvidence = loadRecentEvidence(100);
-    const recentCount = recentEvidence.filter(e => e.timestamp >= sevenDaysAgo).length;
+    // 7일 집계는 전체 집합 기준 (loadRecentEvidence(100) 캡에 걸리면 과소집계 — critic). stats-cli 와 동일 기준.
+    const recentCount = allEvidence.filter(e => e.type === 'explicit_correction' && e.timestamp >= sevenDaysAgo).length;
 
     const solutionCount = (() => {
       if (!fs.existsSync(ME_SOLUTIONS)) return 0;
@@ -61,7 +63,7 @@ export async function handleInspect(args: string[]): Promise<void> {
 
     console.log('── Learning Loop Status ──');
     console.log(`Rules:      ${activeRules.length} active (${rulesByScope.me} me, ${rulesByScope.session} session)`);
-    console.log(`Evidence:   ${evidenceCount} corrections (last 7 days: ${recentCount})`);
+    console.log(`Evidence:   ${evidenceCount} corrections (last 7 days: ${recentCount}; +${otherEvidenceCount} observations/summaries)`);
     console.log(`Compound:   ${solutionCount} solutions`);
     console.log(`Last extraction: ${lastExtractionLabel}`);
     console.log('');

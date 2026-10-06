@@ -60,24 +60,37 @@ describe('forgen stats — R9-PA1', () => {
     const recent = new Date(now - 2 * 86400_000).toISOString();
     const stale = new Date(now - 30 * 86400_000).toISOString();
     writeJsonl(path.join(TEST_HOME, '.forgen', 'state', 'enforcement', 'violations.jsonl'), [
-      { at: recent, rule_id: 'r1', kind: 'block' },
-      { at: recent, rule_id: 'r1', kind: 'block' },
-      { at: stale, rule_id: 'r1', kind: 'block' },
+      { at: recent, rule_id: 'r1', kind: 'block', session_id: 's1' },
+      { at: recent, rule_id: 'r1', kind: 'block', session_id: 's1' },
+      { at: stale, rule_id: 'r1', kind: 'block', session_id: 's1' },
     ]);
     const s = computeStats();
     expect(s.blocks7d).toBe(2);
   });
 
-  it('blocks7d includes block+deny+undefined, excludes correction audit entries', () => {
+  it('blocks7d includes block+deny+undefined, excludes correction/bypass_confirmed and synthetic sessions (ADR-017)', () => {
     const recent = new Date().toISOString();
     writeJsonl(path.join(TEST_HOME, '.forgen', 'state', 'enforcement', 'violations.jsonl'), [
-      { at: recent, rule_id: 'r1', kind: 'block' },       // Mech-B Stop block
-      { at: recent, rule_id: 'r1', kind: 'deny' },        // Mech-A PreToolUse deny
-      { at: recent, rule_id: 'r1', kind: 'correction' },  // user bypass audit (excluded)
-      { at: recent, rule_id: 'r1' },                       // legacy entry with no kind
+      { at: recent, rule_id: 'r1', kind: 'block', session_id: 's1' },            // Mech-B Stop block
+      { at: recent, rule_id: 'r1', kind: 'deny', session_id: 's1' },             // Mech-A PreToolUse deny
+      { at: recent, rule_id: 'r1', kind: 'correction', session_id: 's1' },       // 메타가드 advise (excluded)
+      { at: recent, rule_id: 'r1', kind: 'bypass_confirmed', session_id: 's1' }, // 사용자 명시 우회 (excluded from blocks, counted as bypass)
+      { at: recent, rule_id: 'r1', session_id: 's1' },                           // legacy entry with no kind
+      { at: recent, rule_id: 'r1', kind: 'deny', session_id: 'default' },        // 테스트 유래 (excluded)
+      { at: recent, rule_id: 'r1', kind: 'block', session_id: 'unknown' },       // session 없는 훅 호출 (excluded)
+      { at: recent, rule_id: 'r1', kind: 'bypass_confirmed', session_id: 'default' }, // (excluded)
+    ]);
+    // 과거 자연어 휴리스틱 기록은 더 이상 읽지 않는다
+    writeJsonl(path.join(TEST_HOME, '.forgen', 'state', 'enforcement', 'bypass.jsonl'), [
+      { at: recent, rule_id: 'r1', session_id: 's1', tool: 'Bash', pattern_preview: 'Team' },
     ]);
     const s = computeStats();
-    expect(s.blocks7d).toBe(3); // block + deny + legacy-undefined
+    expect(s.blocks7d).toBe(3); // block + deny + legacy-undefined (실세션만)
+    expect(s.syntheticExcluded7d).toBe(3); // default×2 + unknown×1 — 가시화
+    expect(s.bypass7d).toBe(1); // bypass_confirmed, 실세션만
+    const rendered = renderStats(s);
+    expect(rendered).toMatch(/Bypass \(confirmed\)\s+1/);
+    expect(rendered).toMatch(/Blocks\s+3/);
   });
 
   it('counts acknowledgments within 7d', () => {
@@ -112,10 +125,13 @@ describe('forgen stats — R9-PA1', () => {
 
     // 2 recall hits today + 1 yesterday
     const yesterday = new Date(now - 25 * 3600_000).toISOString();
+    // ADR-017: hit = source:hook + 후보 ≥1. 후보 0건·mcp(테스트/스크립트) 쿼리는 hit 아님.
     writeJsonl(path.join(stateDir, 'match-eval-log.jsonl'), [
-      { source: 'hook', ts: todayIso, rankedTopN: ['a'] },
-      { source: 'hook', ts: todayIso, rankedTopN: ['b'] },
-      { source: 'hook', ts: yesterday, rankedTopN: ['c'] },
+      { source: 'hook', ts: todayIso, rankedTopN: ['a'], candidates: [{ name: 'a', relevance: 0.3 }] },
+      { source: 'hook', ts: todayIso, rankedTopN: ['b'], candidates: [{ name: 'b', relevance: 0.2 }] },
+      { source: 'hook', ts: todayIso, rankedTopN: [], candidates: [] },                 // attempt, not hit
+      { source: 'mcp', ts: todayIso, rankedTopN: ['x'], candidates: [{ name: 'x', relevance: 0.9 }] }, // excluded
+      { source: 'hook', ts: yesterday, rankedTopN: ['c'], candidates: [{ name: 'c', relevance: 0.3 }] },
     ]);
 
     // 1 recommendation_surfaced today + 1 drift_critical today (excluded)
@@ -136,6 +152,8 @@ describe('forgen stats — R9-PA1', () => {
 
     const s = computeStats();
     expect(s.assistToday.recallHits).toBe(2);
+    expect(s.assistToday.recallAttempts).toBe(3);
+    expect(s.assistToday.recallMcp).toBe(1);
     expect(s.assistToday.surfaced).toBe(1);
     expect(s.assistToday.extractedToday).toBe(1);
 

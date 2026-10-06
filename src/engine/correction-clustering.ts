@@ -178,6 +178,31 @@ export function clusterCorrectionRules(
   return clusters;
 }
 
+/**
+ * ADR-017 D3 — 단일 정책 텍스트에 가장 유사한 룰 1개(유사도 ≥ τ)를 찾는다.
+ * 채굴 룰 생성 시 사전 중복 검사와 explicit 링크 판정에 쓰인다.
+ *
+ * category 를 보지 않는 이유: 채굴 룰의 category 는 axis_hint 에서 파생되어 같은 개념이
+ * quality/autonomy/workflow 로 흩어진다(실측: 2026-10-02 채굴 30개). 1:1 최고점 매칭은
+ * union-find 와 달리 전이적으로 번지지 않으므로 category 경계를 넘어도 안전하다
+ * (반면 clusterCorrectionRules 는 전이 연결 때문에 category 경계를 유지한다).
+ */
+export function findMostSimilarRule<T extends { policy: string }>(
+  policy: string,
+  candidates: readonly T[],
+  tau: number = CLUSTER_SIMILARITY_TAU,
+): { rule: T; similarity: number } | null {
+  if ((policy?.length ?? 0) < MIN_POLICY_LEN) return null;
+  let best: { rule: T; similarity: number } | null = null;
+  for (const c of candidates) {
+    if ((c.policy?.length ?? 0) < MIN_POLICY_LEN) continue;
+    const similarity = policySimilarity(policy, c.policy);
+    if (similarity < tau) continue;
+    if (!best || similarity > best.similarity) best = { rule: c, similarity };
+  }
+  return best;
+}
+
 /** 클러스터 멤버 집합의 안정 키(정렬된 rule_id join) — 억제 목록/식별용. */
 export function clusterKey(members: Array<{ rule_id: string }>): string {
   return members

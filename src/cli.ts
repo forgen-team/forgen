@@ -109,8 +109,16 @@ const commands: Command[] = [
     },
   },
   {
+    name: 'block',
+    description: 'Judge a block receipt: forgen block <id|prefix> --ok | --fp [--reason "..."] (ADR-017 D1)',
+    handler: async (args) => {
+      const { handleBlock } = await import('./core/block-cli.js');
+      await handleBlock(args);
+    },
+  },
+  {
     name: 'status',
-    description: 'Unified status: forgen status [--compound|--profile|--rules|--blocks [N]|--overview|--live]',
+    description: 'Unified status: forgen status [--compound|--profile|--rules|--blocks [N]|--overview|--live|--turn]',
     handler: async (args) => {
       const { handleStatus } = await import('./core/status-cli.js');
       await handleStatus(args);
@@ -294,7 +302,8 @@ const commands: Command[] = [
   },
   {
     name: 'rule',
-    description: 'Rule management (list|suppress|activate|scan|health-scan|classify)',
+    aliases: ['rules'],
+    description: 'Rule management (list|suppress|activate|scan|health-scan|classify|merge-mined|unmerge)',
     handler: async (args) => {
       await handleRuleNamespace(args);
     },
@@ -381,6 +390,11 @@ async function handleRuleNamespace(args: string[]): Promise<void> {
     forgen rule classify [--apply] [--force]
                                            Propose enforce_via for legacy rules
     forgen rule unmerge-cluster <id>       Undo a W3-2 correction-cluster merge (restore originals)
+    forgen rule merge-mined [--apply]      ADR-017 D3: merge mined (auto:) rules among themselves,
+                                           link same-concept ones to explicit rules (dry-run by default)
+    forgen rule unmerge <id>               Restore originals of a merged/linked rule (alias of unmerge-cluster)
+    forgen rule enforce <id-or-prefix>     ADR-017 D1: restore blocking for a rule auto-demoted to advise
+    forgen rule advise <id-or-prefix>      Record-only mode (no block); hard rules refused
 `);
     return;
   }
@@ -416,11 +430,25 @@ async function handleRuleNamespace(args: string[]): Promise<void> {
       await handleClassifyEnforce(rest);
       return;
     }
+    case 'enforce':
+    case 'advise': {
+      const { handleEnforceMode } = await import('./engine/rule-toggle-cli.js');
+      await handleEnforceMode(rest, sub === 'advise' ? 'advise' : 'block');
+      return;
+    }
+    case 'merge-mined': {
+      // ADR-017 D3: 채굴 룰 병합(채굴끼리) + explicit 동개념 링크. 기본 dry-run.
+      const { handleMergeMined } = await import('./engine/mined-rule-merge-cli.js');
+      await handleMergeMined(rest);
+      return;
+    }
+    case 'unmerge':
     case 'unmerge-cluster': {
       // W3-2: 교정 클러스터 통합 취소 — 원본 룰 복원 + 재통합 억제.
+      // ADR-017 D3: 채굴 통합 룰 / explicit 링크 타깃에도 동일 경로(링크 타깃은 removed 안 됨).
       const mergedId = rest[0];
       if (!mergedId) {
-        console.error('[forgen] usage: forgen rule unmerge-cluster <merged-rule-id>');
+        console.error(`[forgen] usage: forgen rule ${sub} <merged-rule-id>`);
         process.exit(1);
       }
       const { unmergeCluster } = await import('./engine/correction-cluster-runner.js');
@@ -609,6 +637,7 @@ function printHelp() {
                                       --blocks [N] recent block(s): rule/reason/fix
                                       --overview  rich dashboard (hooks·history·curve)
                                       --live      real-time hook event stream
+                                      --turn      this turn's relevant rules + their origin corrections
     forgen workflows install|list   Install forgen dynamic-workflow templates to .claude/workflows/
     forgen changelog                Auto-summarize commits since last release tag
     forgen compound                 Manage accumulated knowledge

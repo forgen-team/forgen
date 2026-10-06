@@ -8,6 +8,7 @@
  */
 
 import type { Rule, RuleStrength, RuleScope, RuleSource, SessionEffectiveState, Profile, TrustPolicy, JudgmentPack, CommunicationPack } from '../store/types.js';
+import { originTag } from '../store/rule-origin.js';
 import { initLocaleFromConfig, getLocale, RULE_RENDERER } from '../i18n/index.js';
 
 // ── Render Context ──
@@ -83,8 +84,9 @@ function dedupeByRenderKey(rules: Rule[]): Rule[] {
 function ruleToText(rule: Rule): string {
   // AI-optimized: [category|strength] 태그로 축약하여 토큰 절감
   // hard 강도는 태그 생략 (Must Not 섹션이 이미 의미를 전달)
-  if (rule.strength === 'hard') return rule.policy;
-  return `[${rule.category}|${rule.strength}] ${rule.policy}`;
+  // ADR-017 D0: explicit 교정 룰엔 출처 날짜 꼬리표 — 사용자가 "내가 언제 말한 것" 을 식별.
+  if (rule.strength === 'hard') return `${rule.policy}${originTag(rule)}`;
+  return `[${rule.category}|${rule.strength}] ${rule.policy}${originTag(rule)}`;
 }
 
 function trustPolicySummary(policy: TrustPolicy): string {

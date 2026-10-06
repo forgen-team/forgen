@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-10-06 — 신뢰 영수증: 차단·룰·프로필·statusline 이 "왜/언제/얼마나" 를 보여준다 (ADR-017)
+
+오너 피드백 "교정·차단은 좋은데 체감이 안 된다" 에서 출발. 실측으로 드러난 문제 — 7d 차단 108건 중 78건이 테스트 유래,
+Bypass 179건은 전량 휴리스틱 오탐, Recall 773건 중 351건이 테스트 픽스처, 4축 프로필 score 는 갱신 코드 자체가 없었음,
+채굴 룰 30개는 같은 교정의 문장 변형, statusline 은 Claude Code 가 주는 컨텍스트/한도 필드를 하나도 안 읽음 — 을 고쳤다.
+Fable critic 8라운드(ADR·프로필·D0·집계·statusline×2·D1·pre-landing) 반영. vitest 3356 passed (smoke-report). 결정 문서: docs/adr/ADR-017.
+
+### Fixed
+- **4축 프로필 score 가 v0.1.0 부터 0.5 리터럴 고정이던 결함.** 산출 로직이 애초에 없었다. facet 카탈로그 양 끝 팩 centroid
+  선분에 facet 벡터를 투영한 위치와 confidence 를 섞는 공식(`c×t + (1−c)×0.5`)을 구현하고, confidence bump·auto-compound
+  facet 갱신 저장을 한 경로(`saveProfileRecomputed`, atomic)로 통합. SessionStart 에서 미계산 프로필 1회 재계산(변경 없어도
+  스탬프). `inspect` 의 "N corrections" 라벨은 explicit 교정만(450→247).
+- **status 숫자의 정직성.** session_id 없이 기록된(`default`/`unknown` — 실측 전부 테스트가 dist 훅을 spawn 한 흔적) 차단을
+  모든 집계에서 제외하고 `Excluded N` 으로 가시화. T2 는 실제 차단(block/deny)만 집계(메타가드 advise 87건이 위반으로 세어지던
+  것). Top rules 는 rule_id 로 집계(source 로 집계돼 룰별 precision 과 조인 불가하던 것). Recall hits 는 hook 경로 후보≥1 만,
+  시도·mcp 분리.
+- **테스트가 실 `~/.forgen` 을 오염시키던 것.** hook-pipeline(실 HOME spawn)·solution-reader/plugin-coexistence/harness-e2e
+  (in-process)·fgx-routing(실 claude 바이너리 실행) 격리. 전체 suite 실행 시 실 로그 증가 0 확인.
+- 하드 룰 "확인 없는 rm -rf 금지" 가 Claude 의 **자기 임시 작업 폴더**(`/tmp/claude-*/scratchpad`) 정리까지 막던 것(7d 실 차단
+  14건 중 13건). 같은 명령 안의 변수 대입을 한 단계 치환해 대상이 전부 임시 경로일 때만 통과(보수적 — 하나라도 비임시·미해석이면 차단).
+
+### Added
+- **차단 메시지에 룰의 출처.** explicit 교정 룰이 막을 때 `[forgen] 이 룰의 출처 — 2026-09-30 교정 기록 (avoid-this)` 를 붙인다.
+  정직성: 저장된 summary 는 모델이 쓴 문장이라 policy 와 같으면 인용하지 않고 날짜·종류만; 새 `correction-record` 인자
+  `user_quote`(사용자 발화 원문, `<private>` 필터) 가 있을 때만 "당신의 말" 로 인용. 룰 렌더에 ` (교정 YYYY-MM-DD)` 꼬리표.
+- **차단 영수증 + 자동 판정 + precision.** 차단마다 `violation_id`·매칭 프래그먼트·전문 hash 를 남기고 전문은 secret 마스킹 후
+  24h 영수증으로 보관. `forgen status --blocks` 가 영수증·판정·전후 문맥을 보여주고, `forgen block <id> --ok|--fp` 로 사람이
+  판정(자동 판정을 덮어씀). 차단 직후 detached Haiku 심판(auto-compound 와 같은 consent·캡 세션 10/일 30·불확실은 unsure).
+  룰별 precision 을 status 에 표시하고 7d 판정 ≥5 & precision <0.5 면 `advise`(차단 대신 기록) 로 강등 — 하드 룰·builtin 제외,
+  복귀 `forgen rule enforce <id>`.
+- **statusline 2줄 재설계.** 1줄: 모델·경로(브랜치)·`ctx 42%/1M`·`5h 63% → 15:40 소진 (리셋 16:20)`·`7d 21%`·`$1.23`
+  (Claude Code 공식 stdin 필드). 2줄: `관련 룰 N · 이 세션 차단 N · 7d 차단 N · surfaced N`. 소진 예측은 창 안 양끝점 기울기,
+  근거 부족(샘플<3, 폭<15분/2h, 증가<1%p, 리셋 경과)이면 숨김, 현재 페이로드에 있는 창만 표시. 2줄만 세션별 15초 캐시.
+  운영자 지표·CLAUDE.md/MCP/hook 카운트(MCP 는 틀린 값이었음)는 삭제. ADR-010 §2b(usage 철수) 부분 supersede.
+- **턴 단위 관련 룰.** 프롬프트를 룰 용어와 보수적으로 매칭(일반 용어 2개 또는 식별자급 1개)해 `관련 룰 N` 표시,
+  `forgen status --turn` 이 각 룰의 원 교정을 보여준다. 프롬프트 원문은 저장하지 않고 주입도 0바이트.
+- **채굴 룰 병합.** `forgen rule merge-mined [--apply]` — 채굴(auto:) 룰끼리만 병합(strength default 고정), explicit 동개념은
+  흡수하지 않고 링크(`mined_observations`) — ADR-013 불변식 유지. 승격 시 사전 중복 검사. 실측 채굴 30 → 7(활성 45 → 22).
+- Stop 에서 실제 평가돼 통과한 룰을 `checks.jsonl`(7d TTL)에 기록 — 위반 로그와 분리.
+
+### Changed
+- 자연어 휴리스틱 bypass 기록(`bypass.jsonl`) 중단 — 실측 1,114건 전량 오탐(룰 policy 의 단어가 도구 출력에 등장), 실 우회 0건.
+  T3 입력은 `FORGEN_USER_CONFIRMED=1` 명시 우회(kind `bypass_confirmed`)만. 기존 파일은 보존(읽지 않음). flagged 룰을 `--rules` 에 표기.
+- `status --blocks` 는 실세션 실제 차단만, lifecycle-scan 은 `bypass_confirmed=N` 표시.
+
+### 알려진 한계 (정직 표기)
+- 자동 판정은 compound consent(`forgen compound consent on`)가 켜져 있을 때만 돈다. 꺼져 있으면 미판정으로 남고 precision 강등도 없다.
+- 합성 세션 필터는 값 기반(`default`/`unknown`/빈 값) — eval/probe 하네스가 임의 id 를 쓰면 걸러지지 않는다(격리 FORGEN_HOME 전제).
+- 채굴 병합은 category 경계를 유지해 ADR 예상(≤5)보다 많은 7개로 수렴. τ=0.3 에서 오탐 링크 1건 가능 — dry-run 기본.
+- 관련 룰 매칭은 한글 활용형("검증해"≠"검증")을 못 잡는다 — 보수적 방향.
+- 소진 예측의 실세션 관측은 이번 릴리스로 statusline 이 글로벌 패키지에 실린 뒤부터.
+
 ## [0.5.9] — 2026-10-02 — 남겨 둔 한계 정리: 사용자 스킬 보존 · AGENTS.md 전체 정리 · OpenCode uninstall · claude-mem 13.28
 
 ### Fixed

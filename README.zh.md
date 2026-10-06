@@ -504,6 +504,18 @@ forgen rule activate <id>       # 重新激活 suppressed 规则
 forgen rule scan [--apply]      # 运行生命周期触发器 (晋升/降级/退役)
 forgen rule health-scan         # 扫描 drift → Mech 降级候选
 forgen rule classify            # 为旧规则自动提议 enforce_via
+forgen rule merge-mined [--apply]  # 挖掘(auto:)规则之间合并，与同概念 explicit 规则仅建立链接 (默认 dry-run)
+forgen rule unmerge <id>        # 恢复已合并/链接规则的原件
+forgen rule enforce|advise <id> # 恢复自动降级规则的拦截 / 仅记录模式 (hard 规则拒绝)
+```
+
+### 信任回执 (v0.6.0)
+
+```bash
+forgen status --blocks [N]      # 最近真实拦截 + 回执: 匹配片段、24h 上下文、判定(auto/user)
+forgen block <id> --ok | --fp   # 判定一次拦截 (覆盖自动 Haiku 判定) — 计入规则级 precision
+forgen status --turn            # 本轮相关规则，以及每条规则来源的纠正(日期·类型·你的原话)
+forgen statusline               # 2 行: 模型 · 路径(分支) · ctx % · 5h/7d 配额 + 耗尽预测 · $ / 相关规则 · 拦截 · surfaced
 ```
 
 ### 知识管理

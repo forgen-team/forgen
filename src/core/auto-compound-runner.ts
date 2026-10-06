@@ -677,57 +677,31 @@ ${sanitizedSummary.slice(0, 4000)}
           process.stderr.write(`[forgen-auto-compound] mined ${minedCorrections} correction(s) (advisory-only, capped, age-retired)\n`);
         }
 
-        // facet delta 적용
+        // facet delta 적용 — ADR-017: raw JSON write 금지. profile-store 경유로 score 재계산.
         if (parsed.profile_delta) {
-          const profile = JSON.parse(fs.readFileSync(V1_PROFILE, 'utf-8'));
+          const { loadProfile, saveProfileRecomputed } = await import('../store/profile-store.js');
+          const profile = loadProfile();
+          // (critic) 동적 import 가 상단 정적 loadProfile 을 가리지만 동일 모듈 — 의도적으로 지역 바인딩 사용.
           const clamp = (v: number) => Math.max(0.0, Math.min(1.0, v));
           let changed = false;
-
-          if (parsed.profile_delta.quality_safety) {
-            const d = parsed.profile_delta.quality_safety;
-            const f = profile.axes.quality_safety.facets;
-            for (const [k, v] of Object.entries(d)) {
-              if (typeof v === 'number' && Math.abs(v) > 0.001 && k in f) {
-                f[k] = clamp(f[k] + v);
-                changed = true;
+          if (profile) {
+            const axes = ['quality_safety', 'autonomy', 'judgment_philosophy', 'communication_style'] as const;
+            for (const axis of axes) {
+              const d = parsed.profile_delta[axis];
+              if (!d) continue;
+              const f = profile.axes[axis].facets as unknown as Record<string, number>;
+              for (const [k, v] of Object.entries(d)) {
+                if (typeof v === 'number' && Math.abs(v) > 0.001 && Object.hasOwn(f, k)) { // hasOwn: 프로토타입 키 차단 (critic)
+                  f[k] = clamp(f[k] + v);
+                  changed = true;
+                }
               }
             }
           }
-          if (parsed.profile_delta.autonomy) {
-            const d = parsed.profile_delta.autonomy;
-            const f = profile.axes.autonomy.facets;
-            for (const [k, v] of Object.entries(d)) {
-              if (typeof v === 'number' && Math.abs(v) > 0.001 && k in f) {
-                f[k] = clamp(f[k] + v);
-                changed = true;
-              }
-            }
-          }
-          if (parsed.profile_delta.judgment_philosophy) {
-            const d = parsed.profile_delta.judgment_philosophy;
-            const f = profile.axes.judgment_philosophy.facets;
-            for (const [k, v] of Object.entries(d)) {
-              if (typeof v === 'number' && Math.abs(v) > 0.001 && k in f) {
-                f[k] = clamp(f[k] + v);
-                changed = true;
-              }
-            }
-          }
-          if (parsed.profile_delta.communication_style) {
-            const d = parsed.profile_delta.communication_style;
-            const f = profile.axes.communication_style.facets;
-            for (const [k, v] of Object.entries(d)) {
-              if (typeof v === 'number' && Math.abs(v) > 0.001 && k in f) {
-                f[k] = clamp(f[k] + v);
-                changed = true;
-              }
-            }
-          }
-
-          if (changed) {
-            profile.metadata.updated_at = new Date().toISOString();
-            fs.writeFileSync(V1_PROFILE, JSON.stringify(profile, null, 2));
-            process.stderr.write('[forgen-auto-compound] profile facets updated from session learning\n');
+          if (profile && changed) {
+            const r = saveProfileRecomputed(profile);
+            const moved = Object.entries(r.deltas).filter(([, d]) => Math.abs(d.after - d.before) > 1e-9).map(([k, d]) => `${k} ${d.before.toFixed(2)}→${d.after.toFixed(2)}`);
+            process.stderr.write(`[forgen-auto-compound] profile facets updated from session learning${moved.length ? ` (score: ${moved.join(', ')})` : ''}\n`);
           }
         }
       }
