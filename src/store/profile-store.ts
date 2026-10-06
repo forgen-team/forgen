@@ -16,6 +16,7 @@ import {
   judgmentCentroid,
   communicationCentroid,
 } from '../preset/facet-catalog.js';
+import { recomputeProfileScores, type RecomputeResult } from './profile-score.js';
 
 const MODEL_VERSION = '2.0';
 
@@ -76,6 +77,39 @@ export function saveProfile(profile: Profile): void {
 }
 
 /**
+ * ADR-017 §6-8: facet 또는 confidence 가 바뀐 뒤에는 반드시 이 경로로 저장한다.
+ * 4축 score 를 재계산(profile-score.ts)하고 last_reclassification_at 을 기록한 뒤 저장.
+ * facet/confidence 를 건드리는 코드 쓰기(bumpAxisConfidence, auto-compound profile_delta)는
+ * saveProfile 직접 호출 대신 이 함수를 쓴다 — raw write 로 우회하면 score 가 다시 고정된다
+ * (v0.1.0~0.5.9 결함의 원인). 주의: calibrate 스킬(skills/calibrate)은 Claude 세션이 파일을
+ * 직접 편집하는 설계라 이 경로를 타지 않는다 — 그 경우 다음 bump/auto-compound 또는
+ * SessionStart 까지 score 가 stale 일 수 있다.
+ */
+export function saveProfileRecomputed(profile: Profile): RecomputeResult {
+  const r = recomputeProfileScores(profile);
+  saveProfile(profile);
+  return r;
+}
+
+/**
+ * 1회성 마이그레이션: score 산출 로직이 없던 버전에서 만들어진 프로필은
+ * last_reclassification_at 이 null 이다. 그 경우에만 재계산·저장하고 결과를 반환.
+ * (SessionStart bootstrap 이 호출. 이미 계산된 프로필은 건드리지 않는다.)
+ */
+export function recomputeIfNeverReclassified(): RecomputeResult | null {
+  const profile = loadProfile();
+  if (!profile) return null;
+  // 키 누락(구버전 파일)도 null 로 취급 — `!== null` 만 보면 영구 스킵된다 (critic).
+  if (profile.metadata.last_reclassification_at) return null;
+  const r = recomputeProfileScores(profile);
+  // "1회" 불변식: 계산 결과가 저장값과 같아 changed=false 여도 실행 사실을 스탬프한다.
+  // 안 그러면 매 SessionStart 마다 재계산·재저장을 반복한다 (critic SEV-2).
+  if (!profile.metadata.last_reclassification_at) profile.metadata.last_reclassification_at = new Date().toISOString();
+  saveProfile(profile);
+  return r;
+}
+
+/**
  * File existence probe. NOTE: this returns `true` even if the on-disk
  * file is legacy/invalid — callers that need "valid v1 profile present"
  * should combine this with `loadProfile() !== null`. The raw existence
@@ -118,12 +152,12 @@ export function isV1Profile(data: unknown): data is Profile {
 /**
  * D2 fix (2026-04-27): explicit_correction 누적 시 해당 축의 confidence 를 점진
  * 상승시킨다. facet 값은 건드리지 않음 (회귀 위험 최소화) — confidence 가 score
- * 집계 공식 (confidence × facet_avg + (1-confidence) × neutral_anchor) 의 가중치
- * 라서, 사용자가 명시 교정을 누적한 축은 score 가 facet 평균을 더 강하게 반영.
+ * 집계 공식 (confidence × facet_pos + (1-confidence) × neutral_anchor) 의 가중치
+ * 라서, 사용자가 명시 교정을 누적한 축은 score 가 facet 위치를 더 강하게 반영.
  *
- * 자기증거: autonomy explicit_correction 6건이 score 를 못 움직였음 (facet 값
- * 갱신 경로가 mismatch-detector 의 strong rule 승급에만 의존). 본 함수가 직접
- * 경로를 추가.
+ * 자기증거: autonomy explicit_correction 6건이 score 를 못 움직였음. 원인은 두 겹 —
+ * (1) facet 갱신 경로 부재, (2) **score 집계 공식 자체가 미구현**(2026-10-06 ADR-017 §1.5b
+ * 확인: v0.1.0 부터 score 는 0.5 리터럴 고정). (2)는 profile-score.ts 가 해결.
  *
  * delta 기본 0.02 — 6건 누적 시 +0.12 → 0.45 → 0.57 (의미 있는 변동 가시화).
  * clamp 0~1.
@@ -139,7 +173,8 @@ export function bumpAxisConfidence(
   const next = Math.max(0, Math.min(1, target.confidence + delta));
   if (next === target.confidence) return false;
   target.confidence = next;
-  saveProfile(profile);
+  // ADR-017: confidence 는 score 공식의 가중치이므로 바뀌면 score 를 재계산한다.
+  saveProfileRecomputed(profile);
   return true;
 }
 

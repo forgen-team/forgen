@@ -6,7 +6,21 @@
  */
 
 import type { Profile, Rule, Evidence, SessionEffectiveState } from '../store/types.js';
+import { axisDirection, AXIS_POLES, type AxisKey } from '../store/profile-score.js';
+import type { QualityPack, AutonomyPack, JudgmentPack, CommunicationPack } from '../store/types.js';
 import { initLocaleFromConfig, getLocale, qualityName, autonomyName, judgmentName, communicationName, trustName } from '../i18n/index.js';
+
+/** 축 방향 라벨 — 팩 이름을 locale 로 변환. mid 는 "중간/mid" (미학습 아님). */
+function dirLabel(axis: AxisKey, score: number, l: ReturnType<typeof getLocale>): string {
+  const d = axisDirection(score);
+  if (d === 'mid') return l === 'ko' ? '중간' : 'mid';
+  const pack = d === 'low' ? AXIS_POLES[axis].lowPack : AXIS_POLES[axis].highPack;
+  const name = axis === 'quality_safety' ? qualityName(pack as QualityPack, l)
+    : axis === 'autonomy' ? autonomyName(pack as AutonomyPack, l)
+    : axis === 'judgment_philosophy' ? judgmentName(pack as JudgmentPack, l)
+    : communicationName(pack as CommunicationPack, l);
+  return l === 'ko' ? `${name} 쪽` : `→ ${name}`;
+}
 
 export function renderProfile(profile: Profile): string {
   initLocaleFromConfig();
@@ -20,11 +34,12 @@ export function renderProfile(profile: Profile): string {
     `Communication pack: ${communicationName(profile.base_packs.communication_pack, l)}`,
     `Trust policy: ${trustName(profile.trust_preferences.desired_policy, l)} (source: ${profile.trust_preferences.source})`,
     '',
-    '── 4축 상위 score ──',
-    `  품질/안전: ${profile.axes.quality_safety.score.toFixed(2)} (confidence: ${profile.axes.quality_safety.confidence.toFixed(2)})`,
-    `  자율성:   ${profile.axes.autonomy.score.toFixed(2)} (confidence: ${profile.axes.autonomy.confidence.toFixed(2)})`,
-    `  판단철학: ${profile.axes.judgment_philosophy.score.toFixed(2)} (confidence: ${profile.axes.judgment_philosophy.confidence.toFixed(2)})`,
-    `  커뮤니케이션: ${profile.axes.communication_style.score.toFixed(2)} (confidence: ${profile.axes.communication_style.confidence.toFixed(2)})`,
+    `── 4축 상위 score ── (score = confidence × facet 위치 + (1 − confidence) × 0.5; 0=${l === 'ko' ? '왼쪽 팩' : 'left pack'}, 1=${l === 'ko' ? '오른쪽 팩' : 'right pack'})`,
+    `  품질/안전: ${profile.axes.quality_safety.score.toFixed(2)} ${dirLabel('quality_safety', profile.axes.quality_safety.score, l)} (confidence: ${profile.axes.quality_safety.confidence.toFixed(2)})`,
+    `  자율성:   ${profile.axes.autonomy.score.toFixed(2)} ${dirLabel('autonomy', profile.axes.autonomy.score, l)} (confidence: ${profile.axes.autonomy.confidence.toFixed(2)})`,
+    `  판단철학: ${profile.axes.judgment_philosophy.score.toFixed(2)} ${dirLabel('judgment_philosophy', profile.axes.judgment_philosophy.score, l)} (confidence: ${profile.axes.judgment_philosophy.confidence.toFixed(2)})`,
+    `  커뮤니케이션: ${profile.axes.communication_style.score.toFixed(2)} ${dirLabel('communication_style', profile.axes.communication_style.score, l)} (confidence: ${profile.axes.communication_style.confidence.toFixed(2)})`,
+    `  Last reclass: ${profile.metadata.last_reclassification_at ?? 'never'}`,
     '',
     '── Quality facets ──',
     `  verification_depth: ${profile.axes.quality_safety.facets.verification_depth.toFixed(2)}`,
