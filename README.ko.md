@@ -520,6 +520,18 @@ forgen rule activate <id>       # suppressed 규칙 재활성화
 forgen rule scan [--apply]      # 수명주기 트리거 실행 (승격/강등/은퇴)
 forgen rule health-scan         # drift → Mech 강등 후보 스캔
 forgen rule classify            # 레거시 규칙에 enforce_via 자동 제안
+forgen rule merge-mined [--apply]  # 채굴(auto:) 규칙끼리 병합, 같은 개념의 explicit 규칙엔 링크만 (기본 dry-run)
+forgen rule unmerge <id>        # 병합/링크된 규칙의 원본 복원
+forgen rule enforce|advise <id> # 자동 강등된 규칙의 차단 복귀 / 기록만 모드 (hard 규칙은 거부)
+```
+
+### 신뢰 영수증 (v0.6.0)
+
+```bash
+forgen status --blocks [N]      # 최근 실제 차단 + 영수증: 매칭 프래그먼트, 24h 전후 문맥, 판정(auto/user)
+forgen block <id> --ok | --fp   # 차단 판정 (자동 Haiku 판정을 덮어씀) — 규칙별 precision 에 반영
+forgen status --turn            # 이번 턴 관련 규칙과 각 규칙이 생긴 교정(날짜·종류·당신의 말)
+forgen statusline               # 2줄: 모델 · 경로(브랜치) · ctx % · 5h/7d 한도 + 소진 예측 · $ / 관련 규칙 · 차단 · surfaced
 ```
 
 ### 지식 관리

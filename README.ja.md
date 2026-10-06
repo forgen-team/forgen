@@ -535,6 +535,18 @@ forgen rule activate <id>       # suppressed ルールを再アクティブ化
 forgen rule scan [--apply]      # ライフサイクルトリガー実行 (昇格/降格/引退)
 forgen rule health-scan         # drift → Mech 降格候補をスキャン
 forgen rule classify            # 既存ルールに enforce_via を自動提案
+forgen rule merge-mined [--apply]  # マイニング(auto:)ルール同士を統合、同概念の explicit ルールにはリンクのみ (既定 dry-run)
+forgen rule unmerge <id>        # 統合/リンクされたルールの原本を復元
+forgen rule enforce|advise <id> # 自動降格されたルールのブロック復帰 / 記録のみモード (hard ルールは拒否)
+```
+
+### 信頼レシート (v0.6.0)
+
+```bash
+forgen status --blocks [N]      # 最近の実ブロック + レシート: 一致フラグメント、24h 前後文脈、判定(auto/user)
+forgen block <id> --ok | --fp   # ブロックを判定 (自動 Haiku 判定を上書き) — ルール別 precision に反映
+forgen status --turn            # 今ターンに関連するルールと、各ルールが生まれた修正(日付・種類・あなたの発言)
+forgen statusline               # 2行: モデル · パス(ブランチ) · ctx % · 5h/7d 上限 + 枯渇予測 · $ / 関連ルール · ブロック · surfaced
 ```
 
 ### 知識管理
