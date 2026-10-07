@@ -17,6 +17,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { generateHooksJson } from '../hooks/hooks-generator.js';
+import { SHIM_COMMAND_RE, codexHookShimPath, shimSupported, toShimCommand, writeCodexHookShim } from './codex-hook-shim.js';
 import { HOOK_REGISTRY } from '../hooks/hook-registry.js';
 import { hasManagedSkillMarker, installSkillFile, isManagedAgentToml, removeOwnedDevGuideSkills } from './managed-marker.js';
 
@@ -31,6 +32,10 @@ export interface CodexInstallOptions {
   registerMcp?: boolean;
   /** hooks-generator releaseMode (default true: 환경 독립). */
   releaseMode?: boolean;
+  /** 고정 shim 사용(기본: POSIX 에서 true). false 면 이전 방식(node+절대경로). */
+  useShim?: boolean;
+  /** shim 경로 override — 격리 테스트용. */
+  shimPath?: string;
   /** AGENTS.md 위치 override (default: pkgRoot 기준 자동 resolve). 격리 테스트용. */
   agentsMdPath?: string;
   /** ADR-016 D1: config.toml 에 forgen notify 폴백 등록 여부 (default true). */
@@ -135,6 +140,7 @@ export function isForgenHookCommand(command: unknown, pkgRoot: string): boolean 
   if (typeof command !== 'string') return false;
   if (command.includes(`${pkgRoot}/dist/`) || command.includes(`${pkgRoot}\\dist\\`)) return true;
   if (FORGEN_ADAPTER_RE.test(command)) return true;
+  if (SHIM_COMMAND_RE.test(command)) return true; // 고정 shim 경유 (2026-10-07)
   const script = command.match(FORGEN_HOOK_SCRIPT_RE)?.[1];
   return script !== undefined && FORGEN_HOOK_SCRIPT_NAMES.has(script);
 }
@@ -564,6 +570,18 @@ export function planCodexInstall(opts: CodexInstallOptions): CodexInstallResult 
   });
   const generatedHooks = generated.hooks as Record<string, unknown[]>;
 
+  // 1b) 고정 shim (오너 피드백: nvm 전환·재설치마다 /hooks 재승인). 명령을 버전 무관한 shim 경로로 바꿔
+  //     hooks.json 바이트(= trust 해시)를 고정한다. 실제 위임 대상은 shim 파일 내용(아래 5에서 기록).
+  const useShim = opts.useShim ?? shimSupported();
+  const shimPath = opts.shimPath ?? codexHookShimPath(codexHome);
+  if (useShim) {
+    for (const groups of Object.values(generatedHooks)) {
+      for (const g of groups as Array<{ hooks?: Array<{ command?: string }> }>) {
+        for (const h of g.hooks ?? []) if (typeof h.command === 'string') h.command = toShimCommand(h.command, shimPath);
+      }
+    }
+  }
+
   // 2) 기존 hooks.json 읽기 — forgen 그룹은 *제자리에서* 교체, 사용자 그룹은 위치 그대로 보존.
   //    (0.5.3 critic/실머신: 이전엔 사용자 그룹을 앞으로 모으고 forgen 을 뒤에 붙여 그룹 인덱스가
   //    바뀌었고, Codex 의 trust 키 `<event>:<groupIdx>:<hookIdx>` 가 어긋나 20/21 → 12/21 로
@@ -636,6 +654,7 @@ export function planCodexInstall(opts: CodexInstallOptions): CodexInstallResult 
 
   // 5) 실제 쓰기 (dryRun 이면 skip) — hooks.json + config.toml
   if (!opts.dryRun) {
+    if (useShim) writeCodexHookShim(opts.pkgRoot, process.execPath, shimPath);
     fs.mkdirSync(codexHome, { recursive: true });
     fs.writeFileSync(hooksPath, `${JSON.stringify(finalHooksFile, null, 2)}\n`, 'utf-8');
     if (configTomlToWrite !== null) {

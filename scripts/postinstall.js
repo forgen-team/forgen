@@ -1014,6 +1014,23 @@ async function main() {
     }
   }
 
+  // ── 2.4. Codex 훅 shim 갱신 — 이미 쓰고 있으면 새 node/패키지 경로로 내용만 재작성(hooks.json 불변 → trust 유지) ──
+  try {
+    const shimMod = await import(join(PKG_ROOT, 'dist', 'host', 'codex-hook-shim.js'));
+    const shimFile = shimMod.codexHookShimPath(process.env.CODEX_HOME || join(HOME, '.codex'));
+    if (existsSync(shimFile)) {
+      const r = shimMod.writeCodexHookShim(PKG_ROOT, process.execPath, shimFile);
+      if (r === 'written') console.log('[forgen] Codex hook shim updated → no /hooks re-trust needed.');
+    } else {
+      // 이전 형식(node + 절대경로) forgen 훅이 등록돼 있으면 1회 마이그레이션 안내 — 이후로는 재승인 불필요.
+      const hooksFile = join(process.env.CODEX_HOME || join(HOME, '.codex'), 'hooks.json');
+      if (existsSync(hooksFile) && /[\\/]dist[\\/]host[\\/]codex-adapter\.js/.test(readFileSync(hooksFile, 'utf-8'))) {
+        console.log('[forgen] Codex: run `forgen install codex` once to switch hooks to a stable shim —');
+        console.log('[forgen]   after one last /hooks trust, upgrades and nvm switches no longer need re-trust.');
+      }
+    }
+  } catch { /* dist 없음(dev) 또는 실패 — 다음 forgen install codex 가 처리 */ }
+
   // ── 2.5. statusLine 자동 등록 (settings 단일 쓰기에 포함) ──
   let statusLineResult = 'unchanged';
   try { statusLineResult = applyStatusLineAuto(settings); } catch (err) { console.error(`[forgen] statusLine setup skipped: ${err?.message ?? err}`); }

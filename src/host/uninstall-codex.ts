@@ -206,6 +206,14 @@ export function planCodexUninstall(opts: CodexUninstallOptions): CodexUninstallR
     else fs.writeFileSync(hooksPath, `${JSON.stringify(stripped.next, null, 2)}\n`, 'utf-8');
   });
 
+  // 1b) 고정 shim(<codexHome>/forgen-hook) — forgen 마커가 있는 파일만 제거.
+  step('forgen-hook shim', () => {
+    const shim = path.join(codexHome, 'forgen-hook');
+    try {
+      if (fs.existsSync(shim) && fs.readFileSync(shim, 'utf-8').includes('forgen-managed codex-hook shim') && !dryRun) fs.unlinkSync(shim);
+    } catch { /* best-effort */ }
+  });
+
   // 2) config.toml — MCP / notify 블록
   step('config.toml', () => {
     const configTomlPath = path.join(codexHome, 'config.toml');
