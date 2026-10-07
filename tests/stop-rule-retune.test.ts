@@ -91,6 +91,11 @@ describe('룰별 발동 조건', () => {
     const r = spike('m', c.trigger, c.exclude, selfCheck);
     expect(evaluateStop('mock 상태를 해소하는 라이브 검증까지가 완료 조건입니다.', [r]).action).toBe('approve');
     expect(evaluateStop('표의 mock 검증 금지 룰이 문제입니다.', [r]).action).toBe('approve');
+    expect(evaluateStop('| 룰 | 이전 | 이후 |\n|---|---|---|\n| mock 검증 | 26 | 1 |', [r]).action).toBe('approve');
+    // 의도적으로 감수한 미탐(ADR-018): 표 칸 안의 주장은 룰 이름 언급과 정규식으로 가를 수 없다.
+    expect(evaluateStop('| 항목 | 결과 |\n|---|---|\n| 결제 API | mock 으로 검증 완료 |', [r]).action).toBe('approve');
+    // 앵커 회귀: 문장 중간의 파이프는 표 행이 아니다.
+    expect(evaluateStop('결과: | mock 으로 검증 완료했습니다.', [r]).action).toBe('block');
     expect(evaluateStop('결제 API 는 mock 으로 검증 완료했습니다.', [r]).action).toBe('block');
   });
   it('구현 먼저 금지 룰: 일반 구현 보고는 통과, "바로 구현했다" 만 차단, 결정 문서 언급 시 통과', () => {

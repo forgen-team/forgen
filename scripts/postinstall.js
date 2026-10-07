@@ -1035,12 +1035,13 @@ async function main() {
     }
   } catch { /* dist 없음(dev) 또는 실패 — 다음 forgen install codex 가 처리 */ }
 
-  // ── 2.4b. Stop 룰 발동 조건 재조정 1회 마이그레이션 (2026-10-07, v0.6.7) ──
+  // ── 2.4b. Stop 룰 발동 조건 재조정 1회 마이그레이션 (2026-10-07, v0.6.7~) ──
   // 룰별 발동 조건·critic 실행 증거 판정은 룰 파일에 구워져 있어 업그레이드만으론 반영되지 않는다.
   // 사용자 룰만 대상(프로젝트 룰은 git 소스라 건드리지 않음). 마커로 1회만.
   try {
     const forgenHome = process.env.FORGEN_HOME || join(HOME, '.forgen');
-    const marker = join(forgenHome, 'state', 'stop-retune-v1.done');
+    // v2(0.6.8): mock 제외에 표 행 추가 — 트리거가 바뀌면 마커 버전을 올려야 재적용된다.
+    const marker = join(forgenHome, 'state', 'stop-retune-v2.done');
     if (existsSync(join(forgenHome, 'me', 'rules')) && !existsSync(marker)) {
       process.env.FORGEN_HOME = forgenHome;
       process.env.FORGEN_DISABLE_PROJECT_RULES = '1';
