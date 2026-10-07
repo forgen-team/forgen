@@ -172,6 +172,14 @@ function isCompatibleSchema(rule: Rule, filename: string): boolean {
  * 현재 프로젝트 cwd 의 `.forgen/rules/` 경로. FORGEN_CWD/COMPOUND_CWD 우선.
  * 테스트 / CI 에서 프로젝트 스코프 로딩을 비활성화하려면 FORGEN_DISABLE_PROJECT_RULES=1.
  */
+/** 이 룰을 덮어쓰는 프로젝트 룰 파일(<cwd>/.forgen/rules/<id>.json)이 있으면 그 경로. 없으면 null. */
+export function projectRuleOverridePath(ruleId: string): string | null {
+  const dir = resolveProjectRulesDir();
+  if (!dir) return null;
+  const p = path.join(dir, `${ruleId}.json`);
+  return fs.existsSync(p) ? p : null;
+}
+
 function resolveProjectRulesDir(): string | null {
   if (process.env.FORGEN_DISABLE_PROJECT_RULES === '1') return null;
   const cwd = process.env.FORGEN_CWD ?? process.env.COMPOUND_CWD ?? process.cwd();

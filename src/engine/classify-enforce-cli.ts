@@ -10,6 +10,7 @@ import { loadAllRules, saveRule } from '../store/rule-store.js';
 import { classifyAll, applyProposal } from './enforce-classifier.js';
 
 export async function handleClassifyEnforce(args: string[]): Promise<void> {
+  if (args.includes('--stop-only')) { await handleRetuneStop(args.includes('--apply')); return; }
   const apply = args.includes('--apply');
   const force = args.includes('--force');
 
@@ -61,4 +62,40 @@ export async function handleClassifyEnforce(args: string[]): Promise<void> {
   } else {
     console.log(`  Summary: ${skipped} proposal(s) previewed.  Run with --apply to save.\n`);
   }
+}
+
+
+/**
+ * `forgen rule classify --stop-only [--apply]` (2026-10-07) — Stop 훅을 가진 활성 룰의 **Stop 설정만** 현재 분류기로
+ * 다시 굽는다(다른 훅 설정·강도·본문 불변). 기본 dry-run 으로 룰별 발동 조건 종류와 판정 방식 변화를 보여준다.
+ */
+async function handleRetuneStop(apply: boolean): Promise<void> {
+  const { loadActiveRules, projectRuleOverridePath } = await import('../store/rule-store.js');
+  const fs = await import('node:fs');
+  const { chooseStopTrigger, retuneStopSpecs } = await import('./enforce-classifier.js');
+  const rules = loadActiveRules().filter((r) => (r.enforce_via ?? []).some((s) => s.hook === 'Stop'));
+  console.log(`\n  Stop 룰 재조정 — ${rules.length}개 (${apply ? 'APPLY' : 'dry-run'})\n`);
+  let changed = 0;
+  const changes = new Map(retuneStopSpecs(rules).map((c) => [c.rule.rule_id, c.newStop]));
+  for (const rule of rules) {
+    const oldStop = (rule.enforce_via ?? []).filter((s) => s.hook === 'Stop');
+    const newStop = changes.get(rule.rule_id) ?? oldStop;
+    const kept = (rule.enforce_via ?? []).filter((s) => s.hook !== 'Stop');
+    const same = !changes.has(rule.rule_id);
+    const kind = chooseStopTrigger(rule.policy).kind;
+    console.log(`  ${same ? '=' : '↻'} ${rule.rule_id.slice(0, 8)} [${kind}] ${oldStop.map((s) => s.verifier?.kind).join(',')} → ${newStop.map((s) => s.verifier?.kind).join(',')}  "${rule.policy.slice(0, 50)}"`);
+    if (!same) changed += 1;
+    if (apply && !same) saveRule({ ...rule, enforce_via: [...kept, ...newStop] });
+    // 프로젝트 룰(<cwd>/.forgen/rules)이 같은 id 를 덮어쓰면 사용자 파일만 고쳐선 효과가 없다 — 그 파일의 Stop 설정도 갱신.
+    const proj = projectRuleOverridePath(rule.rule_id);
+    if (proj && !same) {
+      console.log(`     ↳ 프로젝트 룰 파일이 이 룰을 덮어씀: ${proj}${apply ? ' — 함께 갱신(커밋 필요)' : ''}`);
+      if (apply) {
+        const pr = JSON.parse(fs.readFileSync(proj, 'utf-8')) as typeof rule;
+        pr.enforce_via = [...(pr.enforce_via ?? []).filter((s) => s.hook !== 'Stop'), ...newStop];
+        fs.writeFileSync(proj, `${JSON.stringify(pr, null, 2)}\n`);
+      }
+    }
+  }
+  console.log(`\n  변경 ${changed}개${apply ? ' 저장됨' : ' (적용: --apply)'}\n`);
 }

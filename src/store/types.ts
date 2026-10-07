@@ -47,7 +47,11 @@ export type VerifierKind =
   | 'pattern_match'
   | 'tool_arg_regex'
   | 'artifact_check'
-  | 'self_check_prompt';
+  | 'self_check_prompt'
+  /** 2026-10-07: 최근 도구 호출 기록에 지정 도구(params.tools)가 있으면 통과 — 자기 신고 대신 실행 증거. */
+  | 'tool_evidence'
+  /** 2026-10-07: 응답의 문자 비율(params.script='hangul', min_ratio)로 언어 룰을 기계 판정. */
+  | 'language_ratio';
 
 export interface VerifierSpec {
   kind: VerifierKind;

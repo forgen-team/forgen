@@ -19,7 +19,7 @@
  *   - 신규 제안은 reason 주석(문자열) 과 함께 반환해 사용자 리뷰 가능.
  */
 
-import type { Rule, EnforceSpec } from '../store/types.js';
+import type { Rule, EnforceSpec, VerifierSpec } from '../store/types.js';
 
 export interface EnforceProposal {
   rule_id: string;
@@ -52,13 +52,97 @@ const EVIDENCE_CONTEXT_PATTERN = /(증거|evidence|검증\s*결과|e2e-result|sm
 
 // R6-F2: shared single source of truth — stop-guard 와 동일 regex 재사용.
 import {
-  DEFAULT_STOP_TRIGGER_RE as STOP_COMPLETION_TRIGGER,
   DEFAULT_STOP_EXCLUDE_RE as STOP_COMPLETION_EXCLUDE,
-  MOCK_TRIGGER_RE as STOP_MOCK_TRIGGER,
   MOCK_EXCLUDE_RE as STOP_MOCK_EXCLUDE,
-  CRITIC_STOP_TRIGGER_RE,
   CRITIC_STOP_EXCLUDE_RE,
+  COMPLETION_TRIGGER_V2_RE,
+  CRITIC_TRIGGER_V2_RE,
+  CHUNK_EVIDENCE_RE,
+  MOCK_CLAIM_TRIGGER_RE,
+  LIVE_RUN_TRIGGER_RE,
+  IMPL_REPORT_TRIGGER_RE,
+  topicDropTrigger,
 } from '../hooks/shared/stop-triggers.js';
+
+const ISOLATION_PATTERN = /(격리|isolat|FORGEN_HOME|CLAUDE_CONFIG_DIR|docker).{0,80}(프로덕션|실\s?데이터|live|라이브|실제)|((프로덕션|실\s?데이터|live|라이브).{0,80}(격리|docker|FORGEN_HOME))/is;
+const IMPL_FIRST_PATTERN = /(구현\s?먼저|구현을?\s?먼저|합의.{0,30}(문서|구현)|결정\s?문서|문서로\s?남긴\s?다음|문서화한\s?(후|뒤|다음))/;
+
+/** 룰이 괄호 안에 ①·② 나 · 로 나열한 기능 이름 — 주제 룰 판별용 (예: "(①원·투모션·④슈터 유형·⑤대표 선수)"). */
+export function extractTopicTerms(policy: string): string[] {
+  // 번호(①~⑨)가 붙은 기능 나열만 주제로 본다 — '·' 만 있는 괄호(예: 오차 규약 통일·거리 스케일)는 절차 설명이라 제외.
+  const m = policy.match(/\(([^()]*[①②③④⑤⑥⑦⑧⑨][^()]*)\)/);
+  if (!m) return [];
+  // 번호가 항목 경계 — "①원·투모션·④슈터 유형" 은 [원·투모션, 슈터 유형]. 항목 끝의 구분자만 벗긴다.
+  return m[1].split(/[①-⑨]/).map((t) => t.replace(/^[\s·,]+|[\s·,]+$/g, '').trim()).filter((t) => t.length >= 2);
+}
+
+/** 트리거 정규식 상한(compileSafeRegex MAX_PATTERN_LEN=500)보다 여유 있게 — 넘으면 룰이 소리 없이 죽는다. */
+const TOPIC_TRIGGER_MAX = 480;
+
+/**
+ * 2026-10-07: 활성 룰 중 Stop 설정이 있는 것만 현재 분류기로 다시 굽는다(다른 훅·강도·본문 불변).
+ * 순수 계산 — 저장은 호출자가. 반환: 바뀐 룰과 새 Stop 설정.
+ */
+export function retuneStopSpecs(rules: Rule[]): Array<{ rule: Rule; newStop: NonNullable<Rule['enforce_via']> }> {
+  const out: Array<{ rule: Rule; newStop: NonNullable<Rule['enforce_via']> }> = [];
+  for (const rule of rules) {
+    if (rule.status !== 'active' || !(rule.enforce_via ?? []).some((s) => s.hook === 'Stop')) continue;
+    const newStop = classify(rule).proposed.filter((s) => s.hook === 'Stop') as NonNullable<Rule['enforce_via']>;
+    if (newStop.length === 0) continue;
+    const oldStop = (rule.enforce_via ?? []).filter((s) => s.hook === 'Stop');
+    if (JSON.stringify(oldStop) !== JSON.stringify(newStop)) out.push({ rule, newStop });
+  }
+  return out;
+}
+
+/** 사용자 룰(~/.forgen/me/rules)에 retune 을 적용·저장. postinstall 1회 마이그레이션용. 반환: 바뀐 수. */
+export async function applyStopRetuneToUserRules(): Promise<number> {
+  const { loadAllRules, saveRule } = await import('../store/rule-store.js');
+  const changes = retuneStopSpecs(loadAllRules());
+  for (const { rule, newStop } of changes) {
+    saveRule({ ...rule, enforce_via: [...(rule.enforce_via ?? []).filter((s) => s.hook !== 'Stop'), ...newStop] });
+  }
+  return changes.length;
+}
+
+/**
+ * 발동 조건 종류에 맞는 판정 방식 — 분류기의 모든 Stop 분기가 이 하나를 쓴다(critic SEV-1: 분기마다 따로 고르다
+ * language 트리거에 self_check 가 붙어 40자 이상 모든 답변을 차단하는 조합이 생겼다).
+ */
+export function stopVerifierFor(kind: StopTriggerChoice['kind'], policy: string): VerifierSpec {
+  if (kind === 'critic') {
+    return { kind: 'tool_evidence', params: { tools: 'Agent,Task,Workflow,mcp__forgen-compound__invoke-agent', window: 60, only_if: CHUNK_EVIDENCE_RE, question: `이 작업 청크에 대해 fresh-context 비판 리뷰(critic 에이전트)를 실제로 돌리지 않았다. 규칙: "${policy.slice(0, 100)}". critic 을 실행하고 발견 사항을 반영한 뒤 다시 보고하라.` } };
+  }
+  if (kind === 'language') {
+    return { kind: 'language_ratio', params: { script: 'hangul', min_ratio: 0.5, question: `직전 응답이 한국어가 아니다(한글 비율 미달). 규칙: "${policy.slice(0, 80)}". 한국어로 다시 답하라.` } };
+  }
+  return { kind: 'self_check_prompt', params: { question: `직전 응답이 다음 규칙을 위반했는지 자가점검하라: "${policy.slice(0, 120)}". 위반 시 구체적 근거와 함께 수정해 재응답하라.` } };
+}
+
+export interface StopTriggerChoice { trigger: string; exclude: string; kind: 'mock' | 'critic' | 'live' | 'impl' | 'topic' | 'completion' | 'language'; }
+
+const KOREAN_ONLY_PATTERN = /(한국어로|한글로).{0,30}(답|응답|작성|말)|영어로\s?답하지/;
+
+/**
+ * 2026-10-07 룰별 발동 조건 — 각 룰이 지키려는 **행동의 주장**에만 반응한다(30일 실측: 공통 완료 어휘는 1.4% 만 발동,
+ * 걸리면 4개 룰이 동시에, mock 룰은 단어만으로 무한 반복). 우선순위: mock > critic > 주제 > 격리 > 구현먼저 > 완료.
+ */
+export function chooseStopTrigger(policy: string): StopTriggerChoice {
+  if (/mock|stub|fake/i.test(policy)) return { trigger: MOCK_CLAIM_TRIGGER_RE, exclude: STOP_MOCK_EXCLUDE, kind: 'mock' };
+  // 언어 룰: 모든 답변(40자 이상)을 한글 비율로 기계 판정 — 준수하면 조용히 통과하므로 넓게 걸어도 노이즈 없음.
+  if (KOREAN_ONLY_PATTERN.test(policy)) return { trigger: '[\\s\\S]{40,}', exclude: '(?!)', kind: 'language' };
+  if (CRITIC_REVIEW_PATTERN.test(policy)) return { trigger: CRITIC_TRIGGER_V2_RE, exclude: CRITIC_STOP_EXCLUDE_RE, kind: 'critic' };
+  const topics = extractTopicTerms(policy);
+  if (topics.length > 0) {
+    // 상한을 넘으면 앞쪽 기능부터 남긴다(룰이 통째로 죽는 것보다 낫다).
+    let n = topics.length;
+    while (n > 1 && topicDropTrigger(topics.slice(0, n)).length > TOPIC_TRIGGER_MAX) n--;
+    return { trigger: topicDropTrigger(topics.slice(0, n)), exclude: STOP_COMPLETION_EXCLUDE, kind: 'topic' };
+  }
+  if (ISOLATION_PATTERN.test(policy)) return { trigger: LIVE_RUN_TRIGGER_RE, exclude: STOP_COMPLETION_EXCLUDE, kind: 'live' };
+  if (IMPL_FIRST_PATTERN.test(policy)) return { trigger: IMPL_REPORT_TRIGGER_RE, exclude: STOP_COMPLETION_EXCLUDE, kind: 'impl' };
+  return { trigger: COMPLETION_TRIGGER_V2_RE, exclude: STOP_COMPLETION_EXCLUDE, kind: 'completion' };
+}
 
 /**
  * critic-review 룰 감지 (2026-07-22, 리뷰 SEV-2 #3): "비판 리뷰/critic 을 돌리고 다음으로
@@ -131,10 +215,9 @@ export function classify(rule: Rule): EnforceProposal {
   }
   if (isCompletion && !isRepeal) {
     const mockAsProof = /mock|stub|fake/i.test(text);
-    const criticReview = CRITIC_REVIEW_PATTERN.test(text);
-    // 트리거 선택: mock > critic-review > 완료-전용. critic 만 skip-review 시그널 포함.
-    const stopTrigger = mockAsProof ? STOP_MOCK_TRIGGER : criticReview ? CRITIC_STOP_TRIGGER_RE : STOP_COMPLETION_TRIGGER;
-    const stopExclude = mockAsProof ? STOP_MOCK_EXCLUDE : criticReview ? CRITIC_STOP_EXCLUDE_RE : STOP_COMPLETION_EXCLUDE;
+    const choice = chooseStopTrigger(rule.policy);
+    const stopTrigger = choice.trigger;
+    const stopExclude = choice.exclude;
     const pathMatch = text.match(ARTIFACT_PATH_PATTERN)?.[0];
     // 증거로 보이는 경로만 게이트화: .forgen/ 하위이거나 텍스트에 증거 맥락어가 있을 때.
     const explicitArtifact = pathMatch && (pathMatch.includes('.forgen/') || EVIDENCE_CONTEXT_PATTERN.test(text))
@@ -159,12 +242,8 @@ export function classify(rule: Rule): EnforceProposal {
       proposed.push({
         mech: 'B',
         hook: 'Stop',
-        verifier: {
-          kind: 'self_check_prompt',
-          params: {
-            question: `직전 응답이 다음 규칙을 위반했는지 자가점검하라: "${rule.policy.slice(0, 120)}". 위반 시 구체적 근거와 함께 수정해 재응답하라.`,
-          },
-        },
+        // critic → 실행 증거, language → 한글 비율, 그 외 자가점검 (stopVerifierFor 단일 소스).
+        verifier: stopVerifierFor(choice.kind, rule.policy),
         trigger_keywords_regex: stopTrigger,
         trigger_exclude_regex: stopExclude,
         system_tag: `rule:${rule.rule_id.slice(0, 8)} — completion-self-check`,
@@ -179,14 +258,10 @@ export function classify(rule: Rule): EnforceProposal {
     proposed.push({
       mech: 'B',
       hook: 'Stop',
-      verifier: {
-        kind: 'self_check_prompt',
-        params: {
-          question: `직전 응답이 다음 규칙을 위반했는지 자가점검하라: "${rule.policy.slice(0, 120)}". 위반 시 구체적 근거와 함께 수정해 재응답하라.`,
-        },
-      },
-      trigger_keywords_regex: STOP_COMPLETION_TRIGGER,
-      trigger_exclude_regex: STOP_COMPLETION_EXCLUDE,
+      // 2026-10-07: 문체 룰도 룰별 발동 조건(주제·격리·구현먼저·언어 등)과 그에 맞는 판정 방식을 쓴다. 해당 없으면 완료 선언.
+      verifier: stopVerifierFor(chooseStopTrigger(rule.policy).kind, rule.policy),
+      trigger_keywords_regex: chooseStopTrigger(rule.policy).trigger,
+      trigger_exclude_regex: chooseStopTrigger(rule.policy).exclude,
       system_tag: `rule:${rule.rule_id.slice(0, 8)} — style-check`,
     });
     reasoning.push(

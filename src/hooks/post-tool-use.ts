@@ -61,7 +61,9 @@ interface ModifiedFilesState {
   recentToolNames?: string[];
 }
 
-const RECENT_TOOL_NAMES_WINDOW = 20;
+// 2026-10-07: 20→60 — critic 룰의 실행 증거 판정(stop-guard tool_evidence)이 'critic 실행 → 수정 수십 회 → 커밋' 흐름에서
+// critic 호출이 창 밖으로 밀려 오탐하지 않도록. 측정 도구 집계는 끝에서 세므로 영향 없음.
+const RECENT_TOOL_NAMES_WINDOW = 60;
 
 /** Lightweight hash for content comparison (not cryptographic) */
 function simpleHash(content: string): string {

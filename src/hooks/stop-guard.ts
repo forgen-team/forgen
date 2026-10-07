@@ -57,7 +57,7 @@ const DRIFT_LOG = path.join(STATE_DIR, 'enforcement', 'drift.jsonl');
 const ACK_LOG = path.join(STATE_DIR, 'enforcement', 'acknowledgments.jsonl');
 
 interface VerifierSpec {
-  kind: 'self_check_prompt' | 'artifact_check' | 'tool_arg_regex';
+  kind: 'self_check_prompt' | 'artifact_check' | 'tool_arg_regex' | 'tool_evidence' | 'language_ratio';
   params: Record<string, string | number | boolean>;
 }
 
@@ -130,7 +130,7 @@ export function rulesFromStore(rules: Rule[]): SpikeRule[] {
       const spec: EnforceSpec = specs[i];
       if (spec.hook !== 'Stop') continue;
       if (!spec.verifier) continue;
-      if (spec.verifier.kind !== 'self_check_prompt' && spec.verifier.kind !== 'artifact_check') continue;
+      if (spec.verifier.kind !== 'self_check_prompt' && spec.verifier.kind !== 'artifact_check' && spec.verifier.kind !== 'tool_evidence' && spec.verifier.kind !== 'language_ratio') continue;
 
       out.push({
         id: rule.rule_id,
@@ -219,15 +219,81 @@ function messageTriggersRule(message: string, rule: SpikeRule): boolean {
   const includeRes = compileSafeRegex(t.response_keywords_regex, 'i');
   if (!includeRes.regex) return false;
   if (!safeRegexTest(includeRes.regex, m)) return false;
-  if (t.context_exclude_regex) {
-    const excludeRes = compileSafeRegex(t.context_exclude_regex, 'i');
-    if (excludeRes.regex && safeRegexTest(excludeRes.regex, m)) return false;
-  }
-  return true;
+  if (!t.context_exclude_regex) return true;
+  const excludeRes = compileSafeRegex(t.context_exclude_regex, 'i');
+  if (!excludeRes.regex) return true;
+  // 2026-10-07: 제외 조건은 **매칭이 일어난 문장**에만 적용한다. 이전엔 메시지 전체를 봐서 "끝났습니다. 실패는
+  // 없습니다" 처럼 다른 문장의 '없습니다' 때문에 정상 완료 보고의 67% 를 놓쳤다(30일 실측).
+  // 길이 0 매칭(lookahead 결합 트리거)은 문장을 특정할 수 없어 기존처럼 메시지 전체로 판단.
+  const sentences = matchedSentences(m, includeRes.regex);
+  if (sentences === null) return !safeRegexTest(excludeRes.regex, m);
+  return sentences.some((s) => !safeRegexTest(excludeRes.regex as RegExp, s));
 }
 
-function evaluateVerifier(rule: SpikeRule): { violated: boolean; reason: string } {
+/** 문장 경계 — 줄바꿈, 반각 마침표류(. ! ?) 뒤 공백, 전각 마침표류(。！？) 뒤. 마침표는 앞 문장에 속한다. */
+// 전각 부호(。！？)는 일·중 표기에서 공백 없이 이어 쓰므로 공백 없이도 경계(critic 재검증 SEV-3).
+const SENTENCE_BOUNDARY = /\r?\n|(?<=[.!?])[ \t]+|(?<=[。！？])[ \t]*/g;
+/** 텍스트 상한 — safeRegexTest 와 같은 절단(긴 최종 보고에서 Stop 훅 timeout 방지). */
+const SENTENCE_SCAN_MAX = 65536;
+
+/**
+ * include 매칭마다 **매칭의 마지막 글자가 속한 문장**을 돌려준다. 길이 0 매칭만 있으면 null.
+ * (critic SEV-1: 이전 구현은 매칭 자체의 끝 '다. ' 를 경계로 오인해 빈 문장/다음 문장을 판정했다.)
+ */
+function matchedSentences(raw: string, re: RegExp): string[] | null {
+  const text = raw.length > SENTENCE_SCAN_MAX ? raw.slice(0, SENTENCE_SCAN_MAX) : raw;
+  const bounds: Array<[number, number]> = [];
+  let from = 0;
+  for (const b of text.matchAll(SENTENCE_BOUNDARY)) {
+    const at = b.index ?? 0;
+    bounds.push([from, at]);
+    from = at + b[0].length;
+  }
+  bounds.push([from, text.length]);
+  const sentenceAt = (pos: number): string => {
+    for (const [a, z] of bounds) if (pos >= a && pos < z) return text.slice(a, z);
+    return '';
+  };
+  const g = new RegExp(re.source, re.flags.includes('g') ? re.flags : `${re.flags}g`);
+  const out: string[] = [];
+  let sawNonEmpty = false;
+  let guard = 0;
+  for (let mm = g.exec(text); mm && guard < 50; mm = g.exec(text), guard++) {
+    if (mm[0].length === 0) { g.lastIndex++; continue; }
+    sawNonEmpty = true;
+    out.push(sentenceAt(mm.index + mm[0].length - 1));
+  }
+  return sawNonEmpty ? out : null;
+}
+
+function evaluateVerifier(rule: SpikeRule, recentTools: string[] = [], message = ''): { violated: boolean; reason: string } {
   const v = rule.verifier;
+  // 2026-10-07: 언어 룰 — 코드·URL·경로를 뺀 본문 글자 중 한글 비율. 기준 미달이면 위반.
+  if (v.kind === 'language_ratio') {
+    const body = message.replace(/```[\s\S]*?```/g, ' ').replace(/`[^`]*`/g, ' ').replace(/https?:\/\/\S+/g, ' ').replace(/[~./\\][\w./\\-]+/g, ' ');
+    const letters = body.match(/[A-Za-z가-힣]/g) ?? [];
+    if (letters.length < 20) return { violated: false, reason: '' };
+    const hangul = letters.filter((c) => /[가-힣]/.test(c)).length;
+    const ratio = hangul / letters.length;
+    const min = Number(v.params.min_ratio ?? 0.5);
+    return ratio >= min ? { violated: false, reason: '' } : { violated: true, reason: String(v.params.question ?? '한국어로 다시 답하라.') };
+  }
+  // 2026-10-07: 자기 신고("위반 없음") 대신 실행 기록으로 판정 — 최근 도구 호출에 지정 도구가 있으면 통과.
+  // (critic 룰: 30일 실측에서 차단 후 실제 critic 실행 29%, 말로만 통과 29%.)
+  if (v.kind === 'tool_evidence') {
+    const want = String(v.params.tools ?? 'Agent,Task,Workflow').split(',').map((s) => s.trim()).filter(Boolean);
+    const window = Number(v.params.window ?? 60);
+    // 도구 기록이 아예 없으면(기록하지 않는 호스트·세션 id 불명) 판정 불가 → 통과(fail-open). 증거 부재와 기록 부재를 구분.
+    if (recentTools.length === 0) return { violated: false, reason: '' };
+    // 청크 경계 증거(커밋 해시·커밋·배포 등)가 메시지에 없으면 이 룰의 대상(청크 완료)이 아니다 — 정규식 lookahead 대신 선형 검사.
+    if (typeof v.params.only_if === 'string') {
+      const only = compileSafeRegex(v.params.only_if, 'i');
+      if (only.regex && !safeRegexTest(only.regex, message)) return { violated: false, reason: '' };
+    }
+    const tail = recentTools.slice(-window);
+    if (tail.some((t) => want.includes(t))) return { violated: false, reason: '' };
+    return { violated: true, reason: String(v.params.question ?? rule.block_message ?? `최근 작업에 ${want.join('/')} 실행 기록이 없음`) };
+  }
   if (v.kind === 'self_check_prompt') {
     const q = String(v.params.question ?? rule.block_message ?? '자가점검 필요');
     // self_check_prompt 는 증거가 없으면(artifact path 미지정/미존재) 위반 간주.
@@ -304,7 +370,8 @@ function artifactFresh(relOrAbs: string, maxAgeS: number): boolean {
 /** Pure core — 단위 테스트용. stdin/IO 없음. */
 export function evaluateStop(
   lastAssistantMessage: string,
-  rules: SpikeRule[]
+  rules: SpikeRule[],
+  recentTools: string[] = [],
 ): { action: 'approve'; hit: null; passed: string[]; advised: Array<{ rule: SpikeRule; reason: string }> }
  | { action: 'block'; hit: SpikeRule; reason: string; passed: string[]; advised: Array<{ rule: SpikeRule; reason: string }> } {
   // ADR-017 D2: 실제 평가돼 통과한 룰(passed)과, D1 advise 강등으로 차단 대신 기록만 하는 룰(advised)을 함께 반환.
@@ -313,7 +380,7 @@ export function evaluateStop(
   for (const rule of rules) {
     if (rule.hook !== 'Stop') continue;
     if (!messageTriggersRule(lastAssistantMessage, rule)) continue;
-    const result = evaluateVerifier(rule);
+    const result = evaluateVerifier(rule, recentTools, lastAssistantMessage);
     if (result.violated) {
       if (rule.enforce_mode === 'advise') { advised.push({ rule, reason: result.reason }); continue; }
       return { action: 'block', hit: rule, reason: result.reason, passed, advised };
@@ -581,8 +648,8 @@ export async function main(): Promise<void> {
       return;
     }
 
-    const result = evaluateStop(lastMessage, rules);
     const sessionId = input?.session_id ?? 'unknown';
+    const result = evaluateStop(lastMessage, rules, loadRecentToolNames(sessionId));
 
     // ADR-017 D2: 실제 평가된 룰의 통과를 checks.jsonl 에 기록(violations 와 분리). D1: advise 강등 룰의
     // 위반은 kind:'correction' 으로 기록만 하고 차단하지 않는다.

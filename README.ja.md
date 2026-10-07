@@ -537,6 +537,7 @@ forgen rule activate <id>       # suppressed ルールを再アクティブ化
 forgen rule scan [--apply]      # ライフサイクルトリガー実行 (昇格/降格/引退)
 forgen rule health-scan         # drift → Mech 降格候補をスキャン
 forgen rule classify            # 既存ルールに enforce_via を自動提案
+forgen rule classify --stop-only  # Stop ルールの発動条件だけを再生成 (既定はプレビュー、--apply で保存)
 forgen rule merge-mined [--apply]  # マイニング(auto:)ルール同士を統合、同概念の explicit ルールにはリンクのみ (既定 dry-run)
 forgen rule unmerge <id>        # 統合/リンクされたルールの原本を復元
 forgen rule enforce|advise <id> # 自動降格されたルールのブロック復帰 / 記録のみモード (hard ルールは拒否)
