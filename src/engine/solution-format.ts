@@ -1,4 +1,5 @@
 import * as yaml from 'js-yaml';
+import { normalizeColloquialKo } from './ko-colloquial.js';
 
 // ── Types ──
 
@@ -415,7 +416,7 @@ const KO_STOPWORDS = new Set([
 ]);
 
 /** 영어 불용어 */
-const EN_STOPWORDS = new Set([
+export const EN_STOPWORDS = new Set([
   'the',
   'and',
   'for',
@@ -541,7 +542,9 @@ export function extractTags(text: string): string[] {
   for (const w of words) {
     const isKorean = /[가-힣]/.test(w);
     if (isKorean && w.length >= 2) {
-      const stem = stripKoSuffix(w);
+      const base = normalizeColloquialKo(w);
+      if (base === null) continue;
+      const stem = stripKoSuffix(base);
       if (stem.length >= 2 && !KO_STOPWORDS.has(stem)) {
         freq.set(stem, (freq.get(stem) ?? 0) + 1);
       }
