@@ -22,7 +22,7 @@
         }
       },
       "trigger_keywords_regex": "((mock|stub|fake|목\\s?객체|스텁)[^.!?\\n]{0,40}(검증|통과|확인했|확인됐|테스트\\s?(했|됐|완료)|verified|passed|green)|(검증|통과|verified|passed)[^.!?\\n]{0,40}(mock|stub|fake|목\\s?객체|스텁))",
-      "trigger_exclude_regex": "(테스트|test|vi\\.mock|jest\\.mock|spec\\.|해소|제거|걷어|대체|교체|대신|라이브|live|실제\\s?(실행|데이터|환경)|실\\s?(데이터|영상|환경)|아니|않|없이|없습니다|금지|룰|규칙|instead|real\\s)",
+      "trigger_exclude_regex": "(테스트|test|vi\\.mock|jest\\.mock|spec\\.|해소|제거|걷어|대체|교체|대신|라이브|live|실제\\s?(실행|데이터|환경)|실\\s?(데이터|영상|환경)|아니|않|없이|없습니다|금지|룰|규칙|instead|real\\s|^\\s*\\|)",
       "system_tag": "rule:L1-no-mo — completion-self-check"
     }
   ]
