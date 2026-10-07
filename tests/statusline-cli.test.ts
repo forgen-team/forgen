@@ -101,9 +101,12 @@ describe('statusline 2줄 렌더', () => {
   it('ctx ≥80 노랑, ≥95 빨강, exceeds_200k_tokens 경고', () => {
     const y = buildUserLine({ context_window: { used_percentage: 85, context_window_size: 200_000 } }, '/x', {}, NOW);
     expect(y).toContain('\x1b[33m▓▓▓▓▓▓▓▓▓░\x1b[0m \x1b[33m85%'); // round(8.5)=9칸
-    const r = buildUserLine({ context_window: { used_percentage: 96 }, exceeds_200k_tokens: true }, '/x', {}, NOW);
+    const r = buildUserLine({ context_window: { used_percentage: 96, context_window_size: 200_000 }, exceeds_200k_tokens: true }, '/x', {}, NOW);
     expect(r).toContain('\x1b[31m▓▓▓▓▓▓▓▓▓▓\x1b[0m \x1b[31m96%');
-    expect(strip(r)).toContain('⚠200k');
+    expect(strip(r)).toContain('⚠200k'); // 200k 창: 창을 꽉 채운 것 → 경고
+    const big = buildUserLine({ context_window: { used_percentage: 83, context_window_size: 1_000_000 }, exceeds_200k_tokens: true }, '/x', {}, NOW);
+    expect(strip(big)).toContain('200k+'); // 1M 창: 상태 표시만
+    expect(strip(big)).not.toContain('⚠');
   });
 
   it('샘플이 쌓이면 한도 소진 예측이 붙고, 리셋 전 소진이면 노랑', () => {

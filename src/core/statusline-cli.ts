@@ -144,7 +144,10 @@ export function buildUsageLine(payload: StdinPayload, forecasts: Partial<Record<
   const parts: string[] = [];
 
   const cw = payload.context_window;
-  const warn200k = payload.exceeds_200k_tokens ? `${YELLOW}⚠200k${RESET}` : '';
+  // exceeds_200k_tokens 는 창 크기와 무관한 고정 임계(공식 문서). 1M 창에선 위험이 아니라 상태이므로 흐리게 '200k+',
+  // 창이 200k 이하일 때만(= 창을 꽉 채운 것) ⚠ 경고. (오너 질문 2026-10-07)
+  const bigWindow = isNum(cw?.context_window_size) && (cw?.context_window_size ?? 0) > 200_000;
+  const warn200k = payload.exceeds_200k_tokens ? (bigWindow ? `${DIM}200k+${RESET}` : `${YELLOW}⚠200k${RESET}`) : '';
   if (cw && isNum(cw.used_percentage)) {
     const pct = Math.round(cw.used_percentage);
     parts.push(`${BOLD}ctx${RESET} ${bar(pct)} ${colored(`${pct}%`, pctColor(pct))}${DIM}${fmtWindowSize(cw.context_window_size)}${RESET}${warn200k ? ` ${warn200k}` : ''}`);
