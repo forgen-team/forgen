@@ -64,13 +64,24 @@ export interface StdinPayload {
   [key: string]: unknown;
 }
 
-export function readStdinJson(): StdinPayload {
+/**
+ * stdin 페이로드 읽기 — 훅과 같은 이벤트 기반 리더(read-stdin.ts).
+ *
+ * 2026-10-07 실사용 관측에서 발견: Claude Code(Node)는 statusline 을 `stdio:'pipe'` 로 띄우므로 stdin 이
+ * **UNIX socketpair** 다. 이전 구현의 `fs.readFileSync('/dev/stdin')` 은 소켓에서 ENXIO 로 실패해 페이로드가
+ * 항상 `{}` 였다 — 0.5.9 부터 statusline 은 세션/모델/컨텍스트/한도를 한 번도 받은 적이 없었고, 셸 파이프로만
+ * 검증해 못 잡았다. (Node spawn 재현 테스트: tests/statusline-stdin-socket.test.ts)
+ */
+export async function readStdinJson(): Promise<StdinPayload> {
   if (process.stdin.isTTY) return {};
   try {
-    const raw = fs.readFileSync('/dev/stdin', 'utf-8').trim();
-    if (!raw) return {};
-    return JSON.parse(raw) as StdinPayload;
+    const { readStdinJSON } = await import('../hooks/shared/read-stdin.js');
+    const parsed = await readStdinJSON<StdinPayload>(1500);
+    // 부모(Claude Code)가 stdin 을 닫지 않아도 프로세스가 EOF 를 기다리며 남지 않도록 핸들을 놓는다.
+    try { process.stdin.destroy(); } catch { /* ignore */ }
+    return parsed && typeof parsed === 'object' ? parsed : {};
   } catch {
+    try { process.stdin.destroy(); } catch { /* ignore */ }
     return {};
   }
 }
@@ -226,7 +237,7 @@ export function renderStatusline(payload: StdinPayload, nowMs: number = Date.now
 }
 
 export async function handleStatusline(): Promise<void> {
-  await handleStatuslineWith(readStdinJson());
+  await handleStatuslineWith(await readStdinJson());
 }
 
 /** stdin 읽기를 분리한 본체 — 테스트는 페이로드를 직접 넣는다. */
