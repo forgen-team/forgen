@@ -180,7 +180,7 @@ npm install -g @wooojin/forgen
 forgen
 ```
 
-> **Node 22+ required.** On Node 20, `npm install -g @wooojin/forgen` silently installs the last Node-20-compatible version (0.4.8) because npm picks the newest release whose `engines` matches. Check `node -v` first, or pin: `npm i -g @wooojin/forgen@latest` and verify `forgen --version`.
+> **Node 22+ required.** On Node 20, `npm i -g @wooojin/forgen` silently installs the last Node-20-compatible version (0.4.8) because npm picks the newest release whose `engines` matches. Check `node -v` first, or pin: `npm i -g @wooojin/forgen@latest` and verify `forgen --version`.
 
 Forgen detects this is your first run and launches a 4-question onboarding. Each question is a concrete scenario:
 

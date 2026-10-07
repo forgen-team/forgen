@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.4] — 2026-10-07 — 설치·실행 편의: statusline 자동 등록 · Codex 훅 재승인 제거(고정 shim) · Node 22 함정 안내
+
+### Added
+- **statusline 자동 등록.** `npm i -g` 의 postinstall 이 `~/.claude/settings.json` 의 statusLine 을 이 패키지의 **절대 경로**
+  (`"<node>" "<pkg>/dist/cli.js" statusline`)로 등록한다 — PATH 의존 `forgen statusline` 은 nvm 버전마다 다른 바이너리를
+  잡았다(실측: 0.4.8). 다른 명령(claude-hud 등)이 설정돼 있으면 건드리지 않고 안내만, 교체는 `forgen statusline install --force`
+  (기존 값은 `statusLine_backup` 에 보관). 켜져 있는 세션도 다음 메시지부터 반영. `forgen doctor` 에 Statusline 체크.
+- **Codex 훅 고정 shim — 업그레이드·nvm 전환마다 `/hooks` 재승인하던 것 제거.** Codex 의 trust 해시는 명령 문자열 단위인데
+  명령에 node·패키지 경로가 박혀 있어 경로가 바뀔 때마다 전부 `modified` 였다. 이제 훅 명령은 `"~/.codex/forgen-hook" "hooks/x.js"`
+  로 고정되고 실제 위임 대상(node·패키지 경로)은 shim 파일 내용에만 있다. postinstall 이 shim 내용만 갱신하므로 hooks.json
+  바이트(= trust)는 그대로. 도입 시 `forgen install codex` 1회 + 마지막 1회 trust 가 필요하고, 그 뒤로는 재승인 불필요.
+  POSIX sh shim(`exec`)이라 node 프로세스가 추가로 뜨지 않는다. Windows 는 기존 방식. uninstall 이 shim 도 제거.
+
+### Docs
+- README 4개 언어: **Node 22 이상 필요** — Node 20 에서 `npm i -g @wooojin/forgen` 은 npm 이 `engines` 에 맞는 최신을 골라
+  조용히 0.4.8 을 설치한다(실측). `forgen statusline install` 사용법.
+
 ## [0.6.3] — 2026-10-07 — statusline 3줄 + 바 그래프 (오너 피드백)
 
 ### Changed

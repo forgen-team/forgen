@@ -127,7 +127,7 @@ npm install -g @wooojin/forgen
 forgen
 ```
 
-> **Node 22 以上が必要。** Node 20 で `npm install -g @wooojin/forgen` を実行すると、npm が `engines` に合う最新版を選ぶため 0.4.8 が静かにインストールされます。先に `node -v` を確認し、インストール後に `forgen --version` を確認してください。
+> **Node 22 以上が必要。** Node 20 で `npm i -g @wooojin/forgen` を実行すると、npm が `engines` に合う最新版を選ぶため 0.4.8 が静かにインストールされます。先に `node -v` を確認し、インストール後に `forgen --version` を確認してください。
 
 初回実行を検出すると、4問のオンボーディングが始まります。各質問は具体的なシナリオです:
 

@@ -34,7 +34,7 @@ describe('planCodexInstall', () => {
     }
   });
 
-  it('빈 codexHome 에 hooks.json 새로 작성, 절대경로 + codex-adapter wrap', () => {
+  it('빈 codexHome 에 hooks.json 새로 작성 — 명령은 고정 shim 경유, shim 이 codex-adapter 로 위임', () => {
     const result = planCodexInstall({ pkgRoot: PKG_ROOT, codexHome });
     expect(result.hooksWritten).toBe(true);
     expect(result.hooksCount).toBeGreaterThan(0);
@@ -47,12 +47,35 @@ describe('planCodexInstall', () => {
       .flat()
       .flatMap((g) => g.hooks.map((h) => h.command));
     expect(allCommands.length).toBe(result.hooksCount);
-    // 모든 command 가 codex-adapter 를 경유 + 절대경로
+    // 모든 command 가 <codexHome>/forgen-hook 고정 shim 경유 (node/패키지 경로가 명령에 없음 → trust 해시 고정)
+    const shim = path.join(codexHome, 'forgen-hook');
     for (const c of allCommands) {
-      expect(c).toContain('codex-adapter');
-      expect(c).toMatch(/node "\/.+codex-adapter\.js"/);
+      expect(c.startsWith(`"${shim}" "hooks/`)).toBe(true);
+      expect(c).not.toContain('codex-adapter');
       expect(c).not.toContain('${CLAUDE_PLUGIN_ROOT}');
     }
+    // shim 은 실행 가능하고 현재 패키지의 codex-adapter 로 위임한다
+    const body = fs.readFileSync(shim, 'utf-8');
+    expect(body).toContain('forgen-managed codex-hook shim');
+    expect(body).toContain(`FORGEN_PKG='${PKG_ROOT}'`);
+    expect(body).toContain('dist/host/codex-adapter.js');
+    expect(fs.statSync(shim).mode & 0o111).not.toBe(0);
+  });
+
+  it('shim 은 node/패키지 경로가 바뀌어도 hooks.json 바이트를 바꾸지 않는다 (trust 해시 고정)', async () => {
+    const a = planCodexInstall({ pkgRoot: PKG_ROOT, codexHome });
+    const before = fs.readFileSync(a.hooksPath, 'utf-8');
+    // 다른 위치의 패키지로 재설치한 상황 — shim 내용만 바뀌어야 한다
+    const { writeCodexHookShim } = await import('../../src/host/codex-hook-shim.js');
+    expect(writeCodexHookShim('/opt/other/forgen', '/opt/node22/bin/node', path.join(codexHome, 'forgen-hook'))).toBe('written');
+    const b = planCodexInstall({ pkgRoot: PKG_ROOT, codexHome });
+    expect(fs.readFileSync(b.hooksPath, 'utf-8')).toBe(before);
+  });
+
+  it('useShim:false 면 이전 방식(node + 절대경로 codex-adapter)', () => {
+    const r = planCodexInstall({ pkgRoot: PKG_ROOT, codexHome, useShim: false });
+    const all = Object.values((JSON.parse(fs.readFileSync(r.hooksPath, 'utf-8')) as { hooks: Record<string, Array<{ hooks: Array<{ command: string }> }>> }).hooks).flat().flatMap((g) => g.hooks.map((h) => h.command));
+    for (const c of all) expect(c).toMatch(/node "\/.+codex-adapter\.js"/);
   });
 
   it('사용자가 직접 작성한 hook 항목은 보존된다', () => {
@@ -81,7 +104,7 @@ describe('planCodexInstall', () => {
     const pre = (final.hooks.PreToolUse ?? []).flatMap((g) => g.hooks.map((h) => h.command));
     expect(pre).toContain('node /home/user/my-own-hook.js');
     // forgen 측 entry 도 함께 존재
-    expect(pre.some((c) => c.includes('codex-adapter'))).toBe(true);
+    expect(pre.some((c) => c.includes('forgen-hook'))).toBe(true);
   });
 
   it('재실행 시 idempotent — forgen entry 가 중복되지 않음', () => {
@@ -561,7 +584,7 @@ describe('hooks.json 그룹 순서 보존 (0.5.3 훅 신뢰 회귀)', () => {
     const second = planCodexInstall({ pkgRoot: PKG_ROOT, codexHome, agentsMdPath: path.join(codexHome, 'AGENTS.md') });
     const after = JSON.parse(fs.readFileSync(second.hooksPath, 'utf-8')) as { hooks: Record<string, Array<{ hooks: Array<{ command: string }> }>> };
     expect(after.hooks.Stop[0].hooks[0].command).toBe('echo user');
-    const forgenGroups = after.hooks.Stop.filter((g) => g.hooks.some((h) => h.command.includes('codex-adapter')));
+    const forgenGroups = after.hooks.Stop.filter((g) => g.hooks.some((h) => h.command.includes('forgen-hook')));
     expect(forgenGroups.length).toBe(1);
   });
 });

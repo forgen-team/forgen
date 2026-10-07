@@ -87,7 +87,7 @@ npm install -g @wooojin/forgen
 forgen
 ```
 
-> **Node 22 이상 필요.** Node 20에서 `npm install -g @wooojin/forgen`을 하면 npm이 `engines`에 맞는 최신 버전을 고르기 때문에 조용히 0.4.8이 설치됩니다. 먼저 `node -v`를 확인하고, 설치 후 `forgen --version`으로 확인하세요.
+> **Node 22 이상 필요.** Node 20에서 `npm i -g @wooojin/forgen`을 하면 npm이 `engines`에 맞는 최신 버전을 고르기 때문에 조용히 0.4.8이 설치됩니다. 먼저 `node -v`를 확인하고, 설치 후 `forgen --version`으로 확인하세요.
 
 첫 실행을 감지하면 4문항 온보딩이 시작됩니다. 각 질문은 구체적인 시나리오입니다:
 
