@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.5] — 2026-10-07 — Codex 훅 shim 전환을 설치 시 자동으로
+
+### Changed
+- `npm i -g @wooojin/forgen` 의 postinstall 이 `~/.codex/hooks.json` 에 이전 형식(node + 절대경로) forgen 훅이 있으면 **자동으로**
+  고정 shim 형식으로 전환한다 — `forgen install codex` 를 따로 칠 필요 없음. forgen 훅 명령만 제자리에서 바꾸고 그룹·훅 순서
+  (Codex trust 키), 사용자 훅, config.toml 은 그대로. 백업 `hooks.json.bak-pre-shim`. 실 hooks.json 복사본에서 22개 전환·실행 확인.
+- Codex 의 trust 승인 자체는 자동화하지 않는다(사용자 승인을 대신 기록하면 Codex 보안 정책 우회). 전환 직후 `/hooks` 에서 마지막
+  1회만 승인하면 이후 업그레이드·nvm 전환은 재승인 불필요.
+
 ## [0.6.4] — 2026-10-07 — 설치·실행 편의: statusline 자동 등록 · Codex 훅 재승인 제거(고정 shim) · Node 22 함정 안내
 
 ### Added

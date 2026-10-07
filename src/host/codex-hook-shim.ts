@@ -81,3 +81,48 @@ export function toShimCommand(command: string, shimPath: string): string {
   const rel = full.slice(root.length + 1);
   return `"${shimPath}" "${rel}"${rest}`;
 }
+
+/** 이전 형식 forgen 훅 명령(`node "<…>/dist/host/codex-adapter.js" "<…>/dist/hooks/…"`)인가. */
+const LEGACY_FORGEN_CMD_RE = /^node "[^"]*[\\/]dist[\\/]host[\\/]codex-adapter\.js" "[^"]*[\\/]dist[\\/]hooks[\\/][a-z][a-z0-9-]*\.js"/;
+
+export interface ShimMigrationResult {
+  status: 'migrated' | 'none' | 'no-hooks-file' | 'shim-foreign' | 'error';
+  rewritten: number;
+}
+
+/**
+ * npm postinstall 용 자동 마이그레이션 (2026-10-07, 오너 피드백 "forgen install codex 도 자동으로").
+ * hooks.json 의 **이전 형식 forgen 훅 명령만** 제자리에서 shim 형식으로 바꾸고 shim 을 쓴다.
+ * 그룹/훅 순서(= Codex trust 키 `<event>:<groupIdx>:<hookIdx>`)·사용자 훅·config.toml 은 건드리지 않는다.
+ * Codex 의 trust 승인 자체는 자동화하지 않는다(보안 정책 우회가 되므로) — 전환 후 마지막 1회만 필요.
+ */
+export function migrateCodexHooksToShim(codexHome: string, pkgRoot: string, nodePath: string): ShimMigrationResult {
+  const hooksPath = path.join(codexHome, 'hooks.json');
+  try {
+    if (!fs.existsSync(hooksPath)) return { status: 'no-hooks-file', rewritten: 0 };
+    const raw = fs.readFileSync(hooksPath, 'utf-8');
+    const file = JSON.parse(raw) as { hooks?: Record<string, Array<{ hooks?: Array<{ command?: string }> }>> };
+    const shimPath = codexHookShimPath(codexHome);
+    let rewritten = 0;
+    for (const groups of Object.values(file.hooks ?? {})) {
+      for (const g of groups ?? []) {
+        for (const h of g.hooks ?? []) {
+          if (typeof h.command !== 'string' || !LEGACY_FORGEN_CMD_RE.test(h.command)) continue;
+          const next = toShimCommand(h.command, shimPath);
+          if (next !== h.command) { h.command = next; rewritten += 1; }
+        }
+      }
+    }
+    if (rewritten === 0) return { status: 'none', rewritten: 0 };
+    const w = writeCodexHookShim(pkgRoot, nodePath, shimPath);
+    if (w === 'foreign') return { status: 'shim-foreign', rewritten: 0 };
+    if (w === 'error') return { status: 'error', rewritten: 0 };
+    fs.copyFileSync(hooksPath, `${hooksPath}.bak-pre-shim`);
+    const tmp = `${hooksPath}.tmp-${process.pid}`;
+    fs.writeFileSync(tmp, `${JSON.stringify(file, null, 2)}\n`, 'utf-8');
+    fs.renameSync(tmp, hooksPath);
+    return { status: 'migrated', rewritten };
+  } catch {
+    return { status: 'error', rewritten: 0 };
+  }
+}
