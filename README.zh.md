@@ -127,7 +127,7 @@ npm install -g @wooojin/forgen
 forgen
 ```
 
-> **需要 Node 22+。** 在 Node 20 上执行 `npm install -g @wooojin/forgen` 时，npm 会选择与 `engines` 匹配的最新版本，从而静默安装 0.4.8。请先检查 `node -v`，安装后用 `forgen --version` 确认。
+> **需要 Node 22+。** 在 Node 20 上执行 `npm i -g @wooojin/forgen` 时，npm 会选择与 `engines` 匹配的最新版本，从而静默安装 0.4.8。请先检查 `node -v`，安装后用 `forgen --version` 确认。
 
 forgen 检测到这是首次运行，启动4题引导问卷。每个问题都是一个具体场景:
 
