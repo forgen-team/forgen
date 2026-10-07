@@ -56,11 +56,12 @@ describe('statusline 2줄 렌더', () => {
   });
   afterEach(() => fs.rmSync(TEST_HOME, { recursive: true, force: true }));
 
-  it('정확히 2줄: 1줄 사용자(모델·경로·ctx·한도·비용), 2줄 forgen(룰·세션 차단·7d 차단·surfaced)', () => {
+  it('3줄: 모델·경로 / 사용량 바(ctx·한도·비용) / forgen(룰·차단·surfaced)', () => {
     const lines = renderStatusline(fullPayload, NOW).map(strip);
-    expect(lines).toHaveLength(2);
-    expect(lines[0]).toMatch(/^Fable │ ~\/workspace\/forgen\(main\*\) │ ctx ▓▓▓▓░░░░░░ 42%\/1M │ 5h ▓▓▓▓▓▓░░░░ 63% \(리셋 \d\d:\d\d\) │ 7d ▓▓░░░░░░░░ 21% \(리셋 D\+1 \d\d:\d\d\) │ \$1\.23$/);
-    expect(lines[1]).toMatch(/^forgen │ 룰 8 │ 차단 0 \(7d 0\) │ surfaced 0$/);
+    expect(lines).toHaveLength(3);
+    expect(lines[0]).toBe('Fable │ ~/workspace/forgen(main*)');
+    expect(lines[1]).toMatch(/^ctx ▓▓▓▓░░░░░░ 42%\/1M │ 5h ▓▓▓▓▓▓░░░░ 63% \(리셋 \d\d:\d\d\) │ 7d ▓▓░░░░░░░░ 21% \(리셋 D\+1 \d\d:\d\d\) │ \$1\.23$/);
+    expect(lines[2]).toMatch(/^forgen │ 룰 8 │ 차단 0 \(7d 0\) │ surfaced 0$/);
   });
 
   it('운영자 지표(recall/ROI/이모지/CLAUDE.md/MCPs/hooks)는 더 이상 statusline 에 없다', () => {
@@ -80,7 +81,7 @@ describe('statusline 2줄 렌더', () => {
       { w: 'seven_day', t: NOW - MIN, used: 21, resets_at: reset + 86400 },
     ], SAMPLES_PATH);
     for (const rl of [undefined, null, { five_hour: null, seven_day: null }, { five_hour: { used_percentage: null, resets_at: reset }, seven_day: null }]) {
-      const line = strip(renderStatusline({ ...fullPayload, rate_limits: rl as never }, NOW)[0]);
+      const line = strip(renderStatusline({ ...fullPayload, rate_limits: rl as never }, NOW)[1]);
       expect(line).not.toContain('5h');
       expect(line).not.toContain('7d');
       expect(line).toMatch(/ctx ▓+░* 42%\/1M/);
@@ -88,7 +89,7 @@ describe('statusline 2줄 렌더', () => {
   });
   it('resets_at 이 지난 창은 숨김', () => {
     const past = Math.floor((NOW - 60_000) / 1000);
-    const line = strip(renderStatusline({ ...fullPayload, rate_limits: { five_hour: { used_percentage: 97, resets_at: past } } }, NOW)[0]);
+    const line = strip(renderStatusline({ ...fullPayload, rate_limits: { five_hour: { used_percentage: 97, resets_at: past } } }, NOW)[1]);
     expect(line).not.toContain('5h');
   });
   it('used_percentage null 이어도 exceeds_200k_tokens 경고는 보인다', () => {
@@ -111,7 +112,7 @@ describe('statusline 2줄 렌더', () => {
       { w: 'five_hour', t: NOW - 20 * MIN, used: 50, resets_at: reset },
       { w: 'five_hour', t: NOW - 10 * MIN, used: 60, resets_at: reset },
     ], SAMPLES_PATH);
-    const raw = renderStatusline({ ...fullPayload, rate_limits: { five_hour: { used_percentage: 70, resets_at: reset } } }, NOW)[0];
+    const raw = renderStatusline({ ...fullPayload, rate_limits: { five_hour: { used_percentage: 70, resets_at: reset } } }, NOW)[1];
     expect(strip(raw)).toMatch(/5h ▓▓▓▓▓▓▓░░░ 70% ⚠ \d\d:\d\d 소진 \(리셋 \d\d:\d\d\)/);
     expect(raw).toContain('\x1b[31m⚠'); // 리셋 전 소진은 빨강 경고
   });
@@ -124,20 +125,20 @@ describe('statusline 2줄 렌더', () => {
       { at: new Date(NOW).toISOString(), rule_id: 'r1', session_id: 'sess-B', kind: 'block' },
       { at: new Date(NOW).toISOString(), rule_id: 'r1', session_id: 'default', kind: 'deny' },
     ].map((e) => JSON.stringify(e)).join('\n') + '\n');
-    const line = strip(renderStatusline(fullPayload, NOW)[1]);
+    const line = strip(renderStatusline(fullPayload, NOW)[2]);
     expect(line).toContain('차단 1 (7d 2)'); // 이 세션 1, 7d 실차단은 sess-A+sess-B = 2
   });
 
   it('ADR-017 D2: 같은 세션의 turn-rules 파일이 있으면 "관련 룰 N", 다른 세션 것·손상 파일이면 "룰 8" 유지', () => {
     const turn = (sid: string, rules: unknown) => fs.writeFileSync(path.join(STATE_DIR, `turn-rules-${sid}.json`), JSON.stringify({ at: new Date(NOW).toISOString(), session_id: sid, prompt_hash: 'abcdef0123456789', rules }));
     turn('sess-B', [{ rule_id: 'r1', score: 1, matchedTerms: ['x'] }]);
-    expect(strip(renderStatusline(fullPayload, NOW)[1])).toMatch(/^forgen │ 룰 8 │ /);
+    expect(strip(renderStatusline(fullPayload, NOW)[2])).toMatch(/^forgen │ 룰 8 │ /);
     turn('sess-A', [{ rule_id: 'r1', score: 1, matchedTerms: ['한국어'] }, { rule_id: 'r2', score: 1.5, matchedTerms: ['병렬', '에이전트'] }]);
-    expect(strip(renderStatusline(fullPayload, NOW)[1])).toMatch(/^forgen │ 관련 룰 2 │ 차단 0 \(7d 0\) │ surfaced 0$/);
+    expect(strip(renderStatusline(fullPayload, NOW)[2])).toMatch(/^forgen │ 관련 룰 2 │ 차단 0 \(7d 0\) │ surfaced 0$/);
     turn('sess-A', []);
-    expect(strip(renderStatusline(fullPayload, NOW)[1])).toMatch(/^forgen │ 관련 룰 0 │ /);
+    expect(strip(renderStatusline(fullPayload, NOW)[2])).toMatch(/^forgen │ 관련 룰 0 │ /);
     fs.writeFileSync(path.join(STATE_DIR, 'turn-rules-sess-A.json'), '{broken');
-    expect(strip(renderStatusline(fullPayload, NOW)[1])).toMatch(/^forgen │ 룰 8 │ /);
+    expect(strip(renderStatusline(fullPayload, NOW)[2])).toMatch(/^forgen │ 룰 8 │ /);
   });
 
   it('2줄 캐시는 세션별 파일, 15초 TTL 만료 후 재계산 (1줄은 매번 렌더)', () => {
@@ -149,11 +150,11 @@ describe('statusline 2줄 렌더', () => {
     fs.writeFileSync(cachePathFor('sess-A'), 'CACHED LINE\n');
     const fresh = NOW / 1000; // 테스트 NOW 는 고정 시각이므로 mtime 을 그에 맞춘다
     fs.utimesSync(cachePathFor('sess-A'), fresh, fresh);
-    expect(renderStatusline({ ...fullPayload, context_window: { used_percentage: 43 } }, NOW, { useForgenCache: true })[1]).toBe('CACHED LINE');
+    expect(renderStatusline({ ...fullPayload, context_window: { used_percentage: 43 } }, NOW, { useForgenCache: true })[2]).toBe('CACHED LINE');
     const stale = (NOW - 20_000) / 1000;
     fs.utimesSync(cachePathFor('sess-A'), stale, stale);
-    expect(strip(renderStatusline(fullPayload, NOW, { useForgenCache: true })[1])).toBe(strip(first[1]));
-    expect(renderStatusline(fullPayload, NOW)[1]).not.toBe('CACHED LINE'); // 캐시 옵션 없으면 사용 안 함
+    expect(strip(renderStatusline(fullPayload, NOW, { useForgenCache: true })[2])).toBe(strip(first[2]));
+    expect(renderStatusline(fullPayload, NOW)[2]).not.toBe('CACHED LINE'); // 캐시 옵션 없으면 사용 안 함
   });
 
   it('handleStatuslineWith: 렌더 2줄 + 샘플 기록 + 세션별 캐시 기록, 두 번째 호출은 캐시 히트로 동일 출력', async () => {
@@ -169,8 +170,8 @@ describe('statusline 2줄 렌더', () => {
     } finally {
       console.log = orig;
     }
-    expect(out).toHaveLength(2);
-    expect(strip(out[0])).toMatch(/ctx ▓+░* 42%\/1M/);
+    expect(out).toHaveLength(3);
+    expect(strip(out[1])).toMatch(/ctx ▓+░* 42%\/1M/);
     expect(fs.existsSync(cachePathFor('sess-A'))).toBe(true);
     // 샘플은 호출마다 기록 — 5h + 7d × 2회
     expect(fs.readFileSync(SAMPLES_PATH, 'utf-8').trim().split('\n')).toHaveLength(4);

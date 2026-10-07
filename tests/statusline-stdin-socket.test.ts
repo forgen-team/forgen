@@ -44,6 +44,7 @@ describe.skipIf(!fs.existsSync(CLI))('forgen statusline — Node spawn(socketpai
     const { out, code } = await runStatusline(payload, home);
     expect(code).toBe(0);
     expect(out.split('\n')[0]).toContain('Fable');
+    expect(out.split('\n')).toHaveLength(4); // 3줄 + 개행
     expect(out).toMatch(/ctx ▓+░* 42%\/1M/);
     expect(out).toMatch(/5h ▓+░* 63%/);
     expect(fs.existsSync(path.join(home, '.forgen', 'state', 'statusline-cache-sock-A.txt'))).toBe(true);

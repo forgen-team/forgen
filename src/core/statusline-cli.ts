@@ -4,9 +4,10 @@
  * Claude Code 는 assistant 메시지마다(300ms 디바운스) statusLine.command 를 호출하고 stdin 에 JSON 을
  * 준다 (공식: code.claude.com/docs/en/statusline — context_window / rate_limits / cost / model / workspace).
  *
- * 2줄 고정:
- *   1줄 (사용자): Fable ~/proj(main) │ ctx ▓▓▓▓░░░░░░ 42%/1M │ 5h ▓▓▓▓▓▓░░░░ 63% ⚠ 15:40 소진 (리셋 16:20) │ 7d ▓▓░░░░░░░░ 21% │ $1.23
- *   2줄 (forgen): forgen │ 관련 룰 3 │ 차단 1 (7d 33) │ surfaced 0   (turn-rules 파일 없으면 '룰 N' = 활성 수)
+ * 3줄 (오너 요청 2026-10-07):
+ *   1줄: Fable │ ~/proj(main)
+ *   2줄: ctx ▓▓▓▓░░░░░░ 42%/1M │ 5h ▓▓▓▓▓▓░░░░ 63% ⚠ 15:40 소진 (리셋 16:20) │ 7d ▓▓░░░░░░░░ 21% │ $1.23   (데이터 없으면 생략)
+ *   3줄: forgen │ 관련 룰 3 │ 차단 1 (7d 33) │ surfaced 0   (turn-rules 파일 없으면 '룰 N' = 활성 수)
  *
  * 원칙 (ADR-017 §2): 출처 없는 숫자는 표시하지 않는다. 데이터가 없으면 세그먼트를 생략한다(자리 채우기 금지).
  * 이전 3~4줄의 운영자 지표(recall/ROI/이모지 분포)는 `forgen status` 에 있고, CLAUDE.md·MCP·hook 카운트는
@@ -128,14 +129,19 @@ function fmtWindowSize(size: number | undefined): string {
   return `/${Math.round(size / 1000)}k`;
 }
 
-/** 1줄: 사용자 정보. 데이터 없는 세그먼트는 생략. */
-export function buildUserLine(payload: StdinPayload, cwd: string, forecasts: Partial<Record<'five_hour' | 'seven_day', Forecast>>, nowMs: number): string {
-  const parts: string[] = [];
-  parts.push(`${BOLD}${CYAN}${payload.model?.display_name ?? 'Claude'}${RESET}`);
-
+/** 1줄: 모델 │ 경로(브랜치). */
+export function buildHeaderLine(payload: StdinPayload, cwd: string): string {
   const branch = getGitBranch(cwd);
   const cwdDisplay = cwd.replace(os.homedir(), '~');
-  parts.push(`${DIM}${cwdDisplay}${RESET}${branch ? `${GREEN}(${branch})${RESET}` : ''}`);
+  return [
+    `${BOLD}${CYAN}${payload.model?.display_name ?? 'Claude'}${RESET}`,
+    `${DIM}${cwdDisplay}${RESET}${branch ? `${GREEN}(${branch})${RESET}` : ''}`,
+  ].join(SEP);
+}
+
+/** 2줄: ctx · 5h · 7d · $ (바 그래프). 데이터 없는 세그먼트는 생략, 전부 없으면 null. */
+export function buildUsageLine(payload: StdinPayload, forecasts: Partial<Record<'five_hour' | 'seven_day', Forecast>>, nowMs: number): string | null {
+  const parts: string[] = [];
 
   const cw = payload.context_window;
   const warn200k = payload.exceeds_200k_tokens ? `${YELLOW}⚠200k${RESET}` : '';
@@ -155,7 +161,13 @@ export function buildUserLine(payload: StdinPayload, cwd: string, forecasts: Par
   if (payload.cost && isNum(payload.cost.total_cost_usd)) {
     parts.push(`${DIM}$${payload.cost.total_cost_usd.toFixed(2)}${RESET}`);
   }
-  return parts.join(SEP);
+  return parts.length ? parts.join(SEP) : null;
+}
+
+/** @deprecated 2줄 시절 호환 — 헤더+사용량을 한 줄로. 테스트·외부 호출용. */
+export function buildUserLine(payload: StdinPayload, cwd: string, forecasts: Partial<Record<'five_hour' | 'seven_day', Forecast>>, nowMs: number): string {
+  const usage = buildUsageLine(payload, forecasts, nowMs);
+  return usage ? `${buildHeaderLine(payload, cwd)}${SEP}${usage}` : buildHeaderLine(payload, cwd);
 }
 
 /**
@@ -249,7 +261,10 @@ export function renderStatusline(payload: StdinPayload, nowMs: number = Date.now
   const history = readSamples(undefined, nowMs);
   const all = opts.currentAlreadyAppended ? history : [...history, ...current];
   const forecasts = forecastAll(all, nowMs, current);
-  const lines = [buildUserLine(payload, cwd, forecasts, nowMs)];
+  // 오너 요청(2026-10-07): 3줄 — 모델·경로 / 사용량 바 / forgen.
+  const lines = [buildHeaderLine(payload, cwd)];
+  const usage = buildUsageLine(payload, forecasts, nowMs);
+  if (usage) lines.push(usage);
   let forgenLine = opts.useForgenCache ? readForgenLineCached(payload.session_id, nowMs) : null;
   if (forgenLine === null) {
     forgenLine = buildForgenLine(payload.session_id);
