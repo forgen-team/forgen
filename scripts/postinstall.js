@@ -1022,11 +1022,12 @@ async function main() {
       const r = shimMod.writeCodexHookShim(PKG_ROOT, process.execPath, shimFile);
       if (r === 'written') console.log('[forgen] Codex hook shim updated → no /hooks re-trust needed.');
     } else {
-      // 이전 형식(node + 절대경로) forgen 훅이 등록돼 있으면 1회 마이그레이션 안내 — 이후로는 재승인 불필요.
-      const hooksFile = join(process.env.CODEX_HOME || join(HOME, '.codex'), 'hooks.json');
-      if (existsSync(hooksFile) && /[\\/]dist[\\/]host[\\/]codex-adapter\.js/.test(readFileSync(hooksFile, 'utf-8'))) {
-        console.log('[forgen] Codex: run `forgen install codex` once to switch hooks to a stable shim —');
-        console.log('[forgen]   after one last /hooks trust, upgrades and nvm switches no longer need re-trust.');
+      // 이전 형식(node + 절대경로) forgen 훅 → shim 형식으로 자동 전환 (forgen 훅 명령만, 순서·사용자 훅 보존).
+      const codexHome = process.env.CODEX_HOME || join(HOME, '.codex');
+      const r = shimMod.migrateCodexHooksToShim(codexHome, PKG_ROOT, process.execPath);
+      if (r.status === 'migrated') {
+        console.log(`[forgen] Codex: ${r.rewritten} forgen hooks switched to a stable shim (backup: hooks.json.bak-pre-shim).`);
+        console.log('[forgen]   Approve once in Codex (/hooks → trust all). Future upgrades and nvm switches keep the trust.');
       }
     }
   } catch { /* dist 없음(dev) 또는 실패 — 다음 forgen install codex 가 처리 */ }
