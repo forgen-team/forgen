@@ -534,7 +534,7 @@ forgen status --blocks [N]      # 최근 실제 차단 + 영수증: 매칭 프�
 forgen block <id> --ok | --fp   # 차단 판정 (자동 Haiku 판정을 덮어씀) — 규칙별 precision 에 반영
 forgen status --turn            # 이번 턴 관련 규칙과 각 규칙이 생긴 교정(날짜·종류·당신의 말)
 forgen statusline               # 3줄: 모델 · 경로(브랜치) / ctx·5h·7d 바 + 소진 예측 · $ / forgen: 관련 규칙 · 차단 · surfaced
-forgen statusline install [--force]  # ~/.claude/settings.json 에 statusline 등록(절대 경로, nvm 안전); --force 는 커스텀 값을 교체(백업 보관)
+forgen statusline install [--force|--chain]  # ~/.claude/settings.json 에 statusline 등록(절대 경로, nvm 안전); --force 는 커스텀 값을 교체(백업 보관); --chain 은 기존 것을 유지하고 그 뒤에 forgen 줄만 덧붙임
 ```
 
 ### 지식 관리

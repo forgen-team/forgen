@@ -272,8 +272,11 @@ function applyStatusLineAuto(settings) {
   const existing = settings.statusLine && settings.statusLine.command;
   const owned = !existing || /^forgen(\s|$)/.test(String(existing).trim()) || /[\\/]dist[\\/]cli\.js"?\s+statusline(\s|$)/.test(String(existing));
   if (!owned) return 'custom';
-  if (existing === cmd) return 'unchanged';
-  settings.statusLine = { type: 'command', command: cmd };
+  // 체인(`… statusline --after '<원본>'`)이면 forgen 경로만 갱신하고 --after 이후는 보존한다.
+  const chainAt = existing ? String(existing).search(/\sstatusline\s+--after\s/) : -1;
+  const next = chainAt >= 0 ? `${cmd}${String(existing).slice(chainAt + ' statusline'.length)}` : cmd;
+  if (existing === next) return 'unchanged';
+  settings.statusLine = { type: 'command', command: next };
   return existing ? 'updated' : 'installed';
 }
 
@@ -1185,6 +1188,7 @@ async function main() {
   } else if (statusLineResult === 'custom') {
     console.log('[forgen] statusLine is set to another command (e.g. claude-hud) — left untouched.');
     console.log('[forgen]   To switch to forgen (backup kept in statusLine_backup): forgen statusline install --force');
+    console.log('[forgen]   To keep it AND show forgen\'s line after it (chain, original kept in statusLine_backup): forgen statusline install --chain');
   }
 
   // First-run banner (신규 사용자 안내) — feat/codex-support P1-6
