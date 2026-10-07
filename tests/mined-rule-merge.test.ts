@@ -323,4 +323,86 @@ describe('ADR-017 D3 — mined rule merge', () => {
     expect(out).toContain('- m2 ');
     expect(out).toContain('대표:');
   });
+  it('(f) category 간 2차 병합: 같은 개념이 quality/autonomy/workflow 로 갈라져도 한 룰로, category 는 다수결', async () => {
+    writeRule('x1', { category: 'quality', policy: FABLE_A });
+    writeRule('x2', { category: 'quality', policy: FABLE_B });
+    writeRule('x3', { category: 'autonomy', policy: FABLE_C });
+    writeRule('x4', { category: 'autonomy', policy: UNRELATED }); // 다른 개념 — category 가 같아도 무관
+
+    const { runMinedRuleMerge } = await import('../src/engine/correction-cluster-runner.js');
+    const { applied, plan } = await runMinedRuleMerge({ apply: true });
+    expect(plan.clusters.length).toBe(1);
+    expect(plan.clusters[0].category).toBe('quality');
+    expect(plan.clusters[0].memberIds.sort()).toEqual(['x1', 'x2', 'x3']);
+
+    const merged = readRule(applied?.mergedRuleIds[0] as string);
+    expect(merged.category).toBe('quality');
+    expect(merged.strength).toBe('default'); // ADR-013: 채굴 통합은 default 고정
+    expect(merged.source).toBe('behavior_inference');
+    expect(String(merged.render_key).startsWith('auto:')).toBe(true);
+    expect(merged.enforce_via).toEqual([]);
+    expect(readRule('x4').status).toBe('active');
+  });
+
+  it('(f) 2차 병합: 서로 다른 category 의 무관한 룰은 합치지 않는다', async () => {
+    writeRule('y1', { category: 'quality', policy: FABLE_A });
+    writeRule('y2', { category: 'workflow', policy: UNRELATED });
+
+    const { runMinedRuleMerge } = await import('../src/engine/correction-cluster-runner.js');
+    const { plan } = await runMinedRuleMerge({ apply: false });
+    expect(plan.clusters.length).toBe(0);
+  });
+
+  it('(f) 2차 병합: 기존 통합 룰(1차 산물)도 category 를 넘어 흡수 — 통합 룰이 여럿이면 2단 트리, unmerge 로 복원', async () => {
+    writeRule('o1', { category: 'workflow', policy: FABLE_A });
+    writeRule('o2', { category: 'workflow', policy: FABLE_B });
+    const { runMinedRuleMerge } = await import('../src/engine/correction-cluster-runner.js');
+    const first = await runMinedRuleMerge({ apply: true });
+    const oldMerged = first.applied?.mergedRuleIds[0] as string;
+
+    writeRule('o3', { category: 'autonomy', policy: FABLE_C });
+    const second = await runMinedRuleMerge({ apply: true });
+    // 새 룰을 만들지 않고 기존 통합 룰에 흡수
+    expect(second.applied?.mergedRuleIds).toEqual([]);
+    expect(second.plan.clusters[0].absorberId).toBe(oldMerged);
+    expect(readRule('o3').clustered_into).toBe(oldMerged);
+    expect(readRule(oldMerged).status).toBe('active');
+  });
+
+  it('(g) mergeAcrossCategories: 전이 연결로 번지지 않는다(대표 직접 유사도, union-find 아님)', async () => {
+    const { mergeAcrossCategories, policySimilarity } = await import('../src/engine/correction-clustering.js');
+    const A = { rule_id: 'A', policy: 'alpha bravo charlie delta echo foxtrot' };
+    const B = { rule_id: 'B', policy: 'charlie delta echo foxtrot golf hotel' };
+    const C = { rule_id: 'C', policy: 'echo foxtrot golf hotel india juliet' };
+    expect(policySimilarity(A.policy, B.policy)).toBeGreaterThanOrEqual(0.5);
+    expect(policySimilarity(B.policy, C.policy)).toBeGreaterThanOrEqual(0.5);
+    expect(policySimilarity(A.policy, C.policy)).toBeLessThan(0.5); // A–B–C 는 사슬
+
+    const groups = mergeAcrossCategories([[A], [B], [C]], new Set(), 0.5);
+    expect(groups.length).toBe(1);
+    expect(groups[0].map((m) => m.rule_id).sort()).toEqual(['A', 'B']); // C 는 사슬로 끌려오지 않음
+  });
+
+  it('(h) 정책 상투어("사용자가 명시적으로")만 겹치는 쌍은 explicit 링크되지 않는다', async () => {
+    writeRule('e1', {
+      source: 'explicit_correction',
+      category: 'workflow',
+      policy: "사용자가 이전에 명시적으로 요청한 기능들(승인제, 디자인 일관성, 이메일 실제 발송 등)을 '코드에 이미 있다'로 치부하지 말 것",
+    });
+    writeRule('m1', {
+      category: 'quality',
+      policy: '사용자가 명시적으로 외부 정보 조사(웹 리서치)를 먼저 수행하라고 지시하면, 그 순서를 지켜야 한다. 조사 단계를 생략하거나 스킵하지 말 것.',
+    });
+
+    const { policySimilarity } = await import('../src/engine/correction-clustering.js');
+    const { runMinedRuleMerge } = await import('../src/engine/correction-cluster-runner.js');
+    expect(
+      policySimilarity(
+        '사용자가 명시적으로 외부 정보 조사를 먼저 수행하라',
+        '사용자가 이전에 명시적으로 요청한 기능들을 치부하지 말 것',
+      ),
+    ).toBe(0);
+    const { plan } = await runMinedRuleMerge({ apply: false });
+    expect(plan.explicitLinks.length).toBe(0);
+  });
 });

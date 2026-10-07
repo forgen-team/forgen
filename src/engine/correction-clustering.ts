@@ -27,6 +27,20 @@ import { extractTags } from './solution-format.js';
 /** τ — 클러스터 편입 유사도 임계. 정준 게이트(RELEVANCE_MATCH_GATE=0.3)를 코드로 상속. */
 export const CLUSTER_SIMILARITY_TAU = RELEVANCE_MATCH_GATE;
 
+/**
+ * explicit 링크 임계. 상투어 제거(stripPolicyBoilerplate) 후 실측 분포(2026-10-07, 프로덕션 복사본):
+ * 진짜 동개념 0.34, 오탐이던 쌍은 0.34→0.00 으로 소멸. 오탐 방어는 임계 상향이 아니라 어휘
+ * 정리가 맡으므로 정준 게이트(0.3)를 유지한다(0.4 로 올리면 진짜 링크까지 잃는다).
+ */
+export const EXPLICIT_LINK_TAU = CLUSTER_SIMILARITY_TAU;
+
+/**
+ * category 간 2차 병합 임계(대표 policy 직접 유사도). 실측 분포: 무관 쌍 최대 0.27,
+ * 동개념 쌍 0.41(웹검색 선조사)·0.70~0.82(Fable 조기 투입). 노이즈 상한 0.27 과 최저 진짜
+ * 쌍 0.41 사이 — 0.4 는 노이즈 대비 마진 0.13 을 두고 진짜 쌍을 모두 잡는다.
+ */
+export const CROSS_CATEGORY_TAU = 0.4;
+
 /** 강도 승급 컷오프 — statusConfidence('verified')=0.75 를 코드로 상속(리터럴 복제 아님). */
 const STRONG_CONFIDENCE_CUTOFF = statusConfidence('verified');
 
@@ -57,12 +71,42 @@ export interface CorrectionCluster {
 }
 
 /**
+ * 정책 상투어(어간) — 거의 모든 교정 정책에 나오는 어휘라 "같은 개념" 신호가 아니다.
+ * 실측: "사용자가 명시적으로 …" 중복만으로 서로 다른 정책이 유사도 0.34 를 받아 explicit
+ * 오탐 링크가 생겼다. 개념 어휘(웹 검색·Fable·설계 등)는 건드리지 않는다.
+ * 어절 prefix 매칭(조사/어미 변형 흡수): '사용자가'·'명시적으로'·'반드시' 등.
+ */
+const POLICY_BOILERPLATE_STEMS = [
+  '사용자',
+  '오너',
+  '명시적',
+  '항상',
+  '반드시',
+  '절대',
+  '무조건',
+  '앞으로',
+  '이전에',
+  '지시',
+];
+
+/** 정책 텍스트에서 상투어 어절을 제거한다(유사도 계산 전용 — 저장 텍스트는 불변). */
+export function stripPolicyBoilerplate(text: string): string {
+  return text
+    .split(/\s+/)
+    .filter(
+      (w) =>
+        !POLICY_BOILERPLATE_STEMS.some((s) => w.replace(/^[^가-힣a-zA-Z0-9]+/, '').startsWith(s)),
+    )
+    .join(' ');
+}
+
+/**
  * 두 정책 텍스트의 대칭 유사도. calculateRelevance 는 비대칭(prompt→solution)이라
  * 양방향 평균으로 대칭화한다. confidence 인자는 1(순수 태그 매치만 보고 싶음).
  */
 export function policySimilarity(a: string, b: string): number {
-  const tagsA = extractTags(a);
-  const tagsB = extractTags(b);
+  const tagsA = extractTags(stripPolicyBoilerplate(a));
+  const tagsB = extractTags(stripPolicyBoilerplate(b));
   if (tagsA.length === 0 || tagsB.length === 0) return 0;
   const ab = calculateRelevance(tagsA, tagsB, 1) as { relevance: number };
   const ba = calculateRelevance(tagsB, tagsA, 1) as { relevance: number };
@@ -179,6 +223,55 @@ export function clusterCorrectionRules(
 }
 
 /**
+ * category 간 2차 병합: 1차 결과 단위(unit = 룰 묶음)들을 *대표 policy 직접 유사도* ≥ tau 로
+ * 병합한다. union-find 가 아니라 최고 유사도 쌍부터 탐욕 병합하되, 병합 뒤 새 대표와
+ * 구성 단위들의 대표가 모두 tau 이상이어야 한다(star complete-linkage) — 전이 연결로
+ * 무관한 덩어리가 한 덩어리가 되는 것을 막는다(실측: 무시 시 10+19 두 덩어리).
+ *
+ * @param units 1차 클러스터(크기≥2) + 잔여 단독 룰(크기 1). 입력은 변경하지 않는다.
+ * @param suppressed 억제 조합 — 병합 결과 멤버 집합이 억제 대상이면 그 병합은 건너뛴다.
+ */
+export function mergeAcrossCategories<T extends { rule_id: string; policy: string }>(
+  units: ReadonlyArray<readonly T[]>,
+  suppressed: ReadonlySet<string> = new Set(),
+  tau: number = CROSS_CATEGORY_TAU,
+): T[][] {
+  const repOf = (members: readonly T[]): string =>
+    members.map((m) => m.policy).reduce((a, b) => (b.length > a.length ? b : a));
+
+  interface Unit {
+    members: T[];
+    rep: string;
+    constituentReps: string[];
+  }
+  let work: Unit[] = units
+    .filter((u) => u.length > 0)
+    .map((u) => ({ members: [...u], rep: repOf(u), constituentReps: [repOf(u)] }));
+
+  for (;;) {
+    let best: { i: number; j: number; sim: number; merged: Unit } | null = null;
+    for (let i = 0; i < work.length; i++) {
+      for (let j = i + 1; j < work.length; j++) {
+        const sim = policySimilarity(work[i].rep, work[j].rep);
+        if (sim < tau || (best && sim <= best.sim)) continue;
+        const members = [...work[i].members, ...work[j].members];
+        if (isSuppressedCluster(members, suppressed)) continue;
+        const rep = repOf(members);
+        const constituentReps = [...work[i].constituentReps, ...work[j].constituentReps];
+        if (constituentReps.some((c) => c !== rep && policySimilarity(c, rep) < tau)) continue;
+        best = { i, j, sim, merged: { members, rep, constituentReps } };
+      }
+    }
+    if (!best) break;
+    const { i, j, merged } = best;
+    work = work.filter((_, k) => k !== i && k !== j);
+    work.push(merged);
+  }
+
+  return work.filter((u) => u.members.length >= 2).map((u) => u.members);
+}
+
+/**
  * ADR-017 D3 — 단일 정책 텍스트에 가장 유사한 룰 1개(유사도 ≥ τ)를 찾는다.
  * 채굴 룰 생성 시 사전 중복 검사와 explicit 링크 판정에 쓰인다.
  *
@@ -190,7 +283,7 @@ export function clusterCorrectionRules(
 export function findMostSimilarRule<T extends { policy: string }>(
   policy: string,
   candidates: readonly T[],
-  tau: number = CLUSTER_SIMILARITY_TAU,
+  tau: number = EXPLICIT_LINK_TAU,
 ): { rule: T; similarity: number } | null {
   if ((policy?.length ?? 0) < MIN_POLICY_LEN) return null;
   let best: { rule: T; similarity: number } | null = null;
