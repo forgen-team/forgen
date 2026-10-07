@@ -133,3 +133,20 @@ describe('statusline install --chain', () => {
     expect(lines[1]).toMatch(/^forgen/);
   });
 });
+
+describe('critic v0.6.6 회귀 — 부모가 SIGTERM 으로 취소돼도 하위 그룹이 고아로 남지 않는다', () => {
+  it('sleep 하위 명령 + 부모 SIGTERM → sleep 프로세스 정리됨', async () => {
+    const { spawn, execSync } = await import('node:child_process');
+    const path = await import('node:path');
+    const cli = path.resolve(import.meta.dirname, '..', 'dist', 'cli.js');
+    const marker = `forgen-orphan-${process.pid}-${Date.now()}`;
+    const p = spawn(process.execPath, [cli, 'statusline', '--after', `sleep 30 # ${marker}`], { stdio: ['pipe', 'ignore', 'ignore'] });
+    p.stdin.write('{}'); p.stdin.end();
+    await new Promise((r) => setTimeout(r, 400));
+    p.kill('SIGTERM');
+    await new Promise((r) => p.on('close', r));
+    await new Promise((r) => setTimeout(r, 200));
+    const ps = execSync('ps -eo args', { encoding: 'utf-8' });
+    expect(ps.includes(marker)).toBe(false);
+  });
+});

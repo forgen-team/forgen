@@ -46,3 +46,15 @@ describe('ranking-pipeline (extracted module)', () => {
     }
   });
 });
+
+describe('critic v0.6.6 회귀 — 맥락 가산은 순위에만, 게이트는 가산 전 relevance', () => {
+  it('contextBonus 를 분리 노출하고 relevance − contextBonus 가 맥락 없는 값과 같다', () => {
+    const sol = { name: 'docker-deploy', tags: ['deploy', 'docker', 'compose', 'registry', 'kubernetes'], identifiers: [], confidence: 0.9 } as never;
+    const without = rankCandidates(['deploy', 'docker'], 'deploy docker', [sol])[0];
+    const withCtx = rankCandidates(['deploy', 'docker'], 'deploy docker', [sol], undefined, ['compose', 'registry', 'kubernetes'])[0];
+    expect(withCtx.contextBonus).toBeGreaterThan(0);
+    expect(withCtx.relevance).toBeGreaterThan(without.relevance);
+    expect(withCtx.relevance - withCtx.contextBonus).toBeCloseTo(without.relevance, 10);
+    expect(without.contextBonus).toBe(0);
+  });
+});

@@ -11,7 +11,7 @@ describe('normalizeColloquialKo', () => {
 
   it('명사+구어 어미는 어간만 남긴다', () => {
     expect(normalizeColloquialKo('검증해줘')).toBe('검증');
-    expect(normalizeColloquialKo('가능한')).toBe('가능');
+    expect(normalizeColloquialKo('가능한')).toBe('가능한'); // 1글자 어미는 제거 안 함 — 명사(권한·역할) 보호가 우선 (critic v0.6.6)
     expect(normalizeColloquialKo('배포하는지')).toBe('배포');
   });
 
@@ -46,5 +46,16 @@ describe('extractTags — 회화체 잔여물', () => {
 
   it('영문 프롬프트는 변하지 않는다', () => {
     expect(extractTags('statusline renderer budget')).toEqual(['statusline', 'renderer', 'budget']);
+  });
+});
+
+describe('critic v0.6.6 회귀 — 1글자 어미가 명사를 자르지 않는다', () => {
+  it('권한·역할·제한·피해 복합 명사 보존, 하자·인지 는 드롭하지 않음', async () => {
+    const { normalizeColloquialKo } = await import('../src/engine/ko-colloquial.js');
+    for (const w of ['접근권한', '파일권한', '최소권한', '무제한', '관리자역할', '사용자역할', '환경피해', '하자', '인지']) {
+      expect(normalizeColloquialKo(w)).toBe(w);
+    }
+    expect(normalizeColloquialKo('검증해줘')).toBe('검증');
+    expect(normalizeColloquialKo('동기화해야')).toBe('동기화');
   });
 });

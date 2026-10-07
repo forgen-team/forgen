@@ -321,7 +321,18 @@ export function runChainedCommand(cmd: string, payload: StdinPayload, timeoutMs:
     } catch { resolve(null); return; }
     let out = '';
     let done = false;
-    const finish = (v: string | null) => { if (done) return; done = true; clearTimeout(timer); resolve(v); };
+    // critic v0.6.6: Claude Code 가 진행 중인 statusline 을 취소(SIGTERM)하면 detached 하위 그룹이 고아로 남았다 →
+    // 부모 종료 신호에서 하위 그룹을 함께 정리한다.
+    const killGroup = () => { try { if (child.pid) process.kill(-child.pid, 'SIGKILL'); } catch { /* gone */ } };
+    const onSignal = (sig: NodeJS.Signals) => { killGroup(); process.exit(sig === 'SIGTERM' ? 143 : 130); };
+    process.once('SIGTERM', onSignal);
+    process.once('SIGINT', onSignal);
+    process.once('exit', killGroup);
+    const finish = (v: string | null) => {
+      if (done) return; done = true; clearTimeout(timer);
+      process.removeListener('SIGTERM', onSignal); process.removeListener('SIGINT', onSignal); process.removeListener('exit', killGroup);
+      resolve(v);
+    };
     const timer = setTimeout(() => {
       try { if (child.pid) process.kill(-child.pid, 'SIGKILL'); } catch { try { child.kill('SIGKILL'); } catch { /* ignore */ } }
       finish(null);

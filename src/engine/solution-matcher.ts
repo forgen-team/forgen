@@ -70,8 +70,10 @@ export interface SolutionMatch {
   identifiers: string[];
   matchedTags: string[];
   matchedIdentifiers: string[];
-  /** 맥락 토큰(cwd/최근 편집 파일)으로만 겹친 태그 — 주입 게이트에서 0.5 가중, 단독 주입 불가. */
+  /** 맥락 토큰(cwd/최근 편집 파일)으로만 겹친 태그 — 순위 가산에만, 게이트·단독 주입 불가. */
   contextMatchedTags?: string[];
+  /** relevance 에 포함된 맥락 가산분 (게이트 비교에서 제외). */
+  contextBonus?: number;
 }
 
 /** Internal loaded solution with scope from directory config */
@@ -139,6 +141,7 @@ export function matchSolutions(
     matchedTags: [...c.matchedTags, ...c.matchedIdentifiers],
     matchedIdentifiers: c.matchedIdentifiers,
     contextMatchedTags: c.contextMatchedTags,
+    contextBonus: c.contextBonus,
   }));
 
   try {

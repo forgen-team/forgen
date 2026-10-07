@@ -611,7 +611,8 @@ async function main(): Promise<void> {
   const toInject: typeof matches = [];
   for (const sol of matches) {
     if (injected.has(sol.name)) continue;
-    if (sol.relevance < minRelevanceFor(sol.name)) continue;
+    // 맥락 가산은 순위에만 — relevance 하한 게이트는 가산 전 값으로 비교한다(맥락만으로 게이트 통과 금지).
+    if (sol.relevance - (sol.contextBonus ?? 0) < minRelevanceFor(sol.name)) continue;
     const idMatches = sol.matchedIdentifiers?.length ?? 0;
     const tagMatches = Math.max(0, sol.matchedTags.length - idMatches);
     // 맥락 토큰(cwd/최근 편집 파일)은 relevance 가산에만 쓰고 이 게이트의 태그 수에는 넣지 않는다.

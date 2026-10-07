@@ -36,8 +36,10 @@ export interface RankedCandidate<T extends RankableSolution = RankableSolution> 
   relevance: number;
   matchedTags: string[];
   matchedIdentifiers: string[];
-  /** 맥락 토큰(cwd/최근 편집 파일)으로만 겹친 태그. matchedTags 와 분리 — 게이트에서 0.5 가중. */
+  /** 맥락 토큰(cwd/최근 편집 파일)으로만 겹친 태그. matchedTags 와 분리 — 순위 가산(태그당 0.1, 상한 0.2)에만 쓰고 게이트엔 안 씀. */
   contextMatchedTags: string[];
+  /** relevance 에 포함된 맥락 가산분. 주입 게이트는 relevance − contextBonus 로 비교한다(critic v0.6.6 SEV-2). */
+  contextBonus: number;
 }
 
 /** 맥락 태그 1개당 relevance 가산(프롬프트 태그 1개 ≈ 0.2 의 절반). */
@@ -125,6 +127,7 @@ export function rankCandidates<T extends RankableSolution>(
         matchedTags: tagMatches,
         matchedIdentifiers,
         contextMatchedTags,
+        contextBonus,
       };
     })
     .filter((c) => c.matchedTags.length + c.matchedIdentifiers.length >= 1)
