@@ -23,7 +23,7 @@ describe('recordViolation 영수증', () => {
 
   it('violation_id 발급, matched 160자 제한, 전문은 secret 마스킹 후 receipts/ 에, 로그엔 hash 만', () => {
     const id = sig.recordViolation(
-      { rule_id: 'r1', session_id: 's1', source: 'pre-tool-guard', kind: 'deny', matched: 'x'.repeat(300), target_kind: 'command' },
+      { rule_id: 'r1', session_id: '00000000-0000-4000-8000-0000000000a1', source: 'pre-tool-guard', kind: 'deny', matched: 'x'.repeat(300), target_kind: 'command' },
       // self-gate(secrets-leak) 가 소스의 리터럴을 잡지 않도록 런타임에 조립 (AWS 공식 예시 키).
       { receipt_text: `export AWS_SECRET_ACCESS_KEY=${['AKIA', 'IOSFODNN7EXAMPLE1234'].join('')} && rm -rf /srv` },
     );
@@ -38,11 +38,11 @@ describe('recordViolation 영수증', () => {
     expect(receipt).toContain('rm -rf /srv');
   });
   it('TTL 지난 영수증은 다음 기록 때 정리', () => {
-    const old = sig.recordViolation({ rule_id: 'r1', session_id: 's1', source: 'stop-guard', kind: 'block' }, { receipt_text: 'old' });
+    const old = sig.recordViolation({ rule_id: 'r1', session_id: '00000000-0000-4000-8000-0000000000a1', source: 'stop-guard', kind: 'block' }, { receipt_text: 'old' });
     const p = path.join(ENF(), 'receipts', `${old}.txt`);
     const past = (Date.now() - sig.RECEIPT_TTL_MS - 60_000) / 1000;
     fs.utimesSync(p, past, past);
-    sig.recordViolation({ rule_id: 'r1', session_id: 's1', source: 'stop-guard', kind: 'block' }, { receipt_text: 'new' });
+    sig.recordViolation({ rule_id: 'r1', session_id: '00000000-0000-4000-8000-0000000000a1', source: 'stop-guard', kind: 'block' }, { receipt_text: 'new' });
     expect(fs.existsSync(p)).toBe(false);
   });
   it('readReceipt 는 경로 인젝션 id 거부', () => {
@@ -55,9 +55,9 @@ describe('판정·precision', () => {
   afterEach(() => fs.rmSync(TEST_HOME, { recursive: true, force: true }));
 
   it('user 판정이 auto 를 덮어쓰고, precision 은 실 차단·7d·판정 기준', () => {
-    const ids = [1, 2, 3, 4].map(() => sig.recordViolation({ rule_id: 'r1', session_id: 's1', source: 'stop-guard', kind: 'block' }));
+    const ids = [1, 2, 3, 4].map(() => sig.recordViolation({ rule_id: 'r1', session_id: '00000000-0000-4000-8000-0000000000a1', source: 'stop-guard', kind: 'block' }));
     sig.recordViolation({ rule_id: 'r1', session_id: 'default', source: 'stop-guard', kind: 'block' }); // 합성 → 제외
-    sig.recordViolation({ rule_id: 'r1', session_id: 's1', source: 'stop-guard', kind: 'correction' }); // advise → 제외
+    sig.recordViolation({ rule_id: 'r1', session_id: '00000000-0000-4000-8000-0000000000a1', source: 'stop-guard', kind: 'correction' }); // advise → 제외
     sig.setVerdict({ violation_id: ids[0], rule_id: 'r1', verdict: 'false_positive', by: 'auto' });
     sig.setVerdict({ violation_id: ids[0], rule_id: 'r1', verdict: 'correct', by: 'user' });
     sig.setVerdict({ violation_id: ids[0], rule_id: 'r1', verdict: 'false_positive', by: 'auto' }); // 나중 auto 도 user 못 덮음
@@ -69,7 +69,7 @@ describe('판정·precision', () => {
     expect(p).toEqual({ rule_id: 'r1', correct: 1, false_positive: 1, unjudged: 2, precision: 0.5 });
   });
   it('checks.jsonl 은 violations 와 분리', () => {
-    sig.recordCheck({ session_id: 's1', rule_id: 'r1', result: 'pass' });
+    sig.recordCheck({ session_id: '00000000-0000-4000-8000-0000000000a1', rule_id: 'r1', result: 'pass' });
     expect(sig.readChecks()).toHaveLength(1);
     expect(fs.existsSync(path.join(ENF(), 'violations.jsonl'))).toBe(false);
   });
@@ -85,7 +85,7 @@ describe('block-judge', () => {
     expect(judge.parseJudgeOutput('garbage').verdict).toBe('unsure');
   });
   it('buildJudgePrompt 에 룰·출처·매칭·발췌가 들어가고 JSON 지시로 끝난다', () => {
-    const p = judge.buildJudgePrompt({ violation: { at: '', rule_id: 'r1', session_id: 's', source: 'stop-guard', kind: 'block', matched: 'rm -rf' }, rulePolicy: 'P', originLine: 'O', receipt: 'x'.repeat(5000) + 'rm -rf' + 'y'.repeat(100) });
+    const p = judge.buildJudgePrompt({ violation: { at: '', rule_id: 'r1', session_id: '00000000-0000-4000-8000-0000000000a3', source: 'stop-guard', kind: 'block', matched: 'rm -rf' }, rulePolicy: 'P', originLine: 'O', receipt: 'x'.repeat(5000) + 'rm -rf' + 'y'.repeat(100) });
     expect(p).toContain('## 룰\nP');
     expect(p).toContain('O');
     expect(p).toContain('rm -rf');
@@ -95,23 +95,23 @@ describe('block-judge', () => {
   it('judgeViolation: consent 없으면 null, 있으면 exec 결과를 auto 판정으로 기록; 실패는 unsure', async () => {
     saveRule(createRule({ category: 'workflow', scope: 'me', trigger: 't', policy: 'P', strength: 'default', source: 'explicit_correction', evidence_refs: [] }));
     const rid = loadAllRules()[0].rule_id;
-    const id = sig.recordViolation({ rule_id: rid, session_id: 's1', source: 'stop-guard', kind: 'block', matched: 'm' }, { receipt_text: 'body' });
+    const id = sig.recordViolation({ rule_id: rid, session_id: '00000000-0000-4000-8000-0000000000a1', source: 'stop-guard', kind: 'block', matched: 'm' }, { receipt_text: 'body' });
     expect(await judge.judgeViolation(id, { consent: () => false })).toBeNull();
     let seen = '';
     expect(await judge.judgeViolation(id, { consent: () => true, exec: async (p) => { seen = p; return '{"verdict":"false_positive","reason":"평문 설명"}'; } })).toBe('false_positive');
     expect(seen).toContain('## 룰\nP');
     expect(sig.effectiveVerdicts().get(id)).toMatchObject({ verdict: 'false_positive', by: 'auto', reason: '평문 설명' });
-    const id2 = sig.recordViolation({ rule_id: rid, session_id: 's1', source: 'stop-guard', kind: 'block' });
+    const id2 = sig.recordViolation({ rule_id: rid, session_id: '00000000-0000-4000-8000-0000000000a1', source: 'stop-guard', kind: 'block' });
     expect(await judge.judgeViolation(id2, { consent: () => true, exec: async () => { throw new Error('timeout'); } })).toBe('unsure');
   });
   it('캡: 일 30건·세션 10건 초과 시 판정 안 함', () => {
     const now = Date.now();
-    const vio = Array.from({ length: 12 }, (_, i) => ({ at: new Date(now).toISOString(), rule_id: 'r', session_id: 's1', source: 'stop-guard' as const, kind: 'block' as const, violation_id: `v${i}` }));
+    const vio = Array.from({ length: 12 }, (_, i) => ({ at: new Date(now).toISOString(), rule_id: 'r', session_id: '00000000-0000-4000-8000-0000000000a1', source: 'stop-guard' as const, kind: 'block' as const, violation_id: `v${i}` }));
     const auto10 = vio.slice(0, 10).map((v) => ({ at: new Date(now).toISOString(), violation_id: v.violation_id, rule_id: 'r', verdict: 'correct' as const, by: 'auto' as const }));
-    expect(judge.withinJudgeCaps('s1', now, auto10, vio)).toBe(false);
-    expect(judge.withinJudgeCaps('s2', now, auto10, vio)).toBe(true);
+    expect(judge.withinJudgeCaps('00000000-0000-4000-8000-0000000000a1', now, auto10, vio)).toBe(false);
+    expect(judge.withinJudgeCaps('00000000-0000-4000-8000-0000000000a2', now, auto10, vio)).toBe(true);
     const day30 = Array.from({ length: 30 }, (_, i) => ({ at: new Date(now).toISOString(), violation_id: `o${i}`, rule_id: 'r', verdict: 'correct' as const, by: 'auto' as const }));
-    expect(judge.withinJudgeCaps('s2', now, day30, vio)).toBe(false);
+    expect(judge.withinJudgeCaps('00000000-0000-4000-8000-0000000000a2', now, day30, vio)).toBe(false);
   });
   it('maybeDemote: 판정 ≥5 & precision <0.5 → advise, 하드 룰은 절대 아님', () => {
     saveRule(createRule({ category: 'workflow', scope: 'me', trigger: 't', policy: 'P', strength: 'default', source: 'explicit_correction', evidence_refs: [] }));
@@ -119,7 +119,7 @@ describe('block-judge', () => {
     const [soft, hard] = loadAllRules().sort((a, b) => a.strength.localeCompare(b.strength)); // default < hard
     for (const r of [soft, hard]) {
       for (let i = 0; i < 6; i++) {
-        const id = sig.recordViolation({ rule_id: r.rule_id, session_id: 's1', source: 'stop-guard', kind: 'block' });
+        const id = sig.recordViolation({ rule_id: r.rule_id, session_id: '00000000-0000-4000-8000-0000000000a1', source: 'stop-guard', kind: 'block' });
         sig.setVerdict({ violation_id: id, rule_id: r.rule_id, verdict: i < 5 ? 'false_positive' : 'correct', by: 'auto' });
       }
     }
@@ -131,17 +131,17 @@ describe('block-judge', () => {
   });
   it('캡은 in-flight 마커를 포함한다 — 판정이 끝나기 전 연속 차단에서 폭주 금지 (critic SEV-1)', () => {
     const now = Date.now();
-    const vio = Array.from({ length: 12 }, (_, i) => ({ at: new Date(now).toISOString(), rule_id: 'r', session_id: 's1', source: 'stop-guard' as const, kind: 'block' as const, violation_id: `v${i}` }));
+    const vio = Array.from({ length: 12 }, (_, i) => ({ at: new Date(now).toISOString(), rule_id: 'r', session_id: '00000000-0000-4000-8000-0000000000a1', source: 'stop-guard' as const, kind: 'block' as const, violation_id: `v${i}` }));
     const inflight10 = vio.slice(0, 10).map((v) => v.violation_id as string);
-    expect(judge.withinJudgeCaps('s1', now, [], vio, inflight10)).toBe(false);
-    expect(judge.withinJudgeCaps('s1', now, [], vio, inflight10.slice(0, 9))).toBe(true);
+    expect(judge.withinJudgeCaps('00000000-0000-4000-8000-0000000000a1', now, [], vio, inflight10)).toBe(false);
+    expect(judge.withinJudgeCaps('00000000-0000-4000-8000-0000000000a1', now, [], vio, inflight10.slice(0, 9))).toBe(true);
     // 실제 마커 파일: markInflight → 집계, clearInflight → 제거
     judge.markInflight('v0');
-    expect(judge.withinJudgeCaps('s1', now, [], vio, undefined)).toBe(true);
+    expect(judge.withinJudgeCaps('00000000-0000-4000-8000-0000000000a1', now, [], vio, undefined)).toBe(true);
     for (let i = 1; i < 10; i++) judge.markInflight(`v${i}`);
-    expect(judge.withinJudgeCaps('s1', now, [], vio, undefined)).toBe(false);
+    expect(judge.withinJudgeCaps('00000000-0000-4000-8000-0000000000a1', now, [], vio, undefined)).toBe(false);
     for (let i = 0; i < 10; i++) judge.clearInflight(`v${i}`);
-    expect(judge.withinJudgeCaps('s1', now, [], vio, undefined)).toBe(true);
+    expect(judge.withinJudgeCaps('00000000-0000-4000-8000-0000000000a1', now, [], vio, undefined)).toBe(true);
   });
 });
 

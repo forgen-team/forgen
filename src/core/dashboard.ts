@@ -174,7 +174,7 @@ export function collectKnowledgeOverview(): KnowledgeOverview {
 
 /** Collect injection activity from match-eval-log. */
 export function collectInjectionActivity(): InjectionActivity {
-  const records = readMatchEvalLog();
+  const records = readMatchEvalLog().filter((r) => r.synthetic !== true);
 
   // Recent injections (last 10)
   const sorted = [...records].sort((a, b) => b.ts.localeCompare(a.ts));

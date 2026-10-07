@@ -60,9 +60,9 @@ describe('forgen stats — R9-PA1', () => {
     const recent = new Date(now - 2 * 86400_000).toISOString();
     const stale = new Date(now - 30 * 86400_000).toISOString();
     writeJsonl(path.join(TEST_HOME, '.forgen', 'state', 'enforcement', 'violations.jsonl'), [
-      { at: recent, rule_id: 'r1', kind: 'block', session_id: 's1' },
-      { at: recent, rule_id: 'r1', kind: 'block', session_id: 's1' },
-      { at: stale, rule_id: 'r1', kind: 'block', session_id: 's1' },
+      { at: recent, rule_id: 'r1', kind: 'block', session_id: '00000000-0000-4000-8000-0000000000a1' },
+      { at: recent, rule_id: 'r1', kind: 'block', session_id: '00000000-0000-4000-8000-0000000000a1' },
+      { at: stale, rule_id: 'r1', kind: 'block', session_id: '00000000-0000-4000-8000-0000000000a1' },
     ]);
     const s = computeStats();
     expect(s.blocks7d).toBe(2);
@@ -71,18 +71,18 @@ describe('forgen stats — R9-PA1', () => {
   it('blocks7d includes block+deny+undefined, excludes correction/bypass_confirmed and synthetic sessions (ADR-017)', () => {
     const recent = new Date().toISOString();
     writeJsonl(path.join(TEST_HOME, '.forgen', 'state', 'enforcement', 'violations.jsonl'), [
-      { at: recent, rule_id: 'r1', kind: 'block', session_id: 's1' },            // Mech-B Stop block
-      { at: recent, rule_id: 'r1', kind: 'deny', session_id: 's1' },             // Mech-A PreToolUse deny
-      { at: recent, rule_id: 'r1', kind: 'correction', session_id: 's1' },       // 메타가드 advise (excluded)
-      { at: recent, rule_id: 'r1', kind: 'bypass_confirmed', session_id: 's1' }, // 사용자 명시 우회 (excluded from blocks, counted as bypass)
-      { at: recent, rule_id: 'r1', session_id: 's1' },                           // legacy entry with no kind
+      { at: recent, rule_id: 'r1', kind: 'block', session_id: '00000000-0000-4000-8000-0000000000a1' },            // Mech-B Stop block
+      { at: recent, rule_id: 'r1', kind: 'deny', session_id: '00000000-0000-4000-8000-0000000000a1' },             // Mech-A PreToolUse deny
+      { at: recent, rule_id: 'r1', kind: 'correction', session_id: '00000000-0000-4000-8000-0000000000a1' },       // 메타가드 advise (excluded)
+      { at: recent, rule_id: 'r1', kind: 'bypass_confirmed', session_id: '00000000-0000-4000-8000-0000000000a1' }, // 사용자 명시 우회 (excluded from blocks, counted as bypass)
+      { at: recent, rule_id: 'r1', session_id: '00000000-0000-4000-8000-0000000000a1' },                           // legacy entry with no kind
       { at: recent, rule_id: 'r1', kind: 'deny', session_id: 'default' },        // 테스트 유래 (excluded)
       { at: recent, rule_id: 'r1', kind: 'block', session_id: 'unknown' },       // session 없는 훅 호출 (excluded)
       { at: recent, rule_id: 'r1', kind: 'bypass_confirmed', session_id: 'default' }, // (excluded)
     ]);
     // 과거 자연어 휴리스틱 기록은 더 이상 읽지 않는다
     writeJsonl(path.join(TEST_HOME, '.forgen', 'state', 'enforcement', 'bypass.jsonl'), [
-      { at: recent, rule_id: 'r1', session_id: 's1', tool: 'Bash', pattern_preview: 'Team' },
+      { at: recent, rule_id: 'r1', session_id: '00000000-0000-4000-8000-0000000000a1', tool: 'Bash', pattern_preview: 'Team' },
     ]);
     const s = computeStats();
     expect(s.blocks7d).toBe(3); // block + deny + legacy-undefined (실세션만)
@@ -96,8 +96,8 @@ describe('forgen stats — R9-PA1', () => {
   it('counts acknowledgments within 7d', () => {
     const now = Date.now();
     writeJsonl(path.join(TEST_HOME, '.forgen', 'state', 'enforcement', 'acknowledgments.jsonl'), [
-      { at: new Date(now - 86400_000).toISOString(), session_id: 's1', rule_id: 'r1', block_count: 2 },
-      { at: new Date(now - 30 * 86400_000).toISOString(), session_id: 's2', rule_id: 'r1', block_count: 1 },
+      { at: new Date(now - 86400_000).toISOString(), session_id: '00000000-0000-4000-8000-0000000000a1', rule_id: 'r1', block_count: 2 },
+      { at: new Date(now - 30 * 86400_000).toISOString(), session_id: '00000000-0000-4000-8000-0000000000a2', rule_id: 'r1', block_count: 1 },
     ]);
     const s = computeStats();
     expect(s.acks7d).toBe(1);
@@ -166,7 +166,7 @@ describe('forgen stats — R9-PA1', () => {
 
   it('render output includes all 7 numbers + labels', () => {
     saveEvidence({
-      evidence_id: 'e1', type: 'explicit_correction', session_id: 's1',
+      evidence_id: 'e1', type: 'explicit_correction', session_id: '00000000-0000-4000-8000-0000000000a1',
       timestamp: new Date().toISOString(), source_component: 'mcp',
       summary: 'test', axis_refs: ['quality_safety'], candidate_rule_refs: [],
       confidence: 0.9, raw_payload: { kind: 'prefer-from-now' },

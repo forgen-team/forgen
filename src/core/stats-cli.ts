@@ -10,7 +10,7 @@ import * as path from 'node:path';
 import { loadAllRules } from '../store/rule-store.js';
 import { loadAllEvidence } from '../store/evidence-store.js';
 import { STATE_DIR, ME_DIR } from './paths.js';
-import { readJsonlWindow, isRealBlock, isConfirmedBypass, isSyntheticSession, precisionByRule, readVerdicts } from '../engine/lifecycle/signals.js';
+import { readJsonlWindow, isRealBlock, isConfirmedBypass, isSyntheticEntry, precisionByRule, readVerdicts } from '../engine/lifecycle/signals.js';
 import { computeFixFeatRatio, formatFixRatio } from './git-stats.js';
 
 // v0.4.1 격리 fix: 이전에는 os.homedir() 직접 사용해서 FORGEN_HOME env 로
@@ -257,7 +257,7 @@ export function computeStats(): StatsSnapshot {
     correctionsTotal,
     corrections7d,
     blocks7d: countWithin(realBlocks, 7),
-    syntheticExcluded7d: countWithin(violations.filter((e) => isSyntheticSession(e.session_id)), 7),
+    syntheticExcluded7d: countWithin(violations.filter((e) => isSyntheticEntry(e)), 7),
     acks7d: countWithin(acks, 7),
     bypass7d: countWithin(bypass, 7),
     drift7d: countWithin(drift, 7),

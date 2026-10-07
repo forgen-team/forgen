@@ -79,6 +79,7 @@ export class OllamaDriverLLM implements Driver {
 
 // retry + exponential backoff — driver/judge 공통 로직은 utils/retry.ts 에 추출
 import { retryWithBackoff } from '../utils/retry.js';
+import { evalChildEnv } from '../utils/isolation.js';
 
 // ── Shared: history → flat prompt ───────────────────────────────────────────
 
@@ -140,7 +141,7 @@ export class ClaudeCliDriver implements Driver {
             encoding: 'utf-8',
             timeout: this.timeoutMs,
             cwd: this.cwd,
-            env: { ...process.env },
+            env: evalChildEnv(),
             maxBuffer: 4 * 1024 * 1024,
           },
         );
@@ -164,7 +165,7 @@ function runCodex(
     const usesStdin = args[args.length - 1] === '-' && typeof opts.stdinPrompt === 'string';
     const child = spawn('codex', args, {
       cwd: opts.cwd,
-      env: { ...process.env, ...(opts.env ?? {}) },
+      env: evalChildEnv(opts.env ?? {}),
       stdio: [usesStdin ? 'pipe' : 'ignore', 'pipe', 'pipe'],
     });
     let stdout = '';

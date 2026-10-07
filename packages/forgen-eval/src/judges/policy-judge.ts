@@ -12,6 +12,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { retryWithBackoff } from '../utils/retry.js';
+import { evalChildEnv } from '../utils/isolation.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -93,7 +94,7 @@ export class PolicyJudge {
             'project',
             '--no-session-persistence',
           ],
-          { encoding: 'utf-8', timeout: this.timeoutMs, cwd: this.cwd, env: { ...process.env }, maxBuffer: 4 * 1024 * 1024 },
+          { encoding: 'utf-8', timeout: this.timeoutMs, cwd: this.cwd, env: evalChildEnv(), maxBuffer: 4 * 1024 * 1024 },
         );
         return res.stdout;
       },
@@ -107,7 +108,7 @@ export class PolicyJudge {
       const { stdout } = await execFileAsync(
         'claude',
         ['-p', 'Reply with just: ok', '--model', this.model, '--system-prompt', 'Output one word.', '--setting-sources', 'project', '--no-session-persistence'],
-        { encoding: 'utf-8', timeout: 30_000, cwd: this.cwd, maxBuffer: 1024 * 1024 },
+        { encoding: 'utf-8', timeout: 30_000, cwd: this.cwd, env: evalChildEnv(), maxBuffer: 1024 * 1024 },
       );
       return /ok/i.test(stdout);
     } catch {
