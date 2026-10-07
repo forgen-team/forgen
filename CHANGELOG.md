@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.2] — 2026-10-07 — statusline 이 실제로는 페이로드를 한 번도 받지 못하고 있었다 (socketpair stdin)
+
+### Fixed
+- **`forgen statusline` 이 Claude Code 가 주는 stdin JSON 을 0.5.9 부터 단 한 번도 읽지 못했다.** Claude Code(Node)는
+  statusline 을 `stdio:'pipe'` 로 띄우고 Linux 에서 그 stdin 은 UNIX **socketpair** 인데, 구현이 `fs.readFileSync('/dev/stdin')`
+  으로 읽어 소켓에서 ENXIO 로 실패 → 페이로드가 항상 `{}` → 모델명 'Claude', 세션 없음(`statusline-cache-nosession`),
+  컨텍스트·한도·소진 예측·관련 룰·세션 모델 캐시 전부 공백. 셸 파이프(`echo … | forgen statusline`)로만 검증해 v0.6.0/0.6.1
+  까지 못 잡았고, 배포 후 15시간 실사용 관측(한도 샘플 1건·세션 캐시 nosession 만 갱신)으로 드러났다. 훅과 같은 이벤트
+  기반 리더(`read-stdin.ts`, idle/timeout)로 교체. Node `spawn` 으로 socketpair 경로를 그대로 재현하는 회귀 테스트 추가
+  (지연 도착·EOF 없음·빈 페이로드 포함).
+- 부수: 세션별 모델 캐시(`current-model-<session>.json`)가 이제야 실제로 기록되므로, 측정된 모델(Opus 4.8 등)에서
+  완료 가드가 advise 모드로 동작하는 ADR-010 W4-3 경로도 이번에 처음 live 가 된다.
+
 ## [0.6.1] — 2026-10-06 — 핫픽스: 임시 경로 예외가 CI(루트 디렉터리 부재)에서 전부 false 이던 것 · self-gate 테스트 픽스처
 
 ### Fixed
