@@ -141,7 +141,12 @@ export function loadAllRules(): Rule[] {
       const rule = safeReadJSON<Rule | null>(path.join(projectRulesDir, file), null);
       if (!rule || !isCompatibleSchema(rule, file)) continue;
       const existingIdx = rules.findIndex((r) => r.rule_id === rule.rule_id);
-      if (existingIdx >= 0) rules[existingIdx] = rule; // project override
+      if (existingIdx >= 0) {
+        // project override 는 정책 본문만 — lifecycle(주입/위반 카운터·phase)은 사용자 로컬 상태라 me 쪽을 유지한다.
+        // 안 그러면 repo 에 commit 된 룰의 lifecycle(0)이 saveRule 로 me 파일을 덮어써 inject_count 가 리셋된다.
+        const meLifecycle = rules[existingIdx].lifecycle;
+        rules[existingIdx] = meLifecycle ? { ...rule, lifecycle: meLifecycle } : rule;
+      }
       else rules.push(rule);
     }
   }
@@ -226,6 +231,25 @@ export function markRulesInjected(ruleIds: string[], nowIso: string = new Date()
     };
     atomicWriteJSON(rulePath(rule.rule_id), updated, { pretty: true });
   }
+}
+
+/**
+ * lifecycle-scan --apply 가 signals(위반 로그)에서 재계산한 카운터를 저장한다.
+ * markRulesInjected 와 같이 updated_at 을 건드리지 않는다 — 카운터 동기화가 T4 decay 의
+ * "마지막 갱신" 신호를 리셋하면 안 된다. 값이 같으면 쓰지 않고 false 반환.
+ */
+export function syncRuleCounters(ruleId: string, counters: { violation_count: number; bypass_count: number; last_violation_at?: string }): boolean {
+  const rule = loadRule(ruleId);
+  if (!rule) return false;
+  const lifecycle = initLifecycle(rule);
+  const lastViolation = counters.last_violation_at ?? lifecycle.last_violation_at;
+  if (lifecycle.violation_count === counters.violation_count && lifecycle.bypass_count === counters.bypass_count && lifecycle.last_violation_at === lastViolation) return false;
+  const updated: Rule = {
+    ...rule,
+    lifecycle: { ...lifecycle, violation_count: counters.violation_count, bypass_count: counters.bypass_count, last_violation_at: lastViolation },
+  };
+  atomicWriteJSON(rulePath(rule.rule_id), updated, { pretty: true });
+  return true;
 }
 
 export function updateRuleStatus(ruleId: string, status: RuleStatus): boolean {

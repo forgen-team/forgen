@@ -23,6 +23,7 @@ import type { EnforcementMech, EnforceSpec, Rule } from '../../store/types.js';
 import { initLifecycle } from '../../store/rule-lifecycle.js';
 import { loadAllRules, saveRule } from '../../store/rule-store.js';
 import { STATE_DIR } from '../../core/paths.js';
+import { readJsonlWindow } from './rotated-logs.js';
 
 const DRIFT_LOG_PATH = path.join(STATE_DIR, 'enforcement', 'drift.jsonl');
 const LIFECYCLE_DIR = path.join(STATE_DIR, 'lifecycle');
@@ -62,21 +63,9 @@ export interface DemotionCandidate {
   current_mechs: EnforcementMech[];
 }
 
+/** drift.jsonl 현재 파일 + 30일 창 안의 회전본. */
 export function readDriftEntries(driftPath: string = DRIFT_LOG_PATH): DriftEntry[] {
-  if (!fs.existsSync(driftPath)) return [];
-  try {
-    const raw = fs.readFileSync(driftPath, 'utf-8');
-    return raw
-      .trim()
-      .split('\n')
-      .filter(Boolean)
-      .map((line) => {
-        try { return JSON.parse(line) as DriftEntry; } catch { return null; }
-      })
-      .filter((e): e is DriftEntry => e !== null);
-  } catch {
-    return [];
-  }
+  return readJsonlWindow<DriftEntry>(driftPath, 30);
 }
 
 export function scanDriftForDemotion(options: {

@@ -2,10 +2,7 @@
  * forgen block <id|prefix> --ok | --fp [--reason "..."]  (ADR-017 D1)
  * 사용자 판정 — 자동(Haiku) 판정을 덮어쓴다. id 는 violation_id 전체 또는 앞 8자 이상 prefix.
  */
-import * as path from 'node:path';
-import { STATE_DIR } from './paths.js';
-import { readJsonlSafe, setVerdict, readReceipt, effectiveVerdicts } from '../engine/lifecycle/signals.js';
-import type { ViolationEntry } from '../engine/lifecycle/types.js';
+import { readViolationsWindow, ROTATED_KEEP_DAYS, setVerdict, readReceipt, effectiveVerdicts } from '../engine/lifecycle/signals.js';
 
 export async function handleBlock(args: string[]): Promise<void> {
   const id = args.find((a) => !a.startsWith('--'));
@@ -19,7 +16,7 @@ export async function handleBlock(args: string[]): Promise<void> {
     return;
   }
   if (!/^[A-Za-z0-9-]{8,}$/.test(id)) { console.log(`invalid id: ${id}`); return; }
-  const all = readJsonlSafe<ViolationEntry>(path.join(STATE_DIR, 'enforcement', 'violations.jsonl'));
+  const all = readViolationsWindow(ROTATED_KEEP_DAYS);
   const matches = all.filter((v) => typeof v.violation_id === 'string' && v.violation_id.startsWith(id));
   if (matches.length === 0) { console.log(`no block with id ${id}. See: forgen status --blocks 5`); return; }
   const ids = new Set(matches.map((v) => v.violation_id));
