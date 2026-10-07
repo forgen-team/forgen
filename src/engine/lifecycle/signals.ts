@@ -84,8 +84,25 @@ export function readJsonlSafe<T>(p: string): T[] {
  */
 export const SYNTHETIC_SESSION_IDS: ReadonlySet<string> = new Set(['default', 'unknown', '']);
 
+/**
+ * 실 Claude Code(session_id) · Codex(thread id)는 전부 UUID 형식이다. eval/probe 하네스가 쓰는
+ * 'forgen-eval-<ts>-<rand>', 'repro-*', 'enforce-test' 등 임의 문자열은 UUID 가 아니므로 합성으로 본다.
+ * (실 ~/.forgen 데이터 검증: 비-default 세션 중 UUID 는 실세션 전부, 비-UUID 는 하네스 41건뿐.)
+ */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export function isSyntheticSession(sessionId: unknown): boolean {
-  return typeof sessionId !== 'string' || SYNTHETIC_SESSION_IDS.has(sessionId);
+  return typeof sessionId !== 'string' || SYNTHETIC_SESSION_IDS.has(sessionId) || !UUID_RE.test(sessionId);
+}
+
+/** FORGEN_SYNTHETIC=1 (eval/probe 러너가 설정) 이면 기록에 synthetic:true 를 붙인다. */
+export function syntheticStamp(): { synthetic?: true } {
+  return process.env.FORGEN_SYNTHETIC === '1' ? { synthetic: true } : {};
+}
+
+/** 엔트리 단위 합성 판정: 명시적 synthetic 플래그 또는 합성 세션 id. */
+export function isSyntheticEntry(e: { synthetic?: unknown; session_id?: unknown }): boolean {
+  return e.synthetic === true || isSyntheticSession(e.session_id);
 }
 
 /** 사용자 관점의 "차단": block/deny (+legacy undefined). correction/bypass_confirmed 는 아님. */
@@ -94,12 +111,12 @@ export function isBlockKind(kind: unknown): boolean {
 }
 
 /** 실세션에서 일어난 실제 차단만. stats/explain/lifecycle 이 공유하는 단일 기준. */
-export function isRealBlock(e: { kind?: unknown; session_id?: unknown }): boolean {
-  return isBlockKind(e.kind) && !isSyntheticSession(e.session_id);
+export function isRealBlock(e: { kind?: unknown; session_id?: unknown; synthetic?: unknown }): boolean {
+  return isBlockKind(e.kind) && !isSyntheticEntry(e);
 }
 
-export function isConfirmedBypass(e: { kind?: unknown; session_id?: unknown }): boolean {
-  return e.kind === 'bypass_confirmed' && !isSyntheticSession(e.session_id);
+export function isConfirmedBypass(e: { kind?: unknown; session_id?: unknown; synthetic?: unknown }): boolean {
+  return e.kind === 'bypass_confirmed' && !isSyntheticEntry(e);
 }
 
 const RECEIPTS_DIR = path.join(ENFORCEMENT_DIR, 'receipts');
@@ -138,7 +155,7 @@ export function recordViolation(entry: Omit<ViolationEntry, 'at'>, opts: RecordV
     fs.mkdirSync(ENFORCEMENT_DIR, { recursive: true });
     rotateIfBig(VIOLATIONS_PATH);
     const violation_id = entry.violation_id ?? crypto.randomUUID();
-    const full: ViolationEntry = { at: new Date().toISOString(), violation_id, ...entry };
+    const full: ViolationEntry = { at: new Date().toISOString(), violation_id, ...entry, ...syntheticStamp() };
     // 로그에 남는 프래그먼트/미리보기도 secret 마스킹 — 영수증만 가리고 로그에 키가 남으면 의미 없다.
     if (typeof full.matched === 'string') full.matched = redactForReceipt(full.matched);
     if (typeof full.message_preview === 'string') full.message_preview = redactForReceipt(full.message_preview);
@@ -172,7 +189,7 @@ export function setVerdict(entry: Omit<VerdictEntry, 'at'>): void {
   try {
     fs.mkdirSync(ENFORCEMENT_DIR, { recursive: true });
     rotateIfBig(VERDICTS_PATH);
-    fs.appendFileSync(VERDICTS_PATH, `${JSON.stringify({ at: new Date().toISOString(), ...entry })}\n`);
+    fs.appendFileSync(VERDICTS_PATH, `${JSON.stringify({ at: new Date().toISOString(), ...entry, ...syntheticStamp() })}\n`);
   } catch { /* best-effort */ }
 }
 
@@ -229,7 +246,7 @@ export function recordCheck(entry: Omit<CheckEntry, 'at'>): void {
   try {
     fs.mkdirSync(ENFORCEMENT_DIR, { recursive: true });
     rotateIfBig(CHECKS_PATH);
-    fs.appendFileSync(CHECKS_PATH, `${JSON.stringify({ at: new Date().toISOString(), ...entry })}\n`);
+    fs.appendFileSync(CHECKS_PATH, `${JSON.stringify({ at: new Date().toISOString(), ...entry, ...syntheticStamp() })}\n`);
     // 7일 TTL — 통과 기록은 턴마다 쌓이므로 1/50 확률로 압축(rotateIfBig 10MB 에 닿지 않게).
     if (Math.random() < 0.02) pruneChecks();
   } catch { /* best-effort */ }
@@ -243,7 +260,7 @@ export function pruneChecks(now: number = Date.now()): void {
 }
 
 export function readChecks(): CheckEntry[] {
-  return readJsonlSafe<CheckEntry>(CHECKS_PATH);
+  return readJsonlSafe<CheckEntry>(CHECKS_PATH).filter((c) => !isSyntheticEntry(c));
 }
 
 /** 정규식 매칭 프래그먼트 추출 — 영수증 `matched` 필드용. */
@@ -263,7 +280,7 @@ export function recordBypass(entry: Omit<BypassEntry, 'at'>): void {
   try {
     fs.mkdirSync(ENFORCEMENT_DIR, { recursive: true });
     rotateIfBig(BYPASS_PATH);
-    const full: BypassEntry = { at: new Date().toISOString(), ...entry };
+    const full: BypassEntry = { at: new Date().toISOString(), ...entry, ...syntheticStamp() };
     fs.appendFileSync(BYPASS_PATH, `${JSON.stringify(full)}\n`);
   } catch (e) {
     if (process.env.FORGEN_DEBUG_SIGNALS === '1') {

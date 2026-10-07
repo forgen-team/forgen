@@ -52,7 +52,7 @@ describe('T3 — 자연어 휴리스틱 bypass 기록 폐기', () => {
         tool_name: 'Write',
         tool_input: { file_path: 'foo.ts', content: 'fetchUser().then(x => console.log(x))' },
         tool_response: 'ok',
-        session_id: 'sess-t3a',
+        session_id: '00000000-0000-4000-8000-00000000000a',
       });
       expect(proc.status).toBe(0);
       expect(fs.existsSync(enforcementPath(home, 'bypass.jsonl'))).toBe(false);
@@ -66,7 +66,7 @@ describe('T3 — 자연어 휴리스틱 bypass 기록 폐기', () => {
     try {
       seedRule(home, { id: 'r-team', policy: '병렬 에이전트 사용 금지 규칙을 폐지함. 반드시 팀(Team)으로만 진행할 필요 없음.' });
       const proc = runHook(POST_TOOL, home, {
-        tool_name: 'Bash', tool_input: { command: 'echo Team' }, tool_response: 'Team\n', session_id: 'sess-t3b',
+        tool_name: 'Bash', tool_input: { command: 'echo Team' }, tool_response: 'Team\n', session_id: '00000000-0000-4000-8000-00000000000b',
       });
       expect(proc.status).toBe(0);
       expect(fs.existsSync(enforcementPath(home, 'bypass.jsonl'))).toBe(false);
@@ -86,7 +86,7 @@ describe('T3 — 사용자 명시 우회만 bypass_confirmed 로 기록되고 T3
     const home = fs.mkdtempSync(path.join(os.tmpdir(), 'forgen-t3-home-'));
     try {
       seedRule(home, l1);
-      const proc = runHook(PRE_TOOL, home, { tool_name: 'Bash', tool_input: { command: 'rm -rf /srv/data' }, session_id: 'sess-t3c' });
+      const proc = runHook(PRE_TOOL, home, { tool_name: 'Bash', tool_input: { command: 'rm -rf /srv/data' }, session_id: '00000000-0000-4000-8000-00000000000c' });
       expect(proc.status).toBe(0);
       const v = readJsonl(enforcementPath(home, 'violations.jsonl'));
       expect(v.some((e) => e.rule_id === 'r-rm' && e.kind === 'deny')).toBe(true);
@@ -100,7 +100,7 @@ describe('T3 — 사용자 명시 우회만 bypass_confirmed 로 기록되고 T3
     const home = fs.mkdtempSync(path.join(os.tmpdir(), 'forgen-t3-home-'));
     try {
       seedRule(home, l1);
-      const proc = runHook(PRE_TOOL, home, { tool_name: 'Bash', tool_input: { command: 'rm -rf /srv/data' }, session_id: 'sess-t3d' }, { FORGEN_USER_CONFIRMED: '1' });
+      const proc = runHook(PRE_TOOL, home, { tool_name: 'Bash', tool_input: { command: 'rm -rf /srv/data' }, session_id: '00000000-0000-4000-8000-00000000000d' }, { FORGEN_USER_CONFIRMED: '1' });
       expect(proc.status).toBe(0);
       const v = readJsonl(enforcementPath(home, 'violations.jsonl'));
       const hit = v.find((e) => e.rule_id === 'r-rm' && e.kind === 'bypass_confirmed');

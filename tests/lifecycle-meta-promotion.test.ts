@@ -151,9 +151,9 @@ describe('signals.collectSignals', () => {
     const r = rule({ rule_id: 'rs-1', updated_at: '2026-03-01T00:00:00Z' });
     const now = Date.parse('2026-04-22T00:00:00Z');
     const violations = [
-      { at: new Date(now - 10 * 24 * 3600_000).toISOString(), rule_id: 'rs-1', session_id: 's1', source: 'stop-guard' as const, kind: 'block' as const },
-      { at: new Date(now - 29 * 24 * 3600_000).toISOString(), rule_id: 'rs-1', session_id: 's1', source: 'stop-guard' as const, kind: 'block' as const },
-      { at: new Date(now - 40 * 24 * 3600_000).toISOString(), rule_id: 'rs-1', session_id: 's1', source: 'stop-guard' as const, kind: 'block' as const },
+      { at: new Date(now - 10 * 24 * 3600_000).toISOString(), rule_id: 'rs-1', session_id: '00000000-0000-4000-8000-0000000000a1', source: 'stop-guard' as const, kind: 'block' as const },
+      { at: new Date(now - 29 * 24 * 3600_000).toISOString(), rule_id: 'rs-1', session_id: '00000000-0000-4000-8000-0000000000a1', source: 'stop-guard' as const, kind: 'block' as const },
+      { at: new Date(now - 40 * 24 * 3600_000).toISOString(), rule_id: 'rs-1', session_id: '00000000-0000-4000-8000-0000000000a1', source: 'stop-guard' as const, kind: 'block' as const },
     ];
     const s = collectSignals(r, { violations, bypass: [], now });
     expect(s.violations_30d).toBe(2);
@@ -163,14 +163,14 @@ describe('signals.collectSignals', () => {
     const r = rule({ rule_id: 'rs-2' });
     const now = Date.parse('2026-04-22T00:00:00Z');
     const legacyBypass = [
-      { at: new Date(now - 3 * 24 * 3600_000).toISOString(), rule_id: 'rs-2', session_id: 's1', tool: 'Bash', pattern_preview: 'x' },
+      { at: new Date(now - 3 * 24 * 3600_000).toISOString(), rule_id: 'rs-2', session_id: '00000000-0000-4000-8000-0000000000a1', tool: 'Bash', pattern_preview: 'x' },
     ];
     const violations = [
-      { at: new Date(now - 3 * 24 * 3600_000).toISOString(), rule_id: 'rs-2', session_id: 's1', source: 'pre-tool-guard' as const, kind: 'bypass_confirmed' as const },
-      { at: new Date(now - 10 * 24 * 3600_000).toISOString(), rule_id: 'rs-2', session_id: 's1', source: 'pre-tool-guard' as const, kind: 'bypass_confirmed' as const },
+      { at: new Date(now - 3 * 24 * 3600_000).toISOString(), rule_id: 'rs-2', session_id: '00000000-0000-4000-8000-0000000000a1', source: 'pre-tool-guard' as const, kind: 'bypass_confirmed' as const },
+      { at: new Date(now - 10 * 24 * 3600_000).toISOString(), rule_id: 'rs-2', session_id: '00000000-0000-4000-8000-0000000000a1', source: 'pre-tool-guard' as const, kind: 'bypass_confirmed' as const },
       // 테스트 유래(default 세션) 와 advise(correction) 는 어느 집계에도 안 들어감
       { at: new Date(now - 1 * 24 * 3600_000).toISOString(), rule_id: 'rs-2', session_id: 'default', source: 'pre-tool-guard' as const, kind: 'bypass_confirmed' as const },
-      { at: new Date(now - 1 * 24 * 3600_000).toISOString(), rule_id: 'rs-2', session_id: 's1', source: 'stop-guard' as const, kind: 'correction' as const },
+      { at: new Date(now - 1 * 24 * 3600_000).toISOString(), rule_id: 'rs-2', session_id: '00000000-0000-4000-8000-0000000000a1', source: 'stop-guard' as const, kind: 'correction' as const },
       { at: new Date(now - 1 * 24 * 3600_000).toISOString(), rule_id: 'rs-2', session_id: 'default', source: 'pre-tool-guard' as const, kind: 'deny' as const },
     ];
     const s = collectSignals(r, { violations, bypass: legacyBypass, now });
@@ -189,7 +189,7 @@ describe('signals.collectSignals', () => {
     const r = rule({ rule_id: 'rs-3' });
     const now = Date.parse('2026-04-22T00:00:00Z');
     const violations = [
-      { at: new Date(now - 5 * 24 * 3600_000).toISOString(), rule_id: 'rs-3', session_id: 's1', source: 'stop-guard' as const, kind: 'block' as const },
+      { at: new Date(now - 5 * 24 * 3600_000).toISOString(), rule_id: 'rs-3', session_id: '00000000-0000-4000-8000-0000000000a1', source: 'stop-guard' as const, kind: 'block' as const },
     ];
     const s = collectSignals(r, { violations, bypass: [], now });
     expect(s.violation_rate_30d).toBe(1);
@@ -201,7 +201,7 @@ describe('signals.record* IO', () => {
   afterEach(() => fs.rmSync(TEST_HOME, { recursive: true, force: true }));
 
   it('recordViolation writes JSONL line under TEST_HOME', () => {
-    recordViolation({ rule_id: 'r1', session_id: 's1', source: 'stop-guard', kind: 'block' });
+    recordViolation({ rule_id: 'r1', session_id: '00000000-0000-4000-8000-0000000000a1', source: 'stop-guard', kind: 'block' });
     const p = path.join(TEST_HOME, '.forgen', 'state', 'enforcement', 'violations.jsonl');
     expect(fs.existsSync(p)).toBe(true);
     const entries = readJsonlSafe(p);
@@ -209,7 +209,7 @@ describe('signals.record* IO', () => {
   });
 
   it('recordBypass writes JSONL line under TEST_HOME', () => {
-    recordBypass({ rule_id: 'r1', session_id: 's1', tool: 'Bash', pattern_preview: '.then(' });
+    recordBypass({ rule_id: 'r1', session_id: '00000000-0000-4000-8000-0000000000a1', tool: 'Bash', pattern_preview: '.then(' });
     const p = path.join(TEST_HOME, '.forgen', 'state', 'enforcement', 'bypass.jsonl');
     expect(fs.existsSync(p)).toBe(true);
     const entries = readJsonlSafe(p);

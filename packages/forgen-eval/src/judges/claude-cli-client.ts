@@ -16,6 +16,7 @@ import { buildJudgePrompt, parseJudgeOutput } from './judge-types.js';
 import type { JudgeClient, JudgePromptInput } from './judge-types.js';
 import type { JudgeScore, JudgeId } from '../types.js';
 import { retryWithBackoff } from '../utils/retry.js';
+import { evalChildEnv } from '../utils/isolation.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -78,7 +79,7 @@ export class ClaudeCliClient implements JudgeClient {
             encoding: 'utf-8',
             timeout: this.timeoutMs,
             cwd: this.cwd,
-            env: { ...process.env },
+            env: evalChildEnv(),
             maxBuffer: 4 * 1024 * 1024,
           },
         );
@@ -113,7 +114,7 @@ export class ClaudeCliClient implements JudgeClient {
           'project',
           '--no-session-persistence',
         ],
-        { encoding: 'utf-8', timeout: 30_000, cwd: this.cwd, maxBuffer: 1024 * 1024 },
+        { encoding: 'utf-8', timeout: 30_000, cwd: this.cwd, env: evalChildEnv(), maxBuffer: 1024 * 1024 },
       );
       return { ok: /ok/i.test(stdout), latencyMs: Date.now() - start, modelInfo: `claude --model ${this.model}` };
     } catch {

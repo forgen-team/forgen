@@ -8,7 +8,7 @@
 import * as path from 'node:path';
 import { loadAllRules, saveRule } from '../../store/rule-store.js';
 import { STATE_DIR } from '../../core/paths.js';
-import { collectSignals, readJsonlSafe, isConfirmedBypass, isSyntheticSession } from './signals.js';
+import { collectSignals, readJsonlSafe, isConfirmedBypass, isSyntheticEntry } from './signals.js';
 import { detect as detectT2 } from './trigger-t2-violation.js';
 import { detect as detectT3 } from './trigger-t3-bypass.js';
 import { detect as detectT4 } from './trigger-t4-decay.js';
@@ -42,7 +42,7 @@ export async function handleLifecycleScan(args: string[]): Promise<void> {
   // ADR-017 D1: bypass.jsonl(자연어 휴리스틱, 전량 오탐)은 더 이상 읽지 않는다. T3 입력은
   // violations 의 kind:'bypass_confirmed'(사용자 명시 우회) 뿐이며 collectSignals 가 거기서 뽑는다.
   const bypassConfirmed = violations.filter(isConfirmedBypass).length;
-  const syntheticExcluded = violations.filter((v) => isSyntheticSession(v.session_id)).length;
+  const syntheticExcluded = violations.filter((v) => isSyntheticEntry(v)).length;
   const drift = readDriftEntries();
 
   const signals = new Map<string, RuleSignals>();
