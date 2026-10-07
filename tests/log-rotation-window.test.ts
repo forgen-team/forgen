@@ -88,7 +88,8 @@ describe('회전본 보존 상한 (state-gc)', () => {
 });
 
 describe('lifecycle 카운터는 로그에서 파생', () => {
-  const v = (o: Partial<ViolationEntry>): ViolationEntry => ({ at: '2026-10-01T00:00:00.000Z', rule_id: 'R1', session_id: 's1', source: 'x', kind: 'block', ...o } as ViolationEntry);
+  // 실세션 id 는 uuid (eval 격리: uuid 가 아니면 합성으로 제외)
+  const v = (o: Partial<ViolationEntry>): ViolationEntry => ({ at: '2026-10-01T00:00:00.000Z', rule_id: 'R1', session_id: '11111111-2222-4333-8444-555555555555', source: 'x', kind: 'block', ...o } as ViolationEntry);
 
   it('실차단/명시 우회만 세고 합성 세션·correction 은 제외한다', () => {
     const m = deriveRuleCounters([
