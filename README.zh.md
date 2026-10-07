@@ -127,6 +127,8 @@ npm install -g @wooojin/forgen
 forgen
 ```
 
+> **需要 Node 22+。** 在 Node 20 上执行 `npm install -g @wooojin/forgen` 时，npm 会选择与 `engines` 匹配的最新版本，从而静默安装 0.4.8。请先检查 `node -v`，安装后用 `forgen --version` 确认。
+
 forgen 检测到这是首次运行，启动4题引导问卷。每个问题都是一个具体场景:
 
 ```
@@ -515,7 +517,8 @@ forgen rule enforce|advise <id> # 恢复自动降级规则的拦截 / 仅记录�
 forgen status --blocks [N]      # 最近真实拦截 + 回执: 匹配片段、24h 上下文、判定(auto/user)
 forgen block <id> --ok | --fp   # 判定一次拦截 (覆盖自动 Haiku 判定) — 计入规则级 precision
 forgen status --turn            # 本轮相关规则，以及每条规则来源的纠正(日期·类型·你的原话)
-forgen statusline               # 2 行: 模型 · 路径(分支) · ctx % · 5h/7d 配额 + 耗尽预测 · $ / 相关规则 · 拦截 · surfaced
+forgen statusline               # 3 行: 模型 · 路径(分支) / ctx·5h·7d 条形 + 耗尽预测 · $ / forgen: 相关规则 · 拦截 · surfaced
+forgen statusline install [--force]  # 在 ~/.claude/settings.json 注册 statusline(绝对路径, nvm 安全); --force 替换自定义值(保留备份)
 ```
 
 ### 知识管理

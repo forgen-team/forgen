@@ -36,6 +36,10 @@ function check(label: string, condition: boolean, hint?: string): void {
   }
 }
 
+function readSettingsForDoctor(): Record<string, unknown> {
+  try { return JSON.parse(fs.readFileSync(path.join(os.homedir(), '.claude', 'settings.json'), 'utf-8')) as Record<string, unknown>; } catch { return {}; }
+}
+
 function exists(p: string): boolean {
   return fs.existsSync(p);
 }
@@ -298,6 +302,14 @@ export async function runDoctor(opts: DoctorOptions = {}): Promise<void> {
     }
   }
   console.log();
+
+  section('Statusline');
+  try {
+    const sl = (readSettingsForDoctor().statusLine as { command?: string } | undefined)?.command;
+    const owned = !sl || /^forgen(\s|$)/.test(sl.trim()) || /[\\/]dist[\\/]cli\.js"?\s+statusline(\s|$)/.test(sl);
+    check('statusLine → forgen', owned, `another command is set (${(sl ?? '').slice(0, 50)}…). Switch: forgen statusline install --force`);
+    if (owned) check('statusLine uses absolute path (nvm-safe)', !!sl && !/^forgen(\s|$)/.test(sl.trim()), 'PATH-dependent `forgen statusline` picks whatever nvm version is active. Fix: forgen statusline install');
+  } catch { /* fail-open */ }
 
   section('Directories');
   check('~/.forgen/', exists(FORGEN_HOME));

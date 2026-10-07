@@ -260,6 +260,23 @@ function registerPlugin() {
 }
 
 /** settings 객체에 enabledPlugins를 적용합니다 (settings.json 쓰기는 main에서 일괄 수행). */
+/**
+ * statusLine 자동 등록 (2026-10-07, 오너 피드백 "설치 후 forgen install 을 또 해야 하는 게 불편").
+ *   - 없거나 forgen 소유(`forgen …` / `…/dist/cli.js statusline`) → 이 패키지의 **절대 경로**로 등록
+ *     (PATH 의존 `forgen statusline` 은 nvm 버전마다 다른 바이너리가 잡힌다 — 실측 0.4.8).
+ *   - 커스텀(claude-hud 등) → 건드리지 않고 안내만. 교체는 `forgen statusline install --force`.
+ * 반환: 'installed' | 'updated' | 'unchanged' | 'custom'
+ */
+function applyStatusLineAuto(settings) {
+  const cmd = `"${process.execPath}" "${join(PKG_ROOT, 'dist', 'cli.js')}" statusline`;
+  const existing = settings.statusLine && settings.statusLine.command;
+  const owned = !existing || /^forgen(\s|$)/.test(String(existing).trim()) || /[\\/]dist[\\/]cli\.js"?\s+statusline(\s|$)/.test(String(existing));
+  if (!owned) return 'custom';
+  if (existing === cmd) return 'unchanged';
+  settings.statusLine = { type: 'command', command: cmd };
+  return existing ? 'updated' : 'installed';
+}
+
 function applyPluginSettings(settings) {
   const pluginKey = 'forgen@forgen-local';
   const enabled = settings.enabledPlugins ?? {};
@@ -997,6 +1014,10 @@ async function main() {
     }
   }
 
+  // ── 2.5. statusLine 자동 등록 (settings 단일 쓰기에 포함) ──
+  let statusLineResult = 'unchanged';
+  try { statusLineResult = applyStatusLineAuto(settings); } catch (err) { console.error(`[forgen] statusLine setup skipped: ${err?.message ?? err}`); }
+
   // ── 3. hooks.json 동적 생성 ──
   //
   // A4 guard (2026-04-09): skip regeneration when running inside the
@@ -1140,6 +1161,12 @@ async function main() {
   if (starterInstalled > 0) parts.push(`${starterInstalled} starter solutions`);
   if (parts.length > 0) {
     console.log(`[forgen] Installed: ${parts.join(', ')} → ${HOME}`);
+  }
+  if (statusLineResult === 'installed' || statusLineResult === 'updated') {
+    console.log('[forgen] statusLine registered (absolute path) — running sessions pick it up on the next message.');
+  } else if (statusLineResult === 'custom') {
+    console.log('[forgen] statusLine is set to another command (e.g. claude-hud) — left untouched.');
+    console.log('[forgen]   To switch to forgen (backup kept in statusLine_backup): forgen statusline install --force');
   }
 
   // First-run banner (신규 사용자 안내) — feat/codex-support P1-6

@@ -180,6 +180,8 @@ npm install -g @wooojin/forgen
 forgen
 ```
 
+> **Node 22+ required.** On Node 20, `npm install -g @wooojin/forgen` silently installs the last Node-20-compatible version (0.4.8) because npm picks the newest release whose `engines` matches. Check `node -v` first, or pin: `npm i -g @wooojin/forgen@latest` and verify `forgen --version`.
+
 Forgen detects this is your first run and launches a 4-question onboarding. Each question is a concrete scenario:
 
 ```
@@ -728,7 +730,8 @@ forgen rule enforce|advise <id> # Restore blocking for an auto-demoted rule / re
 forgen status --blocks [N]      # Recent real blocks with receipt: matched fragment, 24h context, verdict (auto/user)
 forgen block <id> --ok | --fp   # Judge a block (overrides the automatic Haiku verdict); feeds per-rule precision
 forgen status --turn            # Rules relevant to the current turn, each with the correction (date/kind/your words) it came from
-forgen statusline               # 2 lines: model · path(branch) · ctx % · 5h/7d limits + exhaustion forecast · $ / related rules · blocks · surfaced
+forgen statusline               # 3 lines: model · path(branch) / ctx·5h·7d bars + exhaustion forecast · $ / forgen: related rules · blocks · surfaced
+forgen statusline install [--force]  # Register the statusline in ~/.claude/settings.json (absolute path, nvm-safe); --force replaces a custom one (backup kept)
 ```
 
 ### Knowledge management

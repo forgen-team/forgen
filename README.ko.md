@@ -87,6 +87,8 @@ npm install -g @wooojin/forgen
 forgen
 ```
 
+> **Node 22 이상 필요.** Node 20에서 `npm install -g @wooojin/forgen`을 하면 npm이 `engines`에 맞는 최신 버전을 고르기 때문에 조용히 0.4.8이 설치됩니다. 먼저 `node -v`를 확인하고, 설치 후 `forgen --version`으로 확인하세요.
+
 첫 실행을 감지하면 4문항 온보딩이 시작됩니다. 각 질문은 구체적인 시나리오입니다:
 
 ```
@@ -531,7 +533,8 @@ forgen rule enforce|advise <id> # 자동 강등된 규칙의 차단 복귀 / 기
 forgen status --blocks [N]      # 최근 실제 차단 + 영수증: 매칭 프래그먼트, 24h 전후 문맥, 판정(auto/user)
 forgen block <id> --ok | --fp   # 차단 판정 (자동 Haiku 판정을 덮어씀) — 규칙별 precision 에 반영
 forgen status --turn            # 이번 턴 관련 규칙과 각 규칙이 생긴 교정(날짜·종류·당신의 말)
-forgen statusline               # 2줄: 모델 · 경로(브랜치) · ctx % · 5h/7d 한도 + 소진 예측 · $ / 관련 규칙 · 차단 · surfaced
+forgen statusline               # 3줄: 모델 · 경로(브랜치) / ctx·5h·7d 바 + 소진 예측 · $ / forgen: 관련 규칙 · 차단 · surfaced
+forgen statusline install [--force]  # ~/.claude/settings.json 에 statusline 등록(절대 경로, nvm 안전); --force 는 커스텀 값을 교체(백업 보관)
 ```
 
 ### 지식 관리

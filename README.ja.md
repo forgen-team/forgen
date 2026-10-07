@@ -127,6 +127,8 @@ npm install -g @wooojin/forgen
 forgen
 ```
 
+> **Node 22 以上が必要。** Node 20 で `npm install -g @wooojin/forgen` を実行すると、npm が `engines` に合う最新版を選ぶため 0.4.8 が静かにインストールされます。先に `node -v` を確認し、インストール後に `forgen --version` を確認してください。
+
 初回実行を検出すると、4問のオンボーディングが始まります。各質問は具体的なシナリオです:
 
 ```
@@ -546,7 +548,8 @@ forgen rule enforce|advise <id> # 自動降格されたルールのブロック�
 forgen status --blocks [N]      # 最近の実ブロック + レシート: 一致フラグメント、24h 前後文脈、判定(auto/user)
 forgen block <id> --ok | --fp   # ブロックを判定 (自動 Haiku 判定を上書き) — ルール別 precision に反映
 forgen status --turn            # 今ターンに関連するルールと、各ルールが生まれた修正(日付・種類・あなたの発言)
-forgen statusline               # 2行: モデル · パス(ブランチ) · ctx % · 5h/7d 上限 + 枯渇予測 · $ / 関連ルール · ブロック · surfaced
+forgen statusline               # 3行: モデル · パス(ブランチ) / ctx·5h·7d バー + 枯渇予測 · $ / forgen: 関連ルール · ブロック · surfaced
+forgen statusline install [--force]  # ~/.claude/settings.json に statusline を登録(絶対パス, nvm セーフ); --force はカスタム値を置換(バックアップ保持)
 ```
 
 ### 知識管理
