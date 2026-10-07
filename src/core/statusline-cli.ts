@@ -22,7 +22,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { execSync } from 'node:child_process';
+import { execSync, spawn } from 'node:child_process';
 import { loadActiveRules } from '../store/rule-store.js';
 import { STATE_DIR } from './paths.js';
 import { computeStats } from './stats-cli.js';
@@ -261,31 +261,85 @@ function writeForgenLineCache(sessionId: string | undefined, line: string): void
  * @param opts.currentAlreadyAppended handleStatuslineWith 가 이번 샘플을 파일에 이미 append 했으면 true
  *        (중복 카운트 방지).
  */
-export function renderStatusline(payload: StdinPayload, nowMs: number = Date.now(), opts: { useForgenCache?: boolean; currentAlreadyAppended?: boolean } = {}): string[] {
+export function renderStatuslineParts(payload: StdinPayload, nowMs: number = Date.now(), opts: { useForgenCache?: boolean; currentAlreadyAppended?: boolean } = {}): { header: string; usage: string | null; forgen: string | null } {
   const cwd = payload.workspace?.current_dir ?? process.cwd();
   const current = samplesFromPayload(payload.rate_limits, nowMs);
   const history = readSamples(undefined, nowMs);
   const all = opts.currentAlreadyAppended ? history : [...history, ...current];
   const forecasts = forecastAll(all, nowMs, current);
   // 오너 요청(2026-10-07): 3줄 — 모델·경로 / 사용량 바 / forgen.
-  const lines = [buildHeaderLine(payload, cwd)];
+  const header = buildHeaderLine(payload, cwd);
   const usage = buildUsageLine(payload, forecasts, nowMs);
-  if (usage) lines.push(usage);
   let forgenLine = opts.useForgenCache ? readForgenLineCached(payload.session_id, nowMs) : null;
   if (forgenLine === null) {
     forgenLine = buildForgenLine(payload.session_id);
     if (forgenLine && opts.useForgenCache) writeForgenLineCache(payload.session_id, forgenLine);
   }
-  if (forgenLine) lines.push(forgenLine);
+  return { header, usage, forgen: forgenLine };
+}
+
+export function renderStatusline(payload: StdinPayload, nowMs: number = Date.now(), opts: { useForgenCache?: boolean; currentAlreadyAppended?: boolean } = {}): string[] {
+  const { header, usage, forgen } = renderStatuslineParts(payload, nowMs, opts);
+  const lines = [header];
+  if (usage) lines.push(usage);
+  if (forgen) lines.push(forgen);
   return lines;
 }
 
-export async function handleStatusline(): Promise<void> {
-  await handleStatuslineWith(await readStdinJson());
+export interface StatuslineChainOptions {
+  /** 먼저 실행해 출력을 앞에 붙일 다른 statusline 명령(`sh -c`). */
+  after?: string;
+  /** 'all' 이면 forgen 3줄 전부, 기본은 forgen 데이터 줄만. */
+  forgenLines?: 'forgen' | 'all';
+  timeoutMs?: number;
+}
+
+const CHAIN_TIMEOUT_MS = 1500;
+
+/** `--after <cmd>` / `--forgen-lines all` 파싱. 값 없는 `--after` 는 무시. */
+export function parseStatuslineArgs(args: string[]): StatuslineChainOptions {
+  const o: StatuslineChainOptions = {};
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === '--after' && args[i + 1] !== undefined) o.after = args[++i];
+    else if (a.startsWith('--after=')) o.after = a.slice('--after='.length);
+    else if (a === '--forgen-lines' && args[i + 1] !== undefined) o.forgenLines = args[++i] === 'all' ? 'all' : 'forgen';
+    else if (a.startsWith('--forgen-lines=')) o.forgenLines = a.slice('--forgen-lines='.length) === 'all' ? 'all' : 'forgen';
+  }
+  return o;
+}
+
+/**
+ * 하위 statusline 명령 실행 — 같은 페이로드 JSON 을 stdin 으로 주고 stdout 을 돌려준다.
+ * 타임아웃·비정상 종료·빈 출력이면 null(호출 측이 forgen 단독 출력으로 폴백). stderr 는 버린다.
+ */
+export function runChainedCommand(cmd: string, payload: StdinPayload, timeoutMs: number = CHAIN_TIMEOUT_MS): Promise<string | null> {
+  return new Promise((resolve) => {
+    let child: ReturnType<typeof spawn>;
+    try {
+      child = spawn('sh', ['-c', cmd], { stdio: ['pipe', 'pipe', 'ignore'], detached: true });
+    } catch { resolve(null); return; }
+    let out = '';
+    let done = false;
+    const finish = (v: string | null) => { if (done) return; done = true; clearTimeout(timer); resolve(v); };
+    const timer = setTimeout(() => {
+      try { if (child.pid) process.kill(-child.pid, 'SIGKILL'); } catch { try { child.kill('SIGKILL'); } catch { /* ignore */ } }
+      finish(null);
+    }, timeoutMs);
+    child.stdout?.on('data', (d: Buffer) => { out += d.toString(); });
+    child.on('error', () => finish(null));
+    child.on('close', (code) => finish(code === 0 && out.trim() ? out.replace(/\n+$/, '') : null));
+    child.stdin?.on('error', () => { /* 하위가 stdin 을 안 읽고 끝나도 무시 */ });
+    try { child.stdin?.end(JSON.stringify(payload)); } catch { /* ignore */ }
+  });
+}
+
+export async function handleStatusline(args: string[] = []): Promise<void> {
+  await handleStatuslineWith(await readStdinJson(), Date.now(), parseStatuslineArgs(args));
 }
 
 /** stdin 읽기를 분리한 본체 — 테스트는 페이로드를 직접 넣는다. */
-export async function handleStatuslineWith(payload: StdinPayload, nowMs: number = Date.now()): Promise<void> {
+export async function handleStatuslineWith(payload: StdinPayload, nowMs: number = Date.now(), chain: StatuslineChainOptions = {}): Promise<void> {
 
   // (1) 세션별 모델 캐시 — Stop/SubagentStop 가드의 per-model 프로필 조회용. 캐시 판정 앞.
   if (payload.session_id && payload.model?.id) {
@@ -303,6 +357,20 @@ export async function handleStatuslineWith(payload: StdinPayload, nowMs: number 
   }
 
   // (3) 렌더 — 1줄 매번, 2줄 15초 캐시
-  const lines = renderStatusline(payload, nowMs, { useForgenCache: true, currentAlreadyAppended: samples.length > 0 });
-  for (const line of lines) console.log(line);
+  const renderOpts = { useForgenCache: true, currentAlreadyAppended: samples.length > 0 };
+  if (chain.after) {
+    // 체인: 하위 출력을 먼저, forgen 은 데이터 줄만(1·2줄은 하위와 중복). 하위 실패 시 forgen 전체로 폴백.
+    const sub = await runChainedCommand(chain.after, payload, chain.timeoutMs);
+    if (sub !== null) {
+      console.log(sub);
+      if (chain.forgenLines === 'all') {
+        for (const line of renderStatusline(payload, nowMs, renderOpts)) console.log(line);
+      } else {
+        const { forgen } = renderStatuslineParts(payload, nowMs, renderOpts);
+        if (forgen) console.log(forgen);
+      }
+      return;
+    }
+  }
+  for (const line of renderStatusline(payload, nowMs, renderOpts)) console.log(line);
 }

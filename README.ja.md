@@ -549,7 +549,7 @@ forgen status --blocks [N]      # 最近の実ブロック + レシート: 一�
 forgen block <id> --ok | --fp   # ブロックを判定 (自動 Haiku 判定を上書き) — ルール別 precision に反映
 forgen status --turn            # 今ターンに関連するルールと、各ルールが生まれた修正(日付・種類・あなたの発言)
 forgen statusline               # 3行: モデル · パス(ブランチ) / ctx·5h·7d バー + 枯渇予測 · $ / forgen: 関連ルール · ブロック · surfaced
-forgen statusline install [--force]  # ~/.claude/settings.json に statusline を登録(絶対パス, nvm セーフ); --force はカスタム値を置換(バックアップ保持)
+forgen statusline install [--force|--chain]  # ~/.claude/settings.json に statusline を登録(絶対パス, nvm セーフ); --force はカスタム値を置換(バックアップ保持); --chain は既存を残したまま forgen の行だけを後ろに追加
 ```
 
 ### 知識管理

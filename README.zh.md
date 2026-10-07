@@ -518,7 +518,7 @@ forgen status --blocks [N]      # 最近真实拦截 + 回执: 匹配片段、24
 forgen block <id> --ok | --fp   # 判定一次拦截 (覆盖自动 Haiku 判定) — 计入规则级 precision
 forgen status --turn            # 本轮相关规则，以及每条规则来源的纠正(日期·类型·你的原话)
 forgen statusline               # 3 行: 模型 · 路径(分支) / ctx·5h·7d 条形 + 耗尽预测 · $ / forgen: 相关规则 · 拦截 · surfaced
-forgen statusline install [--force]  # 在 ~/.claude/settings.json 注册 statusline(绝对路径, nvm 安全); --force 替换自定义值(保留备份)
+forgen statusline install [--force|--chain]  # 在 ~/.claude/settings.json 注册 statusline(绝对路径, nvm 安全); --chain 保留现有 statusline 并在其后追加 forgen 行
 ```
 
 ### 知识管理
