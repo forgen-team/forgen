@@ -719,6 +719,7 @@ forgen rule activate <id>       # Re-activate a suppressed rule
 forgen rule scan [--apply]      # Run lifecycle triggers (promote/demote/retire)
 forgen rule health-scan         # Scan drift → Mech downgrade candidates
 forgen rule classify            # Propose enforce_via for legacy rules
+forgen rule classify --stop-only  # Re-bake only Stop-rule triggers (dry-run; --apply to save)
 forgen rule merge-mined [--apply]  # Merge mined (auto:) rules among themselves; link same-concept ones to explicit rules (dry-run by default)
 forgen rule unmerge <id>        # Restore originals of a merged/linked rule
 forgen rule enforce|advise <id> # Restore blocking for an auto-demoted rule / record-only mode (hard rules refused)

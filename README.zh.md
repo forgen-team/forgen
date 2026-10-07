@@ -506,6 +506,7 @@ forgen rule activate <id>       # 重新激活 suppressed 规则
 forgen rule scan [--apply]      # 运行生命周期触发器 (晋升/降级/退役)
 forgen rule health-scan         # 扫描 drift → Mech 降级候选
 forgen rule classify            # 为旧规则自动提议 enforce_via
+forgen rule classify --stop-only  # 仅重新生成 Stop 规则的触发条件 (默认预览，--apply 保存)
 forgen rule merge-mined [--apply]  # 挖掘(auto:)规则之间合并，与同概念 explicit 规则仅建立链接 (默认 dry-run)
 forgen rule unmerge <id>        # 恢复已合并/链接规则的原件
 forgen rule enforce|advise <id> # 恢复自动降级规则的拦截 / 仅记录模式 (hard 规则拒绝)

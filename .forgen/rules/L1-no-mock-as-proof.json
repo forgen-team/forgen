@@ -18,12 +18,12 @@
       "verifier": {
         "kind": "self_check_prompt",
         "params": {
-          "question": "직전 응답에서 mock/stub/fake 기반으로 검증 완료를 주장했는가? forgen L1 규칙은 실제 실행 증거 없는 완료 선언을 금지한다. mock 에 의존했다면 명시적으로 인정하고 live 실행으로 재검증하라."
+          "question": "직전 응답이 다음 규칙을 위반했는지 자가점검하라: \"mock/stub/fake 기반 검증으로 완료 선언 금지. 실제 실행 기반 증거만 유효 (프로덕션 코드 맥락 한정, 테스트 파일 내 vi.mock 은 제외).\". 위반 시 구체적 근거와 함께 수정해 재응답하라."
         }
       },
-      "trigger_keywords_regex": "(mock|stub|fake)",
-      "trigger_exclude_regex": "(테스트|test|vi\\.mock|jest\\.mock|spec\\.|tests/)",
-      "system_tag": "rule:L1-no-mock-as-proof"
+      "trigger_keywords_regex": "((mock|stub|fake|목\\s?객체|스텁)[^.!?\\n]{0,40}(검증|통과|확인했|확인됐|테스트\\s?(했|됐|완료)|verified|passed|green)|(검증|통과|verified|passed)[^.!?\\n]{0,40}(mock|stub|fake|목\\s?객체|스텁))",
+      "trigger_exclude_regex": "(테스트|test|vi\\.mock|jest\\.mock|spec\\.|해소|제거|걷어|대체|교체|대신|라이브|live|실제\\s?(실행|데이터|환경)|실\\s?(데이터|영상|환경)|아니|않|없이|없습니다|금지|룰|규칙|instead|real\\s)",
+      "system_tag": "rule:L1-no-mo — completion-self-check"
     }
   ]
 }
