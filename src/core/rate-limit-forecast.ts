@@ -193,7 +193,13 @@ export function forecastWindow(w: WindowKey, samples: Sample[], nowMs: number, c
   }
   if (!current) return null;
   if (current.resets_at !== null && current.resets_at * 1000 < nowMs) return null;
-  const tail = currentWindowTail([...samples.filter((s) => s.t !== current.t), current]);
+  // 실사용 관측(2026-10-07): 여러 세션·계정의 샘플이 섞여 들어온다(예: 7월 창 정보를 가진 오래된 세션). 시간순으로
+  // resets_at 변화마다 끊으면 섞인 샘플 하나가 창을 계속 리셋해 예측이 거의 안 뜬다 → **현재 창(resets_at 동일)
+  // 샘플만** 골라 그 안에서 하락 지점만 경계로 본다.
+  const sameWindow = current.resets_at === null
+    ? samples.filter((s) => s.resets_at === null)
+    : samples.filter((s) => s.resets_at === current.resets_at);
+  const tail = currentWindowTail([...sameWindow.filter((s) => s.t !== current.t), current]);
   const last = current;
   const resetsAt = last.resets_at !== null ? last.resets_at * 1000 : null;
   const base: Forecast = {
