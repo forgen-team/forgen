@@ -70,6 +70,10 @@ export interface SolutionMatch {
   identifiers: string[];
   matchedTags: string[];
   matchedIdentifiers: string[];
+  /** 맥락 토큰(cwd/최근 편집 파일)으로만 겹친 태그 — 순위 가산에만, 게이트·단독 주입 불가. */
+  contextMatchedTags?: string[];
+  /** relevance 에 포함된 맥락 가산분 (게이트 비교에서 제외). */
+  contextBonus?: number;
 }
 
 /** Internal loaded solution with scope from directory config */
@@ -97,7 +101,12 @@ function applyCandidateExplorationBonus(entries: LoadedSolution[]): LoadedSoluti
 
 // ── Public API ──
 
-export function matchSolutions(prompt: string, scope: ScopeInfo, cwd: string): SolutionMatch[] {
+export function matchSolutions(
+  prompt: string,
+  scope: ScopeInfo,
+  cwd: string,
+  contextTokens: readonly string[] = [],
+): SolutionMatch[] {
   const dirs: SolutionDirConfig[] = [{ dir: ME_SOLUTIONS, scope: 'me' }];
   if (scope.team) {
     dirs.push({ dir: path.join(PACKS_DIR, scope.team.name, 'solutions'), scope: 'team' });
@@ -114,7 +123,7 @@ export function matchSolutions(prompt: string, scope: ScopeInfo, cwd: string): S
 
   const tunedWeights = loadTunedMatcherWeights();
 
-  const ranked = rankCandidates(promptTags, promptLower, allSolutions, tunedWeights);
+  const ranked = rankCandidates(promptTags, promptLower, allSolutions, tunedWeights, contextTokens);
 
   // ADR-010 W3-1 (F2): 저 ROI 강등 — ranking-pipeline 은 순수 유지, 여기서
   // 후처리. surfaced≫acted_on 솔루션은 ×0.5, 2윈도 연속이면 주입 제외.
@@ -131,6 +140,8 @@ export function matchSolutions(prompt: string, scope: ScopeInfo, cwd: string): S
     identifiers: c.solution.identifiers,
     matchedTags: [...c.matchedTags, ...c.matchedIdentifiers],
     matchedIdentifiers: c.matchedIdentifiers,
+    contextMatchedTags: c.contextMatchedTags,
+    contextBonus: c.contextBonus,
   }));
 
   try {

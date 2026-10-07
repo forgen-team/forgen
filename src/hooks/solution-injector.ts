@@ -37,6 +37,7 @@ import { appendImplicitFeedback } from '../store/implicit-feedback-store.js';
 import { emitSolutionEvent, querySurfacedWithin } from '../core/observability-store.js';
 import { parseSolutionV3 } from '../engine/solution-format.js';
 import { ME_SOLUTIONS } from '../core/paths.js';
+import { buildContextTokens } from '../engine/context-signals.js';
 
 interface HookInput {
   prompt: string;
@@ -515,7 +516,8 @@ async function main(): Promise<void> {
   // allMatched는 backfill 용도로 보존: 이미 injected된 entry라도 같은 솔루션이
   // 다시 매칭되면 그 정보로 cache의 missing tags를 채울 수 있다.
   // matches는 새 주입 후보 (이미 injected는 제외).
-  const allMatched = matchSolutions(input.prompt, scope, cwd);
+  const contextTokens = buildContextTokens(cwd, input.session_id);
+  const allMatched = matchSolutions(input.prompt, scope, cwd, contextTokens);
   // Observability P1: matched emit — top-5 후보 각각 기록
   try {
     for (const candidate of allMatched.slice(0, 5)) {
@@ -609,9 +611,12 @@ async function main(): Promise<void> {
   const toInject: typeof matches = [];
   for (const sol of matches) {
     if (injected.has(sol.name)) continue;
-    if (sol.relevance < minRelevanceFor(sol.name)) continue;
+    // 맥락 가산은 순위에만 — relevance 하한 게이트는 가산 전 값으로 비교한다(맥락만으로 게이트 통과 금지).
+    if (sol.relevance - (sol.contextBonus ?? 0) < minRelevanceFor(sol.name)) continue;
     const idMatches = sol.matchedIdentifiers?.length ?? 0;
     const tagMatches = Math.max(0, sol.matchedTags.length - idMatches);
+    // 맥락 토큰(cwd/최근 편집 파일)은 relevance 가산에만 쓰고 이 게이트의 태그 수에는 넣지 않는다.
+    // 실측(S16): 범용 프롬프트 토큰 1개 + 맥락 3개를 0.5 가중으로 합산하면 무관한 솔루션이 통과했다.
     if (idMatches < 1 && tagMatches < 2) continue;
     if (sol.status === 'experiment') {
       if (experimentCount >= 1) continue;

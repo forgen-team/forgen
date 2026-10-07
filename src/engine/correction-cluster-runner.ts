@@ -28,6 +28,7 @@ import {
   clusterKey,
   findMostSimilarRule,
   isSuppressedCluster,
+  mergeAcrossCategories,
 } from './correction-clustering.js';
 
 const log = createLogger('correction-cluster');
@@ -307,7 +308,7 @@ export interface MinedExplicitLink {
 }
 
 export interface MinedClusterPlan {
-  category: string;
+  category: Rule['category'];
   /** 통합 대상 원본(기존 통합 룰이 있으면 그 룰은 absorberId 로 분리되고 여기엔 신규만). */
   memberIds: string[];
   memberPolicies: string[];
@@ -333,11 +334,31 @@ export interface MinedMergeApplyResult {
   supersededIds: string[];
 }
 
+/** 멤버 다수결 category — 동수면 관측(evidence) 합이 큰 쪽, 그래도 같으면 먼저 나온 쪽. */
+function majorityCategory(members: Rule[]): Rule['category'] {
+  const tally = new Map<Rule['category'], { count: number; obs: number }>();
+  for (const m of members) {
+    const t = tally.get(m.category) ?? { count: 0, obs: 0 };
+    t.count++;
+    t.obs += minedObservationCount(m);
+    tally.set(m.category, t);
+  }
+  let best = members[0].category;
+  let bt = tally.get(best) as { count: number; obs: number };
+  for (const [cat, t] of tally) {
+    if (t.count > bt.count || (t.count === bt.count && t.obs > bt.obs)) {
+      best = cat;
+      bt = t;
+    }
+  }
+  return best;
+}
+
 /**
  * 병합 계획(읽기 전용). 순서: (1) explicit 동개념 링크 → (2) 남은 채굴 룰끼리 클러스터.
- * explicit 매칭은 1:1 최고점(category 무시), 채굴끼리는 기존 clusterCorrectionRules
+ * explicit 매칭은 1:1 최고점(category 무시). 채굴끼리는 2단: 1차 clusterCorrectionRules
  * (category 경계 유지 — 전이 연결이 category 를 넘으면 무관한 개념까지 한 덩어리가 된다는
- * 실측에 근거).
+ * 실측에 근거) → 2차 mergeAcrossCategories(더 높은 임계 + 대표 policy 직접 유사도만 사용).
  */
 export function planMinedRuleMerge(): MinedMergePlan {
   const all = loadAllRules();
@@ -367,20 +388,39 @@ export function planMinedRuleMerge(): MinedMergePlan {
   }
 
   const remaining = mined.filter((r) => !linkedIds.has(r.rule_id));
+  const byId = new Map(remaining.map((r) => [r.rule_id, r]));
+
+  // 1차: category 내 클러스터. 2차: 1차 결과 + 잔여 단독 룰을 category 무관하게 대표 유사도로 병합.
+  const primary = clusterCorrectionRules(remaining.map(toClusterable), suppressed);
+  const inPrimary = new Set(primary.flatMap((c) => c.members.map((m) => m.rule_id)));
+  const units: Rule[][] = primary.map((c) =>
+    c.members.map((m) => byId.get(m.rule_id)).filter((r): r is Rule => Boolean(r)),
+  );
+  for (const r of remaining) {
+    if (inPrimary.has(r.rule_id) || r.strength === 'hard' || (r.policy?.length ?? 0) < 10) continue;
+    units.push([r]);
+  }
+  const groups = mergeAcrossCategories(units, suppressed);
+
   const clusters: MinedClusterPlan[] = [];
-  for (const cluster of clusterCorrectionRules(remaining.map(toClusterable), suppressed)) {
-    const memberRules = cluster.members
-      .map((m) => remaining.find((r) => r.rule_id === m.rule_id))
-      .filter((r): r is Rule => Boolean(r));
+  for (const memberRules of groups) {
     if (memberRules.length < 2) continue;
-    const absorber = memberRules.find(isClusterMergedRule);
-    const fresh = absorber ? memberRules.filter((r) => r.rule_id !== absorber.rule_id) : memberRules;
+    // 기존 통합 룰이 여럿이면 관측이 가장 많은 것이 흡수자, 나머지는 신규 멤버로 흡수된다
+    // (2단 트리: 원본→옛 통합 룰→흡수자. unmerge 시 옛 통합 룰이 그대로 복원된다).
+    const absorber = memberRules
+      .filter(isClusterMergedRule)
+      .sort((a, b) => minedObservationCount(b) - minedObservationCount(a))[0];
+    const fresh = absorber
+      ? memberRules.filter((r) => r.rule_id !== absorber.rule_id)
+      : memberRules;
     if (fresh.length === 0) continue;
     clusters.push({
-      category: memberRules[0].category,
+      category: majorityCategory(memberRules),
       memberIds: fresh.map((r) => r.rule_id),
       memberPolicies: fresh.map((r) => r.policy),
-      representativePolicy: cluster.representativePolicy,
+      representativePolicy: memberRules
+        .map((r) => r.policy)
+        .reduce((a, b) => (b.length > a.length ? b : a)),
       oldestCreatedAt: memberRules
         .map((r) => r.created_at)
         .reduce((a, b) => (Date.parse(b) < Date.parse(a) ? b : a)),
@@ -459,6 +499,7 @@ async function applyMinedRuleMergePlan(plan: MinedMergePlan): Promise<MinedMerge
       absorber.status = 'active';
       absorber.clustered_into = undefined;
       absorber.policy = cluster.representativePolicy;
+      absorber.category = cluster.category;
       absorber.strength = 'default';
       absorber.evidence_refs = evidenceRefs;
       absorber.created_at = oldestCreatedAt;
@@ -467,7 +508,7 @@ async function applyMinedRuleMergePlan(plan: MinedMergePlan): Promise<MinedMerge
       mergedId = absorber.rule_id;
     } else {
       const merged = createRule({
-        category: fresh[0].category,
+        category: cluster.category,
         scope: 'me',
         trigger: fresh[0].trigger,
         policy: cluster.representativePolicy,

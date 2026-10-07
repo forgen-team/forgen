@@ -731,7 +731,7 @@ forgen status --blocks [N]      # Recent real blocks with receipt: matched fragm
 forgen block <id> --ok | --fp   # Judge a block (overrides the automatic Haiku verdict); feeds per-rule precision
 forgen status --turn            # Rules relevant to the current turn, each with the correction (date/kind/your words) it came from
 forgen statusline               # 3 lines: model · path(branch) / ctx·5h·7d bars + exhaustion forecast · $ / forgen: related rules · blocks · surfaced
-forgen statusline install [--force]  # Register the statusline in ~/.claude/settings.json (absolute path, nvm-safe); --force replaces a custom one (backup kept)
+forgen statusline install [--force|--chain]  # Register the statusline in ~/.claude/settings.json (absolute path, nvm-safe); --force replaces a custom one (backup kept); --chain keeps it and appends forgen's line after it
 ```
 
 ### Knowledge management

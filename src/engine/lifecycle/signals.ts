@@ -33,6 +33,9 @@ export function redactForReceipt(text: string): string {
   return t;
 }
 import type { RuleSignals, ViolationEntry, BypassEntry, VerdictEntry, CheckEntry } from './types.js';
+import { listRotated, logFilesWithin, readJsonlSafe, readJsonlWindow, ROTATED_KEEP_MAX, ROTATED_KEEP_DAYS } from './rotated-logs.js';
+export { listRotated, logFilesWithin, readJsonlSafe, readJsonlWindow, ROTATED_KEEP_MAX, ROTATED_KEEP_DAYS };
+export type { RotatedFile } from './rotated-logs.js';
 import { STATE_DIR as FORGEN_STATE_DIR } from '../../core/paths.js';
 
 const ENFORCEMENT_DIR = path.join(FORGEN_STATE_DIR, 'enforcement');
@@ -61,22 +64,6 @@ export function rotateIfBig(p: string): void {
   } catch { /* missing → no rotate */ }
 }
 
-export function readJsonlSafe<T>(p: string): T[] {
-  if (!fs.existsSync(p)) return [];
-  try {
-    return fs.readFileSync(p, 'utf-8')
-      .trim()
-      .split('\n')
-      .filter(Boolean)
-      .map((line) => {
-        try { return JSON.parse(line) as T; } catch { return null; }
-      })
-      .filter((e): e is T => e !== null);
-  } catch {
-    return [];
-  }
-}
-
 /**
  * ADR-017 §2 원칙 2: 훅이 session_id 없이 호출되면 'default'/'unknown' 폴백이 기록된다.
  * 실세션(Claude·Codex 모두 session_id 전달)에서는 나오지 않으며, 실측상 전부 테스트가
@@ -84,8 +71,25 @@ export function readJsonlSafe<T>(p: string): T[] {
  */
 export const SYNTHETIC_SESSION_IDS: ReadonlySet<string> = new Set(['default', 'unknown', '']);
 
+/**
+ * 실 Claude Code(session_id) · Codex(thread id)는 전부 UUID 형식이다. eval/probe 하네스가 쓰는
+ * 'forgen-eval-<ts>-<rand>', 'repro-*', 'enforce-test' 등 임의 문자열은 UUID 가 아니므로 합성으로 본다.
+ * (실 ~/.forgen 데이터 검증: 비-default 세션 중 UUID 는 실세션 전부, 비-UUID 는 하네스 41건뿐.)
+ */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export function isSyntheticSession(sessionId: unknown): boolean {
-  return typeof sessionId !== 'string' || SYNTHETIC_SESSION_IDS.has(sessionId);
+  return typeof sessionId !== 'string' || SYNTHETIC_SESSION_IDS.has(sessionId) || !UUID_RE.test(sessionId);
+}
+
+/** FORGEN_SYNTHETIC=1 (eval/probe 러너가 설정) 이면 기록에 synthetic:true 를 붙인다. */
+export function syntheticStamp(): { synthetic?: true } {
+  return process.env.FORGEN_SYNTHETIC === '1' ? { synthetic: true } : {};
+}
+
+/** 엔트리 단위 합성 판정: 명시적 synthetic 플래그 또는 합성 세션 id. */
+export function isSyntheticEntry(e: { synthetic?: unknown; session_id?: unknown }): boolean {
+  return e.synthetic === true || isSyntheticSession(e.session_id);
 }
 
 /** 사용자 관점의 "차단": block/deny (+legacy undefined). correction/bypass_confirmed 는 아님. */
@@ -94,12 +98,12 @@ export function isBlockKind(kind: unknown): boolean {
 }
 
 /** 실세션에서 일어난 실제 차단만. stats/explain/lifecycle 이 공유하는 단일 기준. */
-export function isRealBlock(e: { kind?: unknown; session_id?: unknown }): boolean {
-  return isBlockKind(e.kind) && !isSyntheticSession(e.session_id);
+export function isRealBlock(e: { kind?: unknown; session_id?: unknown; synthetic?: unknown }): boolean {
+  return isBlockKind(e.kind) && !isSyntheticEntry(e);
 }
 
-export function isConfirmedBypass(e: { kind?: unknown; session_id?: unknown }): boolean {
-  return e.kind === 'bypass_confirmed' && !isSyntheticSession(e.session_id);
+export function isConfirmedBypass(e: { kind?: unknown; session_id?: unknown; synthetic?: unknown }): boolean {
+  return e.kind === 'bypass_confirmed' && !isSyntheticEntry(e);
 }
 
 const RECEIPTS_DIR = path.join(ENFORCEMENT_DIR, 'receipts');
@@ -138,7 +142,7 @@ export function recordViolation(entry: Omit<ViolationEntry, 'at'>, opts: RecordV
     fs.mkdirSync(ENFORCEMENT_DIR, { recursive: true });
     rotateIfBig(VIOLATIONS_PATH);
     const violation_id = entry.violation_id ?? crypto.randomUUID();
-    const full: ViolationEntry = { at: new Date().toISOString(), violation_id, ...entry };
+    const full: ViolationEntry = { at: new Date().toISOString(), violation_id, ...entry, ...syntheticStamp() };
     // 로그에 남는 프래그먼트/미리보기도 secret 마스킹 — 영수증만 가리고 로그에 키가 남으면 의미 없다.
     if (typeof full.matched === 'string') full.matched = redactForReceipt(full.matched);
     if (typeof full.message_preview === 'string') full.message_preview = redactForReceipt(full.message_preview);
@@ -162,6 +166,11 @@ export function recordViolation(entry: Omit<ViolationEntry, 'at'>, opts: RecordV
   }
 }
 
+/** 위반 로그(현재 + 창 안 회전본). 기본 30일 = collectSignals 창. */
+export function readViolationsWindow(days: number = VIOLATION_WINDOW_DAYS, now: number = Date.now()): ViolationEntry[] {
+  return readJsonlWindow<ViolationEntry>(VIOLATIONS_PATH, days, now);
+}
+
 export function readReceipt(violationId: string): string | null {
   if (!/^[A-Za-z0-9-]+$/.test(violationId)) return null;
   try { return fs.readFileSync(path.join(RECEIPTS_DIR, `${violationId}.txt`), 'utf-8'); } catch { return null; }
@@ -172,12 +181,13 @@ export function setVerdict(entry: Omit<VerdictEntry, 'at'>): void {
   try {
     fs.mkdirSync(ENFORCEMENT_DIR, { recursive: true });
     rotateIfBig(VERDICTS_PATH);
-    fs.appendFileSync(VERDICTS_PATH, `${JSON.stringify({ at: new Date().toISOString(), ...entry })}\n`);
+    fs.appendFileSync(VERDICTS_PATH, `${JSON.stringify({ at: new Date().toISOString(), ...entry, ...syntheticStamp() })}\n`);
   } catch { /* best-effort */ }
 }
 
+/** 판정은 위반 이후에 기록되므로 30일 창(위반 조회 최대 창)이면 충분하다. */
 export function readVerdicts(): VerdictEntry[] {
-  return readJsonlSafe<VerdictEntry>(VERDICTS_PATH);
+  return readJsonlWindow<VerdictEntry>(VERDICTS_PATH, VIOLATION_WINDOW_DAYS);
 }
 
 /** violation_id → 유효 판정 (user 가 있으면 user, 없으면 마지막 auto). */
@@ -229,7 +239,7 @@ export function recordCheck(entry: Omit<CheckEntry, 'at'>): void {
   try {
     fs.mkdirSync(ENFORCEMENT_DIR, { recursive: true });
     rotateIfBig(CHECKS_PATH);
-    fs.appendFileSync(CHECKS_PATH, `${JSON.stringify({ at: new Date().toISOString(), ...entry })}\n`);
+    fs.appendFileSync(CHECKS_PATH, `${JSON.stringify({ at: new Date().toISOString(), ...entry, ...syntheticStamp() })}\n`);
     // 7일 TTL — 통과 기록은 턴마다 쌓이므로 1/50 확률로 압축(rotateIfBig 10MB 에 닿지 않게).
     if (Math.random() < 0.02) pruneChecks();
   } catch { /* best-effort */ }
@@ -243,7 +253,7 @@ export function pruneChecks(now: number = Date.now()): void {
 }
 
 export function readChecks(): CheckEntry[] {
-  return readJsonlSafe<CheckEntry>(CHECKS_PATH);
+  return readJsonlWindow<CheckEntry>(CHECKS_PATH, CHECKS_TTL_MS / (24 * 3600 * 1000)).filter((c) => !isSyntheticEntry(c));
 }
 
 /** 정규식 매칭 프래그먼트 추출 — 영수증 `matched` 필드용. */
@@ -263,7 +273,7 @@ export function recordBypass(entry: Omit<BypassEntry, 'at'>): void {
   try {
     fs.mkdirSync(ENFORCEMENT_DIR, { recursive: true });
     rotateIfBig(BYPASS_PATH);
-    const full: BypassEntry = { at: new Date().toISOString(), ...entry };
+    const full: BypassEntry = { at: new Date().toISOString(), ...entry, ...syntheticStamp() };
     fs.appendFileSync(BYPASS_PATH, `${JSON.stringify(full)}\n`);
   } catch (e) {
     if (process.env.FORGEN_DEBUG_SIGNALS === '1') {
@@ -280,7 +290,7 @@ export interface SignalInputs {
 
 export function collectSignals(rule: Rule, inputs: SignalInputs = {}): RuleSignals {
   const now = inputs.now ?? Date.now();
-  const allViolations = inputs.violations ?? readJsonlSafe<ViolationEntry>(VIOLATIONS_PATH);
+  const allViolations = inputs.violations ?? readViolationsWindow(VIOLATION_WINDOW_DAYS, now);
   // ADR-017 D1/D2: T2 는 실제 차단만 센다 — 이전엔 kind 필터가 없어 메타가드 advise(correction)
   // 와 테스트 유래(default 세션) 기록이 위반으로 집계돼 flag 를 조기 발화시켰다.
   const violations = allViolations.filter(isRealBlock);
@@ -339,6 +349,28 @@ export function collectSignals(rule: Rule, inputs: SignalInputs = {}): RuleSigna
     violations_rolling_n: violationsRolling,
     last_updated_days_ago: lastUpdatedDays,
   };
+}
+
+/**
+ * 룰별 위반/우회 카운터를 로그에서 재계산 (lifecycle-scan --apply 가 룰 JSON 에 저장).
+ * 원천은 항상 로그다 — 룰 JSON 의 violation_count/bypass_count 는 이 값의 캐시일 뿐이며
+ * 보존된 로그 범위(회전본 포함) 안의 합계다. 훅 경로에서는 갱신하지 않는다.
+ */
+export function deriveRuleCounters(violations: ViolationEntry[]): Map<string, { violation_count: number; bypass_count: number; last_violation_at?: string }> {
+  const m = new Map<string, { violation_count: number; bypass_count: number; last_violation_at?: string }>();
+  for (const v of violations) {
+    const real = isRealBlock(v);
+    if (!real && !isConfirmedBypass(v)) continue;
+    const c = m.get(v.rule_id) ?? { violation_count: 0, bypass_count: 0 };
+    if (real) {
+      c.violation_count++;
+      if (!c.last_violation_at || v.at > c.last_violation_at) c.last_violation_at = v.at;
+    } else {
+      c.bypass_count++;
+    }
+    m.set(v.rule_id, c);
+  }
+  return m;
 }
 
 export function collectAllSignals(rules: Rule[], inputs: SignalInputs = {}): Map<string, RuleSignals> {

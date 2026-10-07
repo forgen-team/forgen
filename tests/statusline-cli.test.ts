@@ -41,7 +41,7 @@ const NOW = Date.parse('2026-10-06T12:00:00Z');
 const reset = Math.floor((NOW + 2 * 3600_000) / 1000);
 
 const fullPayload = {
-  session_id: 'sess-A',
+  session_id: '00000000-0000-4000-8000-0000000000b1',
   model: { id: 'claude-fable-5-1', display_name: 'Fable' },
   workspace: { current_dir: `${TEST_HOME}/workspace/forgen` },
   context_window: { context_window_size: 1_000_000, used_percentage: 42, remaining_percentage: 58 },
@@ -123,9 +123,9 @@ describe('statusline 2줄 렌더', () => {
   it('이 세션 차단 수는 실세션·실차단만 (default 세션·correction 제외)', () => {
     const v = path.join(STATE_DIR, 'enforcement', 'violations.jsonl');
     fs.writeFileSync(v, [
-      { at: new Date(NOW).toISOString(), rule_id: 'r1', session_id: 'sess-A', kind: 'block' },
-      { at: new Date(NOW).toISOString(), rule_id: 'r1', session_id: 'sess-A', kind: 'correction' },
-      { at: new Date(NOW).toISOString(), rule_id: 'r1', session_id: 'sess-B', kind: 'block' },
+      { at: new Date(NOW).toISOString(), rule_id: 'r1', session_id: '00000000-0000-4000-8000-0000000000b1', kind: 'block' },
+      { at: new Date(NOW).toISOString(), rule_id: 'r1', session_id: '00000000-0000-4000-8000-0000000000b1', kind: 'correction' },
+      { at: new Date(NOW).toISOString(), rule_id: 'r1', session_id: '00000000-0000-4000-8000-0000000000b2', kind: 'block' },
       { at: new Date(NOW).toISOString(), rule_id: 'r1', session_id: 'default', kind: 'deny' },
     ].map((e) => JSON.stringify(e)).join('\n') + '\n');
     const line = strip(renderStatusline(fullPayload, NOW)[2]);
@@ -134,28 +134,28 @@ describe('statusline 2줄 렌더', () => {
 
   it('ADR-017 D2: 같은 세션의 turn-rules 파일이 있으면 "관련 룰 N", 다른 세션 것·손상 파일이면 "룰 8" 유지', () => {
     const turn = (sid: string, rules: unknown) => fs.writeFileSync(path.join(STATE_DIR, `turn-rules-${sid}.json`), JSON.stringify({ at: new Date(NOW).toISOString(), session_id: sid, prompt_hash: 'abcdef0123456789', rules }));
-    turn('sess-B', [{ rule_id: 'r1', score: 1, matchedTerms: ['x'] }]);
+    turn('00000000-0000-4000-8000-0000000000b2', [{ rule_id: 'r1', score: 1, matchedTerms: ['x'] }]);
     expect(strip(renderStatusline(fullPayload, NOW)[2])).toMatch(/^forgen │ 룰 8 │ /);
-    turn('sess-A', [{ rule_id: 'r1', score: 1, matchedTerms: ['한국어'] }, { rule_id: 'r2', score: 1.5, matchedTerms: ['병렬', '에이전트'] }]);
+    turn('00000000-0000-4000-8000-0000000000b1', [{ rule_id: 'r1', score: 1, matchedTerms: ['한국어'] }, { rule_id: 'r2', score: 1.5, matchedTerms: ['병렬', '에이전트'] }]);
     expect(strip(renderStatusline(fullPayload, NOW)[2])).toMatch(/^forgen │ 관련 룰 2 │ 차단 0 \(7d 0\) │ surfaced 0$/);
-    turn('sess-A', []);
+    turn('00000000-0000-4000-8000-0000000000b1', []);
     expect(strip(renderStatusline(fullPayload, NOW)[2])).toMatch(/^forgen │ 관련 룰 0 │ /);
-    fs.writeFileSync(path.join(STATE_DIR, 'turn-rules-sess-A.json'), '{broken');
+    fs.writeFileSync(path.join(STATE_DIR, 'turn-rules-00000000-0000-4000-8000-0000000000b1.json'), '{broken');
     expect(strip(renderStatusline(fullPayload, NOW)[2])).toMatch(/^forgen │ 룰 8 │ /);
   });
 
   it('2줄 캐시는 세션별 파일, 15초 TTL 만료 후 재계산 (1줄은 매번 렌더)', () => {
-    expect(cachePathFor('sess-A')).not.toBe(cachePathFor('sess-B'));
+    expect(cachePathFor('00000000-0000-4000-8000-0000000000b1')).not.toBe(cachePathFor('00000000-0000-4000-8000-0000000000b2'));
     expect(cachePathFor('a/b')).toMatch(/statusline-cache-a_b\.txt$/);
     const first = renderStatusline(fullPayload, NOW, { useForgenCache: true });
-    expect(fs.existsSync(cachePathFor('sess-A'))).toBe(true);
+    expect(fs.existsSync(cachePathFor('00000000-0000-4000-8000-0000000000b1'))).toBe(true);
     // 캐시 내용을 바꿔치기 → 히트면 바뀐 값, 만료면 재계산
-    fs.writeFileSync(cachePathFor('sess-A'), 'CACHED LINE\n');
+    fs.writeFileSync(cachePathFor('00000000-0000-4000-8000-0000000000b1'), 'CACHED LINE\n');
     const fresh = NOW / 1000; // 테스트 NOW 는 고정 시각이므로 mtime 을 그에 맞춘다
-    fs.utimesSync(cachePathFor('sess-A'), fresh, fresh);
+    fs.utimesSync(cachePathFor('00000000-0000-4000-8000-0000000000b1'), fresh, fresh);
     expect(renderStatusline({ ...fullPayload, context_window: { used_percentage: 43 } }, NOW, { useForgenCache: true })[2]).toBe('CACHED LINE');
     const stale = (NOW - 20_000) / 1000;
-    fs.utimesSync(cachePathFor('sess-A'), stale, stale);
+    fs.utimesSync(cachePathFor('00000000-0000-4000-8000-0000000000b1'), stale, stale);
     expect(strip(renderStatusline(fullPayload, NOW, { useForgenCache: true })[2])).toBe(strip(first[2]));
     expect(renderStatusline(fullPayload, NOW)[2]).not.toBe('CACHED LINE'); // 캐시 옵션 없으면 사용 안 함
   });
@@ -175,7 +175,7 @@ describe('statusline 2줄 렌더', () => {
     }
     expect(out).toHaveLength(3);
     expect(strip(out[1])).toMatch(/ctx ▓+░* 42%\/1M/);
-    expect(fs.existsSync(cachePathFor('sess-A'))).toBe(true);
+    expect(fs.existsSync(cachePathFor('00000000-0000-4000-8000-0000000000b1'))).toBe(true);
     // 샘플은 호출마다 기록 — 5h + 7d × 2회
     expect(fs.readFileSync(SAMPLES_PATH, 'utf-8').trim().split('\n')).toHaveLength(4);
   });
@@ -198,6 +198,6 @@ describe('statusline 2줄 렌더', () => {
   it('FORGEN_HOME 격리에서 모델 캐시가 실 홈이 아니라 STATE_DIR 에 쓰인다 (critic r2 ⑧)', async () => {
     const orig = console.log; console.log = () => {};
     try { await handleStatuslineWith(fullPayload, NOW); } finally { console.log = orig; }
-    expect(fs.existsSync(path.join(STATE_DIR, 'current-model-sess-A.json'))).toBe(true);
+    expect(fs.existsSync(path.join(STATE_DIR, 'current-model-00000000-0000-4000-8000-0000000000b1.json'))).toBe(true);
   });
 });

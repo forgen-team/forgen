@@ -157,6 +157,8 @@ export interface MatchEvalLogRecord {
   }>;
   rankedTopN: string[];
   ts: string;
+  /** FORGEN_SYNTHETIC=1 하네스 기록 — 집계 제외. */
+  synthetic?: true;
 }
 
 /**
@@ -250,6 +252,7 @@ export function logMatchDecision(input: MatchEvalLogInput): void {
       })),
       rankedTopN: input.rankedTopN.slice(0, MAX_CANDIDATES_LOGGED),
       ts: new Date().toISOString(),
+      ...(process.env.FORGEN_SYNTHETIC === '1' ? { synthetic: true as const } : {}),
     };
 
     // Serialize FIRST so any toJSON throw is caught before we touch disk.

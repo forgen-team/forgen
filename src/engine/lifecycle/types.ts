@@ -58,6 +58,8 @@ export interface ViolationEntry {
   at: string;
   rule_id: string;
   session_id: string;
+  /** FORGEN_SYNTHETIC=1 하네스가 기록 — 모든 집계에서 제외. */
+  synthetic?: true;
   source: 'stop-guard' | 'subagent-stop-guard' | 'pre-tool-guard' | 'post-tool-guard' | 'evidence-store' | 'manual';
   /**
    * block/deny = 실제 차단. correction = 메타가드 advise(기록만). bypass_confirmed = 사용자가
@@ -85,6 +87,7 @@ export interface VerdictEntry {
   /** 사람 > 모델. user 판정은 auto 를 덮어쓴다. */
   by: 'auto' | 'user';
   reason?: string;
+  synthetic?: true;
 }
 
 /** D2: Stop 에서 실제 평가된 룰의 결과 (통과/위반). violations.jsonl 과 분리 — T2·explain 오염 방지. */
@@ -93,6 +96,7 @@ export interface CheckEntry {
   session_id: string;
   rule_id: string;
   result: 'pass' | 'violation';
+  synthetic?: true;
 }
 
 export interface BypassEntry {
@@ -101,4 +105,5 @@ export interface BypassEntry {
   session_id: string;
   tool: string;
   pattern_preview: string;
+  synthetic?: true;
 }

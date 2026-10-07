@@ -12,6 +12,7 @@ import { spawn } from 'node:child_process';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { evalChildEnv } from '../utils/isolation.js';
 
 /** Resolve hooks dir relative to this file so the eval works from any clone path.
  *  Layout: <repo>/packages/forgen-eval/{src|dist}/arms/forgen-bridge.{ts|js}
@@ -61,7 +62,7 @@ async function invokeHook<T>(
   return new Promise((resolve, reject) => {
     const proc = spawn('node', [scriptPath], {
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...process.env, ...env },
+      env: evalChildEnv(env),
     });
     let stdout = '';
     let stderr = '';

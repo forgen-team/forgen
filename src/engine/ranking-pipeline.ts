@@ -9,6 +9,7 @@
 import { maskBlockedTokens } from './phrase-blocklist.js';
 import { calculateRelevance } from './relevance-scorer.js';
 import { expandCompoundTags, expandQueryBigrams, expandQueryKoreanStems } from './solution-format.js';
+import { tagWeight } from './scoring-algorithms.js';
 import { shouldRejectByR4T3Rules } from './precision-guards.js';
 import { defaultNormalizer } from './term-normalizer.js';
 
@@ -35,7 +36,16 @@ export interface RankedCandidate<T extends RankableSolution = RankableSolution> 
   relevance: number;
   matchedTags: string[];
   matchedIdentifiers: string[];
+  /** 맥락 토큰(cwd/최근 편집 파일)으로만 겹친 태그. matchedTags 와 분리 — 순위 가산(태그당 0.1, 상한 0.2)에만 쓰고 게이트엔 안 씀. */
+  contextMatchedTags: string[];
+  /** relevance 에 포함된 맥락 가산분. 주입 게이트는 relevance − contextBonus 로 비교한다(critic v0.6.6 SEV-2). */
+  contextBonus: number;
 }
+
+/** 맥락 태그 1개당 relevance 가산(프롬프트 태그 1개 ≈ 0.2 의 절반). */
+export const CONTEXT_TAG_BONUS = 0.1;
+/** 맥락 가산 총상한 — 맥락이 점수를 지배하지 못하게. */
+export const CONTEXT_BONUS_CAP = 0.2;
 
 /**
  * Shared ranking core: tag-based relevance + identifier boost + top-5 sort.
@@ -52,6 +62,7 @@ export function rankCandidates<T extends RankableSolution>(
   promptLower: string,
   solutions: readonly T[],
   ensembleWeights?: { tfidf: number; bm25: number; bigram: number },
+  contextTokens: readonly string[] = [],
 ): RankedCandidate<T>[] {
   // R4-T2: mask blocked tokens before expansion/normalization
   const maskedPromptTags = maskBlockedTokens(promptLower, promptTags);
@@ -94,11 +105,29 @@ export function rankCandidates<T extends RankableSolution>(
         tagMatches = [];
       }
 
+      // 맥락 신호: 프롬프트로 이미 1개 이상 매칭된 후보에만 적용(맥락 단독 후보 생성 금지).
+      // 프롬프트 매칭 태그와 겹치는 맥락 토큰은 중복 가산하지 않는다.
+      const contextMatchedTags: string[] = [];
+      let contextBonus = 0;
+      if (contextTokens.length > 0 && tagMatches.length + matchedIdentifiers.length >= 1) {
+        const ctx = new Set(contextTokens);
+        const already = new Set([...tagMatches, ...maskedPromptTags]);
+        for (const t of solTagsExpanded) {
+          if (ctx.has(t) && !already.has(t) && !contextMatchedTags.includes(t)) {
+            contextMatchedTags.push(t);
+            contextBonus += CONTEXT_TAG_BONUS * tagWeight(t);
+          }
+        }
+        contextBonus = Math.min(contextBonus, CONTEXT_BONUS_CAP);
+      }
+
       return {
         solution: sol,
-        relevance: tagRelevance + identifierBoost,
+        relevance: tagRelevance + identifierBoost + contextBonus,
         matchedTags: tagMatches,
         matchedIdentifiers,
+        contextMatchedTags,
+        contextBonus,
       };
     })
     .filter((c) => c.matchedTags.length + c.matchedIdentifiers.length >= 1)

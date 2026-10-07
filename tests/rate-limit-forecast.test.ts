@@ -197,3 +197,18 @@ describe('샘플 파일 — 잘린 줄 내성 · TTL', () => {
     fs.rmSync(dir, { recursive: true, force: true });
   });
 });
+
+describe('여러 세션 샘플이 섞여도 현재 창만으로 예측 (실사용 관측 회귀)', () => {
+  it('다른 resets_at(오래된 세션) 샘플이 사이사이 끼어도 현재 창 기울기를 낸다', () => {
+    const cur = series([[20, 50], [10, 60], [0, 70]]);
+    const stale = [
+      { t: T0 - 15 * MIN, used: 100, resets_at: Math.floor(Date.parse('2026-07-16T09:30:00Z') / 1000) },
+      { t: T0 - 5 * MIN, used: 14, resets_at: Math.floor(Date.parse('2026-07-02T10:10:00Z') / 1000) },
+    ];
+    const mixed = [...cur, ...stale].sort((a, b) => a.t - b.t);
+    const f = forecastWindow('five_hour', mixed, T0, { t: T0, used: 70, resets_at: reset })!;
+    expect(f.exhaustAt).not.toBeNull();
+    expect(f.ratePerHour).toBeCloseTo(60, 6);
+    expect(f.sampleCount).toBe(3);
+  });
+});

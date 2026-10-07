@@ -6,9 +6,9 @@
  */
 
 import * as path from 'node:path';
-import { loadAllRules, saveRule } from '../../store/rule-store.js';
+import { loadAllRules, saveRule, syncRuleCounters } from '../../store/rule-store.js';
 import { STATE_DIR } from '../../core/paths.js';
-import { collectSignals, readJsonlSafe, isConfirmedBypass, isSyntheticSession } from './signals.js';
+import { collectSignals, deriveRuleCounters, readViolationsWindow, ROTATED_KEEP_DAYS, isConfirmedBypass, isSyntheticEntry } from './signals.js';
 import { detect as detectT2 } from './trigger-t2-violation.js';
 import { detect as detectT3 } from './trigger-t3-bypass.js';
 import { detect as detectT4 } from './trigger-t4-decay.js';
@@ -22,7 +22,7 @@ import {
   appendLifecycleEvents,
 } from './meta-reclassifier.js';
 import { foldEvents } from './orchestrator.js';
-import type { LifecycleEvent, RuleSignals, ViolationEntry, } from './types.js';
+import type { LifecycleEvent, RuleSignals } from './types.js';
 
 const LIFECYCLE_DIR = path.join(STATE_DIR, 'lifecycle');
 
@@ -36,13 +36,12 @@ export async function handleLifecycleScan(args: string[]): Promise<void> {
     return;
   }
 
-  const violations = readJsonlSafe<ViolationEntry>(
-    path.join(STATE_DIR, 'enforcement', 'violations.jsonl')
-  );
+  // 현재 파일 + 30일 창 안의 회전본 (rotateIfBig 직후에도 창 기록이 사라지지 않게).
+  const violations = readViolationsWindow(30, now);
   // ADR-017 D1: bypass.jsonl(자연어 휴리스틱, 전량 오탐)은 더 이상 읽지 않는다. T3 입력은
   // violations 의 kind:'bypass_confirmed'(사용자 명시 우회) 뿐이며 collectSignals 가 거기서 뽑는다.
   const bypassConfirmed = violations.filter(isConfirmedBypass).length;
-  const syntheticExcluded = violations.filter((v) => isSyntheticSession(v.session_id)).length;
+  const syntheticExcluded = violations.filter((v) => isSyntheticEntry(v)).length;
   const drift = readDriftEntries();
 
   const signals = new Map<string, RuleSignals>();
@@ -61,8 +60,24 @@ export async function handleLifecycleScan(args: string[]): Promise<void> {
   console.log(`\n  Lifecycle Scan — ${rules.length} rule(s)  (${apply ? 'APPLY' : 'dry-run'})\n`);
   console.log(`  Signals: violations.jsonl=${violations.length} (synthetic-session excluded ${syntheticExcluded})  bypass_confirmed=${bypassConfirmed}  drift.jsonl=${drift.length}\n`);
 
+  // 카운터 재계산 — 룰 JSON 의 violation_count/bypass_count 는 훅 경로가 갱신하지 않는 캐시라
+  // 로그(보존 범위 전체, 회전본 포함)에서 다시 계산한다. dry-run 은 차이만 보여준다.
+  const counters = deriveRuleCounters(readViolationsWindow(ROTATED_KEEP_DAYS, now));
+  const counterDiffs = rules.filter((r) => {
+    const c = counters.get(r.rule_id);
+    return (r.lifecycle?.violation_count ?? 0) !== (c?.violation_count ?? 0) || (r.lifecycle?.bypass_count ?? 0) !== (c?.bypass_count ?? 0);
+  });
+  console.log(`  Counters: ${counterDiffs.length} rule(s) differ from logs (violation_count/bypass_count)${apply ? '' : ' — --apply 로 동기화'}\n`);
+  // Meta apply 가 원본 rule 객체로 다시 저장하므로 카운터 동기화는 항상 마지막에 한다.
+  const applyCounters = (): number => {
+    let n = 0;
+    for (const r of counterDiffs) if (syncRuleCounters(r.rule_id, counters.get(r.rule_id) ?? { violation_count: 0, bypass_count: 0 })) n++;
+    return n;
+  };
+
   if (events.length === 0 && demotionCandidates.length === 0 && promotionCandidates.length === 0) {
     console.log('  No lifecycle events. System stable.\n');
+    if (apply) console.log(`  Counters synced: ${applyCounters()} rule(s).\n`);
     return;
   }
 
@@ -115,6 +130,7 @@ export async function handleLifecycleScan(args: string[]): Promise<void> {
   }
   if (metaEvents.length > 0) appendLifecycleEvents(metaEvents, now);
 
-  console.log(`\n  Applied: ${saved} rule(s) updated, ${metaEvents.length} health event(s).`);
+  const countersSynced = applyCounters();
+  console.log(`\n  Applied: ${saved} rule(s) updated, ${metaEvents.length} health event(s), ${countersSynced} counter sync(s).`);
   console.log(`  Log: ${LIFECYCLE_DIR}/${new Date(now).toISOString().slice(0, 10)}.jsonl\n`);
 }

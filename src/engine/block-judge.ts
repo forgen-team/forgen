@@ -20,7 +20,7 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { STATE_DIR } from '../core/paths.js';
 import {
-  readJsonlSafe, readReceipt, readVerdicts, setVerdict, precisionByRule,
+  readJsonlSafe, readViolationsWindow, ROTATED_KEEP_DAYS, readReceipt, readVerdicts, setVerdict, precisionByRule,
 } from './lifecycle/signals.js';
 import type { ViolationEntry, Verdict } from './lifecycle/types.js';
 import { loadRule, saveRule, loadActiveRules } from '../store/rule-store.js';
@@ -33,7 +33,6 @@ export const JUDGE_CAP_PER_DAY = 30;
 export const DEMOTE_MIN_JUDGED = 5;
 export const DEMOTE_PRECISION_BELOW = 0.5;
 
-const VIOLATIONS_PATH = path.join(STATE_DIR, 'enforcement', 'violations.jsonl');
 /** critic D1 SEV-1: 캡은 완료된 판정만 세면 연속 차단에서 폭주한다 → 부모가 spawn 전에 동기적으로 in-flight 마커를 쓴다. */
 const INFLIGHT_DIR = path.join(STATE_DIR, 'enforcement', 'judge-inflight');
 export const INFLIGHT_STALE_MS = 5 * 60 * 1000;
@@ -132,14 +131,14 @@ export function withinJudgeCaps(sessionId: string, now: number = Date.now(), ver
   const inflightNew = inflight.filter((id) => !judgedIds.has(id));
   const today = auto.filter((v) => Date.parse(v.at) >= dayCutoff).length + inflightNew.length;
   if (today >= JUDGE_CAP_PER_DAY) return false;
-  const vio = violations ?? readJsonlSafe<ViolationEntry>(VIOLATIONS_PATH);
+  const vio = violations ?? readViolationsWindow(1, now);
   const sessionIds = new Set(vio.filter((v) => v.session_id === sessionId && v.violation_id).map((v) => v.violation_id as string));
   const thisSession = auto.filter((v) => sessionIds.has(v.violation_id)).length + inflightNew.filter((id) => sessionIds.has(id)).length;
   return thisSession < JUDGE_CAP_PER_SESSION;
 }
 
 export function findViolation(violationId: string): ViolationEntry | null {
-  const all = readJsonlSafe<ViolationEntry>(VIOLATIONS_PATH);
+  const all = readViolationsWindow(ROTATED_KEEP_DAYS);
   for (let i = all.length - 1; i >= 0; i--) if (all[i].violation_id === violationId) return all[i];
   return null;
 }
@@ -197,7 +196,7 @@ async function defaultExec(prompt: string): Promise<string> {
 export function maybeDemote(ruleId: string, now: number = Date.now()): boolean {
   const rule = loadRule(ruleId);
   if (!rule || rule.strength === 'hard' || rule.enforce_mode === 'advise') return false;
-  const violations = readJsonlSafe<ViolationEntry>(VIOLATIONS_PATH);
+  const violations = readViolationsWindow(7, now);
   const p = precisionByRule(violations, readVerdicts(), 7, now).get(ruleId);
   if (!p || p.precision === null) return false;
   if (p.correct + p.false_positive < DEMOTE_MIN_JUDGED || p.precision >= DEMOTE_PRECISION_BELOW) return false;

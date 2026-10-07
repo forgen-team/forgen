@@ -18,6 +18,7 @@ import { buildJudgePrompt, parseJudgeOutput } from './judge-types.js';
 import type { JudgeClient, JudgePromptInput } from './judge-types.js';
 import type { JudgeScore } from '../types.js';
 import { retryWithBackoff } from '../utils/retry.js';
+import { evalChildEnv } from '../utils/isolation.js';
 
 const DEFAULT_TIMEOUT_MS = 120_000;
 
@@ -32,7 +33,7 @@ function runCodex(
     const usesStdin = args[args.length - 1] === '-' && typeof opts.stdinPrompt === 'string';
     const child = spawn('codex', args, {
       cwd: opts.cwd,
-      env: { ...process.env, ...(opts.env ?? {}) },
+      env: evalChildEnv(opts.env ?? {}),
       stdio: [usesStdin ? 'pipe' : 'ignore', 'pipe', 'pipe'],
     });
     let stdout = '';

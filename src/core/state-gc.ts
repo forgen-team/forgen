@@ -18,6 +18,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { STATE_DIR, OUTCOMES_DIR } from './paths.js';
+import { listRotated, ROTATED_KEEP_MAX, ROTATED_KEEP_DAYS } from '../engine/lifecycle/rotated-logs.js';
 
 /** Filename prefixes that identify session-scoped ephemeral files. */
 const SESSION_SCOPED_PREFIXES = [
@@ -173,6 +174,42 @@ export function rotateAppendOnlyLogs(opts: {
   return out;
 }
 
+/** rotateIfBig 가 `<name>.<timestamp>` 로 남기는 enforcement jsonl — 영구 보존되던 회전본의 정리 대상. */
+const ENFORCEMENT_ROTATED_LOGS = [
+  'violations.jsonl',
+  'verdicts.jsonl',
+  'checks.jsonl',
+  'acknowledgments.jsonl',
+  'drift.jsonl',
+  'bypass.jsonl',
+];
+
+/**
+ * enforcement 회전본 보존 상한: 로그당 최신 ROTATED_KEEP_MAX(3)개만, 그리고 mtime 이
+ * ROTATED_KEEP_DAYS(60)일 이내인 것만 남긴다. 현재(활성) 파일은 건드리지 않는다.
+ */
+export function pruneRotatedEnforcementLogs(opts: { stateDir?: string; dryRun?: boolean; now?: number } = {}): { scanned: number; pruned: number; bytes: number; sample: string[] } {
+  const stateDir = opts.stateDir ?? STATE_DIR;
+  const dryRun = opts.dryRun ?? true;
+  const cutoff = (opts.now ?? Date.now()) - ROTATED_KEEP_DAYS * 24 * 60 * 60 * 1000;
+  const out = { scanned: 0, pruned: 0, bytes: 0, sample: [] as string[] };
+  for (const name of ENFORCEMENT_ROTATED_LOGS) {
+    const rotated = listRotated(path.join(stateDir, 'enforcement', name)); // 오래된 것 먼저
+    out.scanned += rotated.length;
+    const keep = new Set(rotated.slice(-ROTATED_KEEP_MAX).filter((r) => r.mtimeMs >= cutoff).map((r) => r.path));
+    for (const r of rotated) {
+      if (keep.has(r.path)) continue;
+      if (!dryRun) {
+        try { fs.unlinkSync(r.path); } catch { continue; }
+      }
+      out.pruned++;
+      out.bytes += r.size;
+      if (out.sample.length < 20) out.sample.push(path.basename(r.path));
+    }
+  }
+  return out;
+}
+
 /**
  * Prune session-scoped files older than `retentionMs` from the state and
  * outcomes directories. Defaults to a dry-run so callers must opt-in to
@@ -195,13 +232,15 @@ export function pruneState(opts: PruneOptions = {}): PruneReport {
   const blockCountDir = path.join(stateDir, 'enforcement', 'block-count');
   const blockCounters = pruneDir(blockCountDir, cutoff, dryRun, (n) => n.endsWith('.json'));
 
+  const rotatedLogs = pruneRotatedEnforcementLogs({ stateDir, dryRun, now });
+
   return {
-    scanned: state.scanned + outcomes.scanned + blockCounters.scanned,
-    pruned: state.pruned + outcomes.pruned + blockCounters.pruned,
-    bytesFreed: state.bytes + outcomes.bytes + blockCounters.bytes,
+    scanned: state.scanned + outcomes.scanned + blockCounters.scanned + rotatedLogs.scanned,
+    pruned: state.pruned + outcomes.pruned + blockCounters.pruned + rotatedLogs.pruned,
+    bytesFreed: state.bytes + outcomes.bytes + blockCounters.bytes + rotatedLogs.bytes,
     retentionDays: Math.round(retentionMs / (24 * 60 * 60 * 1000)),
     dryRun,
-    sample: [...state.sample, ...outcomes.sample, ...blockCounters.sample].slice(0, 20),
+    sample: [...state.sample, ...outcomes.sample, ...blockCounters.sample, ...rotatedLogs.sample].slice(0, 20),
   };
 }
 

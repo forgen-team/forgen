@@ -134,7 +134,7 @@ const commands: Command[] = [
   },
   {
     name: 'statusline',
-    description: 'Compact HUD for Claude Code statusLine (reads stdin JSON). `statusline install [--force]` registers it in settings.json',
+    description: 'Compact HUD for Claude Code statusLine (reads stdin JSON). `statusline install [--force|--chain]` registers it in settings.json; `statusline --after "<cmd>"` appends the forgen line after another statusline',
     handler: async (args) => {
       if (args[0] === 'install') {
         const { handleStatuslineInstall } = await import('./core/statusline-install.js');
@@ -142,7 +142,7 @@ const commands: Command[] = [
         return;
       }
       const { handleStatusline } = await import('./core/statusline-cli.js');
-      await handleStatusline();
+      await handleStatusline(args);
     },
   },
   {
