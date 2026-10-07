@@ -4,10 +4,9 @@
  * Shows: what rule fired, why, what Claude said, and how to resolve.
  */
 
-import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { STATE_DIR } from './paths.js';
-import { isRealBlock, effectiveVerdicts, readReceipt } from '../engine/lifecycle/signals.js';
+import { readJsonlWindow, ROTATED_KEEP_DAYS, isRealBlock, effectiveVerdicts, readReceipt } from '../engine/lifecycle/signals.js';
 
 const isTTY = process.stdout.isTTY;
 const C = {
@@ -39,25 +38,11 @@ interface ViolationEntry {
 }
 
 function readViolations(): ViolationEntry[] {
-  const p = path.join(STATE_DIR, 'enforcement', 'violations.jsonl');
-  if (!fs.existsSync(p)) return [];
-  const out: ViolationEntry[] = [];
-  for (const line of fs.readFileSync(p, 'utf-8').split('\n')) {
-    if (!line.trim()) continue;
-    try { out.push(JSON.parse(line)); } catch { /* skip */ }
-  }
-  return out;
+  return readJsonlWindow<ViolationEntry>(path.join(STATE_DIR, 'enforcement', 'violations.jsonl'), ROTATED_KEEP_DAYS);
 }
 
 function readAcknowledgments(): Array<{ at?: string; session_id?: string }> {
-  const p = path.join(STATE_DIR, 'enforcement', 'acknowledgments.jsonl');
-  if (!fs.existsSync(p)) return [];
-  const out: Array<{ at?: string; session_id?: string }> = [];
-  for (const line of fs.readFileSync(p, 'utf-8').split('\n')) {
-    if (!line.trim()) continue;
-    try { out.push(JSON.parse(line)); } catch { /* skip */ }
-  }
-  return out;
+  return readJsonlWindow<{ at?: string; session_id?: string }>(path.join(STATE_DIR, 'enforcement', 'acknowledgments.jsonl'), ROTATED_KEEP_DAYS);
 }
 
 function formatTime(iso: string): string {

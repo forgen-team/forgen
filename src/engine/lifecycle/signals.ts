@@ -33,6 +33,9 @@ export function redactForReceipt(text: string): string {
   return t;
 }
 import type { RuleSignals, ViolationEntry, BypassEntry, VerdictEntry, CheckEntry } from './types.js';
+import { listRotated, logFilesWithin, readJsonlSafe, readJsonlWindow, ROTATED_KEEP_MAX, ROTATED_KEEP_DAYS } from './rotated-logs.js';
+export { listRotated, logFilesWithin, readJsonlSafe, readJsonlWindow, ROTATED_KEEP_MAX, ROTATED_KEEP_DAYS };
+export type { RotatedFile } from './rotated-logs.js';
 import { STATE_DIR as FORGEN_STATE_DIR } from '../../core/paths.js';
 
 const ENFORCEMENT_DIR = path.join(FORGEN_STATE_DIR, 'enforcement');
@@ -59,22 +62,6 @@ export function rotateIfBig(p: string): void {
       fs.renameSync(p, `${p}.${Date.now()}`);
     }
   } catch { /* missing → no rotate */ }
-}
-
-export function readJsonlSafe<T>(p: string): T[] {
-  if (!fs.existsSync(p)) return [];
-  try {
-    return fs.readFileSync(p, 'utf-8')
-      .trim()
-      .split('\n')
-      .filter(Boolean)
-      .map((line) => {
-        try { return JSON.parse(line) as T; } catch { return null; }
-      })
-      .filter((e): e is T => e !== null);
-  } catch {
-    return [];
-  }
 }
 
 /**
@@ -162,6 +149,11 @@ export function recordViolation(entry: Omit<ViolationEntry, 'at'>, opts: RecordV
   }
 }
 
+/** 위반 로그(현재 + 창 안 회전본). 기본 30일 = collectSignals 창. */
+export function readViolationsWindow(days: number = VIOLATION_WINDOW_DAYS, now: number = Date.now()): ViolationEntry[] {
+  return readJsonlWindow<ViolationEntry>(VIOLATIONS_PATH, days, now);
+}
+
 export function readReceipt(violationId: string): string | null {
   if (!/^[A-Za-z0-9-]+$/.test(violationId)) return null;
   try { return fs.readFileSync(path.join(RECEIPTS_DIR, `${violationId}.txt`), 'utf-8'); } catch { return null; }
@@ -176,8 +168,9 @@ export function setVerdict(entry: Omit<VerdictEntry, 'at'>): void {
   } catch { /* best-effort */ }
 }
 
+/** 판정은 위반 이후에 기록되므로 30일 창(위반 조회 최대 창)이면 충분하다. */
 export function readVerdicts(): VerdictEntry[] {
-  return readJsonlSafe<VerdictEntry>(VERDICTS_PATH);
+  return readJsonlWindow<VerdictEntry>(VERDICTS_PATH, VIOLATION_WINDOW_DAYS);
 }
 
 /** violation_id → 유효 판정 (user 가 있으면 user, 없으면 마지막 auto). */
@@ -243,7 +236,7 @@ export function pruneChecks(now: number = Date.now()): void {
 }
 
 export function readChecks(): CheckEntry[] {
-  return readJsonlSafe<CheckEntry>(CHECKS_PATH);
+  return readJsonlWindow<CheckEntry>(CHECKS_PATH, CHECKS_TTL_MS / (24 * 3600 * 1000));
 }
 
 /** 정규식 매칭 프래그먼트 추출 — 영수증 `matched` 필드용. */
@@ -280,7 +273,7 @@ export interface SignalInputs {
 
 export function collectSignals(rule: Rule, inputs: SignalInputs = {}): RuleSignals {
   const now = inputs.now ?? Date.now();
-  const allViolations = inputs.violations ?? readJsonlSafe<ViolationEntry>(VIOLATIONS_PATH);
+  const allViolations = inputs.violations ?? readViolationsWindow(VIOLATION_WINDOW_DAYS, now);
   // ADR-017 D1/D2: T2 는 실제 차단만 센다 — 이전엔 kind 필터가 없어 메타가드 advise(correction)
   // 와 테스트 유래(default 세션) 기록이 위반으로 집계돼 flag 를 조기 발화시켰다.
   const violations = allViolations.filter(isRealBlock);
@@ -339,6 +332,28 @@ export function collectSignals(rule: Rule, inputs: SignalInputs = {}): RuleSigna
     violations_rolling_n: violationsRolling,
     last_updated_days_ago: lastUpdatedDays,
   };
+}
+
+/**
+ * 룰별 위반/우회 카운터를 로그에서 재계산 (lifecycle-scan --apply 가 룰 JSON 에 저장).
+ * 원천은 항상 로그다 — 룰 JSON 의 violation_count/bypass_count 는 이 값의 캐시일 뿐이며
+ * 보존된 로그 범위(회전본 포함) 안의 합계다. 훅 경로에서는 갱신하지 않는다.
+ */
+export function deriveRuleCounters(violations: ViolationEntry[]): Map<string, { violation_count: number; bypass_count: number; last_violation_at?: string }> {
+  const m = new Map<string, { violation_count: number; bypass_count: number; last_violation_at?: string }>();
+  for (const v of violations) {
+    const real = isRealBlock(v);
+    if (!real && !isConfirmedBypass(v)) continue;
+    const c = m.get(v.rule_id) ?? { violation_count: 0, bypass_count: 0 };
+    if (real) {
+      c.violation_count++;
+      if (!c.last_violation_at || v.at > c.last_violation_at) c.last_violation_at = v.at;
+    } else {
+      c.bypass_count++;
+    }
+    m.set(v.rule_id, c);
+  }
+  return m;
 }
 
 export function collectAllSignals(rules: Rule[], inputs: SignalInputs = {}): Map<string, RuleSignals> {

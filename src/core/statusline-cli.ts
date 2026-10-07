@@ -26,7 +26,7 @@ import { execSync } from 'node:child_process';
 import { loadActiveRules } from '../store/rule-store.js';
 import { STATE_DIR } from './paths.js';
 import { computeStats } from './stats-cli.js';
-import { isRealBlock } from '../engine/lifecycle/signals.js';
+import { isRealBlock, logFilesWithin } from '../engine/lifecycle/signals.js';
 import { sanitizeId } from '../hooks/shared/sanitize-id.js';
 import { readTurnRules } from '../engine/rule-relevance.js';
 import {
@@ -212,14 +212,17 @@ export function buildForgenLine(sessionId: string | undefined): string | null {
 function countSessionBlocks(sessionId: string): number {
   try {
     const p = path.join(STATE_DIR, 'enforcement', 'violations.jsonl');
-    if (!fs.existsSync(p)) return 0;
     let n = 0;
-    for (const line of fs.readFileSync(p, 'utf-8').split('\n')) {
-      if (!line.includes(sessionId)) continue; // 빠른 선별
-      try {
-        const e = JSON.parse(line) as { session_id?: string; kind?: string };
-        if (e.session_id === sessionId && isRealBlock(e)) n++;
-      } catch { /* skip */ }
+    // 세션은 회전 경계를 넘을 수 있다 — 현재 파일 + 최근 2일 안 회전본.
+    for (const f of logFilesWithin(p, 2)) {
+      if (!fs.existsSync(f)) continue;
+      for (const line of fs.readFileSync(f, 'utf-8').split('\n')) {
+        if (!line.includes(sessionId)) continue; // 빠른 선별
+        try {
+          const e = JSON.parse(line) as { session_id?: string; kind?: string };
+          if (e.session_id === sessionId && isRealBlock(e)) n++;
+        } catch { /* skip */ }
+      }
     }
     return n;
   } catch {

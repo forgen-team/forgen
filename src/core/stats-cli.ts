@@ -10,7 +10,7 @@ import * as path from 'node:path';
 import { loadAllRules } from '../store/rule-store.js';
 import { loadAllEvidence } from '../store/evidence-store.js';
 import { STATE_DIR, ME_DIR } from './paths.js';
-import { isRealBlock, isConfirmedBypass, isSyntheticSession, precisionByRule, readVerdicts } from '../engine/lifecycle/signals.js';
+import { readJsonlWindow, isRealBlock, isConfirmedBypass, isSyntheticSession, precisionByRule, readVerdicts } from '../engine/lifecycle/signals.js';
 import { computeFixFeatRatio, formatFixRatio } from './git-stats.js';
 
 // v0.4.1 격리 fix: 이전에는 os.homedir() 직접 사용해서 FORGEN_HOME env 로
@@ -233,7 +233,7 @@ export function computeStats(): StatsSnapshot {
   const cutoff7d = Date.now() - 7 * MS_PER_DAY;
   const corrections7d = corrections.filter((e) => Date.parse(e.timestamp) >= cutoff7d).length;
 
-  const violations = readJsonl(path.join(ENFORCEMENT_DIR, 'violations.jsonl'));
+  const violations = readJsonlWindow<Record<string, unknown>>(path.join(ENFORCEMENT_DIR, 'violations.jsonl'), 30);
   // v0.4.1 historical false-positive 제거: pre-0.4.1 bypass-detector 가 Write/Edit
   // content 의 quote 본문까지 raw 매칭해서 bypass 로 오기록. 실 관찰: L1-no-rm-rf
   // -unconfirmed bypass 20건 중 Write/Edit 15건. stats 표시는 **실 실행 맥락** 인
@@ -241,8 +241,8 @@ export function computeStats(): StatsSnapshot {
   // ADR-017 D1: bypass.jsonl(자연어 휴리스틱)은 더 이상 읽지 않는다 — 실측 전량 오탐, 실 우회 0건.
   // "Bypass" 는 FORGEN_USER_CONFIRMED=1 명시 우회(kind:'bypass_confirmed')만 센다.
   const bypass = violations.filter(isConfirmedBypass);
-  const drift = readJsonl(path.join(ENFORCEMENT_DIR, 'drift.jsonl'));
-  const acks = readJsonl(path.join(ENFORCEMENT_DIR, 'acknowledgments.jsonl'));
+  const drift = readJsonlWindow<Record<string, unknown>>(path.join(ENFORCEMENT_DIR, 'drift.jsonl'), 30);
+  const acks = readJsonlWindow<Record<string, unknown>>(path.join(ENFORCEMENT_DIR, 'acknowledgments.jsonl'), 30);
 
   // R9-PA2: violations 는 'block' (stop-guard/post-tool) + 'deny' (pre-tool Mech-A)
   // + 'correction' (메타가드 advise) + 'bypass_confirmed' (사용자 명시 우회) 혼재. 사용자 관점에서 "Block" 은 앞의 2종이며
