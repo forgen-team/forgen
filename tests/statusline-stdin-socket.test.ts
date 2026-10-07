@@ -44,8 +44,9 @@ describe.skipIf(!fs.existsSync(CLI))('forgen statusline — Node spawn(socketpai
     const { out, code } = await runStatusline(payload, home);
     expect(code).toBe(0);
     expect(out.split('\n')[0]).toContain('Fable');
-    expect(out).toContain('ctx 42%/1M');
-    expect(out).toContain('5h 63%');
+    expect(out.split('\n')).toHaveLength(4); // 3줄 + 개행
+    expect(out).toMatch(/ctx ▓+░* 42%\/1M/);
+    expect(out).toMatch(/5h ▓+░* 63%/);
     expect(fs.existsSync(path.join(home, '.forgen', 'state', 'statusline-cache-sock-A.txt'))).toBe(true);
     expect(fs.existsSync(path.join(home, '.forgen', 'state', 'current-model-sock-A.json'))).toBe(true);
     expect(fs.readFileSync(path.join(home, '.forgen', 'state', 'rate-limit-samples.jsonl'), 'utf-8')).toContain('"five_hour"');
@@ -54,14 +55,14 @@ describe.skipIf(!fs.existsSync(CLI))('forgen statusline — Node spawn(socketpai
   it('페이로드가 150ms 늦게 와도 읽는다', async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), 'forgen-sl-sock-'));
     const { out } = await runStatusline(payload, home, { late: true });
-    expect(out).toContain('ctx 42%/1M');
+    expect(out).toMatch(/ctx ▓+░* 42%\/1M/);
   });
 
   it('부모가 stdin 을 닫지 않아도(EOF 없음) 멈추지 않고 idle 후 렌더한다', async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), 'forgen-sl-sock-'));
     const t0 = Date.now();
     const { out } = await runStatusline(payload, home, { noEnd: true });
-    expect(out).toContain('ctx 42%/1M');
+    expect(out).toMatch(/ctx ▓+░* 42%\/1M/);
     expect(Date.now() - t0).toBeLessThan(2400); // 2.5s 강제 종료 전에 끝남
   });
 

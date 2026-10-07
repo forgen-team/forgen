@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.3] — 2026-10-07 — statusline 3줄 + 바 그래프 (오너 피드백)
+
+### Changed
+- **statusline 을 3줄로.** 1줄 `Fable │ ~/proj(main)`, 2줄 `ctx ▓▓▓▓▓▓░░░░ 58%/1M │ 5h ▓▓▓░░░░░░░ 32% (리셋 03:55) │
+  7d ▓▓▓▓▓░░░░░ 48% (리셋 D+1 …) │ $3.20`, 3줄 `forgen │ 관련 룰 4 │ 차단 11 (7d 38) │ surfaced 0`. 숫자 나열은 눈에
+  안 들어온다는 피드백 → 10칸 바(80% 노랑, 95% 빨강), 구분자 `│`, 리셋 전 소진 예상은 빨간 `⚠ HH:MM 소진`. 사용량 데이터가
+  없는 환경(API 키 등)에선 2줄이 생략된다.
+- `exceeds_200k_tokens` 는 창이 200k 보다 크면(1M) 흐린 `200k+` 상태 표시만, 200k 창에서 넘겼을 때만 `⚠200k` 경고.
+
 ## [0.6.2] — 2026-10-07 — statusline 이 실제로는 페이로드를 한 번도 받지 못하고 있었다 (socketpair stdin)
 
 ### Fixed

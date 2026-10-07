@@ -4,9 +4,10 @@
  * Claude Code 는 assistant 메시지마다(300ms 디바운스) statusLine.command 를 호출하고 stdin 에 JSON 을
  * 준다 (공식: code.claude.com/docs/en/statusline — context_window / rate_limits / cost / model / workspace).
  *
- * 2줄 고정:
- *   1줄 (사용자): 모델 · 경로(브랜치) · ctx 42%/1M · 5h 63% → 15:40 소진 (리셋 16:20) · 7d 21% → 리셋 … 여유 · $1.23
- *   2줄 (forgen): 관련 룰 3 · 이 세션 차단 1 · 7d 차단 33 · surfaced 0   (turn-rules 파일 없으면 '룰 N' = 활성 수)
+ * 3줄 (오너 요청 2026-10-07):
+ *   1줄: Fable │ ~/proj(main)
+ *   2줄: ctx ▓▓▓▓░░░░░░ 42%/1M │ 5h ▓▓▓▓▓▓░░░░ 63% ⚠ 15:40 소진 (리셋 16:20) │ 7d ▓▓░░░░░░░░ 21% │ $1.23   (데이터 없으면 생략)
+ *   3줄: forgen │ 관련 룰 3 │ 차단 1 (7d 33) │ surfaced 0   (turn-rules 파일 없으면 '룰 N' = 활성 수)
  *
  * 원칙 (ADR-017 §2): 출처 없는 숫자는 표시하지 않는다. 데이터가 없으면 세그먼트를 생략한다(자리 채우기 금지).
  * 이전 3~4줄의 운영자 지표(recall/ROI/이모지 분포)는 `forgen status` 에 있고, CLAUDE.md·MCP·hook 카운트는
@@ -29,7 +30,7 @@ import { isRealBlock } from '../engine/lifecycle/signals.js';
 import { sanitizeId } from '../hooks/shared/sanitize-id.js';
 import { readTurnRules } from '../engine/rule-relevance.js';
 import {
-  samplesFromPayload, appendSamples, readSamples, compactSamples, forecastAll, fmtForecast,
+  samplesFromPayload, appendSamples, readSamples, compactSamples, forecastAll, fmtClock,
   type RateLimitsPayload, type Forecast,
 } from './rate-limit-forecast.js';
 
@@ -44,7 +45,17 @@ const RED = '\x1b[31m';
 const BOLD = '\x1b[1m';
 const RESET = '\x1b[0m';
 
-const SEP = `${DIM} · ${RESET}`;
+const SEP = `${DIM} │ ${RESET}`;
+const BAR_CELLS = 10;
+
+/** 0~100 → ▓▓▓░░░░░░░ (10칸). 색은 pctColor(80 노랑/95 빨강, 그 외 초록). 오너 요청(2026-10-07): 숫자만으론 눈에 안 들어온다. */
+export function bar(pct: number, cells: number = BAR_CELLS): string {
+  const p = Math.max(0, Math.min(100, pct));
+  const filled = Math.round((p / 100) * cells);
+  const body = `${'▓'.repeat(filled)}${'░'.repeat(cells - filled)}`;
+  const color = pctColor(p) || GREEN;
+  return `${color}${body}${RESET}`;
+}
 
 /** 공식 statusline stdin 스키마의 부분집합 (2026-10 확인). 전부 optional — 구버전/다른 플랜은 비어 있을 수 있다. */
 export interface StdinPayload {
@@ -118,20 +129,28 @@ function fmtWindowSize(size: number | undefined): string {
   return `/${Math.round(size / 1000)}k`;
 }
 
-/** 1줄: 사용자 정보. 데이터 없는 세그먼트는 생략. */
-export function buildUserLine(payload: StdinPayload, cwd: string, forecasts: Partial<Record<'five_hour' | 'seven_day', Forecast>>, nowMs: number): string {
-  const parts: string[] = [];
-  parts.push(`${BOLD}${CYAN}${payload.model?.display_name ?? 'Claude'}${RESET}`);
-
+/** 1줄: 모델 │ 경로(브랜치). */
+export function buildHeaderLine(payload: StdinPayload, cwd: string): string {
   const branch = getGitBranch(cwd);
   const cwdDisplay = cwd.replace(os.homedir(), '~');
-  parts.push(`${DIM}${cwdDisplay}${RESET}${branch ? `${GREEN}(${branch})${RESET}` : ''}`);
+  return [
+    `${BOLD}${CYAN}${payload.model?.display_name ?? 'Claude'}${RESET}`,
+    `${DIM}${cwdDisplay}${RESET}${branch ? `${GREEN}(${branch})${RESET}` : ''}`,
+  ].join(SEP);
+}
+
+/** 2줄: ctx · 5h · 7d · $ (바 그래프). 데이터 없는 세그먼트는 생략, 전부 없으면 null. */
+export function buildUsageLine(payload: StdinPayload, forecasts: Partial<Record<'five_hour' | 'seven_day', Forecast>>, nowMs: number): string | null {
+  const parts: string[] = [];
 
   const cw = payload.context_window;
-  const warn200k = payload.exceeds_200k_tokens ? `${YELLOW}⚠200k${RESET}` : '';
+  // exceeds_200k_tokens 는 창 크기와 무관한 고정 임계(공식 문서). 1M 창에선 위험이 아니라 상태이므로 흐리게 '200k+',
+  // 창이 200k 이하일 때만(= 창을 꽉 채운 것) ⚠ 경고. (오너 질문 2026-10-07)
+  const bigWindow = isNum(cw?.context_window_size) && (cw?.context_window_size ?? 0) > 200_000;
+  const warn200k = payload.exceeds_200k_tokens ? (bigWindow ? `${DIM}200k+${RESET}` : `${YELLOW}⚠200k${RESET}`) : '';
   if (cw && isNum(cw.used_percentage)) {
     const pct = Math.round(cw.used_percentage);
-    parts.push(`${colored(`ctx ${pct}%${fmtWindowSize(cw.context_window_size)}`, pctColor(pct))}${warn200k ? ` ${warn200k}` : ''}`);
+    parts.push(`${BOLD}ctx${RESET} ${bar(pct)} ${colored(`${pct}%`, pctColor(pct))}${DIM}${fmtWindowSize(cw.context_window_size)}${RESET}${warn200k ? ` ${warn200k}` : ''}`);
   } else if (warn200k) {
     parts.push(warn200k); // used_percentage 가 null(세션 초반)이어도 경고는 유지
   }
@@ -139,16 +158,35 @@ export function buildUserLine(payload: StdinPayload, cwd: string, forecasts: Par
   for (const w of ['five_hour', 'seven_day'] as const) {
     const f = forecasts[w];
     if (!f) continue;
-    const text = fmtForecast(f, nowMs);
-    // 리셋 전 소진 예상이면 사용률과 무관하게 최소 노랑.
-    const color = f.exhaustsBeforeReset ? (pctColor(f.used) || YELLOW) : pctColor(f.used);
-    parts.push(colored(text, color));
+    parts.push(fmtLimitSegment(f, nowMs));
   }
 
   if (payload.cost && isNum(payload.cost.total_cost_usd)) {
     parts.push(`${DIM}$${payload.cost.total_cost_usd.toFixed(2)}${RESET}`);
   }
-  return parts.join(SEP);
+  return parts.length ? parts.join(SEP) : null;
+}
+
+/** @deprecated 2줄 시절 호환 — 헤더+사용량을 한 줄로. 테스트·외부 호출용. */
+export function buildUserLine(payload: StdinPayload, cwd: string, forecasts: Partial<Record<'five_hour' | 'seven_day', Forecast>>, nowMs: number): string {
+  const usage = buildUsageLine(payload, forecasts, nowMs);
+  return usage ? `${buildHeaderLine(payload, cwd)}${SEP}${usage}` : buildHeaderLine(payload, cwd);
+}
+
+/**
+ * 한도 세그먼트: `5h ▓▓▓░░░░░░░ 29% (리셋 04:00)` / 소진 예상 `5h ▓▓▓▓▓▓▓░░░ 72% ⚠ 03:40 소진 (리셋 04:00)`
+ * / 여유 `… → 리셋 04:00 여유 (예상 81%)`. 예측 근거 부족이면 사용률+리셋만.
+ */
+export function fmtLimitSegment(f: Forecast, nowMs: number): string {
+  const label = f.window === 'five_hour' ? '5h' : '7d';
+  const pct = Math.round(f.used);
+  const reset = f.resetsAt !== null ? `리셋 ${fmtClock(f.resetsAt, nowMs)}` : '';
+  let tail = reset ? `${DIM}(${reset})${RESET}` : '';
+  if (f.exhaustAt !== null) {
+    if (f.exhaustsBeforeReset) tail = `${RED}⚠ ${fmtClock(f.exhaustAt, nowMs)} 소진${RESET}${reset ? ` ${DIM}(${reset})${RESET}` : ''}`;
+    else if (reset) tail = `${DIM}→ ${reset} 여유${f.projectedAtReset !== null ? ` (예상 ${Math.round(f.projectedAtReset)}%)` : ''}${RESET}`;
+  }
+  return `${BOLD}${label}${RESET} ${bar(pct)} ${colored(`${pct}%`, pctColor(pct))}${tail ? ` ${tail}` : ''}`;
 }
 
 /** 2줄: forgen 정보. 전부 실측 카운터(computeStats = status 와 같은 기준). 실패 시 생략. */
@@ -159,11 +197,11 @@ export function buildForgenLine(sessionId: string | undefined): string | null {
     const turnRelevant = (() => { try { return sessionId ? readTurnRules(sessionId)?.rules.length ?? null : null; } catch { return null; } })();
     const s = computeStats();
     const sessionBlocks = sessionId ? countSessionBlocks(sessionId) : null;
-    const parts: string[] = [];
+    const parts: string[] = [`${BOLD}${CYAN}forgen${RESET}`];
     if (turnRelevant !== null) parts.push(`${DIM}관련 룰${RESET} ${turnRelevant}`);
     else if (rules !== null) parts.push(`${DIM}룰${RESET} ${rules}`);
-    if (sessionBlocks !== null) parts.push(`${DIM}이 세션 차단${RESET} ${sessionBlocks > 0 ? colored(String(sessionBlocks), YELLOW) : '0'}`);
-    parts.push(`${DIM}7d 차단${RESET} ${s.blocks7d}`);
+    if (sessionBlocks !== null) parts.push(`${DIM}차단${RESET} ${sessionBlocks > 0 ? colored(String(sessionBlocks), YELLOW) : '0'} ${DIM}(7d ${s.blocks7d})${RESET}`);
+    else parts.push(`${DIM}7d 차단${RESET} ${s.blocks7d}`);
     parts.push(`${DIM}surfaced${RESET} ${s.assistToday.surfaced}`);
     return parts.join(SEP);
   } catch {
@@ -226,7 +264,10 @@ export function renderStatusline(payload: StdinPayload, nowMs: number = Date.now
   const history = readSamples(undefined, nowMs);
   const all = opts.currentAlreadyAppended ? history : [...history, ...current];
   const forecasts = forecastAll(all, nowMs, current);
-  const lines = [buildUserLine(payload, cwd, forecasts, nowMs)];
+  // 오너 요청(2026-10-07): 3줄 — 모델·경로 / 사용량 바 / forgen.
+  const lines = [buildHeaderLine(payload, cwd)];
+  const usage = buildUsageLine(payload, forecasts, nowMs);
+  if (usage) lines.push(usage);
   let forgenLine = opts.useForgenCache ? readForgenLineCached(payload.session_id, nowMs) : null;
   if (forgenLine === null) {
     forgenLine = buildForgenLine(payload.session_id);
