@@ -24,6 +24,8 @@ describe('rm -rf 경로 정책 (v0.4.1 → D12-A)', () => {
   it('claude 임시 경로(/tmp/claude-*, macOS /var/folders)는 pass', () => {
     expect(act(`${RM} /tmp/claude-1001/x/build`)).toBe('pass');
     expect(act(`${RM} /var/folders/b0/x/T/tmpdir`)).toBe('pass');
+    // macOS 에서 /var/folders 는 /private/var/folders 의 링크다. 실제 경로도 임시 경로로 판정해야 한다.
+    expect(act(`${RM} /private/var/folders/b0/x/T/tmpdir`)).toBe('pass');
   });
   it('일반 /tmp·/var/tmp 하위는 확인 요청(ask) — 사용자 파일일 수 있다', () => {
     expect(act(`${RM} /tmp/foo`)).toBe('ask');

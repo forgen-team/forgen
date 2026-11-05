@@ -1,7 +1,7 @@
 {
   "schema": "smoke-report/v1",
   "passed": true,
-  "at": "2026-11-05T08:22:22.079Z",
+  "at": "2026-11-05T08:30:36.510Z",
   "version": "0.6.9",
   "mock_detected": false,
   "node": "v22.22.0",

@@ -87,7 +87,8 @@ export function preprocessForMatch(cmd: string, target: MatchTarget | undefined)
  * `/tmp/claude-*` (Claude Code scratchpad) 와 `$TMPDIR/claude-*` 로 좁힌다 (critic D1: `/tmp/*` 전체는 너무 넓다).
  */
 function tempRoots(): string[] {
-  const roots = ['/tmp/claude-', '/private/tmp/claude-', '/var/tmp/claude-', '/var/folders/'];
+  // macOS 의 /tmp·/var 는 /private 아래로 가는 링크다. 아래 symlink 탈출 검사가 realpath 로 판정하므로 양쪽 다 필요하다.
+  const roots = ['/tmp/claude-', '/private/tmp/claude-', '/var/tmp/claude-', '/private/var/tmp/claude-', '/var/folders/', '/private/var/folders/'];
   const t = process.env.TMPDIR?.replace(/\/+$/, '');
   if (t && t !== '/tmp') roots.push(`${t}/claude-`);
   return roots;
@@ -173,7 +174,7 @@ export function isSuspiciousRm(cmd: string): boolean {
   for (const m of cmd.matchAll(rmRe)) {
     if (!/(^|\s)-[a-zA-Z]*r|--recursive/i.test(m[1])) continue;
     for (const t of m[2].trim().split(/\s+/)) {
-      if (/(^|\/)\.\.(\/|$)|[{}*?[\]]|\$\(|`/.test(t) && /^\/?(tmp|private\/tmp|var\/tmp|var\/folders)(\/|$)|\/tmp\//.test(t.replace(/^["']|["']$/g, ''))) return true;
+      if (/(^|\/)\.\.(\/|$)|[{}*?[\]]|\$\(|`/.test(t) && /^\/?(tmp|private\/tmp|var\/tmp|private\/var\/tmp|var\/folders|private\/var\/folders)(\/|$)|\/tmp\//.test(t.replace(/^["']|["']$/g, ''))) return true;
     }
   }
   return false;
