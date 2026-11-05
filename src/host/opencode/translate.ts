@@ -80,7 +80,7 @@ export function toolBeforeToClaudeInput(
 
 /**
  * forgen PreToolUse hook 의 stdout(JSON 여러 줄일 수 있음) → OpenCode 판정.
- * permissionDecision:"deny" → block(throw). 그 외/파싱 실패 → 허용(fail-open — 가드 부재가
+ * permissionDecision:"deny"/"ask" → block(throw) (OpenCode 는 ask 를 지원하지 않음). 그 외/파싱 실패 → 허용(fail-open — 가드 부재가
  * 도구를 막지 않는다, forgen 의 hook 실패 정책과 동일).
  */
 export function decisionFromForgenOutput(stdout: string): OpencodeToolDecision {
@@ -89,9 +89,11 @@ export function decisionFromForgenOutput(stdout: string): OpencodeToolDecision {
   const hso = (parsed as { hookSpecificOutput?: unknown }).hookSpecificOutput;
   if (hso && typeof hso === 'object') {
     const decision = (hso as { permissionDecision?: unknown }).permissionDecision;
-    if (decision === 'deny') {
+    if (decision === 'deny' || decision === 'ask') {
       const reason = (hso as { permissionDecisionReason?: unknown }).permissionDecisionReason;
-      return { block: true, reason: typeof reason === 'string' ? reason : '[forgen] blocked by guard' };
+      const base = typeof reason === 'string' ? reason : '[forgen] blocked by guard';
+      // OpenCode plugin 에는 확인 요청 경로가 없다 — ask 를 통과시키면 가드 무력화이므로 차단 + 안내.
+      return { block: true, reason: decision === 'ask' ? `${base}\n[forgen] OpenCode 는 확인 요청(ask)을 지원하지 않아 차단으로 처리했습니다. 의도한 작업이면 직접 실행하거나 FORGEN_USER_CONFIRMED=1 로 다시 실행하세요.` : base };
     }
   }
   return { block: false };

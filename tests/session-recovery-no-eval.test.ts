@@ -27,7 +27,7 @@ describe('session-recovery code-injection defense', () => {
   it('lifecycle runner를 argv로 호출한다 (인라인 코드 인젝션 금지)', () => {
     expect(src).toMatch(/run-lifecycle-check\.js/);
     // spawn('node', [runnerPath, sessionId], ...) 형태 확인
-    expect(src).toMatch(/spawnLifecycle\s*\(\s*['"]node['"]\s*,\s*\[\s*runnerPath\s*,\s*sessionId\s*\]/);
+    expect(src).toMatch(/spawnLifecycle\s*\(\s*process\.execPath\s*,\s*\[\s*runnerPath\s*,\s*sessionId\s*\]/);
   });
 
   it('sessionId를 실행 가능한 위치에 template literal로 interpolate하지 않는다', () => {

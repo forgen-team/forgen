@@ -33,8 +33,8 @@ describe('install/uninstall symmetry (source invariants)', () => {
       .join('\n');
     // 과거의 정확 일치 체크는 제거되었어야 함
     expect(codeOnly).not.toMatch(/command === ['"]forgen status['"]/);
-    // 새 체크: /^forgen(\s|$)/ 패턴
-    expect(codeOnly).toMatch(/\/\^forgen\(\\s\|\$\)\//);
+    // 새 체크: statusline-install 의 isForgenStatusline (`forgen …` + 절대경로 + shim 형식)
+    expect(codeOnly).toMatch(/isForgenStatusline\(/);
   });
 });
 

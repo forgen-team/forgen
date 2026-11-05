@@ -65,7 +65,7 @@ describe('pre-tool-use enforce_via dispatcher (ADR-001 Mech-A PreToolUse)', () =
     try {
       // Construct target command matching our r + m + -rf pattern via fragment join
       // ADR-017 §6-2: /tmp 하위는 이제 '임시 폴더 예외' 로 통과하므로 비임시 경로로 검증.
-      const target = ['r', 'm', ' -', 'rf'].join('') + ' /srv/forgen-test-target';
+      const target = ['r', 'm', ' -', 'rf'].join('') + ' /srv';
       const proc = runHook(home, {
         tool_name: 'Bash',
         tool_input: { command: target },

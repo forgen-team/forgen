@@ -132,7 +132,7 @@ Claude가 `correction-record` MCP 도구를 호출합니다. 교정은 축 분�
 
 **Always on (결정론적, egress 0):** 명시적 교정은 영구 규칙으로 승급되고, 거의 중복인 교정은 클러스터링되어 강화되며, 축적된 evidence로 facet이 미세 조정됩니다. 시간 기반 `compound sweep` backstop(선택적으로 cron)이 길거나 중단된 세션에서도 그 학습이 유실되지 않게 보장합니다.
 
-**Opt-in (`forgen compound consent on`):** 백그라운드 Haiku 패스가 세션 transcript의 *redaction된 요약*을 읽어 재사용 가능한 솔루션, 행동 관찰, 그리고 위의 완곡한 교정을 추출합니다. 이것은 **기본 off** 입니다 — 당신이 켜지 않는 한 forgen은 당신의 대화를 어디로도 보내지 않으며, 전송 전에 secret / `<private>` 범위는 제거됩니다. `forgen doctor` 가 항상 현재 상태를 보여줍니다.
+**기본 ON (`forgen compound consent off` 로 끔):** 백그라운드 Haiku 패스가 세션 transcript의 *요약*(내 발화와 어시스턴트 발화 — 어시스턴트가 읽은 파일 내용의 일부가 섞일 수 있음)을 읽어 재사용 가능한 솔루션, 행동 관찰, 그리고 위의 완곡한 교정을 추출합니다. 전송 전에 비밀키는 마스킹하고 `<private>` 범위는 제외하며, 내 계정의 Claude Haiku 로만 보냅니다. `ANTHROPIC_API_KEY` 가 설정돼 있으면 그 API 계정으로 과금됩니다. 첫 세션에 안내가 한 번 나오고, `forgen status`·`forgen doctor` 가 현재 상태와 오늘 호출 수를 보여줍니다.
 
 교정이 지속적으로 현재 팩과 다른 방향을 가리키면, 3세션 후 mismatch 감지가 트리거되어 팩 변경을 추천합니다.
 
@@ -182,7 +182,7 @@ forgen 홈은 기본 `~/.forgen` 이지만 프로세스별 override 가능:
 ```bash
 # 깨끗한 격리 홈 — 실제 ~/.forgen 은 건드리지 않음
 FORGEN_HOME=/tmp/forgen-clean forgen init    # starter-pack 15개 자동 배포
-FORGEN_HOME=/tmp/forgen-clean forgen stats   # 격리 홈의 통계만 표시
+FORGEN_HOME=/tmp/forgen-clean forgen status   # 격리 홈의 통계만 표시
 FORGEN_HOME=/tmp/forgen-clean claude -p "…"  # 훅이 env 상속 → 격리된 로그
 ```
 
@@ -203,7 +203,7 @@ Linux 컨테이너에서 `~/.claude.json` 만 마운트하면 refresh 토큰이 
 
 ### 마이그레이션
 
-`forgen migrate implicit-feedback` — pre-v0.4.1 로그의 `category` 필드 백필.
+`forgen dev migrate implicit-feedback` — pre-v0.4.1 로그의 `category` 필드 백필.
 멱등(idempotent) — 여러 번 실행 안전.
 
 ---
@@ -269,7 +269,7 @@ Linux 컨테이너에서 `~/.claude.json` 만 마운트하면 refresh 토큰이 
            v                                                |
   +------------------+                                      |
   |  세션 종료        |   corrections -> rules (항상, egress 0)  |
-  |                  |   transcript 추출: opt-in (Haiku)        |
+  |                  |   transcript 추출: 기본 ON (Haiku)        |
   +--------+---------+                                      |
            |                                                |
            v                                                |
@@ -494,7 +494,7 @@ forgen --resume                 # 이전 세션 이어서
 ### 개인화
 
 ```bash
-forgen onboarding               # 4문항 온보딩 실행
+forgen forge --onboarding               # 4문항 온보딩 실행
 forgen forge --profile          # 현재 프로필 확인
 forgen forge --reset soft       # 프로필 초기화 (soft / learning / full)
 forgen forge --export           # 프로필 내보내기
@@ -503,14 +503,14 @@ forgen forge --export           # 프로필 내보내기
 ### 상태 확인
 
 ```bash
-forgen stats                    # 한 화면 Trust Layer 대시보드 (규칙·교정·block 7일)
-forgen last-block               # 가장 최근 block 이벤트와 rule 상세
+forgen status                    # 한 화면 Trust Layer 대시보드 (규칙·교정·block 7일)
+forgen status --blocks               # 가장 최근 block 이벤트와 rule 상세
 forgen inspect profile          # 4축 프로필 + 팩 + facet
 forgen inspect rules            # 활성/비활성 규칙
 forgen inspect corrections      # 교정 기록 (alias: evidence)
 forgen inspect session          # 현재 세션 상태
 forgen inspect violations       # 최근 block 기록 (--last N)
-forgen me                       # 개인 대시보드 (inspect profile 단축키)
+forgen status --profile                       # 개인 대시보드 (inspect profile 단축키)
 ```
 
 ### 규칙 관리
@@ -549,8 +549,13 @@ forgen compound --lifecycle     # 승격/강등 검사 실행
 forgen compound --verify <이름> # 수동으로 verified 승격
 forgen compound export          # 지식을 tar.gz로 내보내기
 forgen compound import <경로>   # 지식 아카이브 가져오기
-forgen skill promote <이름>     # 검증된 솔루션을 스킬로 승격
+forgen skill promote <이름>  # 검증된 솔루션을 표준 SKILL.md 로 승격 (--install → ~/.claude/skills)
 forgen skill list               # 승격된 스킬 목록
+forgen way                       # 내 방식을 한 화면에 (내가 말한 규칙 vs 추론, 강제 vs 자문)
+forgen way export --target agents-md   # AGENTS.md | claude-rules | skill | system-prompt | gemini | cursor | workflow | json 으로 내보내기 (미리보기, --out <dir> 로 쓰기)
+forgen way import way.json --apply     # 고친 내용을 룰에 반영
+forgen way collect-memory              # Claude 메모리 feedback_*.md 를 룰 후보로 읽기
+forgen way draft skill "<주제>"          # 주제와 관련된 룰·솔루션·교정 원문으로 SKILL.md 초안 작성 (`workflow`: 호스트 중립 체크리스트). 격리된 Haiku 호출, 미리보기 기본, --out <dir> 로 쓰면 근거 파일이 옆에 생김, Haiku 불가 시 관련 항목 묶음 출력
 ```
 
 ### 시스템
@@ -558,7 +563,7 @@ forgen skill list               # 승격된 스킬 목록
 ```bash
 forgen init                     # 프로젝트 초기화
 forgen doctor                   # 시스템 진단 (10개 항목 + 하네스 성숙도)
-forgen dashboard                # 지식 현황 대시보드 (6개 섹션)
+forgen status --overview                # 지식 현황 대시보드 (6개 섹션)
 forgen config hooks             # 훅 상태 + 컨텍스트 예산 확인
 forgen config hooks --regenerate # 훅 재생성
 forgen mcp list                 # 설치된 MCP 서버 목록

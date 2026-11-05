@@ -7,8 +7,8 @@
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { loadAllRules } from '../store/rule-store.js';
-import { loadAllEvidence } from '../store/evidence-store.js';
+import { loadAllRules, scanRuleFiles } from '../store/rule-store.js';
+import { readEvidenceCounts, readSavedTimes, countSince, formatLastExtraction, unreadable, haikuStatus, isInjectedRecall, logFilesWithRotated } from './flow-status.js';
 import { STATE_DIR, ME_DIR } from './paths.js';
 import { readJsonlWindow, isRealBlock, isConfirmedBypass, isSyntheticEntry, precisionByRule, readVerdicts } from '../engine/lifecycle/signals.js';
 import { computeFixFeatRatio, formatFixRatio } from './git-stats.js';
@@ -33,6 +33,11 @@ function readJsonl(p: string): Array<Record<string, unknown>> {
     } catch { /* skip malformed */ }
   }
   return out;
+}
+
+/** 회전본(.1/.2/타임스탬프)까지 이어 읽는다. */
+function readJsonlRotated(p: string): Array<Record<string, unknown>> {
+  return logFilesWithRotated(p).flatMap((f) => readJsonl(f));
 }
 
 function countWithin(entries: Array<Record<string, unknown>>, days: number, tsKey = 'at'): number {
@@ -63,40 +68,17 @@ function readLifecycleRetired(days: number): number {
   return n;
 }
 
-function readLastExtraction(): string {
-  // v0.4.1 파일명 정합: auto-compound-runner 는 last-auto-compound.json 에 기록.
-  // 이전 코드가 last-extraction.json 을 찾아 "never" 가 만성적으로 표시됨 —
-  // 실은 매 auto-compound 세션마다 값이 업데이트되고 있는데도 stats 에 반영 X.
-  const candidates = ['last-auto-compound.json', 'last-extraction.json'];
-  let p: string | null = null;
-  for (const name of candidates) {
-    const candidate = path.join(STATE_DIR, name);
-    if (fs.existsSync(candidate)) { p = candidate; break; }
-  }
-  if (!p) return 'never';
-  try {
-    const data = JSON.parse(fs.readFileSync(p, 'utf-8')) as {
-      timestamp?: string;
-      date?: string;
-      completedAt?: string;
-    };
-    const ts = data.completedAt ?? data.timestamp ?? data.date;
-    if (!ts) return 'never';
-    const diffDays = Math.floor((Date.now() - Date.parse(ts)) / MS_PER_DAY);
-    const dateStr = new Date(ts).toISOString().slice(0, 10);
-    if (diffDays === 0) return `${dateStr} (today)`;
-    if (diffDays === 1) return `${dateStr} (yesterday)`;
-    return `${dateStr} (${diffDays}d ago)`;
-  } catch {
-    return 'unknown';
-  }
-}
-
 export interface StatsSnapshot {
   activeRules: number;
   suppressedRules: number;
+  /** 사용자가 직접 한 교정 (hook 기록) */
   correctionsTotal: number;
   corrections7d: number;
+  /** Haiku 채굴 추론 — 사용자 발화가 아님 */
+  minedTotal: number;
+  mined7d: number;
+  /** 읽기 실패·깨진 파일 경고 (0건과 구분) */
+  readErrors: string[];
   blocks7d: number;
   /** ADR-017 §2 원칙 1: 집계에서 제외된 합성 세션(default/unknown) 기록 수 — 누락을 가시화. */
   syntheticExcluded7d: number;
@@ -114,6 +96,7 @@ export interface StatsSnapshot {
     recallMcp: number;
     surfaced: number;
     referenced: number;
+    /** 오늘 새로 저장된 솔루션·룰 (흐름의 "저장"과 같은 정의) */
     extractedToday: number;
   };
   philosophy?: {
@@ -154,7 +137,7 @@ function computeAssistToday(): StatsSnapshot['assistToday'] {
   // ADR-017 §1.5a: 이전엔 match-eval-log 의 오늘 entry 수 전체를 "Recall hits" 로 셌다 —
   // 후보 0건·mcp 쿼리·vitest 픽스처(7d 773건 중 351건)까지 포함돼 "25회 recall 에 0 surfaced"
   // 라는 틀린 그림을 만들었다. hit = source:hook 이고 후보 ≥1. attempts = hook 전체.
-  const matchLog = readJsonl(path.join(STATE_DIR, 'match-eval-log.jsonl'));
+  const matchLog = readJsonlRotated(path.join(STATE_DIR, 'match-eval-log.jsonl'));
   let recallHits = 0;
   let recallAttempts = 0;
   let recallMcp = 0;
@@ -164,7 +147,7 @@ function computeAssistToday(): StatsSnapshot['assistToday'] {
     if (e.source === 'mcp') { recallMcp++; continue; }
     if (e.source !== 'hook') continue;
     recallAttempts++;
-    if (Array.isArray(e.candidates) && e.candidates.length > 0) recallHits++;
+    if (isInjectedRecall(e)) recallHits++;
   }
 
   // surfaced + referenced — 같은 스트림 1회 loop 로.
@@ -178,17 +161,8 @@ function computeAssistToday(): StatsSnapshot['assistToday'] {
     else if (e.type === 'recall_referenced') referenced++;
   }
 
-  // extracted today: solutions dir 에서 오늘 mtime 인 .md 파일
-  let extractedToday = 0;
-  try {
-    if (fs.existsSync(SOLUTIONS_DIR)) {
-      for (const f of fs.readdirSync(SOLUTIONS_DIR)) {
-        if (!f.endsWith('.md')) continue;
-        const stat = fs.statSync(path.join(SOLUTIONS_DIR, f));
-        if (stat.mtimeMs >= cutoffMs) extractedToday++;
-      }
-    }
-  } catch { /* fail-open */ }
+  // extracted today: 솔루션 frontmatter created 기준 (mtime 은 touch·cp 로 바뀐다)
+  const extractedToday = readSavedTimes().times.filter((t) => t >= cutoffMs).length;
 
   return { recallHits, recallAttempts, recallMcp, surfaced, referenced, extractedToday };
 }
@@ -220,18 +194,24 @@ function computePhilosophy(): StatsSnapshot['philosophy'] {
 }
 
 export function computeStats(): StatsSnapshot {
-  const rules = loadAllRules();
+  const ruleScan = scanRuleFiles();
+  const rules = ruleScan.dirError ? [] : loadAllRules();
   const activeRules = rules.filter((r) => r.status === 'active').length;
   const suppressedRules = rules.filter((r) => r.status === 'suppressed').length;
 
-  // v0.4.1 정확도 수정: loadRecentEvidence(500) 제한은 "Corrections (total)"
-  // 라벨과 모순 — 실 behavior 618건 중 118건 누락됐음. 전체 evidence 스캔으로
-  // 교체. explicit_correction 만 filter 이므로 memory overhead 는 N * ~1KB 수준.
-  const evidence = loadAllEvidence();
-  const corrections = evidence.filter((e) => e.type === 'explicit_correction');
-  const correctionsTotal = corrections.length;
-  const cutoff7d = Date.now() - 7 * MS_PER_DAY;
-  const corrections7d = corrections.filter((e) => Date.parse(e.timestamp) >= cutoff7d).length;
+  // 교정은 출처별로 분리: 사용자가 직접 한 것(hook)과 Haiku 채굴 추론(auto-compound-miner).
+  // 합쳐서 "Corrections 271" 로 표시하면 실제 사용자 교정 39건이 묻힌다.
+  const evidence = readEvidenceCounts();
+  const correctionsTotal = evidence.user.times.length;
+  const corrections7d = countSince(evidence.user.times, 7);
+  const minedTotal = evidence.mined.times.length;
+  const mined7d = countSince(evidence.mined.times, 7);
+  const readErrors: string[] = [];
+  if (evidence.user.error) readErrors.push(`behavior 디렉터리: ${evidence.user.error}`);
+  const stateErr = unreadable(ENFORCEMENT_DIR);
+  if (stateErr) readErrors.push(`state/enforcement: ${stateErr}`);
+  if (ruleScan.dirError) readErrors.push(`룰 디렉터리: ${ruleScan.dirError}`);
+  if (ruleScan.broken.length > 0) readErrors.push(`깨진 룰 파일 ${ruleScan.broken.length}개 (${ruleScan.broken.slice(0, 2).map((b) => b.file).join(', ')}${ruleScan.broken.length > 2 ? ' …' : ''}) — 룰 수에 포함되지 않음`);
 
   const violations = readJsonlWindow<Record<string, unknown>>(path.join(ENFORCEMENT_DIR, 'violations.jsonl'), 30);
   // v0.4.1 historical false-positive 제거: pre-0.4.1 bypass-detector 가 Write/Edit
@@ -256,13 +236,16 @@ export function computeStats(): StatsSnapshot {
     suppressedRules,
     correctionsTotal,
     corrections7d,
+    minedTotal,
+    mined7d,
+    readErrors,
     blocks7d: countWithin(realBlocks, 7),
     syntheticExcluded7d: countWithin(violations.filter((e) => isSyntheticEntry(e)), 7),
     acks7d: countWithin(acks, 7),
     bypass7d: countWithin(bypass, 7),
     drift7d: countWithin(drift, 7),
     retired7d: readLifecycleRetired(7),
-    lastExtraction: readLastExtraction(),
+    lastExtraction: formatLastExtraction(),
     assistToday: computeAssistToday(),
     philosophy: computePhilosophy(),
     solutionHealth: computeSolutionHealth(),
@@ -296,7 +279,7 @@ function computeSolutionHealth(): StatsSnapshot['solutionHealth'] {
   } catch { /* fail-open */ }
 
   const cutoff7d = Date.now() - 7 * MS_PER_DAY;
-  const matchLog = readJsonl(path.join(STATE_DIR, 'match-eval-log.jsonl'));
+  const matchLog = readJsonlRotated(path.join(STATE_DIR, 'match-eval-log.jsonl'));
   const matchedLocalNames = new Set<string>();
   for (const e of matchLog) {
     const ts = typeof e.ts === 'string' ? Date.parse(e.ts) : NaN;
@@ -361,28 +344,23 @@ function computeWeeklyTrend(violations: Array<Record<string, unknown>>): StatsSn
     if (Number.isFinite(ts) && ts >= lastWeekStart && ts < thisWeekStart) blocksLastWeek++;
   }
 
-  const matchLog = readJsonl(path.join(STATE_DIR, 'match-eval-log.jsonl'));
+  const matchLog = readJsonlRotated(path.join(STATE_DIR, 'match-eval-log.jsonl'));
   let recallsThisWeek = 0;
   let recallsLastWeek = 0;
   for (const e of matchLog) {
     const ts = typeof e.ts === 'string' ? Date.parse(e.ts) : NaN;
-    if (!Number.isFinite(ts)) continue;
+    if (!Number.isFinite(ts) || !isInjectedRecall(e)) continue; // 흐름의 "주입"·Today 의 Recall hits 와 같은 정의
     if (ts >= thisWeekStart) recallsThisWeek++;
     else if (ts >= lastWeekStart) recallsLastWeek++;
   }
 
+  // 저장 수: 흐름의 "저장"과 같은 정의 — 솔루션 created + 룰 created_at (파일 mtime 아님)
   let extractionsThisWeek = 0;
   let extractionsLastWeek = 0;
-  try {
-    if (fs.existsSync(SOLUTIONS_DIR)) {
-      for (const f of fs.readdirSync(SOLUTIONS_DIR)) {
-        if (!f.endsWith('.md')) continue;
-        const mtime = fs.statSync(path.join(SOLUTIONS_DIR, f)).mtimeMs;
-        if (mtime >= thisWeekStart) extractionsThisWeek++;
-        else if (mtime >= lastWeekStart) extractionsLastWeek++;
-      }
-    }
-  } catch { /* fail-open */ }
+  for (const t of readSavedTimes().times) {
+    if (t >= thisWeekStart) extractionsThisWeek++;
+    else if (t >= lastWeekStart) extractionsLastWeek++;
+  }
 
   return { blocksThisWeek, blocksLastWeek, recallsThisWeek, recallsLastWeek, extractionsThisWeek, extractionsLastWeek };
 }
@@ -397,14 +375,14 @@ export function renderStats(s: StatsSnapshot): string {
   lines.push('  forgen — trust layer status');
   lines.push('  ───────────────────────────');
   lines.push(`  Active rules          ${padNum(s.activeRules)}    (${s.suppressedRules} suppressed)`);
-  lines.push(`  Corrections (total)   ${padNum(s.correctionsTotal)}    (+${s.corrections7d} last 7d)`);
+  lines.push(`  Corrections (you)     ${padNum(s.correctionsTotal)}    (+${s.corrections7d} last 7d) — 당신이 직접 한 교정`);
+  lines.push(`  Mined (Haiku)         ${padNum(s.minedTotal)}    (+${s.mined7d} last 7d) — 대화에서 추론한 후보, 당신의 발화 아님`);
+  for (const e of s.readErrors) lines.push(`  ⚠ 읽기 문제: ${e}`);
   lines.push('');
   lines.push('  Last 7 days');
   // R9-PA2: ack rate = block→retract→pass 루프가 실제 작동한 비율.
-  const ackRateLabel = s.blocks7d > 0
-    ? `(${Math.round((s.acks7d / s.blocks7d) * 100)}% acknowledged)`
-    : '';
-  lines.push(`    Blocks              ${padNum(s.blocks7d)}    — times Claude was asked to retract ${ackRateLabel}`);
+  // ack/block 비율은 서로 다른 로그를 나눈 값이라 의미가 없어 표시하지 않는다 (건수만).
+  lines.push(`    Blocks              ${padNum(s.blocks7d)}    — times Claude was asked to retract`);
   lines.push(`    Acknowledgments     ${padNum(s.acks7d)}    — block → retract → pass loops`);
   lines.push(`    Bypass (confirmed)  ${padNum(s.bypass7d)}    — FORGEN_USER_CONFIRMED=1 overrides (audited)`);
   if (s.syntheticExcluded7d > 0) lines.push(`    Excluded            ${padNum(s.syntheticExcluded7d)}    — session-less records (tests/probes), not counted above`);
@@ -415,11 +393,8 @@ export function renderStats(s: StatsSnapshot): string {
   lines.push('  Today (assist)');
   lines.push(`    Recall hits         ${padNum(s.assistToday.recallHits)}    — 후보가 나온 recall (hook 시도 ${s.assistToday.recallAttempts} · mcp ${s.assistToday.recallMcp})`);
   lines.push(`    Surfaced            ${padNum(s.assistToday.surfaced)}    — 실제 주입된 솔루션 수`);
-  const ratio = s.assistToday.surfaced > 0
-    ? ` (${Math.round(100 * s.assistToday.referenced / s.assistToday.surfaced)}% referenced)`
-    : '';
-  lines.push(`    Referenced          ${padNum(s.assistToday.referenced)}    — Claude 응답에 인용됨${ratio}`);
-  lines.push(`    Extracted           ${padNum(s.assistToday.extractedToday)}    — 오늘 새로 저장된 패턴`);
+  lines.push(`    Referenced          ${padNum(s.assistToday.referenced)}    — Claude 응답에 인용됨`);
+  lines.push(`    Saved               ${padNum(s.assistToday.extractedToday)}    — 오늘 새로 저장된 솔루션·룰 (흐름의 저장과 같은 기준)`);
   lines.push('');
 
   // v0.4.1 철학 고도화 단면 — "개인화가 어디까지 학습됐나" 1섹션.
@@ -452,14 +427,14 @@ export function renderStats(s: StatsSnapshot): string {
     lines.push('  Solutions');
     lines.push(`    Total               ${padNum(sh.total)}    ${statusParts}`);
     lines.push(`    Avg confidence      ${sh.avgConfidence.toFixed(2)}`);
-    lines.push(`    Utilization (7d)    ${Math.round(sh.utilization7d * 100)}%   — matched at least once`);
+    lines.push(`    Matched (7d)        ${padNum(Math.round(sh.utilization7d * sh.total))}    — 최근 7일에 한 번이라도 매칭된 솔루션 (전체 ${sh.total})`);
     lines.push('');
   }
 
   // v0.5.0: Top rules (7d) + ADR-017 D1 precision
   if (s.topRules7d.length > 0) {
     lines.push('  Top rules (7d)                 precision (judged / unjudged)');
-    const adviseRules = new Set(loadAllRules().filter((r) => r.enforce_mode === 'advise').map((r) => r.rule_id));
+    const adviseRules = new Set((() => { try { return loadAllRules(); } catch { return []; } })().filter((r) => r.enforce_mode === 'advise').map((r) => r.rule_id));
     const pmap = new Map(s.precision7d.map((p) => [p.rule_id, p]));
     for (const r of s.topRules7d) {
       const p = pmap.get(r.name);
@@ -468,7 +443,12 @@ export function renderStats(s: StatsSnapshot): string {
       lines.push(`    ${padNum(r.count)}x  ${r.name.padEnd(28).slice(0, 28)}${prec}${advise}`);
     }
     const unjudged = s.precision7d.reduce((n, p) => n + p.unjudged, 0);
-    if (unjudged > 0) lines.push(`    ${C_DIM}unjudged ${unjudged} — 자동 판정(Haiku) 은 compound consent 가 켜져 있을 때만 돕니다: forgen compound consent on${C_RESET}`);
+    if (unjudged > 0) {
+      const h = haikuStatus();
+      const how = h.state === 'off' ? '자동 판정(Haiku)이 꺼져 있어 사람이 판정해야 합니다: forgen block <id> --ok|--fp'
+        : h.state === 'on' ? '자동 판정 대기 중' : `자동 판정 불가 (${h.detail})`;
+      lines.push(`    ${C_DIM}unjudged ${unjudged} — ${how}${C_RESET}`);
+    }
     lines.push('');
   }
 
@@ -481,8 +461,8 @@ export function renderStats(s: StatsSnapshot): string {
   };
   lines.push('  Weekly trend (this vs last)');
   lines.push(`    Blocks       ${padNum(wt.blocksThisWeek)} → ${padNum(wt.blocksLastWeek, 2)} prev   (${trendArrow(wt.blocksThisWeek, wt.blocksLastWeek)})`);
-  lines.push(`    Recalls      ${padNum(wt.recallsThisWeek)} → ${padNum(wt.recallsLastWeek, 2)} prev   (${trendArrow(wt.recallsThisWeek, wt.recallsLastWeek)})`);
-  lines.push(`    Extractions  ${padNum(wt.extractionsThisWeek)} → ${padNum(wt.extractionsLastWeek, 2)} prev   (${trendArrow(wt.extractionsThisWeek, wt.extractionsLastWeek)})`);
+  lines.push(`    Recall hits  ${padNum(wt.recallsThisWeek)} → ${padNum(wt.recallsLastWeek, 2)} prev   (${trendArrow(wt.recallsThisWeek, wt.recallsLastWeek)})`);
+  lines.push(`    Saved        ${padNum(wt.extractionsThisWeek)} → ${padNum(wt.extractionsLastWeek, 2)} prev   (${trendArrow(wt.extractionsThisWeek, wt.extractionsLastWeek)})`);
   lines.push('');
 
   lines.push(`  Last extraction: ${s.lastExtraction}`);

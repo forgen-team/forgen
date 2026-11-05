@@ -12,15 +12,16 @@ import { fileURLToPath } from 'node:url';
 import { HookError } from '../core/errors.js';
 import { readStdinJSON } from './shared/read-stdin.js';
 import { isHookEnabled } from './hook-config.js';
-import { approve, approveWithWarning, failOpenWithTracking } from './shared/hook-response.js';
+import { approve, approveWithPostToolContext, failOpenWithTracking } from './shared/hook-response.js';
+import { stringifyToolResponse } from './shared/tool-response.js';
 
 interface PostToolInput {
   tool_name?: string;
   toolName?: string;
   tool_input?: Record<string, unknown>;
   toolInput?: Record<string, unknown>;
-  tool_response?: string;
-  toolOutput?: string;
+  tool_response?: unknown;
+  toolOutput?: unknown;
   session_id?: string;
 }
 
@@ -30,7 +31,8 @@ export interface SecretPattern {
 }
 
 export const SECRET_PATTERNS: SecretPattern[] = [
-  { name: 'API Key', pattern: /(sk|pk|api[_-]?key)[_-][\w\-.]{20,}/i },
+  // 단어 중간 매칭 방지: risk_/task-/disk- 의 sk_ sk- 는 키가 아니다. `_` 앞(MY_API_KEY_…)은 허용하려고 \b 대신 영숫자 lookbehind.
+  { name: 'API Key', pattern: /(?<![A-Za-z0-9])(sk|pk|api[_-]?key)[_-][\w\-.]{20,}/i },
   { name: 'AWS Access Key', pattern: /AKIA[\w]{16}/ },
   { name: 'Token/Bearer/JWT', pattern: /(token|bearer|jwt)[=:\s]["']?[\w\-.]{20,}/i },
   { name: 'Password', pattern: /(password|passwd|pwd)\s*[=:]\s*["']?[^\s"']{8,}/i },
@@ -89,7 +91,8 @@ export async function main(): Promise<void> {
   }
 
   const toolName = data.tool_name ?? data.toolName ?? '';
-  const toolResponse = data.tool_response ?? data.toolOutput ?? '';
+  // H3: Bash 는 {stdout, stderr, …} 객체로 온다 — 문자열 리프를 모아 스캔한다.
+  const toolResponse = stringifyToolResponse(data.tool_response ?? data.toolOutput ?? '');
   const toolInput = data.tool_input ?? data.toolInput ?? {};
 
   // Write/Edit/Bash 도구만 검사
@@ -104,8 +107,16 @@ export async function main(): Promise<void> {
 
   const secrets = detectSecrets(textToScan);
   if (secrets.length > 0) {
+    // 비밀 "값"은 어디에도 싣지 않는다 — 패턴 이름만 모델·사용자·로그에 전달한다.
     const names = secrets.map(s => s.name).join(', ');
-    console.log(approveWithWarning(`<compound-security-warning>\n[Forgen] ⚠ Sensitive information exposure detected: ${names}\nThe output may contain secrets. Please review.\n</compound-security-warning>`));
+    const inOutput = detectSecrets(toolResponse).length > 0;
+    const context = ['<compound-security-warning>',
+      `[Forgen secret-filter] 방금 ${toolName} ${inOutput ? '출력' : '입력'}에서 민감 정보 패턴이 탐지됐다: ${names}.`,
+      '- 값을 답변, 커밋, 파일, 메모리에 옮겨 적지 말 것. 필요하면 환경변수 이름으로만 참조한다.',
+      '- 이미 외부에 노출됐을 수 있으면 사용자에게 키 폐기·재발급을 안내한다.',
+      '</compound-security-warning>',
+    ].join('\n');
+    console.log(approveWithPostToolContext(context, `[Forgen] ⚠ Sensitive information detected: ${names}`));
     return;
   }
 

@@ -7,7 +7,7 @@
  *   2. MCP: 기존 config 파일(opencode.jsonc 우선, 없으면 opencode.json)에 mcp.forgen-compound
  *      surgical 병합. **JSONC 파서(jsonc-parser)로 주석/trailing-comma 보존**, 쓰기 전 백업
  *      (리뷰 HIGH: JSON.parse 가 공식 JSONC 를 clobber 하던 데이터 손실 수정).
- *   3. AGENTS.md: cwd 의 forgen rules block (Codex 헬퍼 재사용).
+ *   3. AGENTS.md: <config>/AGENTS.md 의 forgen rules block (Codex 헬퍼 재사용).
  */
 
 import * as fs from 'node:fs';
@@ -15,7 +15,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { applyEdits, modify, parse as parseJsonc } from 'jsonc-parser';
 import { createLogger } from '../core/logger.js';
-import { recordAgentsMdInstall, resolveAgentsMdPath, upsertForgenRulesInAgentsMd } from './install-codex.js';
+import { cleanStaleAgentsMd, recordAgentsMdInstall, upsertForgenRulesInAgentsMd } from './install-codex.js';
 
 const log = createLogger('install-opencode');
 
@@ -48,6 +48,8 @@ export interface OpencodeInstallResult {
   /** config 백업 경로(수정 전 .bak). */
   mcpBackupPath?: string;
   agentsMdInjected: boolean;
+  /** 예전 설치가 cwd·홈에 남긴 forgen 블록을 걷어낸 파일들. */
+  staleAgentsMdCleaned?: string[];
 }
 
 export function resolveOpencodeConfigDir(opts: OpencodeInstallOptions): string {
@@ -186,7 +188,9 @@ export function planOpencodeInstall(opts: OpencodeInstallOptions): OpencodeInsta
   }
 
   // ── 3) AGENTS.md rules (Codex 헬퍼 재사용) ──
-  const agentsMdPath = opts.agentsMdPath ?? resolveAgentsMdPath(opts.pkgRoot);
+  // cwd 가 아니라 OpenCode 전역 지침 파일(<config>/AGENTS.md)에 쓴다. 예전에 cwd·홈에 남긴 블록은 걷어낸다.
+  const agentsMdPath = opts.agentsMdPath ?? path.join(configDir, 'AGENTS.md');
+  if (!opts.agentsMdPath) result.staleAgentsMdCleaned = cleanStaleAgentsMd({ hostDir: configDir, targetPath: agentsMdPath, pkgRoot: opts.pkgRoot, dryRun }).cleaned;
   const agentsResult = upsertForgenRulesInAgentsMd({ agentsMdPath, pkgRoot: opts.pkgRoot, dryRun });
   result.agentsMdInjected = agentsResult.injected;
   if (!dryRun) recordAgentsMdInstall(configDir, agentsMdPath);

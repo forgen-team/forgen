@@ -3,7 +3,11 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import * as readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
+import { FORGEN_RUN_MARKER, forgenRunShimPath, isForgenRunCommand } from '../host/claude-shim.js';
 import { hasManagedSkillMarker, listDevGuideSkillNames, removeSkillFile } from '../host/managed-marker.js';
+import { isForgenStatusline } from './statusline-install.js';
+import { reclaimRenderedRuleFiles } from './rendered-rules-manifest.js';
+import { removeForgenHooks } from '../host/install-claude.js';
 import {
   SETTINGS_PATH,
   acquireLock,
@@ -145,7 +149,9 @@ export function cleanClaudeJsonMcp(homeDir: string = os.homedir()): boolean {
     const entry = data.mcpServers?.['forgen-compound'];
     if (!entry) return false;
     const args = Array.isArray(entry.args) ? entry.args : [];
-    const isForgenServer = args.some((a) => typeof a === 'string' && /[\\/]dist[\\/]mcp[\\/]server\.js$/.test(a));
+    const command = (entry as { command?: unknown }).command;
+    const isForgenServer = (typeof command === 'string' && isForgenRunCommand(command))
+      || args.some((a) => typeof a === 'string' && /[\\/]dist[\\/]mcp[\\/]server\.js$/.test(a));
     if (!isForgenServer) return false; // 사용자가 같은 이름으로 다른 서버를 등록
     delete data.mcpServers?.['forgen-compound'];
     if (data.mcpServers && Object.keys(data.mcpServers).length === 0) delete data.mcpServers;
@@ -192,38 +198,11 @@ function cleanSettings(): void {
     }
   }
 
-  // hooks에서 forgen 관련 엔트리 제거
-  const hookMarkers = ['forgen', 'compound-harness'];
-  function isCHCommand(cmd: string): boolean {
-    return hookMarkers.some(m => cmd.includes(m));
-  }
-  function isCHHookEntry(entry: Record<string, unknown>): boolean {
-    // 직접 형식: { type, command }
-    if (typeof entry.command === 'string' && isCHCommand(entry.command)) return true;
-    // 래핑 형식: { matcher, hooks: [{ command }] }
-    const innerHooks = entry.hooks as Array<Record<string, unknown>> | undefined;
-    if (Array.isArray(innerHooks)) {
-      return innerHooks.some(h => typeof h.command === 'string' && isCHCommand(h.command));
-    }
-    return false;
-  }
-
+  // hooks 에서 forgen 항목만 제거한다. 같은 그룹의 사용자 hook 과 다른 도구 hook 은 남긴다.
   const hooks = settings.hooks as Record<string, unknown[]> | undefined;
   if (hooks) {
-    for (const [hookType, entries] of Object.entries(hooks)) {
-      if (!Array.isArray(entries)) continue;
-      const filtered = entries.filter(
-        (h) => !isCHHookEntry(h as Record<string, unknown>)
-      );
-      if (filtered.length === 0) {
-        delete hooks[hookType];
-      } else {
-        hooks[hookType] = filtered;
-      }
-    }
-    if (Object.keys(hooks).length === 0) {
-      delete settings.hooks;
-    }
+    removeForgenHooks(hooks, path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..'));
+    if (Object.keys(hooks).length === 0) delete settings.hooks;
   }
 
   // statusLine이 forgen이 설치한 command 중 하나면 제거.
@@ -232,12 +211,15 @@ function cleanSettings(): void {
   // 실제 install은 `settings-injector.ts:59`에서 `'forgen me'`를 주입한다.
   // command 문자열이 `forgen`으로 시작하는 경우를 모두 forgen 소유로 보고
   // 제거 — 사용자 커스텀 statusLine(예: `custom-cli ...`)은 건드리지 않음.
+  // 구형(`forgen statusline`, 절대경로 dist/cli.js)과 shim 형식 모두 forgen 소유. 설치 때 보관한 원본(statusLine_backup)이 있으면 복원.
   const statusLine = settings.statusLine as Record<string, unknown> | undefined;
-  if (
-    typeof statusLine?.command === 'string' &&
-    /^forgen(\s|$)/.test(statusLine.command.trim())
-  ) {
-    delete settings.statusLine;
+  if (typeof statusLine?.command === 'string' && statusLine.command.trim() && isForgenStatusline(statusLine.command)) {
+    if (typeof settings.statusLine_backup === 'string') {
+      settings.statusLine = { type: 'command', command: settings.statusLine_backup };
+    } else {
+      delete settings.statusLine;
+    }
+    delete settings.statusLine_backup;
   }
 
   // enabledPlugins에서 forgen@forgen-local 제거
@@ -297,6 +279,36 @@ function cleanAgents(cwd: string): void {
   if (removed === 0 && preserved === 0) {
     console.log('  - No agent files found');
   }
+}
+
+/** 고정 shim(<FORGEN_HOME>/bin/forgen-run) 제거 — 표식이 있는 forgen 파일만. 빈 bin 디렉토리도 정리. */
+export function cleanForgenRunShim(homeDir: string = os.homedir()): boolean {
+  const shim = forgenRunShimPath(homeDir);
+  try {
+    if (!fs.readFileSync(shim, 'utf-8').includes(FORGEN_RUN_MARKER)) return false;
+    fs.unlinkSync(shim);
+    try { fs.rmdirSync(path.dirname(shim)); } catch { /* 비어 있지 않음 */ }
+    return true;
+  } catch {
+    return false; // 없음
+  }
+}
+
+/** 전역 ~/.claude/agents/ch-*.md — forgen 표식이 있는 것만 지운다(사용자 파일 보존). */
+export function cleanGlobalAgents(homeDir: string = os.homedir()): number {
+  const dir = path.join(homeDir, '.claude', 'agents');
+  let removed = 0;
+  try {
+    for (const name of fs.readdirSync(dir)) {
+      if (!name.startsWith('ch-') || !name.endsWith('.md')) continue;
+      const f = path.join(dir, name);
+      if (fs.lstatSync(f).isSymbolicLink() || !hasManagedSkillMarker(fs.readFileSync(f, 'utf-8'))) continue;
+      fs.unlinkSync(f);
+      removed += 1;
+    }
+    if (fs.readdirSync(dir).length === 0) fs.rmdirSync(dir);
+  } catch { /* 없음 */ }
+  return removed;
 }
 
 /** .claude/rules/ 의 forgen 규칙 파일 및 레거시 compound-rules.md 제거 */
@@ -373,11 +385,11 @@ function cleanClaudeMd(cwd: string): void {
 export async function handleUninstall(cwd: string, options: { force?: boolean; purge?: boolean }): Promise<void> {
   console.log('\n[forgen] Uninstalling Forgen\n');
   console.log('The following items will be cleaned up:');
-  console.log('  1. Remove CH env vars/hooks/statusLine/enabledPlugins from ~/.claude/settings.json');
-  console.log('  2. Delete .claude/agents/ch-*.md agent files');
+  console.log('  1. Remove CH env vars/hooks/statusLine (shim or absolute-path form)/enabledPlugins from ~/.claude/settings.json');
+  console.log('  2. Delete ch-*.md agent files (project .claude/agents and global ~/.claude/agents; only forgen-managed ones)');
   console.log('  3. Delete .claude/rules/ rule files (project-context, routing, forge-*)');
   console.log('  4. Remove forgen block from CLAUDE.md');
-  console.log('  5. Remove slash commands (~/.claude/commands/forgen/) and the forgen-managed verify skill (~/.claude/skills/verify/)');
+  console.log('  5. Remove the hook/MCP shim (~/.forgen/bin/forgen-run), global rule files generated by forgen, slash commands (~/.claude/commands/forgen/) and the forgen-managed verify skill (~/.claude/skills/verify/)');
   console.log('  6. Remove plugin artifacts (cache, installed_plugins.json, plugin directory), dev-guide skills, and the forgen-compound MCP entry in ~/.claude.json');
   console.log('  7. Codex (if $CODEX_HOME or ~/.codex exists): forgen hooks in hooks.json, the MCP/notify blocks in config.toml, forgen skills, ch-*.toml agents, and the AGENTS.md blocks (every project recorded at install time) — hooks and files from other tools are kept');
   console.log('     OpenCode (if its config dir exists): the forgen plugin, the forgen-compound MCP entry, AGENTS.md blocks');
@@ -409,11 +421,17 @@ export async function handleUninstall(cwd: string, options: { force?: boolean; p
   cleanCompoundRules(cwd);
   cleanClaudeMd(cwd);
   cleanSlashCommands();
+  const agents = cleanGlobalAgents();
+  if (agents > 0) console.log(`  ✓ Removed ${agents} global agent(s) (~/.claude/agents/ch-*.md)`);
+  // 전역 ~/.claude/rules 의 forgen 생성 파일(생성 표제로 판정)은 backups 로 옮긴다 — 방치하면 uninstall 후에도 주입된다.
+  const reclaimed = reclaimRenderedRuleFiles(cwd).filter((f) => f.startsWith(path.join(os.homedir(), '.claude', 'rules')));
+  if (reclaimed.length > 0) console.log(`  ✓ Moved ${reclaimed.length} global rule file(s) out of ~/.claude/rules (backup under ~/.forgen/backups/)`);
   if (cleanVerifySkill()) console.log('  ✓ Removed forgen verify skill (~/.claude/skills/verify/)');
   const pkgRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
   const devGuide = cleanDevGuideSkills(pkgRoot);
   if (devGuide > 0) console.log(`  ✓ Removed ${devGuide} dev-guide skill(s) (~/.claude/skills/forgen-*)`);
   if (cleanClaudeJsonMcp()) console.log('  ✓ Removed forgen-compound MCP server from ~/.claude.json');
+  if (cleanForgenRunShim()) console.log('  ✓ Removed hook/MCP shim (~/.forgen/bin/forgen-run)');
   // ADR-016 D4 — Codex 에 등록한 것도 되돌린다 (다른 도구의 훅과 그 신뢰는 보존)
   try {
     const { planCodexUninstall, renderCodexUninstall } = await import('../host/uninstall-codex.js');

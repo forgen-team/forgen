@@ -11,16 +11,17 @@ export async function handleBlock(args: string[]): Promise<void> {
   const reasonIdx = args.indexOf('--reason');
   const reason = reasonIdx >= 0 ? args[reasonIdx + 1] : undefined;
   if (!id || (!ok && !fp) || (ok && fp)) {
+    process.exitCode = 1;
     console.log('usage: forgen block <violation_id|prefix> --ok | --fp [--reason "..."]');
     console.log('       --ok  이 차단은 맞다(정탐)   --fp  이 차단은 틀렸다(오탐). 자동 판정을 덮어씁니다.');
     return;
   }
-  if (!/^[A-Za-z0-9-]{8,}$/.test(id)) { console.log(`invalid id: ${id}`); return; }
+  if (!/^[A-Za-z0-9-]{8,}$/.test(id)) { console.error(`invalid id: ${id}`); process.exitCode = 1; return; }
   const all = readViolationsWindow(ROTATED_KEEP_DAYS);
   const matches = all.filter((v) => typeof v.violation_id === 'string' && v.violation_id.startsWith(id));
-  if (matches.length === 0) { console.log(`no block with id ${id}. See: forgen status --blocks 5`); return; }
+  if (matches.length === 0) { console.error(`no block with id ${id}. See: forgen status --blocks 5`); process.exitCode = 1; return; }
   const ids = new Set(matches.map((v) => v.violation_id));
-  if (ids.size > 1) { console.log(`ambiguous prefix ${id} → ${[...ids].join(', ')}`); return; }
+  if (ids.size > 1) { console.error(`ambiguous prefix ${id} → ${[...ids].join(', ')}`); process.exitCode = 1; return; }
   const v = matches[matches.length - 1];
   const prev = effectiveVerdicts().get(v.violation_id as string);
   setVerdict({ violation_id: v.violation_id as string, rule_id: v.rule_id, verdict: ok ? 'correct' : 'false_positive', by: 'user', reason });

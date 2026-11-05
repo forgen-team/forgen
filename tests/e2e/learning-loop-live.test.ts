@@ -176,7 +176,7 @@ describe('Learning Loop Live: 교정 → 승격 → 규칙 반영 전체 사이�
       const { loadActiveRules, cleanupStaleSessionRules } = require('./dist/store/rule-store.js');
 
       const before = loadActiveRules().filter(r => r.scope === 'session').length;
-      const cleaned = cleanupStaleSessionRules('live-session-2'); // 새 세션
+      const cleaned = cleanupStaleSessionRules('live-session-2', Date.now() + 25 * 3600_000); // 유예가 지난 새 세션
       const after = loadActiveRules().filter(r => r.scope === 'session').length;
 
       console.log(JSON.stringify({ before, cleaned, after }));

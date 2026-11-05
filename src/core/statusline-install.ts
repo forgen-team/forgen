@@ -15,7 +15,9 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { forgenRunShimPath, isForgenRunCommand, shimSupported } from '../host/claude-shim.js';
 import { CLAUDE_DIR } from './paths.js';
+import { quoteArg } from '../hooks/hooks-generator.js';
 
 export interface StatusLineInstallResult {
   status: 'installed' | 'updated' | 'unchanged' | 'skipped_custom' | 'error';
@@ -25,15 +27,34 @@ export interface StatusLineInstallResult {
   message: string;
 }
 
-/** 이 패키지의 cli.js 절대 경로로 만든 statusline 명령 — PATH/nvm 무관. */
-export function forgenStatuslineCommand(): string {
+/**
+ * statusline 명령. 고정 shim 경유(`"<shim>" "cli.js" statusline`)라 node 버전·패키지 위치와 무관하다.
+ * shim 을 못 쓰는 환경(Windows)은 이 패키지 cli.js 절대경로.
+ */
+export function forgenStatuslineCommand(shimPath: string | null = shimSupported() ? forgenRunShimPath() : null): string {
+  if (shimPath) return `${quoteArg(shimPath)} "cli.js" statusline`;
   const cli = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'cli.js');
   return `"${process.execPath}" "${cli}" statusline`;
 }
 
 export function isForgenStatusline(command: unknown): boolean {
   if (typeof command !== 'string' || !command.trim()) return true; // 없음 = forgen 이 가져가도 됨
-  return /^forgen(\s|$)/.test(command.trim()) || /[\\/]dist[\\/]cli\.js"?\s+statusline(\s|$)/.test(command);
+  return /^forgen(\s|$)/.test(command.trim()) || /[\\/]dist[\\/]cli\.js"?\s+statusline(\s|$)/.test(command)
+    || (isForgenRunCommand(command) && /"?cli\.js"?\s+statusline(\s|$)/.test(command));
+}
+
+/**
+ * settings 객체의 statusLine 을 제자리에서 갱신(설치·래퍼 공용). 없거나 forgen 소유면 `command` 로,
+ * 체인(`… statusline --after '<원본>'`)이면 forgen 부분만 갱신하고 --after 이후는 보존, 커스텀이면 그대로 둔다.
+ */
+export function applyStatusLineAuto(settings: Record<string, unknown>, command: string): 'installed' | 'updated' | 'unchanged' | 'custom' {
+  const existing = (settings.statusLine as { command?: string } | undefined)?.command;
+  if (existing && !isForgenStatusline(existing)) return 'custom';
+  const chainAt = existing ? String(existing).search(CHAIN_RE) : -1;
+  const next = chainAt >= 0 ? `${command}${String(existing).slice(chainAt + ' statusline'.length)}` : command;
+  if (existing === next) return 'unchanged';
+  settings.statusLine = { type: 'command', command: next };
+  return existing ? 'updated' : 'installed';
 }
 
 /** POSIX 단일 인용 — 내부 `'` 는 `'\''` 로. `$(…)`·`"`·`\` 도 리터럴로 보존된다. */
@@ -48,7 +69,7 @@ export function forgenChainCommand(original: string): string {
 
 const CHAIN_RE = /\sstatusline\s+--after\s/;
 export function isChainedStatusline(command: unknown): boolean {
-  return typeof command === 'string' && /[\\/]cli\.js"?\s+statusline\s+--after\s/.test(command);
+  return typeof command === 'string' && /[\\/"]cli\.js"?\s+statusline\s+--after\s/.test(command);
 }
 
 export function installStatusline(opts: { force?: boolean; chain?: boolean; settingsPath?: string } = {}): StatusLineInstallResult {

@@ -23,7 +23,7 @@ vi.mock('node:os', async (importOriginal) => {
 });
 
 const { processCorrection } = await import('../src/forge/evidence-processor.js');
-const { loadAllRules } = await import('../src/store/rule-store.js');
+const { loadAllRules, saveRule } = await import('../src/store/rule-store.js');
 
 const REPO_ROOT = path.resolve(__dirname, '..');
 const STOP_GUARD = path.join(REPO_ROOT, 'dist', 'hooks', 'stop-guard.js');
@@ -41,7 +41,7 @@ function runStopGuard(message: string): { stdout: string; exit: number | null } 
       stop_hook_active: true,
       last_assistant_message: message,
     }),
-    env: { ...process.env, HOME: TEST_HOME, FORGEN_SESSION_ID: 'e2e-sess', FORGEN_SPIKE_RULES: emptySpike },
+    env: { ...process.env, HOME: TEST_HOME, FORGEN_SESSION_ID: 'e2e-sess', FORGEN_SPIKE_RULES: emptySpike, FORGEN_NO_BLOCK_JUDGE: '1' },
     encoding: 'utf-8',
     timeout: 10000,
   });
@@ -105,7 +105,7 @@ describe('E2E: correction → rule with enforce_via → live enforcement', () =>
     expect(out3.continue).toBe(true);
   });
 
-  it('prefer-from-now 교정 (mock 지양) → enforce_via 자동 분류 → next turn mock 맥락 응답에 block', () => {
+  it('prefer-from-now 교정 (mock 지양) → enforce_via 자동 분류 → 기본은 기록만, rule enforce 후 차단', () => {
     // 교정: "실제 실행으로 검증해라, mock 으로 완료 선언하지 마라"
     processCorrection({
       session_id: 'e2e-sess-mock',
@@ -122,12 +122,14 @@ describe('E2E: correction → rule with enforce_via → live enforcement', () =>
     const stopSpec = newRule?.enforce_via?.find((s) => s.hook === 'Stop');
     expect(stopSpec).toBeDefined();
 
-    // 실제 mock-as-proof 응답에 발화하는지 smoke
-    const { stdout } = runStopGuard('mock db 붙여서 핸들러 검증 완료.');
-    const lastLine = stdout.trim().split('\n').filter(Boolean).pop();
-    const out = JSON.parse(lastLine!);
-    // mock 키워드가 있고 테스트 맥락 exclude 미매칭 → block 기대
-    expect(out.decision).toBe('block');
+    // 의미 룰(self_check)은 기본이 기록만 — 교정 직후에는 차단하지 않는다
+    const lastOf = (stdout: string) => JSON.parse(stdout.trim().split('\n').filter(Boolean).pop()!);
+    expect(stopSpec?.verifier?.kind).toBe('self_check_prompt');
+    expect(lastOf(runStopGuard('mock db 붙여서 핸들러 검증 완료.').stdout).decision).toBeUndefined();
+
+    // 사용자가 `forgen rule enforce` 로 켜면 같은 응답을 차단한다
+    saveRule({ ...newRule!, enforce_mode: 'block' });
+    expect(lastOf(runStopGuard('mock db 붙여서 핸들러 검증 완료.').stdout).decision).toBe('block');
   });
 
   it('교정이 없으면 rule 도 enforce_via 도 생성되지 않음 (control)', () => {

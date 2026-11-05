@@ -8,7 +8,12 @@
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { nodeEngineWarning } from '../core/node-engine.js';
 import { registerTools } from './tools.js';
+
+// stdout 은 MCP 프로토콜 전용 — Node 엔진 경고는 stderr 로만.
+const nodeWarning = nodeEngineWarning();
+if (nodeWarning) process.stderr.write(`${nodeWarning}\n`);
 
 if (!process.env.FORGEN_CWD && !process.env.COMPOUND_CWD) {
   process.env.FORGEN_CWD = process.cwd();

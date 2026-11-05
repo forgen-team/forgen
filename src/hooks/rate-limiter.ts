@@ -10,6 +10,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { readStdinJSON } from './shared/read-stdin.js';
 import { atomicWriteJSON } from './shared/atomic-write.js';
+import { withFileLockSync } from './shared/file-lock.js';
 import { isHookEnabled } from './hook-config.js';
 import { approve, denyOrObserve, failOpenWithTracking } from './shared/hook-response.js';
 import { STATE_DIR } from '../core/paths.js';
@@ -75,7 +76,7 @@ async function main(): Promise<void> {
   const data = await readStdinJSON<PreToolInput>(1500); // Must finish within plugin.json timeout (2000ms)
   if (!data) {
     // stdin 파싱 실패 — 통과 (rate limiter는 fail-open)
-    console.log(failOpenWithTracking('rate-limiter'));
+    console.log(failOpenWithTracking('rate-limiter', new Error('stdin parse failed or empty — rate limit not evaluated')));
     return;
   }
   if (!isHookEnabled('rate-limiter')) {
@@ -91,13 +92,15 @@ async function main(): Promise<void> {
     return;
   }
 
-  const state = loadRateLimitState();
-  const { exceeded, count, updatedState } = checkRateLimit(state);
-
-  // 거부된 호출은 상태를 저장하지 않음 (윈도우 누적 방지)
-  if (!exceeded) {
-    saveRateLimitState(updatedState);
-  }
+  // H8: load → check → save 가 락 없이 돌아 동시 호출 20회 중 15건만 기록됐다(마지막 쓴 쪽이 이김).
+  // 락 안에서 읽고-판정하고-쓴다. 락/쓰기 실패는 삼키지 않고 main().catch 가 사유와 함께 기록한다(fail-open).
+  const { exceeded, count } = withFileLockSync(RATE_LIMIT_PATH, () => {
+    const state = loadRateLimitState();
+    const r = checkRateLimit(state);
+    // 거부된 호출은 상태를 저장하지 않음 (윈도우 누적 방지)
+    if (!r.exceeded) saveRateLimitState(r.updatedState);
+    return r;
+  }, { timeoutMs: 1200 });
 
   if (exceeded) {
     console.log(denyOrObserve('rate-limiter', `[Forgen] Rate limit exceeded (${count}/${DEFAULT_LIMIT}/min). Wait before retrying.`));

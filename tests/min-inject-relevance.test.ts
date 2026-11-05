@@ -25,7 +25,7 @@ describe('MIN_INJECT_RELEVANCE gate', () => {
     // 2026-04-21 champion-aware gate 이후: 직접 MIN_INJECT_RELEVANCE 비교 대신
     // minRelevanceFor(name)으로 solution fitness state 기반 임계값 선택.
     // v0.6.6: 맥락 가산분을 뺀 relevance 로 비교 (게이트는 더 엄격 — 맥락만으로 통과 금지)
-    expect(src).toMatch(/if\s*\(\s*sol\.relevance\s*-\s*\(sol\.contextBonus\s*\?\?\s*0\)\s*<\s*minRelevanceFor\(sol\.name\)\s*\)\s*continue/);
+    // 게이트는 evaluateGate 로 옮겨졌다(탈락 사유 기록). 조건은 같다: 맥락 가산 제외 relevance < 하한 → 탈락.\n    expect(src).toMatch(/sol\.relevance\s*-\s*\(sol\.contextBonus\s*\?\?\s*0\)\s*<\s*opts\.minRelevanceFor\(sol\.name\)/);
     expect(src).toMatch(/MIN_INJECT_RELEVANCE_TRUSTED/);
   });
 

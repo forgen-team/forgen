@@ -7,7 +7,6 @@ import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resolveView } from '../src/core/status-cli.js';
-import { renderHealthLine, computeHealth } from '../src/core/health-cli.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CLI = path.join(__dirname, '..', 'dist', 'cli.js');
@@ -43,15 +42,6 @@ describe('status view 라우팅 (resolveView)', () => {
   });
 });
 
-describe('renderHealthLine', () => {
-  it('한 줄 health 요약에 grade와 점수 포함', () => {
-    const line = renderHealthLine(computeHealth());
-    expect(line).toContain('forgen status'); // W1: health line shown under `forgen status`
-    expect(line).toMatch(/[ABCDF]/);
-    expect(line).toMatch(/\d+\/100/);
-  });
-});
-
 describe('명령 통합 회귀 방지 (제거된 명령은 Unknown)', () => {
   const REMOVED = ['stats', 'health', 'dashboard', 'me', 'recall', 'explain', 'last-block', 'watch'];
   for (const cmd of REMOVED) {
@@ -68,7 +58,7 @@ describe('명령 통합 회귀 방지 (제거된 명령은 Unknown)', () => {
 });
 
 describe('W1-3 dev 네임스페이스', () => {
-  const DEV_MOVED = ['parity', 'probe-workflow', 'migrate', 'regress-map'];
+  const DEV_MOVED = ['probe-workflow', 'migrate', 'regress-map'];
   for (const cmd of DEV_MOVED) {
     it(`forgen ${cmd} (top-level) → Unknown command (dev로 이동)`, () => {
       const r = spawnSync('node', [CLI, cmd], { encoding: 'utf-8', timeout: 30_000, env: { ...process.env } });

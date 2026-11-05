@@ -123,7 +123,7 @@ describe('statusline install --chain', () => {
     const home = mkdir();
     const p = settingsWith(`bash -c 'echo "HUD:$(echo ok) it'"'"'s"'`);
     installStatusline({ chain: true, settingsPath: p });
-    const cmd = (read(p).statusLine.command as string).replace(/"[^"]*cli\.js"/, `"${CLI}"`);
+    const cmd = (read(p).statusLine.command as string).replace(/^"[^"]*" "cli\.js"/, `"${process.execPath}" "${CLI}"`);
     const out = strip(execFileSync('sh', ['-c', cmd], {
       input: JSON.stringify(payload), encoding: 'utf-8',
       env: { ...process.env, HOME: home, FORGEN_HOME: path.join(home, '.forgen') },

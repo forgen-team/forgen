@@ -67,11 +67,18 @@ export interface ExecHostResult {
  */
 /** ADR-015 C-G1 — forgen 이 띄우는 중첩 claude 실행의 공통 표식. hook-config.isHookEnabled 가 읽는다. */
 export const NESTED_RUN_ENV: Readonly<Record<string, string>> = { FORGEN_NESTED_RUN: '1' };
-/** `--no-session-persistence` 는 --print 전용 — 추출 run 의 transcript 를 디스크에 남기지 않는다. */
-export const NESTED_RUN_CLAUDE_ARGS: ReadonlyArray<string> = ['--no-session-persistence'];
+/**
+ * `--no-session-persistence` 는 --print 전용 — 추출 run 의 transcript 를 디스크에 남기지 않는다.
+ * D12-D: `--tools ""` — 추출은 텍스트만 돌려받으면 되므로 도구를 아예 주지 않는다(안전 hook 이 유지되더라도
+ * 도구가 없는 편이 가장 안전하다).
+ */
+export const NESTED_RUN_CLAUDE_ARGS: ReadonlyArray<string> = ['--tools', '', '--no-session-persistence'];
 
 export function withNestedRunClaudeArgs(args: string[]): string[] {
-  return args.includes('--no-session-persistence') ? args : [...args, ...NESTED_RUN_CLAUDE_ARGS];
+  const out = [...args];
+  if (!out.includes('--tools') && !out.includes('--allowedTools') && !out.includes('--allowed-tools')) out.push('--tools', '');
+  if (!out.includes('--no-session-persistence')) out.push('--no-session-persistence');
+  return out;
 }
 
 export function execHost(opts: ExecHostOptions): ExecHostResult {
@@ -99,8 +106,9 @@ export function execHost(opts: ExecHostOptions): ExecHostResult {
     // ADR-015 C-G1: 중첩 실행 표식 + 세션 비영속 (추출 run 의 transcript 가 다음 SessionStart 의
     // "이전 세션 auto-compound" 후보로 잡히거나 forgen 훅이 재귀 발화하지 않도록).
     const nested = opts.nestedRun ?? true;
-    const args = ['-p', opts.prompt, ...(nested ? NESTED_RUN_CLAUDE_ARGS : [])];
+    const args = ['-p', opts.prompt];
     if (opts.model) args.push('--model', opts.model);
+    if (nested) args.push(...NESTED_RUN_CLAUDE_ARGS);
     const env = nested ? { ...(baseOpts.env ?? {}), ...NESTED_RUN_ENV } : baseOpts.env;
     const stdout = execFileSync('claude', args, { ...baseOpts, env }) as unknown as string;
     return { message: stdout.toString().trim(), host: 'claude', usage: null };

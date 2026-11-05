@@ -31,6 +31,7 @@ import type {
   RuleStatus,
 } from '../../store/types.js';
 import type { LifecycleEvent } from './types.js';
+import { withStatusChange } from '../../store/rule-lifecycle.js';
 
 /**
  * R5-B1: rule 이 inactive 상태로 전이될 때 block-count 디렉터리의 잔여 파일 정리.
@@ -120,9 +121,9 @@ export function applyEvent(rule: Rule, event: LifecycleEvent, now: number = Date
     sweepBlockCountsForRule(rule.rule_id);
   }
 
+  const refs = event.evidence?.refs?.length ? ` ${event.evidence.refs.join(',')}` : '';
   return {
-    ...rule,
-    status: nextStatusValue,
+    ...withStatusChange(rule, nextStatusValue, `${event.kind}${refs}`, 'lifecycle', new Date(now).toISOString()),
     lifecycle: updatedLifecycle,
     updated_at: new Date(now).toISOString(),
   };

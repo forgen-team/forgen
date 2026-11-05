@@ -1,5 +1,5 @@
 /**
- * Forgen v0.4.1 — `forgen migrate` CLI
+ * Forgen v0.4.1 — `forgen dev migrate` CLI
  *
  * 데이터 스키마 업그레이드를 1회성으로 돌리는 관리 명령.
  * 현재 대상:
@@ -14,19 +14,19 @@ import { migrateEvidenceHost } from './migrate-evidence-host.js';
 import type { HostId } from './trust-layer-intent.js';
 
 const HELP = `
-  forgen migrate — one-shot schema migrations
+  forgen dev migrate — one-shot schema migrations
 
   Usage:
-    forgen migrate implicit-feedback   category 필드가 없는 레거시 엔트리 백필 + 재기록
-    forgen migrate all                 (현재는 implicit-feedback 과 동일)
-    forgen migrate evidence-host       behavior/*.json 에 host 필드 백필
+    forgen dev migrate implicit-feedback   category 필드가 없는 레거시 엔트리 백필 + 재기록
+    forgen dev migrate all                 (현재는 implicit-feedback 과 동일)
+    forgen dev migrate evidence-host       behavior/*.json 에 host 필드 백필
       --dry-run                          디스크 미수정, 카운트만 출력
       --default-host <claude|codex>      host 기본값 (default: claude)
-    forgen migrate tenetx              tenetx/legacy 규칙 스프롤 회수 (ADR-010 W1-1)
+    forgen dev migrate tenetx              tenetx/legacy 규칙 스프롤 회수 (ADR-010 W1-1)
       --dry-run                          회수 대상만 표시
       --yes                              marker-only(사용자 편집 가능성) 파일도 회수
       --apply-settings                   settings.json/registry 의 tenetx 항목 제거
-    forgen migrate --help              이 도움말
+    forgen dev migrate --help              이 도움말
 `;
 
 export async function handleMigrate(args: string[]): Promise<void> {
@@ -37,9 +37,9 @@ export async function handleMigrate(args: string[]): Promise<void> {
   }
 
   if (sub === 'implicit-feedback' || sub === 'all') {
-    console.log('[forgen migrate] implicit-feedback.jsonl 백필 시작...');
+    console.log('[forgen dev migrate] implicit-feedback.jsonl 백필 시작...');
     const { migrated, dropped } = migrateImplicitFeedbackLog();
-    console.log(`[forgen migrate] 백필 ${migrated}건, 드롭 ${dropped}건 — 재기록 완료.`);
+    console.log(`[forgen dev migrate] 백필 ${migrated}건, 드롭 ${dropped}건 — 재기록 완료.`);
     return;
   }
 
@@ -48,7 +48,7 @@ export async function handleMigrate(args: string[]): Promise<void> {
     const hostFlagIdx = args.indexOf('--default-host');
     const rawHost = hostFlagIdx !== -1 ? args[hostFlagIdx + 1] : 'claude';
     if (rawHost !== 'claude' && rawHost !== 'codex') {
-      console.error(`[forgen migrate] --default-host 는 'claude' 또는 'codex' 여야 합니다. 받은 값: ${rawHost}`);
+      console.error(`[forgen dev migrate] --default-host 는 'claude' 또는 'codex' 여야 합니다. 받은 값: ${rawHost}`);
       process.exit(1);
     }
     const defaultHost = rawHost as HostId;
@@ -70,7 +70,7 @@ export async function handleMigrate(args: string[]): Promise<void> {
     return;
   }
 
-  console.error(`[forgen migrate] unknown target: ${sub}`);
+  console.error(`[forgen dev migrate] unknown target: ${sub}`);
   console.error(HELP);
   process.exit(1);
 }

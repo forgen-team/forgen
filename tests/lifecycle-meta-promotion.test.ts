@@ -49,17 +49,39 @@ describe('scanSignalsForPromotion', () => {
   beforeEach(() => fs.rmSync(TEST_HOME, { recursive: true, force: true }));
   afterEach(() => fs.rmSync(TEST_HOME, { recursive: true, force: true }));
 
-  it('rolling 20 injects + 0 violations → candidate', () => {
-    const r = rule({
-      rule_id: 'r-p',
-      enforce_via: [{ mech: 'B', hook: 'Stop', verifier: { kind: 'self_check_prompt', params: {} } }],
-    });
-    const signals = new Map([
-      [r.rule_id, { violations_30d: 0, violation_rate_30d: 0, bypass_7d: 0, last_inject_days_ago: 2, injects_rolling_n: 25, violations_rolling_n: 0, last_updated_days_ago: 2 }],
-    ]);
-    const candidates = scanSignalsForPromotion({ rules: [r], signals });
+  const detectableB = () => rule({
+    rule_id: 'r-p',
+    enforce_via: [{ mech: 'B', hook: 'Stop', verifier: { kind: 'artifact_check', params: { path: 'x.json', max_age_s: 60 } } }],
+  });
+  const sig = (id: string, injects = 25) => new Map([
+    [id, { violations_30d: 0, violation_rate_30d: 0, bypass_7d: 0, last_inject_days_ago: 2, injects_rolling_n: injects, violations_rolling_n: 0, last_updated_days_ago: 2 }],
+  ]);
+
+  it('D12-C: 탐지 가능 룰 + 20 injects + 평가 통과 10회 + 위반 0 → candidate', () => {
+    const r = detectableB();
+    const candidates = scanSignalsForPromotion({ rules: [r], signals: sig(r.rule_id), passCounts: new Map([[r.rule_id, 12]]) });
     expect(candidates).toHaveLength(1);
     expect(candidates[0].current_mechs).toContain('B');
+    expect(candidates[0].checks_pass_n).toBe(12);
+  });
+
+  it('D12-C: 탐지 불가(자문) 룰은 위반 0 이어도 승급 안 함 — self_check_prompt(증거 없음)', () => {
+    const r = rule({
+      rule_id: 'r-advisory',
+      enforce_via: [{ mech: 'B', hook: 'Stop', verifier: { kind: 'self_check_prompt', params: {} } }],
+    });
+    expect(scanSignalsForPromotion({ rules: [r], signals: sig(r.rule_id, 99), passCounts: new Map([[r.rule_id, 99]]) })).toHaveLength(0);
+  });
+
+  it('D12-C: drift_key 만 있는 spec 은 자문 — 승급 안 함', () => {
+    const r = rule({ rule_id: 'r-drift', enforce_via: [{ mech: 'C', hook: 'PostToolUse', drift_key: 'x' }] });
+    expect(scanSignalsForPromotion({ rules: [r], signals: sig(r.rule_id, 99), passCounts: new Map([[r.rule_id, 99]]) })).toHaveLength(0);
+  });
+
+  it('D12-C: 탐지 가능해도 평가 통과 기록이 없으면 승급 안 함 (위반 0 ≠ 준수)', () => {
+    const r = detectableB();
+    expect(scanSignalsForPromotion({ rules: [r], signals: sig(r.rule_id) })).toHaveLength(0);
+    expect(scanSignalsForPromotion({ rules: [r], signals: sig(r.rule_id), passCounts: new Map([[r.rule_id, 3]]) })).toHaveLength(0);
   });
 
   it('injects below rolling_min → no candidate', () => {
@@ -113,6 +135,7 @@ describe('applyPromotion — persistence', () => {
     const candidate = {
       rule_id: 'r-promote',
       injects_rolling_n: 25,
+      checks_pass_n: 12,
       violations_rolling_n: 0,
       current_mechs: ['B' as const, 'C' as const],
       reason: 'test',
@@ -136,7 +159,7 @@ describe('applyPromotion — persistence', () => {
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(path.join(dir, `${r.rule_id}.json`), JSON.stringify(r));
     const result = applyPromotion(r, {
-      rule_id: r.rule_id, injects_rolling_n: 30, violations_rolling_n: 0, current_mechs: ['A'], reason: 'x',
+      rule_id: r.rule_id, injects_rolling_n: 30, checks_pass_n: 12, violations_rolling_n: 0, current_mechs: ['A'], reason: 'x',
     });
     expect(result.applied).toBe(false);
     expect(result.reason).toMatch(/no Mech-B\/C/);

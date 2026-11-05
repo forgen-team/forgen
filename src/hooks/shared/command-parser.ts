@@ -29,6 +29,21 @@ import * as fs from 'node:fs';
  *   - heredoc bodies (<<EOF ... EOF): masked as `<<HEREDOC>>` (v0.4.1+)
  *   - nested $(...) / `...`: outer level masked
  */
+/** `$(...)` → `$()` (닫는 `)` 가 없으면 그대로). 정규식 `\$\([^)]*\)` 는 `$(` 가 많고 `)` 가 없을 때 이차 시간이라 선형으로 다시 썼다. */
+function maskCommandSubstitutions(src: string): string {
+  let out = '';
+  let i = 0;
+  while (i < src.length) {
+    const open = src.indexOf('$(', i);
+    if (open < 0) break;
+    const close = src.indexOf(')', open + 2);
+    if (close < 0) break;
+    out += `${src.slice(i, open)}$()`;
+    i = close + 1;
+  }
+  return out + src.slice(i);
+}
+
 export function maskQuotedContent(cmd: string): string {
   if (!cmd) return cmd;
   let out = cmd;
@@ -36,9 +51,12 @@ export function maskQuotedContent(cmd: string): string {
   // 처럼 heredoc 본문이 command string 에 포함돼 false-positive block 발생.
   // 지원 형식: <<EOF / <<'EOF' / <<"EOF" / <<-EOF (indent 무시 변종).
   // <<-MARK 은 indent 허용 (terminator 앞 whitespace). `\n\s*\2` 로 반영.
-  out = out.replace(/<<-?\s*(['"]?)([A-Za-z_][A-Za-z0-9_]*)\1[\s\S]*?\n\s*\2\b/g, '<<HEREDOC>>');
+  // 성능: `<<` 가 많은 입력에서 종결자 없는 lazy 매칭이 이차 시간이 된다 → 개수 상한(초과 시 마스킹 생략 = 더 많이 잡는 쪽).
+  if ((out.match(/<</g)?.length ?? 0) <= 100) {
+    out = out.replace(/<<-?\s*(['"]?)([A-Za-z_][A-Za-z0-9_]*)\1[\s\S]*?\n\s*\2\b/g, '<<HEREDOC>>');
+  }
   // Order matters: command substitution before plain quotes (they may contain quotes themselves).
-  out = out.replace(/\$\([^)]*\)/g, '$()');
+  out = maskCommandSubstitutions(out);
   out = out.replace(/`[^`]*`/g, '``');
   out = out.replace(/'[^']*'/g, "''");
   out = out.replace(/"[^"]*"/g, '""');
@@ -69,7 +87,8 @@ export function preprocessForMatch(cmd: string, target: MatchTarget | undefined)
  * `/tmp/claude-*` (Claude Code scratchpad) 와 `$TMPDIR/claude-*` 로 좁힌다 (critic D1: `/tmp/*` 전체는 너무 넓다).
  */
 function tempRoots(): string[] {
-  const roots = ['/tmp/claude-', '/private/tmp/claude-', '/var/tmp/claude-', '/var/folders/'];
+  // macOS 의 /tmp·/var 는 /private 아래로 가는 링크다. 아래 symlink 탈출 검사가 realpath 로 판정하므로 양쪽 다 필요하다.
+  const roots = ['/tmp/claude-', '/private/tmp/claude-', '/var/tmp/claude-', '/private/var/tmp/claude-', '/var/folders/', '/private/var/folders/'];
   const t = process.env.TMPDIR?.replace(/\/+$/, '');
   if (t && t !== '/tmp') roots.push(`${t}/claude-`);
   return roots;
@@ -110,31 +129,42 @@ export function isTempOnlyRm(cmd: string, cwd?: string): boolean {
     for (const raw of targets) {
       found = true;
       const t = expand(raw.replace(/^["']|["']$/g, ''), vars);
-      if (t.includes('$')) return false; // 미해석 변수
-      if (UNSAFE_TARGET_RE.test(t)) return false; // `..`, glob, brace, 백틱, $(), ~
-      let abs = t;
-      if (!abs.startsWith('/')) {
-        if (!base) return false; // 상대 경로인데 cwd 를 모름
-        abs = `${base}/${t === '.' ? '' : t}`;
-      }
-      abs = normalizePosix(abs);
-      if (!roots.some((r) => abs.startsWith(r))) return false;
-      // 루트 디렉터리 자체(/tmp/claude-1001 등)는 제외 — 하위만
-      if (!roots.some((r) => abs.length > r.length && abs.slice(r.length).includes('/'))) return false;
-      // symlink 탈출: 가장 깊은 **실존 조상**의 realpath 에 나머지(미존재) 경로를 다시 붙인 결과가 임시 루트 아래여야
-      // 한다. (CI 처럼 /tmp/claude-* 가 아직 없으면 조상은 /tmp 이고, /tmp 의 realpath(+나머지)로 판정 — v0.6.0 의
-      // 릴리스 CI 가 바로 이 경우에 false 를 내 실패했다.)
-      try {
-        let probe = abs;
-        while (probe !== '/' && !fs.existsSync(probe)) probe = probe.slice(0, probe.lastIndexOf('/')) || '/';
-        if (probe !== '/') {
-          const realAbs = fs.realpathSync(probe) + abs.slice(probe.length);
-          if (!roots.some((r) => realAbs.startsWith(r))) return false;
-        }
-      } catch { return false; }
+      if (!isClaudeTempPath(t, base)) return false;
     }
   }
   return found;
+}
+
+
+/**
+ * 단일 삭제 대상(변수 치환 끝난 문자열)이 Claude 임시 루트 **하위**인지. `..`/glob/brace/백틱/`$()`/미해석 변수/
+ * 루트 자체/symlink 탈출이면 false (보수적). 상대 경로는 base(cwd)로 해석, base 모르면 false.
+ */
+export function isClaudeTempPath(t: string, base: string): boolean {
+  const roots = tempRoots();
+  if (t.includes('$')) return false; // 미해석 변수
+  if (UNSAFE_TARGET_RE.test(t)) return false; // `..`, glob, brace, 백틱, $(), ~
+  let abs = t;
+  if (!abs.startsWith('/')) {
+    if (!base) return false; // 상대 경로인데 cwd 를 모름
+    abs = `${base}/${t === '.' ? '' : t}`;
+  }
+  abs = normalizePosix(abs);
+  if (!roots.some((r) => abs.startsWith(r))) return false;
+  // 루트 디렉터리 자체(/tmp/claude-1001 등)는 제외 — 하위만
+  if (!roots.some((r) => abs.length > r.length && abs.slice(r.length).includes('/'))) return false;
+  // symlink 탈출: 가장 깊은 **실존 조상**의 realpath 에 나머지(미존재) 경로를 다시 붙인 결과가 임시 루트 아래여야
+  // 한다. (CI 처럼 /tmp/claude-* 가 아직 없으면 조상은 /tmp 이고, /tmp 의 realpath(+나머지)로 판정 — v0.6.0 의
+  // 릴리스 CI 가 바로 이 경우에 false 를 내 실패했다.)
+  try {
+    let probe = abs;
+    while (probe !== '/' && !fs.existsSync(probe)) probe = probe.slice(0, probe.lastIndexOf('/')) || '/';
+    if (probe !== '/') {
+      const realAbs = fs.realpathSync(probe) + abs.slice(probe.length);
+      if (!roots.some((r) => realAbs.startsWith(r))) return false;
+    }
+  } catch { return false; }
+  return true;
 }
 
 /** `..`·glob·brace 가 섞인 재귀 삭제 — 빌트인 /tmp 예외를 우회하려는 모양. 호출자가 차단에 쓴다. */
@@ -144,7 +174,7 @@ export function isSuspiciousRm(cmd: string): boolean {
   for (const m of cmd.matchAll(rmRe)) {
     if (!/(^|\s)-[a-zA-Z]*r|--recursive/i.test(m[1])) continue;
     for (const t of m[2].trim().split(/\s+/)) {
-      if (/(^|\/)\.\.(\/|$)|[{}*?[\]]|\$\(|`/.test(t) && /^\/?(tmp|private\/tmp|var\/tmp|var\/folders)(\/|$)|\/tmp\//.test(t.replace(/^["']|["']$/g, ''))) return true;
+      if (/(^|\/)\.\.(\/|$)|[{}*?[\]]|\$\(|`/.test(t) && /^\/?(tmp|private\/tmp|var\/tmp|private\/var\/tmp|var\/folders|private\/var\/folders)(\/|$)|\/tmp\//.test(t.replace(/^["']|["']$/g, ''))) return true;
     }
   }
   return false;

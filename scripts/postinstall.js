@@ -12,10 +12,11 @@
  *   - forge overlay 없이 기본 스킬만 설치 (overlay는 harness 실행 시 적용)
  *   - 사용자가 수정한 파일(<!-- forgen-managed --> 마커 없음)은 보존
  *   - settings.json의 기존 non-forgen 설정은 보존
- *   - 실패해도 npm install을 깨뜨리지 않음 (silent failure)
+ *   - 실패해도 npm install을 깨뜨리지 않음 (사유는 출력)
+ *   - Claude 설치는 dist/host/install-claude.js 의 planClaudeInstall 을 호출 (`forgen install claude` 와 동일 경로)
  */
 
-import { readFileSync, readdirSync, writeFileSync, mkdirSync, existsSync, rmSync, symlinkSync, cpSync, lstatSync, statSync, copyFileSync, renameSync, readlinkSync, unlinkSync, rmdirSync } from 'node:fs';
+import { readdirSync, writeFileSync, mkdirSync, existsSync, symlinkSync, cpSync, lstatSync, statSync, copyFileSync, renameSync, readlinkSync, unlinkSync, rmdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { homedir, platform } from 'node:os';
 import { execFileSync } from 'node:child_process';
@@ -24,6 +25,8 @@ import { fileURLToPath } from 'node:url';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PKG_ROOT = join(__dirname, '..');
 const IS_WINDOWS = platform() === 'win32';
+/** package.json engines.node 와 같게 유지 (tests/node-engine 이 대조). */
+const MIN_NODE_MAJOR = 22;
 
 /** SUDO_USER 유효성 검증 — 커맨드 인젝션 방지 */
 const SAFE_USERNAME_RE = /^[a-zA-Z0-9_-]+$/;
@@ -89,12 +92,7 @@ function fixOwnership(...paths) {
 const HOME = resolveHome();
 
 // ── Paths ──
-const SKILLS_DIR = join(PKG_ROOT, 'assets', 'claude', 'commands');
-const DIST_HOOKS = join(PKG_ROOT, 'dist', 'hooks');
-const COMMANDS_DIR = join(HOME, '.claude', 'commands', 'forgen');
 const CLAUDE_DIR = join(HOME, '.claude');
-const PLUGINS_DIR = join(CLAUDE_DIR, 'plugins');
-const SETTINGS_PATH = join(CLAUDE_DIR, 'settings.json');
 const COMPOUND_HOME = join(HOME, '.forgen');
 
 // ── 0.5. Migrate legacy storage (~/.tenetx/, ~/.compound/) → ~/.forgen/ ──
@@ -175,603 +173,6 @@ function installStarterPack() {
   return installed;
 }
 
-// ── 2. Register as Claude Code plugin ──
-// omc, claude-hud 등 동작하는 플러그인의 실제 구조를 그대로 따름:
-//   .claude-plugin/plugin.json  — 메타데이터 + skills 경로
-//   hooks/hooks.json            — ${CLAUDE_PLUGIN_ROOT} 기반 훅 정의
-//   skills/{name}/SKILL.md      — 스킬 파일 (서브디렉토리 구조)
-//   commands/*.md               — 슬래시 커맨드
-//
-// 설계 결정: 캐시 디렉토리를 PKG_ROOT로 symlink하여 dist/, node_modules/ 접근 보장.
-// symlink 실패 시 (sudo, cross-device 등) 필수 파일만 복사.
-function registerPlugin() {
-  // .claude-plugin/plugin.json 필수 — 없으면 표준 구조가 아님
-  if (!existsSync(join(PKG_ROOT, '.claude-plugin', 'plugin.json'))) return false;
-
-  const pkg = JSON.parse(readFileSync(join(PKG_ROOT, 'package.json'), 'utf-8'));
-  const version = pkg.version ?? '0.0.0';
-
-  // skills/ 디렉토리 생성 (commands/*.md → skills/{name}/SKILL.md)
-  generateSkillsDir();
-
-  // 캐시 경로: ~/.claude/plugins/cache/forgen-local/forgen/{version}/
-  const cacheParent = join(PLUGINS_DIR, 'cache', 'forgen-local', 'forgen');
-  const CACHE_DIR = join(cacheParent, version);
-
-  // 이전 잔재 완전 제거
-  try { rmSync(cacheParent, { recursive: true, force: true }); } catch { /* ignore */ }
-  mkdirSync(join(cacheParent), { recursive: true });
-
-  // 1차: symlink (개발 환경, dist/node_modules 접근 가능)
-  let linked = false;
-  try {
-    symlinkSync(PKG_ROOT, CACHE_DIR, 'dir');
-    linked = true;
-  } catch {
-    // symlink 실패 → 복사 fallback
-  }
-
-  if (!linked) {
-    // 2차: 필수 디렉토리 복사
-    mkdirSync(CACHE_DIR, { recursive: true });
-    const copyDirs = ['.claude-plugin', 'hooks', 'skills', 'assets'];
-    for (const dir of copyDirs) {
-      const src = join(PKG_ROOT, dir);
-      if (existsSync(src)) {
-        cpSync(src, join(CACHE_DIR, dir), { recursive: true });
-      }
-    }
-    // dist/ 복사 (훅 실행에 필요)
-    if (existsSync(join(PKG_ROOT, 'dist'))) {
-      cpSync(join(PKG_ROOT, 'dist'), join(CACHE_DIR, 'dist'), { recursive: true });
-    }
-    // 핵심 의존성 복사 (symlink 실패 시 필요)
-    const coreDeps = ['js-yaml', '@modelcontextprotocol', 'zod'];
-    mkdirSync(join(CACHE_DIR, 'node_modules'), { recursive: true });
-    for (const dep of coreDeps) {
-      const depSrc = join(PKG_ROOT, 'node_modules', dep);
-      if (existsSync(depSrc)) {
-        cpSync(depSrc, join(CACHE_DIR, 'node_modules', dep), { recursive: true });
-      }
-    }
-  }
-
-  // installed_plugins.json에 등록
-  const installedPath = join(PLUGINS_DIR, 'installed_plugins.json');
-  let installed = { version: 2, plugins: {} };
-  if (existsSync(installedPath)) {
-    try { installed = JSON.parse(readFileSync(installedPath, 'utf-8')); } catch { /* ignore */ }
-  }
-
-  const pluginKey = 'forgen@forgen-local';
-  installed.plugins = installed.plugins ?? {};
-  installed.plugins[pluginKey] = [{
-    scope: 'user',
-    installPath: CACHE_DIR,
-    version,
-    installedAt: new Date().toISOString(),
-    lastUpdated: new Date().toISOString(),
-  }];
-
-  mkdirSync(PLUGINS_DIR, { recursive: true });
-  writeFileSync(installedPath, JSON.stringify(installed, null, 2));
-
-  return true;
-}
-
-/** settings 객체에 enabledPlugins를 적용합니다 (settings.json 쓰기는 main에서 일괄 수행). */
-/**
- * statusLine 자동 등록 (2026-10-07, 오너 피드백 "설치 후 forgen install 을 또 해야 하는 게 불편").
- *   - 없거나 forgen 소유(`forgen …` / `…/dist/cli.js statusline`) → 이 패키지의 **절대 경로**로 등록
- *     (PATH 의존 `forgen statusline` 은 nvm 버전마다 다른 바이너리가 잡힌다 — 실측 0.4.8).
- *   - 커스텀(claude-hud 등) → 건드리지 않고 안내만. 교체는 `forgen statusline install --force`.
- * 반환: 'installed' | 'updated' | 'unchanged' | 'custom'
- */
-function applyStatusLineAuto(settings) {
-  const cmd = `"${process.execPath}" "${join(PKG_ROOT, 'dist', 'cli.js')}" statusline`;
-  const existing = settings.statusLine && settings.statusLine.command;
-  const owned = !existing || /^forgen(\s|$)/.test(String(existing).trim()) || /[\\/]dist[\\/]cli\.js"?\s+statusline(\s|$)/.test(String(existing));
-  if (!owned) return 'custom';
-  // 체인(`… statusline --after '<원본>'`)이면 forgen 경로만 갱신하고 --after 이후는 보존한다.
-  const chainAt = existing ? String(existing).search(/\sstatusline\s+--after\s/) : -1;
-  const next = chainAt >= 0 ? `${cmd}${String(existing).slice(chainAt + ' statusline'.length)}` : cmd;
-  if (existing === next) return 'unchanged';
-  settings.statusLine = { type: 'command', command: next };
-  return existing ? 'updated' : 'installed';
-}
-
-function applyPluginSettings(settings) {
-  const pluginKey = 'forgen@forgen-local';
-  const enabled = settings.enabledPlugins ?? {};
-  enabled[pluginKey] = true;
-  settings.enabledPlugins = enabled;
-}
-
-/**
- * 설치된 다른 플러그인을 감지하여 겹치는 스킬 목록을 반환.
- * Returns Map<skillName, pluginName>.
- *
- * 설계 결정: 빌드 이전 postinstall 단계에서 실행되므로
- * TypeScript 소스 import 없이 순수 파일시스템 체크만 사용.
- */
-function detectPluginConflicts() {
-  const conflicts = new Map();
-
-  // oh-my-claudecode: ~/.omc 또는 .omc(프로젝트 루트) 존재 여부 확인
-  const omcGlobal = join(HOME, '.omc');
-  const omcLocal = join(process.cwd(), '.omc');
-  if (existsSync(omcGlobal) || existsSync(omcLocal)) {
-    const omcSkills = [
-      'autopilot', 'team', 'code-review', 'tdd', 'debug-detective',
-      'refactor', 'security-review', 'git-master', 'migrate', 'pipeline', 'ultrawork',
-    ];
-    for (const skill of omcSkills) {
-      conflicts.set(skill, 'oh-my-claudecode');
-    }
-  }
-
-  // claude-mem: ~/.claude-mem 존재 여부 확인
-  const claudeMem = join(HOME, '.claude-mem');
-  if (existsSync(claudeMem)) {
-    // claude-mem과 겹치는 스킬이 추가되면 여기에 등록
-  }
-
-  // superpowers: ~/.codex/superpowers/ 존재 여부 확인
-  const superpowers = join(HOME, '.codex', 'superpowers');
-  if (existsSync(superpowers)) {
-    for (const skill of ['tdd', 'debug-detective', 'refactor', 'code-review']) {
-      conflicts.set(skill, 'superpowers');
-    }
-  }
-
-  // feature-dev (official Anthropic plugin): ~/.claude/plugins/feature-dev/ 존재 여부 확인
-  const featureDev = join(HOME, '.claude', 'plugins', 'feature-dev');
-  if (existsSync(featureDev)) {
-    conflicts.set('pipeline', 'feature-dev');
-  }
-
-  // code-review plugin (official Anthropic plugin): ~/.claude/plugins/code-review/ 존재 여부 확인
-  const codeReviewPlugin = join(HOME, '.claude', 'plugins', 'code-review');
-  if (existsSync(codeReviewPlugin)) {
-    conflicts.set('code-review', 'code-review-plugin');
-  }
-
-  // commit-commands (official Anthropic plugin): ~/.claude/plugins/commit-commands/ 존재 여부 확인
-  const commitCommands = join(HOME, '.claude', 'plugins', 'commit-commands');
-  if (existsSync(commitCommands)) {
-    conflicts.set('git-master', 'commit-commands');
-  }
-
-  return conflicts;
-}
-
-/**
- * commands/*.md → skills/{name}/SKILL.md 변환.
- * Claude Code 플러그인은 skills/{name}/SKILL.md 구조로 스킬을 인식.
- */
-function generateSkillsDir() {
-  const skillsSrc = join(PKG_ROOT, 'assets', 'claude', 'commands');
-  const skillsDst = join(PKG_ROOT, 'skills');
-  if (!existsSync(skillsSrc)) return;
-
-  // 기존 skills/ 제거 후 재생성
-  try { rmSync(skillsDst, { recursive: true, force: true }); } catch { /* ignore */ }
-
-  const conflicts = detectPluginConflicts();
-  let skipped = 0;
-
-  for (const file of readdirSync(skillsSrc).filter(f => f.endsWith('.md'))) {
-    const name = file.replace('.md', '');
-
-    // 다른 플러그인이 동일 스킬을 제공하면 건너뜀
-    if (conflicts.has(name)) {
-      const pluginName = conflicts.get(name);
-      console.log(`[forgen] Skipping skill "${name}" — provided by ${pluginName}`);
-      skipped++;
-      continue;
-    }
-
-    const raw = readFileSync(join(skillsSrc, file), 'utf-8');
-
-    // description 추출
-    const descMatch = raw.match(/description:\s*(.+)/);
-    const desc = descMatch?.[1]?.trim() ?? name;
-
-    // frontmatter 이후 본문 추출
-    const bodyMatch = raw.match(/^---\n[\s\S]*?\n---\n([\s\S]*)$/);
-    const body = bodyMatch?.[1]?.trim() ?? raw;
-
-    // skills/{name}/SKILL.md 생성 (Claude Code 표준)
-    const skillDir = join(skillsDst, name);
-    mkdirSync(skillDir, { recursive: true });
-    writeFileSync(join(skillDir, 'SKILL.md'), `---\nname: ${name}\ndescription: ${desc}\n---\n\n${body}\n`);
-  }
-
-  if (skipped > 0) {
-    console.log(`[forgen] ${skipped} overlapping skills skipped. Compound knowledge engine remains active.`);
-  }
-}
-
-// ── 3. Generate hooks/hooks.json dynamically ──
-
-/**
- * HOOK_REGISTRY — hooks/hook-registry.json에서 로드.
- * 단일 소스 오브 트루스: hook-registry.ts와 동일 파일을 읽습니다.
- * 중복/불일치 완전 제거.
- */
-let HOOK_REGISTRY = [];
-try {
-  HOOK_REGISTRY = JSON.parse(readFileSync(join(PKG_ROOT, 'assets', 'shared', 'hook-registry.json'), 'utf-8'));
-} catch {
-  console.warn('[forgen] hook-registry.json not found, skipping hook generation');
-}
-
-/**
- * hook-config.ts의 isHookEnabled 로직 인라인 구현.
- * 우선순위: 개별 훅 > 티어 > 레거시 > 기본값 true
- * compound-core 훅은 tier 설정으로 비활성화 불가.
- */
-function isHookEnabledFromConfig(hookName, hookTier, config) {
-  if (!config) return true;
-
-  const hooksSection = config['hooks'];
-  // 1) 개별 훅 설정 (v2: hooks 섹션)
-  if (hooksSection?.[hookName]?.['enabled'] === false) return false;
-  if (hooksSection?.[hookName]?.['enabled'] === true) return true;
-
-  // 2) 티어 설정 — compound-core는 tier 비활성화 무시
-  if (hookTier !== 'compound-core') {
-    const tiers = config['tiers'];
-    if (tiers?.[hookTier]?.['enabled'] === false) return false;
-  }
-
-  // 3) 레거시 형식 (최상위 hookName.enabled)
-  if (config[hookName]?.['enabled'] === false) return false;
-
-  return true;
-}
-
-/**
- * 플러그인별 충돌 훅 목록 (plugin-detector.ts의 overlappingHooks와 동기화 필요).
- * 다른 플러그인이 감지되어도 이 목록에 있는 훅만 자동 비활성화.
- */
-const PLUGIN_HOOK_CONFLICTS = {
-  'oh-my-claudecode': ['intent-classifier', 'keyword-detector', 'skill-injector'],
-};
-
-/**
- * hooks/hooks.json을 동적으로 생성합니다.
- *
- * 동작:
- *   1. ~/.compound/hook-config.json 로드 (없으면 모두 활성화)
- *   2. detectPluginConflicts()로 다른 플러그인 존재 여부 판별
- *   3. 활성 훅을 이벤트별 그룹으로 변환하여 hooks.json 작성
- *
- * 설계 결정:
- *   - compound-core 훅은 절대 자동 비활성화 안 함
- *   - script 필드에 공백이 있으면 파일 경로와 인수로 분리
- *     예: "hooks/subagent-tracker.js stop" →
- *         node "${CLAUDE_PLUGIN_ROOT}/dist/hooks/subagent-tracker.js" stop
- *   - 다른 플러그인이 감지되어도 해당 플러그인과 실제 충돌하는 훅만 비활성
- *     (plugin-detector.ts의 overlappingHooks와 동일한 좁은 기준)
- */
-function generateAndWriteHooksJson() {
-  const pluginRoot = '${CLAUDE_PLUGIN_ROOT}/dist';
-  const hooksJsonPath = join(PKG_ROOT, 'hooks', 'hooks.json');
-
-  // hook-config.json 로드 (실패 시 null → 모두 기본 활성)
-  let hookConfig = null;
-  const hookConfigPath = join(COMPOUND_HOME, 'hook-config.json');
-  if (existsSync(hookConfigPath)) {
-    try { hookConfig = JSON.parse(readFileSync(hookConfigPath, 'utf-8')); } catch { /* ignore */ }
-  }
-
-  // detectPluginConflicts()는 skill→plugin Map이므로, 플러그인 집합을 추출해 훅 충돌 구성
-  const skillConflicts = detectPluginConflicts();
-  const hasOtherPlugins = skillConflicts.size > 0;
-  const detectedPluginNames = new Set(skillConflicts.values());
-  const hookConflicts = new Map();
-  for (const [plugin, hooks] of Object.entries(PLUGIN_HOOK_CONFLICTS)) {
-    if (detectedPluginNames.has(plugin)) {
-      for (const h of hooks) hookConflicts.set(h, plugin);
-    }
-  }
-
-  // 활성 훅 필터링
-  const activeHooks = HOOK_REGISTRY.filter(hook => {
-    // 1) hook-config.json 기반 개별/티어 비활성화
-    if (!isHookEnabledFromConfig(hook.name, hook.tier, hookConfig)) return false;
-
-    // 2) 다른 플러그인과 실제 충돌하는 workflow 훅만 비활성 (compound-critical 제외)
-    //    hooks-generator.ts의 hookConflicts.has(hook.name) 조건과 동일한 좁은 기준
-    if (hasOtherPlugins && hook.tier === 'workflow' && hookConflicts.has(hook.name) && !hook.compoundCritical) return false;
-
-    return true;
-  });
-
-  // 이벤트별 그룹핑 (registry 순서 유지)
-  const byEvent = new Map();
-  for (const hook of activeHooks) {
-    if (!byEvent.has(hook.event)) byEvent.set(hook.event, []);
-    byEvent.get(hook.event).push(hook);
-  }
-
-  // hooks.json 구조 조립 — matcher별 그룹핑 (best practice: 도구별 필터링)
-  const hooks = {};
-  for (const [event, entries] of byEvent) {
-    const byMatcher = new Map();
-    for (const h of entries) {
-      const m = h.matcher || '*';
-      if (!byMatcher.has(m)) byMatcher.set(m, []);
-      byMatcher.get(m).push(h);
-    }
-    hooks[event] = [...byMatcher.entries()].map(([matcher, matcherEntries]) => ({
-      matcher,
-      hooks: matcherEntries.map(h => {
-        const spaceIdx = h.script.indexOf(' ');
-        let command;
-        if (spaceIdx === -1) {
-          command = `node "${pluginRoot}/${h.script}"`;
-        } else {
-          const scriptPath = h.script.slice(0, spaceIdx);
-          const args = h.script.slice(spaceIdx + 1);
-          command = `node "${pluginRoot}/${scriptPath}" ${args}`;
-        }
-        return { type: 'command', command, timeout: h.timeout };
-      }),
-    }));
-  }
-
-  const total = HOOK_REGISTRY.length;
-  const active = activeHooks.length;
-  const result = {
-    description: `Forgen harness hooks (auto-generated, ${active}/${total} active)`,
-    hooks,
-  };
-
-  mkdirSync(join(PKG_ROOT, 'hooks'), { recursive: true });
-  writeFileSync(hooksJsonPath, JSON.stringify(result, null, 2) + '\n');
-
-  return { active, total };
-}
-
-// ── 4. Install slash commands ──
-/** Build-time injected --with-codex shared snippet. Mirror of scripts/copy-assets.js. */
-const WITH_CODEX_SNIPPET = `
-
----
-
-## \`--with-codex\` flag (cross-model review)
-
-If \`$ARGUMENTS\` contains any of \`--with-codex\`, \`--코덱스\`, \`with codex\`, \`코덱스 검토\`, \`코덱스로 검토\`,
-then after completing the primary skill work, perform a cross-model review pass:
-
-1. Save your primary output text to a temp file (e.g., \`/tmp/forgen-with-codex-$(date +%s).md\`).
-2. Invoke codex via Bash:
-   \`\`\`bash
-   codex exec --json --ignore-user-config --ignore-rules --ephemeral \\
-     -s read-only -c approval_policy="never" --skip-git-repo-check \\
-     "$(printf 'You are a second-opinion reviewer for another AI assistant\\\\u0027s output. Read the work product below and report ONLY:\\n1. Defects, gaps, or risks the original work missed\\n2. Specific disagreements with the original\\n3. Topics that should have been covered but were not\\n\\nOutput format: prioritized bullet list (max 15 items, severity-sorted, no prose intro). If you find nothing material, say "No critical issues found."\\n\\n<work>\\n%s\\n</work>' "$(cat /tmp/forgen-with-codex-*.md)")"
-   \`\`\`
-3. Append the codex output under heading \`## Codex Cross-Review (--with-codex)\` in your final response.
-4. If codex flags critical issues, briefly acknowledge + suggest follow-up.
-5. If \`codex: command not found\`, note in response and skip the review pass (do not fail).
-
-OPT-IN per invocation. Without the flag, skip this entire section.
-`;
-
-function buildCommandContent(skillContent, skillName) {
-  const descMatch = skillContent.match(/description:\s*(.+)/);
-  const desc = descMatch?.[1]?.trim() ?? skillName;
-  return `# ${desc}\n\n<!-- forgen-managed -->\n\nActivate Forgen "${skillName}" mode for the task: $ARGUMENTS\n\n${skillContent}${WITH_CODEX_SNIPPET}`;
-}
-
-function safeWriteCommand(cmdPath, content) {
-  if (existsSync(cmdPath)) {
-    const existing = readFileSync(cmdPath, 'utf-8');
-    if (!existing.includes('<!-- forgen-managed -->')) return false;
-  }
-  writeFileSync(cmdPath, content);
-  return true;
-}
-
-function installSlashCommands() {
-  if (!existsSync(SKILLS_DIR)) return 0;
-  mkdirSync(COMMANDS_DIR, { recursive: true });
-
-  const skills = readdirSync(SKILLS_DIR).filter((f) => f.endsWith('.md'));
-  let installed = 0;
-
-  for (const file of skills) {
-    const skillName = file.replace('.md', '');
-    const skillContent = readFileSync(join(SKILLS_DIR, file), 'utf-8');
-    const cmdContent = buildCommandContent(skillContent, skillName);
-    if (safeWriteCommand(join(COMMANDS_DIR, file), cmdContent)) {
-      installed++;
-    }
-  }
-  return installed;
-}
-
-// ── 3. Inject hooks into settings.json ──
-
-/** 훅 경로가 forgen dist/hooks를 가리키는지 판별 (Windows \ 와 Unix / 모두 처리) */
-function isForgenHook(entry) {
-  // [\\/] 패턴으로 양쪽 구분자 모두 매칭 (harness.ts와 동일 전략)
-  const HOOK_PATTERN = /[\\/]dist[\\/]hooks[\\/].*\.js/;
-  const check = (cmd) => HOOK_PATTERN.test(cmd) && (cmd.includes(PKG_ROOT) || cmd.includes('forgen') || cmd.includes('tenetx'));
-  if (typeof entry.command === 'string' && check(entry.command)) return true;
-  if (Array.isArray(entry.hooks)) {
-    return entry.hooks.some((h) => typeof h.command === 'string' && check(h.command));
-  }
-  return false;
-}
-
-/**
- * settings.json에 forgen 훅을 절대 경로로 직접 등록합니다.
- *
- * 설계 결정:
- *   - 플러그인 hooks.json의 ${CLAUDE_PLUGIN_ROOT}는 Claude Code 버전에 따라
- *     해석되지 않을 수 있으므로, settings.json에 절대 경로로 직접 등록.
- *   - PKG_ROOT는 npm i -g 시 글로벌 node_modules 경로,
- *     npm link 시 개발 디렉토리 경로로 자동 해석.
- *   - 기존 non-forgen 훅은 보존.
- */
-function applyHookSettings(settings) {
-  if (!existsSync(DIST_HOOKS)) return false;
-
-  // 1) 기존 forgen 훅 제거 (이전 버전 잔재 + 현재 버전 모두)
-  const hooksConfig = settings.hooks ?? {};
-  for (const [event, entries] of Object.entries(hooksConfig)) {
-    if (Array.isArray(entries)) {
-      hooksConfig[event] = entries.filter(h => !isForgenHook(h));
-      if (hooksConfig[event].length === 0) delete hooksConfig[event];
-    }
-  }
-
-  // 2) hook-registry.json 기반으로 활성 훅을 settings.json에 등록
-  // registry의 script 필드는 "hooks/xxx.js" 형식 → dist/ 기준으로 join
-  const distDir = join(PKG_ROOT, 'dist');
-
-  let hookConfig = null;
-  const hookConfigPath = join(COMPOUND_HOME, 'hook-config.json');
-  if (existsSync(hookConfigPath)) {
-    try { hookConfig = JSON.parse(readFileSync(hookConfigPath, 'utf-8')); } catch { /* ignore */ }
-  }
-
-  const skillConflicts = detectPluginConflicts();
-  const detectedPluginNames = new Set(skillConflicts.values());
-  const hookConflicts = new Map();
-  for (const [plugin, hooks] of Object.entries(PLUGIN_HOOK_CONFLICTS)) {
-    if (detectedPluginNames.has(plugin)) {
-      for (const h of hooks) hookConflicts.set(h, plugin);
-    }
-  }
-
-  const activeHooks = HOOK_REGISTRY.filter(hook => {
-    if (!isHookEnabledFromConfig(hook.name, hook.tier, hookConfig)) return false;
-    if (skillConflicts.size > 0 && hook.tier === 'workflow' && hookConflicts.has(hook.name) && !hook.compoundCritical) return false;
-    return true;
-  });
-
-  // 이벤트별 그룹핑
-  const byEvent = new Map();
-  for (const hook of activeHooks) {
-    if (!byEvent.has(hook.event)) byEvent.set(hook.event, []);
-    byEvent.get(hook.event).push(hook);
-  }
-
-  // settings.json hooks 구조 조립 (절대 경로 사용)
-  for (const [event, entries] of byEvent) {
-    const byMatcher = new Map();
-    for (const h of entries) {
-      const m = h.matcher || '';
-      if (!byMatcher.has(m)) byMatcher.set(m, []);
-      byMatcher.get(m).push(h);
-    }
-
-    if (!hooksConfig[event]) hooksConfig[event] = [];
-
-    for (const [matcher, matcherEntries] of byMatcher) {
-      hooksConfig[event].push({
-        matcher,
-        hooks: matcherEntries.map(h => {
-          const spaceIdx = h.script.indexOf(' ');
-          let command;
-          if (spaceIdx === -1) {
-            command = `node "${join(distDir, h.script)}"`;
-          } else {
-            const scriptPath = h.script.slice(0, spaceIdx);
-            const args = h.script.slice(spaceIdx + 1);
-            command = `node "${join(distDir, scriptPath)}" ${args}`;
-          }
-          return { type: 'command', command, timeout: h.timeout };
-        }),
-      });
-    }
-  }
-
-  settings.hooks = hooksConfig;
-
-  // env에 COMPOUND_HARNESS 마커 설정
-  const env = settings.env ?? {};
-  env.COMPOUND_HARNESS = '1';
-  settings.env = env;
-
-  return true;
-}
-
-// ── MCP Server Registration ──
-
-/**
- * ~/.claude.json의 mcpServers에 forgen-compound MCP 서버를 등록합니다.
- *
- * 설계 결정 (실증 검증 완료):
- *   - Claude Code는 settings.json의 mcpServers를 읽지 않음
- *   - MCP 서버는 반드시 ~/.claude.json에 등록해야 Claude Code가 인식
- *   - context7 등 동작하는 MCP 서버와 동일한 등록 경로
- *   - npm bin 경로(forgen-mcp) 우선, 없으면 node + 절대 경로 fallback
- */
-function applyMcpToClaudeJson() {
-  const mcpServerPath = join(PKG_ROOT, 'dist', 'mcp', 'server.js');
-  if (!existsSync(mcpServerPath)) return false;
-
-  // W-V3: 항상 node + 절대경로 사용 — PATH 변경/nvm 전환에도 안정적
-  const mcpCommand = 'node';
-  const mcpArgs = [mcpServerPath];
-
-  const claudeJsonPath = join(HOME, '.claude.json');
-  let claudeJson = {};
-  if (existsSync(claudeJsonPath)) {
-    try {
-      claudeJson = JSON.parse(readFileSync(claudeJsonPath, 'utf-8'));
-    } catch (e) {
-      // Audit fix #10 (2026-04-21): silent parse-failure used to let the
-      // merged write below overwrite the user's malformed-but-original
-      // ~/.claude.json, wiping all their other plugin configs. Preserve
-      // and skip instead.
-      const corruptPath = `${claudeJsonPath}.corrupt-${Date.now()}`;
-      try { copyFileSync(claudeJsonPath, corruptPath); } catch { /* best-effort */ }
-      console.error(
-        `[forgen] ${claudeJsonPath} failed to parse; preserved at ${corruptPath}. ` +
-        `Skipping MCP registration.`,
-      );
-      return false;
-    }
-  }
-
-  const mcpServers = claudeJson.mcpServers ?? {};
-  mcpServers['forgen-compound'] = {
-    command: mcpCommand,
-    args: mcpArgs,
-  };
-  claudeJson.mcpServers = mcpServers;
-
-  // Atomic write — tmp file + rename so a partial write never leaves
-  // ~/.claude.json in a torn state for any concurrent reader.
-  const tmpPath = `${claudeJsonPath}.tmp.${process.pid}`;
-  writeFileSync(tmpPath, JSON.stringify(claudeJson, null, 2));
-  renameSync(tmpPath, claudeJsonPath);
-  fixOwnership(claudeJsonPath);
-  return true;
-}
-
-/** settings.json에서 레거시 mcpServers 항목 정리 (더 이상 사용하지 않음) */
-function cleanLegacyMcpFromSettings(settings) {
-  if (settings.mcpServers?.['forgen-compound']) {
-    delete settings.mcpServers['forgen-compound'];
-    if (Object.keys(settings.mcpServers).length === 0) {
-      delete settings.mcpServers;
-    }
-  }
-}
-
-/**
- * dev-guide 스킬 14개 자동 설치 — assets/dev-guide/{fe,be}/skills/{stack}/{skill}/SKILL.md
- *   → ~/.claude/skills/forgen-<stack>-<skill>/SKILL.md
- *
- * forgen- prefix 로 사용자 own skills 와 격리. idempotent 재실행 시 forgen-* 만 정리 후 재설치.
- */
 /**
  * forgen 이 설치한 dev-guide 스킬만 정리한다 (src/host/managed-marker.ts 의 removeOwnedDevGuideSkills 와 같은 규칙).
  *
@@ -838,45 +239,6 @@ function installSkillFile(src, skillsDir, name) {
   }
 }
 
-function installDevGuideSkills(home) {
-  const devGuideRoot = join(PKG_ROOT, 'assets', 'dev-guide');
-  if (!existsSync(devGuideRoot)) {
-    console.log('[forgen] dev-guide assets not found — skipping skill install');
-    return 0;
-  }
-
-  const userSkillsDir = join(home, '.claude', 'skills');
-  mkdirSync(userSkillsDir, { recursive: true });
-
-  // 1. forgen 이 설치한 dev-guide 스킬 정리 (사용자가 만든 forgen-* 스킬은 보존)
-  const removed = removeOwnedDevGuideSkills(userSkillsDir, devGuideRoot);
-
-  // 2. assets/dev-guide/{side}/skills/{stack}/{skill}/SKILL.md 수집
-  let installed = 0;
-  for (const side of ['fe', 'be']) {
-    const sideSkillsDir = join(devGuideRoot, side, 'skills');
-    if (!existsSync(sideSkillsDir)) continue;
-    for (const stack of readdirSync(sideSkillsDir)) {
-      const stackDir = join(sideSkillsDir, stack);
-      if (!statSync(stackDir).isDirectory()) continue;
-      for (const skill of readdirSync(stackDir)) {
-        const skillSrc = join(stackDir, skill);
-        const skillFile = join(skillSrc, 'SKILL.md');
-        if (!existsSync(skillFile)) continue;
-
-        // 대상: ~/.claude/skills/forgen-<stack>-<skill>/SKILL.md (이미 있는 사용자 것은 덮어쓰지 않는다)
-        if (installSkillFile(skillFile, userSkillsDir, `forgen-${stack}-${skill}`)) installed++;
-      }
-    }
-  }
-
-  // 3. sudo 케이스 ownership 회복
-  fixOwnership(userSkillsDir);
-
-  console.log(`[forgen] dev-guide skills: ${installed} installed${removed > 0 ? ` (${removed} stale removed)` : ''}`);
-  return installed;
-}
-
 /**
  * v0.4.9: dev-guide 14 skills → ~/.codex/skills/forgen-<stack>-<skill>/SKILL.md
  * forgen 자체 commands(forgen-compound 등) 와 prefix 겹치지 않도록
@@ -922,111 +284,57 @@ function installDevGuideSkillsToCodex(home) {
 // ── Main ──
 
 /**
- * settings.json을 한 번 읽고, 모든 변경을 적용한 후, 한 번만 씁니다.
- * 이전 방식(3곳에서 각각 read-modify-write)은 중간에 다른 프로세스가
- * settings.json을 수정하면 데이터 유실 가능성이 있었습니다.
+ * 한 번에 설치 완료: Claude(hook·MCP·statusLine·commands·skills·verify·agents)는 dist 의 planClaudeInstall 을 호출해
+ * `forgen install claude` 와 같은 경로를 쓴다. hook/MCP/statusLine 은 고정 shim(~/.forgen/bin/forgen-run)만 가리키므로
+ * Node 전환·재설치 때 settings 는 바뀌지 않는다. 어떤 단계가 실패해도 npm install 은 성공으로 끝내되 사유를 출력한다.
  */
 async function main() {
-  // W-V2: 로컬 설치 시 전역 설정 수정 방지
-  if (!process.env.npm_config_global && process.env.INIT_CWD && process.env.INIT_CWD !== PKG_ROOT) {
-    // npm install (로컬) — postinstall 스킵
+  if (process.env.FORGEN_SKIP_POSTINSTALL === '1') return;
+  // 저장소 체크아웃에서 `npm install` 하면 INIT_CWD 가 PKG_ROOT 와 같아진다. 개발자 실제 홈을 바꾸면 안 된다.
+  if (existsSync(join(PKG_ROOT, '.git')) && process.env.FORGEN_FORCE_POSTINSTALL !== '1') {
+    console.log('[forgen] 저장소 체크아웃이라 사용자 설정을 건드리지 않습니다. 설치하려면: forgen install claude');
     return;
   }
-  migrateLegacyStorage();
-  ensureDirectories();
+  // pnpm·yarn 전역 설치는 npm_config_global 이 없다. 패키지 위치로 판별한다.
+  const globalByPath = /[\\/](pnpm[\\/]global|\.pnpm-global|yarn[\\/]global|\.config[\\/]yarn[\\/]global)[\\/]/.test(PKG_ROOT);
+  // W-V2: 프로젝트 의존성으로 설치할 때는 사용자 홈에 hook 을 심지 않는다.
+  if (!process.env.npm_config_global && !globalByPath && process.env.INIT_CWD && process.env.INIT_CWD !== PKG_ROOT) {
+    console.log('[forgen] 프로젝트 의존성으로 설치되어 hook 을 등록하지 않았습니다. 등록하려면: npx forgen install claude');
+    return;
+  }
+  const problems = [];
+  const attempt = (label, fn) => {
+    try { return fn(); } catch (err) { problems.push(`${label}: ${err?.message ?? err}`); return undefined; }
+  };
 
-  // ── 0. 기존 forgen entry 감지 (마이그레이션 모드 분기) ──
-  //
-  // feat/codex-support (P1-6, 2026-04-27): postinstall 이 호스트 인젝션을 *자동*
-  // 으로 하던 v0.4.x 동작을 변경. 새로운 정책:
-  //   - 기존 사용자 (settings.json 에 forgen hook entry 있음): 그대로 갱신 (행동
-  //     변화 없음 — 마이그레이션 안전). default_host 자동 설정 안내 banner 출력.
-  //   - 신규 사용자 (forgen entry 없음): host 인젝션 자동 안 함. "Run `forgen
-  //     install`" banner 만 출력. 사용자가 어느 host (Claude/Codex/Both) 에 등록할지
-  //     명시 선택.
-  //
-  // 사용자 의도와 무관한 Claude bias (postinstall 이 ~/.claude/ 자동 인젝션) 제거.
-  let isExistingForgenUser = false;
-  if (existsSync(SETTINGS_PATH)) {
-    try {
-      const probe = JSON.parse(readFileSync(SETTINGS_PATH, 'utf-8'));
-      const hooks = probe?.hooks ?? {};
-      for (const arr of Object.values(hooks)) {
-        if (!Array.isArray(arr)) continue;
-        for (const grp of arr) {
-          if (!grp?.hooks) continue;
-          for (const h of grp.hooks) {
-            const cmd = typeof h?.command === 'string' ? h.command : '';
-            // P1-6b detection: forgen hook command path 식별. cross-platform (POSIX + Windows)
-            // 및 다양한 install 위치 (npm global, plugin cache, dev) 커버.
-            if (
-              cmd.includes('CLAUDE_PLUGIN_ROOT') ||
-              cmd.includes('/forgen-local/forgen/') ||
-              cmd.includes('\\forgen-local\\forgen\\') ||
-              cmd.includes('/forgen/dist/hooks/') ||
-              cmd.includes('\\forgen\\dist\\hooks\\') ||
-              cmd.includes('/@wooojin/forgen/') ||
-              cmd.includes('\\@wooojin\\forgen\\')
-            ) {
-              isExistingForgenUser = true;
-            }
-          }
-          if (isExistingForgenUser) break;
-        }
-        if (isExistingForgenUser) break;
-      }
-    } catch { /* settings.json 손상 시 fall-through, 단계 1 의 corrupt handling 이 처리 */ }
+  // Node 엔진 미달 경고 (설치는 막지 않는다)
+  if (Number(process.versions.node.split('.')[0]) < MIN_NODE_MAJOR) {
+    console.error(`[forgen] WARNING: Node ${process.versions.node} is below the supported range (>=${MIN_NODE_MAJOR}). Some features may fail; use: nvm install ${MIN_NODE_MAJOR} && nvm use ${MIN_NODE_MAJOR}`);
   }
 
-  // ── 1. settings.json 한 번 읽기 ──
-  //
-  // Audit finding #2/#10 (2026-04-21): prior `catch { settings = {} }`
-  // silently swallowed parse failures and let the merged write below
-  // clobber the user's malformed-but-original settings.json — a data
-  // loss path triggered by any partial edit or external corruption.
-  // Now: preserve the corrupt file as `.corrupt-<ts>`, abort the
-  // settings write (and subsequent MCP registration + ownership fix
-  // that also touches ~/.claude.json), surface the warning via npm's
-  // postinstall output. The outer try/catch at the bottom ensures
-  // `npm install` still succeeds; only the settings mutation is
-  // skipped.
-  let settings = {};
-  if (existsSync(SETTINGS_PATH)) {
-    try {
-      settings = JSON.parse(readFileSync(SETTINGS_PATH, 'utf-8'));
-    } catch (e) {
-      const corruptPath = `${SETTINGS_PATH}.corrupt-${Date.now()}`;
-      try { copyFileSync(SETTINGS_PATH, corruptPath); } catch { /* best-effort */ }
-      throw new Error(
-        `[forgen] ${SETTINGS_PATH} failed to parse: ${e?.message ?? e}. ` +
-        `Preserved corrupt copy at ${corruptPath}. Skipping settings injection to avoid data loss.`,
-      );
-    }
+  attempt('legacy storage migration', migrateLegacyStorage);
+  attempt('directories', ensureDirectories);
+
+  // ── Claude: 단일 설치 경로 ──
+  let claude = null;
+  try {
+    const mod = await import(join(PKG_ROOT, 'dist', 'host', 'install-claude.js'));
+    claude = mod.planClaudeInstall({ pkgRoot: PKG_ROOT, homeDir: HOME });
+    for (const e of claude.errors) problems.push(e);
+  } catch (err) {
+    problems.push(`claude install: ${err?.message ?? err} (is dist/ built?)`);
   }
 
-  // ── 2. 플러그인 등록 (installed_plugins.json + skills) ──
-  // P1-6b (옵션 Y): 신규 사용자에게는 자동 install 안 함. 기존 forgen 사용자만 갱신.
-  // 사용자 host 선택 권한 보장 (1원칙 = Claude bias 제거).
-  let plugin = false;
-  if (isExistingForgenUser) {
-    try {
-      plugin = registerPlugin();
-      if (plugin) applyPluginSettings(settings);
-    } catch (err) {
-      console.error(`[forgen] plugin registration failed: ${err?.message ?? err}`);
-    }
-  }
-
-  // ── 2.4. Codex 훅 shim 갱신 — 이미 쓰고 있으면 새 node/패키지 경로로 내용만 재작성(hooks.json 불변 → trust 유지) ──
+  // ── Codex 훅 shim 갱신 — 이미 쓰고 있으면 새 node/패키지 경로로 내용만 재작성(hooks.json 불변 → trust 유지) ──
   try {
     const shimMod = await import(join(PKG_ROOT, 'dist', 'host', 'codex-hook-shim.js'));
-    const shimFile = shimMod.codexHookShimPath(process.env.CODEX_HOME || join(HOME, '.codex'));
+    const codexHome = process.env.CODEX_HOME || join(HOME, '.codex');
+    const shimFile = shimMod.codexHookShimPath(codexHome);
     if (existsSync(shimFile)) {
       const r = shimMod.writeCodexHookShim(PKG_ROOT, process.execPath, shimFile);
       if (r === 'written') console.log('[forgen] Codex hook shim updated → no /hooks re-trust needed.');
     } else {
       // 이전 형식(node + 절대경로) forgen 훅 → shim 형식으로 자동 전환 (forgen 훅 명령만, 순서·사용자 훅 보존).
-      const codexHome = process.env.CODEX_HOME || join(HOME, '.codex');
       const r = shimMod.migrateCodexHooksToShim(codexHome, PKG_ROOT, process.execPath);
       if (r.status === 'migrated') {
         console.log(`[forgen] Codex: ${r.rewritten} forgen hooks switched to a stable shim (backup: hooks.json.bak-pre-shim).`);
@@ -1035,7 +343,7 @@ async function main() {
     }
   } catch { /* dist 없음(dev) 또는 실패 — 다음 forgen install codex 가 처리 */ }
 
-  // ── 2.4b. Stop 룰 발동 조건 재조정 1회 마이그레이션 (2026-10-07, v0.6.7~) ──
+  // ── Stop 룰 발동 조건 재조정 1회 마이그레이션 (2026-10-07, v0.6.7~) ──
   // 룰별 발동 조건·critic 실행 증거 판정은 룰 파일에 구워져 있어 업그레이드만으론 반영되지 않는다.
   // 사용자 룰만 대상(프로젝트 룰은 git 소스라 건드리지 않음). 마커로 1회만.
   try {
@@ -1053,185 +361,54 @@ async function main() {
     }
   } catch (err) { console.error(`[forgen] Stop rule retune skipped: ${err?.message ?? err}`); }
 
-  // ── 2.5. statusLine 자동 등록 (settings 단일 쓰기에 포함) ──
-  let statusLineResult = 'unchanged';
-  try { statusLineResult = applyStatusLineAuto(settings); } catch (err) { console.error(`[forgen] statusLine setup skipped: ${err?.message ?? err}`); }
+  // ── Starter Knowledge Pack (솔루션 < 5개일 때만) ──
+  const starterInstalled = attempt('starter pack', installStarterPack) ?? 0;
 
-  // ── 3. hooks.json 동적 생성 ──
-  //
-  // A4 guard (2026-04-09): skip regeneration when running inside the
-  // forgen source tree itself. Pre-A4 fix, every `npm install` /
-  // `npm audit fix` run from the dev checkout clobbered the package's
-  // own committed `hooks/hooks.json` with a file reflecting the
-  // developer's LOCAL plugin state (which usually has `oh-my-claudecode`
-  // or similar installed for testing). That 17/19-active file then
-  // shipped in the next npm tarball and broke keyword-detector for
-  // every user whose postinstall didn't complete (sudo issues,
-  // read-only FS, etc.). The checked-in file should always be the
-  // pristine 19/19 baseline; per-user plugin conflict resolution is
-  // handled at runtime via `forgen config hooks`. Detect "we're in the
-  // source tree" via the presence of a sibling `.git/` directory next
-  // to the package root — a regular npm install never has that.
-  let hooksJsonResult = null;
-  const isSourceCheckout = existsSync(join(PKG_ROOT, '.git'));
-  if (isSourceCheckout) {
-    // no-op in dev: leave the committed file untouched
-  } else {
-    try {
-      hooksJsonResult = generateAndWriteHooksJson();
-    } catch (err) {
-      console.error(`[forgen] hooks.json generation failed: ${err?.message ?? err}`);
-    }
-  }
-
-  // ── 4. 슬래시 커맨드 설치 ── (기존 사용자만)
-  let commands = 0;
-  if (isExistingForgenUser) {
-    try {
-      commands = installSlashCommands();
-    } catch (err) {
-      console.error(`[forgen] slash commands failed: ${err?.message ?? err}`);
-    }
-  }
-
-  // ── 5. settings에 훅 설정 적용 ── (기존 사용자만)
-  let hooks = false;
-  if (isExistingForgenUser) {
-    try {
-      hooks = applyHookSettings(settings);
-    } catch (err) {
-      console.error(`[forgen] hooks settings failed: ${err?.message ?? err}`);
-    }
-  }
-
-  // ── 6. MCP 서버 ~/.claude.json 등록 ── (기존 사용자만)
-  let mcp = false;
-  if (isExistingForgenUser) {
-    try {
-      mcp = applyMcpToClaudeJson();
-      cleanLegacyMcpFromSettings(settings);
-    } catch (err) {
-      console.error(`[forgen] MCP server registration failed: ${err?.message ?? err}`);
-    }
-  }
-
-  // ── 7. settings.json 한 번 쓰기 (atomic) ──
-  //
-  // Audit fix #10 (2026-04-21): prior direct writeFileSync could leave
-  // settings.json truncated / partially-written if the process was
-  // interrupted (sudo shell SIGINT, npm exit). Tmp + rename is atomic
-  // on POSIX within the same directory. Lock is NOT acquired here —
-  // postinstall is serialized by npm and we don't want to introduce a
-  // cross-module dependency from a build-time script.
-  try {
-    mkdirSync(dirname(SETTINGS_PATH), { recursive: true });
-    const tmpPath = `${SETTINGS_PATH}.tmp.${process.pid}`;
-    writeFileSync(tmpPath, JSON.stringify(settings, null, 2));
-    renameSync(tmpPath, SETTINGS_PATH);
-  } catch (err) {
-    console.error(`[forgen] settings.json write failed: ${err?.message ?? err}`);
-  }
-
-  // ── 8. Starter Knowledge Pack 설치 (솔루션 < 5개일 때만) ──
-  let starterInstalled = 0;
-  try {
-    starterInstalled = installStarterPack();
-  } catch (err) {
-    console.error(`[forgen] starter pack failed: ${err?.message ?? err}`);
-  }
-
-  // ── 8b. dev-guide 스킬 자동 설치 (claude) ──
-  try {
-    installDevGuideSkills(HOME);
-  } catch (e) {
-    // postinstall 의 "fail-open" 원칙 — npm install 깨뜨리지 않음
-    console.log(`[forgen] dev-guide skills 설치 스킵 (${e?.message ?? e})`);
-  }
-
-  // ── 8c. dev-guide 스킬 자동 설치 (codex) ──
-  try {
-    installDevGuideSkillsToCodex(HOME);
-  } catch (e) {
-    console.log(`[forgen] codex dev-guide skills 설치 스킵 (${e?.message ?? e})`);
-  }
+  // ── dev-guide 스킬 (codex) ──
+  attempt('codex dev-guide skills', () => installDevGuideSkillsToCodex(HOME));
 
   // sudo 실행 시 파일 소유권을 실제 유저로 변경
-  fixOwnership(join(HOME, '.claude'), join(HOME, '.forgen'));
+  fixOwnership(join(HOME, '.claude'), join(HOME, '.forgen'), join(HOME, '.claude.json'));
 
-  // ── 9. Self-check: 설치 산출물이 현재 Node 에서 실제로 로드되는지 확인 ──
-  //
-  // Why: 0.4.4 이전 빌드는 `import ... with { type: 'json' }` 를 사용해 Node
-  //   20.0-20.9 에서 모든 훅이 SyntaxError 로 깨졌다. 사용자는 npm i -g 가 정상
-  //   종료된 직후에야 "각종 훅들이 에러난다"는 증상을 보았다. self-check 가 있었
-  //   다면 install 시점에 즉시 실패를 노출했을 것.
-  //
-  // 동작: dist/hooks/hook-registry.js 를 dynamic import 로 로드 → HOOK_REGISTRY
-  //   배열에 entry 가 있는지 확인. 실패 시 stderr 로 구체적 원인 + Node 버전을
-  //   알리고 npm install 자체는 깨뜨리지 않음 (postinstall 정책 유지).
-  let selfCheckOk = false;
+  // ── Self-check: 설치 산출물이 현재 Node 에서 실제로 로드되는지 확인 ──
+  // 0.4.4 이전 빌드는 Node 20.0-20.9 에서 모든 훅이 SyntaxError 로 깨졌다. 설치 직후에 노출하기 위한 점검.
   let selfCheckErr = '';
   try {
-    const registryUrl = new URL('../dist/hooks/hook-registry.js', import.meta.url);
-    const mod = await import(registryUrl.href);
-    if (Array.isArray(mod?.HOOK_REGISTRY) && mod.HOOK_REGISTRY.length > 0) {
-      selfCheckOk = true;
-    } else {
-      selfCheckErr = 'HOOK_REGISTRY is empty or not an array';
-    }
+    const mod = await import(new URL('../dist/hooks/hook-registry.js', import.meta.url).href);
+    if (!Array.isArray(mod?.HOOK_REGISTRY) || mod.HOOK_REGISTRY.length === 0) selfCheckErr = 'HOOK_REGISTRY is empty or not an array';
   } catch (err) {
     selfCheckErr = err?.message ?? String(err);
   }
-  if (!selfCheckOk) {
-    console.error('');
-    console.error(`[forgen] WARNING: hook self-check FAILED on Node ${process.version}.`);
-    console.error(`[forgen]   reason: ${selfCheckErr}`);
-    console.error('[forgen]   훅이 Claude Code 실행 시 로드 실패할 수 있습니다.');
-    console.error('[forgen]   Node 20.10+ 또는 22.x 사용을 권장합니다.');
-    console.error('[forgen]   문제 지속 시: https://github.com/forgen-team/forgen/issues');
-    console.error('');
-  }
+  if (selfCheckErr) problems.push(`hook self-check failed on Node ${process.version}: ${selfCheckErr}`);
 
-  const parts = [];
-  if (plugin) parts.push('plugin');
-  if (hooksJsonResult) parts.push(`hooks.json (${hooksJsonResult.active}/${hooksJsonResult.total} active)`);
-  if (commands > 0) parts.push(`${commands} slash commands`);
-  if (hooks) parts.push('hooks');
-  if (mcp) parts.push('MCP compound');
-  if (starterInstalled > 0) parts.push(`${starterInstalled} starter solutions`);
-  if (parts.length > 0) {
+  // ── 요약 ──
+  if (claude) {
+    const parts = [
+      claude.shimPath ? `shim ${claude.shimPath}` : 'absolute-path hooks (no shim)',
+      `${claude.hooksInjected} hooks`,
+      claude.mcpAlreadyPresent || claude.mcpRegistered ? 'MCP' : null,
+      `statusLine ${claude.statusLine}`,
+      `${claude.slashCommandsCount} commands`,
+      `${claude.skillsInstalled} skills`,
+      `verify ${claude.verifySkill}`,
+      `${claude.agentsInstalled} agents`,
+      starterInstalled > 0 ? `${starterInstalled} starter solutions` : null,
+    ].filter(Boolean);
     console.log(`[forgen] Installed: ${parts.join(', ')} → ${HOME}`);
+    if (claude.statusLine === 'custom') {
+      console.log('[forgen] statusLine is set to another command (e.g. claude-hud) — left untouched.');
+      console.log('[forgen]   To switch to forgen (backup kept in statusLine_backup): forgen statusline install --force');
+      console.log('[forgen]   To keep it AND show forgen\'s line after it (chain, original kept in statusLine_backup): forgen statusline install --chain');
+    }
   }
-  if (statusLineResult === 'installed' || statusLineResult === 'updated') {
-    console.log('[forgen] statusLine registered (absolute path) — running sessions pick it up on the next message.');
-  } else if (statusLineResult === 'custom') {
-    console.log('[forgen] statusLine is set to another command (e.g. claude-hud) — left untouched.');
-    console.log('[forgen]   To switch to forgen (backup kept in statusLine_backup): forgen statusline install --force');
-    console.log('[forgen]   To keep it AND show forgen\'s line after it (chain, original kept in statusLine_backup): forgen statusline install --chain');
-  }
-
-  // First-run banner (신규 사용자 안내) — feat/codex-support P1-6
-  if (!isExistingForgenUser) {
-    console.log('');
-    console.log('  ╭─ forgen — setup checklist ────────────────────────────────╮');
-    console.log('  │                                                            │');
-    console.log('  │  1. Register on a host:                                   │');
-    console.log('  │     $ forgen install claude   (or codex / both)           │');
-    console.log('  │                                                            │');
-    console.log('  │  2. Complete onboarding (4 questions):                    │');
-    console.log('  │     $ forgen                                               │');
-    console.log('  │                                                            │');
-    console.log('  │  3. Verify setup:                                          │');
-    console.log('  │     $ forgen doctor --quick                                │');
-    console.log('  │                                                            │');
-    console.log('  ╰────────────────────────────────────────────────────────────╯');
-    console.log('');
+  if (problems.length > 0) {
+    console.error('');
+    console.error('[forgen] Setup was incomplete — the package itself is installed:');
+    for (const p of problems) console.error(`[forgen]   - ${p}`);
+    console.error('[forgen]   Retry after fixing the cause: forgen install claude');
+    console.error('');
   } else {
-    // 기존 사용자: default_host 안내
-    console.log('');
-    console.log('  [forgen] Multi-host support added. Existing forgen entry preserved.');
-    console.log('  Optional: `forgen config default-host {claude|codex|ask}` to set fgx default.');
-    console.log('  Optional: `forgen install codex` to register on Codex too.');
-    console.log('');
+    console.log('[forgen] Next: run `forgen` to finish onboarding, then `forgen doctor --quick`. Codex: `forgen install codex`.');
   }
 }
 

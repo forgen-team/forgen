@@ -73,25 +73,26 @@ describe('hook-timing', () => {
     expect(stats[0].hook).toBe('ok');
   });
 
-  it('recordHookTiming rotates when exceeding MAX_LINES and size gate', () => {
+  it('H13: 30일치 집계가 가능한 크기를 보존하고, 상한을 넘으면 오래된 쪽부터 회전', () => {
     const logPath = path.join(tmpDir, 'hook-timing.jsonl');
-    // P0-2 (2026-04-20) introduced a size gate: rotation only fires when
-    // file size exceeds ROTATE_SIZE_BYTES (~80KB). The earlier test only
-    // wrote 510 short entries (~33KB) which never crossed the gate — pad
-    // the event name so each line is ~200B and 510 lines ≈ 100KB.
-    const padding = 'X'.repeat(160);
-    const lines: string[] = [];
-    for (let i = 0; i < 510; i++) {
-      lines.push(JSON.stringify({ hook: 'test', ms: i, event: padding, at: Date.now() }));
-    }
-    fs.writeFileSync(logPath, lines.join('\n') + '\n');
+    // 기존 500줄 회전이면 하루도 못 가던 규모: 5만 줄(30일 × 일 ~1,700회)이 그대로 남아야 한다.
+    const day = 24 * 3600 * 1000; const now = Date.now();
+    const mk = (i: number, n: number) => JSON.stringify({ hook: 'h', ms: 5, event: 'E', at: now - (n - i) * (30 * day / n) });
+    const N = 50_000;
+    fs.writeFileSync(logPath, Array.from({ length: N }, (_, i) => mk(i, N)).join('\n') + '\n');
+    recordHookTiming('h', 7, 'E');
+    const kept = fs.readFileSync(logPath, 'utf-8').trim().split('\n');
+    expect(kept.length).toBeGreaterThan(N);
+    const oldest = JSON.parse(kept[0]).at;
+    expect(now - oldest).toBeGreaterThan(29 * day);
 
-    // This call should trigger rotation
-    recordHookTiming('test', 999, 'X');
-
-    const content = fs.readFileSync(logPath, 'utf-8');
-    const remaining = content.trim().split('\n');
-    expect(remaining.length).toBeLessThanOrEqual(500);
+    // 상한(200,000줄)을 넘으면 회전: 90% 로 줄고 최신 엔트리는 유지
+    const big = 200_100;
+    fs.writeFileSync(logPath, Array.from({ length: big }, (_, i) => JSON.stringify({ hook: 'h', ms: i, event: 'E'.repeat(60), at: i })).join('\n') + '\n');
+    recordHookTiming('h', 1, 'E');
+    const after = fs.readFileSync(logPath, 'utf-8').trim().split('\n');
+    expect(after.length).toBeLessThanOrEqual(200_000);
+    expect(JSON.parse(after[after.length - 2]).ms).toBe(big - 1);
   });
 });
 

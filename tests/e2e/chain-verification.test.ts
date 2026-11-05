@@ -165,8 +165,8 @@ describe('Chain 3: auto-compound quality gate', () => {
     // multiple lines, so we match it via regex rather than a literal
     // substring that had no newline between `(` and `[`.
     const beforeIdx = src.indexOf('solutionsBefore');
-    // ADR-012: solution 추출 호출이 execClaudeRetry → extractViaHaiku(opt-in 게이트 래퍼)로 변경.
-    const claudeMatch = src.match(/(?:execClaudeRetry|extractViaHaiku)\s*\(\s*\[\s*'-p'\s*,\s*solutionPrompt/);
+    // ADR-019: solution 추출 호출은 callHaiku('solution', ...) (격리 인자·소요 기록 경계).
+    const claudeMatch = src.match(/callHaiku\(\s*'solution'/);
     const claudeIdx = claudeMatch ? claudeMatch.index ?? -1 : -1;
     const validateIdx = src.indexOf('validateSolutionFiles(solutionsBefore)');
     expect(beforeIdx).toBeGreaterThan(-1);
@@ -201,14 +201,9 @@ describe('Chain 4: auto-compound injection defense', () => {
 
   it('sanitizedSummary가 claude -p 프롬프트에 사용된다 (원본 summary 대신)', () => {
     const src = fs.readFileSync(path.join(PROJECT_ROOT, 'src', 'core', 'auto-compound-runner.ts'), 'utf-8');
-    // sanitizedSummary가 프롬프트에 포함
-    expect(src).toContain('sanitizedSummary.slice');
-    // solutionPrompt 템플릿에서 원본 summary.slice 대신 sanitizedSummary.slice 사용
-    // userPrompt 템플릿에서도 동일
-    const solutionPromptIdx = src.indexOf('const solutionPrompt');
-    const afterPrompt = src.slice(solutionPromptIdx, solutionPromptIdx + 500);
-    expect(afterPrompt).toContain('sanitizedSummary');
-    expect(afterPrompt).not.toMatch(/\$\{summary\.slice/);
+    // 필터를 통과한 sanitizedSummary 만 단계 실행기에 들어가고, 원본(rawSummary/redactedSummary)은 프롬프트로 가지 않는다.
+    expect(src).toContain('runPhases(sanitizedSummary');
+    expect(src).not.toMatch(/runPhases\((rawSummary|redactedSummary)/);
   });
 
   it('filterSolutionContent가 실제로 인젝션을 차단한다', async () => {
@@ -295,12 +290,11 @@ describe('Chain 5: skill-injector in hook-registry', () => {
 // Phase 0 보강: doctor 플러그인 캐시 체크
 // ────────────────────────────────────────────────────
 
-describe('Doctor — plugin cache verification', () => {
-  it('doctor.ts에 플러그인 캐시 체크가 있다', () => {
+describe('Doctor — shim verification', () => {
+  it('doctor.ts 는 플러그인 캐시가 아니라 고정 shim 이 가리키는 패키지를 점검한다', () => {
     const src = fs.readFileSync(path.join(PROJECT_ROOT, 'src', 'core', 'doctor.ts'), 'utf-8');
-    expect(src).toContain('forgen plugin cache');
-    expect(src).toContain('installed_plugins.json');
-    expect(src).toContain('lstatSync'); // statSync가 아닌 lstatSync 사용
+    expect(src).toContain('shimTargetOk');
+    expect(src).not.toContain('installed_plugins.json');
   });
 });
 

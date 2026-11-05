@@ -5,7 +5,7 @@
  * matcher quality against labeled fixtures. No production side-effects.
  */
 
-import { extractTags } from './solution-format.js';
+import { extractSolutionTags } from './solution-format.js';
 import { rankCandidates } from './ranking-pipeline.js';
 
 /**
@@ -108,7 +108,7 @@ function computeBucketMetrics(queries: EvalQuery[], solutions: EvalSolution[]): 
   let noResultCount = 0;
 
   for (const q of queries) {
-    const promptTags = extractTags(q.query);
+    const promptTags = extractSolutionTags(q.query);
     const ranked = rankCandidates(promptTags, q.query.toLowerCase(), solutions);
     if (ranked.length === 0) {
       noResultCount++;
@@ -140,7 +140,7 @@ export function evaluateQuery(
   query: string,
   solutions: readonly EvalSolution[],
 ): Array<{ name: string; relevance: number; matchedTags: string[] }> {
-  const promptTags = extractTags(query);
+  const promptTags = extractSolutionTags(query);
   return rankCandidates(promptTags, query.toLowerCase(), solutions).map((c) => ({
     name: c.solution.name,
     relevance: c.relevance,
@@ -176,7 +176,7 @@ export function evaluateSolutionMatcher(fixture: EvalFixture): EvalResult {
 
   let negAnyResult = 0;
   for (const q of fixture.negative) {
-    const promptTags = extractTags(q.query);
+    const promptTags = extractSolutionTags(q.query);
     const ranked = rankCandidates(promptTags, q.query.toLowerCase(), fixture.solutions);
     if (ranked.length >= 1) negAnyResult++;
   }

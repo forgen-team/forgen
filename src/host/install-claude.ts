@@ -1,25 +1,28 @@
 /**
- * Claude InstallPlan — feat/codex-support Phase 1 (P1-2)
+ * Claude InstallPlan — `forgen install claude` 와 npm postinstall 이 공유하는 단일 설치 경로 (D1 설치 일원화).
  *
- * `npm install` postinstall.js 의 *Claude 측* 5 작업을 module 로 분리.
- * `forgen install claude` CLI 가 호출 + (P1-6 에서) postinstall.js 도 위임.
+ * 작업:
+ *   1. 고정 shim: <FORGEN_HOME>/bin/forgen-run 작성 (node·패키지 경로는 shim 내용에만)
+ *   2. Slash commands: ~/.claude/commands/forgen/*.md (forgen-managed marker)
+ *   3. settings.json: hook 전체 + statusLine 을 shim 경유로. 사용자 hook·statusLine 보존, 멱등, 구형 절대경로 교체,
+ *      래퍼가 남긴 FORGEN_* env 와 forgen@forgen-local 플러그인 잔재 정리
+ *   4. MCP: ~/.claude.json mcpServers.forgen-compound (shim 경유)
+ *   5. Dev-guide skills, verify skill, 전역 ch-* agents (~/.claude/agents, forgen 표식 있는 파일만 관리)
  *
- * 5 작업:
- *   1. Plugin cache: ~/.claude/plugins/cache/forgen-local/forgen/<ver>/ 작성 + installed_plugins.json 등록
- *   2. Slash commands: ~/.claude/commands/forgen/*.md 생성 (forgen-managed marker)
- *   3. Settings hooks injection: ~/.claude/settings.json 의 hooks 머지 (forgen entry idempotent)
- *   4. MCP register: ~/.claude.json 에 mcpServers.forgen-compound 추가
- *   5. Dev-guide skills: ~/.claude/skills/forgen-<stack>-<skill>/ 설치 (forgen-managed only)
- *   6. verify skill: ~/.claude/skills/verify/ 설치 (ADR-016 D3 — 사용자 소유면 보존)
- *
- * 사용자 비-forgen 자산 보존 + 재실행 idempotent.
+ * 플러그인 등록(캐시·installed_plugins·enabledPlugins)은 만들지 않는다 — 마켓플레이스가 없어 로드 실패하고 hook 만 겹쳤다.
+ * shim 을 못 쓰는 환경(Windows)은 기존 절대경로 유지. 한 단계가 실패해도 나머지는 진행하고 사유를 errors 로 돌려준다.
  */
 
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { generateHooksJson } from '../hooks/hooks-generator.js';
+import { applyStatusLineAuto, forgenStatuslineCommand } from '../core/statusline-install.js';
+import { ensureForgenRunShim, forgenRunShimPath, isForgenRunCommand, shimSupported } from './claude-shim.js';
 import { hasManagedSkillMarker, installSkillFile, removeOwnedDevGuideSkills } from './managed-marker.js';
+import { refreshCronAfterUpgrade } from '../core/compound-sweep-cli.js';
+import { HOOK_REGISTRY } from '../hooks/hook-registry.js';
+import { FileLockError, withFileLockSync } from '../hooks/shared/file-lock.js';
 
 export interface ClaudeInstallOptions {
   pkgRoot: string;
@@ -44,100 +47,94 @@ export type VerifySkillStatus =
 
 export interface ClaudeInstallResult {
   homeDir: string;
-  pluginCachePath: string;
-  pluginCacheWritten: boolean;
+  /** 고정 shim 경로. 쓰지 못했으면 null(절대경로 폴백). */
+  shimPath: string | null;
+  shimStatus: string;
   slashCommandsPath: string;
   slashCommandsCount: number;
   settingsPath: string;
   hooksInjected: number;
+  statusLine: 'installed' | 'updated' | 'unchanged' | 'custom';
   mcpRegistered: boolean;
   mcpAlreadyPresent: boolean;
   skillsPath: string;
   skillsInstalled: number;
   skillsRemoved: number;
   verifySkill: VerifySkillStatus;
+  agentsPath: string;
+  agentsInstalled: number;
+  agentsRemoved: number;
+  /** forgen@forgen-local 플러그인 잔재를 정리했는가. */
+  legacyPluginCleaned: boolean;
+  /** 단계별 실패 사유. 비어 있지 않으면 설치가 일부만 됐다. */
+  errors: string[];
 }
 
 const PLUGIN_KEY = 'forgen@forgen-local';
 const FORGEN_MANAGED_MARKER = '<!-- forgen-managed -->';
+/** 래퍼가 과거에 settings.env 에 써 넣던 키. 이제는 자식 프로세스 env 로만 넘긴다. */
+const LEGACY_WRAPPER_ENV_KEYS = ['FORGEN_HARNESS', 'FORGEN_CWD', 'FORGEN_V1', 'FORGEN_RUNTIME', 'FORGEN_SESSION_ID', 'COMPOUND_HARNESS', 'COMPOUND_CWD'];
 
-function readPkgVersion(pkgRoot: string): string {
+type Json = Record<string, unknown>;
+
+function errMsg(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
+
+/** JSON 객체 파일 읽기. 없으면 {}, 파싱 실패면 `.corrupt-<ts>` 로 보존하고 throw — 덮어써서 사용자 설정을 잃지 않는다. */
+function readJsonObject(file: string): Json {
+  if (!fs.existsSync(file)) return {};
+  const raw = fs.readFileSync(file, 'utf-8');
   try {
-    const pkg = JSON.parse(fs.readFileSync(path.join(pkgRoot, 'package.json'), 'utf-8'));
-    return pkg.version ?? '0.0.0';
-  } catch {
-    return '0.0.0';
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed as Json;
+    throw new Error('not a JSON object');
+  } catch (e) {
+    const corrupt = `${file}.corrupt-${Date.now()}`;
+    try { fs.copyFileSync(file, corrupt); } catch { /* best-effort */ }
+    throw new Error(`${file} failed to parse (${errMsg(e)}); left untouched, copy at ${corrupt}`);
   }
 }
 
-// ── 1. Plugin cache ────────────────────────────────────────────────────
-
-function writePluginCache(opts: { pkgRoot: string; cacheDir: string; pluginsDir: string; version: string; dryRun: boolean }): boolean {
-  const { pkgRoot, cacheDir, pluginsDir, version, dryRun } = opts;
-  if (dryRun) return false;
-
-  const cacheParent = path.dirname(cacheDir);
-  // 이전 잔재 제거 + 디렉토리 작성
-  try { fs.rmSync(cacheParent, { recursive: true, force: true }); } catch { /* ignore */ }
-  fs.mkdirSync(cacheParent, { recursive: true });
-
-  // 1차: symlink 시도 (개발 환경)
-  // Why warn on fallback: Windows 비관리자 / macOS SIP 환경에서 symlink 가 EPERM
-  //   으로 거부되면 조용히 cpSync 폴백을 탔는데, 사용자는 "왜 install 이 느리지"
-  //   를 알 길이 없었다. 폴백 진입을 stderr 로 알려서 진단성 확보.
-  let linked = false;
-  let symlinkErr: unknown = null;
-  try {
-    fs.symlinkSync(pkgRoot, cacheDir, 'dir');
-    linked = true;
-  } catch (e) {
-    symlinkErr = e;
+/** 내용이 바뀐 경우에만 원자적으로 쓴다(tmp+rename). 바뀌지 않으면 파일을 건드리지 않는다. */
+function writeJsonIfChanged(file: string, before: string, data: Json): boolean {
+  if (JSON.stringify(data) === before) return false;
+  // 사용자가 읽기 전용으로 잠근 파일은 rename 으로 몰래 교체하지 않는다
+  if (fs.existsSync(file)) {
+    try { fs.accessSync(file, fs.constants.W_OK); } catch { throw new Error(`${file} is read-only (EACCES); not modified`); }
   }
-  if (!linked && symlinkErr) {
-    const code = (symlinkErr as NodeJS.ErrnoException).code ?? 'UNKNOWN';
-    process.stderr.write(
-      `[forgen] symlink ${pkgRoot} → ${cacheDir} failed (${code}); falling back to cpSync.\n`,
-    );
-  }
-
-  if (!linked) {
-    fs.mkdirSync(cacheDir, { recursive: true });
-    const copyDirs = ['.claude-plugin', 'hooks', 'skills', 'assets'];
-    for (const dir of copyDirs) {
-      const src = path.join(pkgRoot, dir);
-      if (fs.existsSync(src)) fs.cpSync(src, path.join(cacheDir, dir), { recursive: true });
-    }
-    if (fs.existsSync(path.join(pkgRoot, 'dist'))) {
-      fs.cpSync(path.join(pkgRoot, 'dist'), path.join(cacheDir, 'dist'), { recursive: true });
-    }
-    // core deps
-    const coreDeps = ['js-yaml', '@modelcontextprotocol', 'zod'];
-    fs.mkdirSync(path.join(cacheDir, 'node_modules'), { recursive: true });
-    for (const dep of coreDeps) {
-      const depSrc = path.join(pkgRoot, 'node_modules', dep);
-      if (fs.existsSync(depSrc)) {
-        fs.cpSync(depSrc, path.join(cacheDir, 'node_modules', dep), { recursive: true });
-      }
-    }
-  }
-
-  // installed_plugins.json 등록
-  const installedPath = path.join(pluginsDir, 'installed_plugins.json');
-  let installed: { version: number; plugins: Record<string, Array<unknown>> } = { version: 2, plugins: {} };
-  if (fs.existsSync(installedPath)) {
-    try { installed = JSON.parse(fs.readFileSync(installedPath, 'utf-8')); } catch { /* ignore */ }
-  }
-  installed.plugins = installed.plugins ?? {};
-  installed.plugins[PLUGIN_KEY] = [{
-    scope: 'user',
-    installPath: cacheDir,
-    version,
-    installedAt: new Date().toISOString(),
-    lastUpdated: new Date().toISOString(),
-  }];
-  fs.mkdirSync(pluginsDir, { recursive: true });
-  fs.writeFileSync(installedPath, `${JSON.stringify(installed, null, 2)}\n`);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const tmp = `${file}.tmp-${process.pid}`;
+  fs.writeFileSync(tmp, `${JSON.stringify(data, null, 2)}\n`);
+  fs.renameSync(tmp, file);
   return true;
+}
+
+// ── 1. 플러그인 잔재 정리 ──────────────────────────────────────────────
+
+/** 과거 postinstall 이 만든 forgen@forgen-local 캐시·installed_plugins 항목을 지운다. 지운 것이 있으면 true. */
+function cleanLegacyPluginFiles(homeDir: string): boolean {
+  let cleaned = false;
+  const pluginsDir = path.join(homeDir, '.claude', 'plugins');
+  const cacheDir = path.join(pluginsDir, 'cache', 'forgen-local');
+  if (fs.existsSync(cacheDir) || isDanglingLink(cacheDir)) {
+    fs.rmSync(cacheDir, { recursive: true, force: true });
+    cleaned = true;
+  }
+  const installedPath = path.join(pluginsDir, 'installed_plugins.json');
+  if (fs.existsSync(installedPath)) {
+    const data = JSON.parse(fs.readFileSync(installedPath, 'utf-8')) as { plugins?: Json };
+    if (data.plugins && PLUGIN_KEY in data.plugins) {
+      delete data.plugins[PLUGIN_KEY];
+      fs.writeFileSync(installedPath, `${JSON.stringify(data, null, 2)}\n`);
+      cleaned = true;
+    }
+  }
+  return cleaned;
+}
+
+function isDanglingLink(p: string): boolean {
+  try { return fs.lstatSync(p).isSymbolicLink(); } catch { return false; }
 }
 
 // ── 2. Slash commands ──────────────────────────────────────────────────
@@ -192,61 +189,114 @@ function writeSlashCommands(opts: { pkgRoot: string; targetDir: string; dryRun: 
   return count;
 }
 
-// ── 3. Settings hooks injection ────────────────────────────────────────
+// ── 3. Settings (hooks · statusLine · 잔재 정리) ───────────────────────
 
-function injectHooksIntoSettings(opts: { pkgRoot: string; settingsPath: string; dryRun: boolean }): number {
-  const { pkgRoot, settingsPath, dryRun } = opts;
-  // settings.json 컨텍스트는 ${CLAUDE_PLUGIN_ROOT} 미해석 — 절대 경로 박제 (postinstall.js 와 동일 노하우)
+let hookScriptsCache: Set<string> | null = null;
+function forgenHookScripts(): Set<string> {
+  if (!hookScriptsCache) {
+    hookScriptsCache = new Set(HOOK_REGISTRY.map((h) => path.basename(h.script.split(/\s+/)[0]))); // script 에 인자가 붙을 수 있다(`hooks/x.js start`)
+    // 등록에서 빠졌지만 구버전 settings 에 남아 있을 수 있는 이름.
+    for (const legacy of ['pre-tool-use.js', 'post-tool-use.js', 'stop-guard.js', 'session-recovery.js']) hookScriptsCache.add(legacy);
+  }
+  return hookScriptsCache;
+}
+
+/** settings.json hook 명령이 forgen 소유인가 — 새 shim 형식과 구형 절대경로·플러그인 변수 형식 모두. */
+export function isForgenHookCommand(cmd: string, pkgRoot: string): boolean {
+  if (isForgenRunCommand(cmd)) return true;
+  if (cmd.includes('/forgen-local/forgen/')) return true;
+  // 다른 플러그인 hook 을 지우지 않게, forgen 이 실제로 쓰는 hook 스크립트 이름까지 일치해야 한다.
+  const script = /[\\/]dist[\\/]hooks[\\/]([^"\s\\/]+\.js)/.exec(cmd)?.[1];
+  if (!script || !(forgenHookScripts().has(script) || script.includes('forgen'))) return false;
+  if (cmd.includes('CLAUDE_PLUGIN_ROOT')) return true;
+  return (cmd.includes(pkgRoot) || /@wooojin[\\/]forgen|[\\/]forgen[^\\/\s"]*[\\/]|tenetx|compound-harness/.test(cmd));
+}
+
+export interface SettingsApplyResult {
+  hooks: number;
+  statusLine: ClaudeInstallResult['statusLine'];
+}
+
+/**
+ * settings 객체에 forgen 설정을 제자리 반영한다(설치·래퍼 공용, 순수 함수).
+ * hook 은 forgen 것만 갈아끼우고 사용자 hook 은 그룹 안에서도 보존한다. 같은 입력이면 결과가 같아 멱등이다.
+ */
+export function removeForgenHooks(hooksConfig: Record<string, unknown[]>, pkgRoot: string): void {
+  for (const [event, groups] of Object.entries(hooksConfig)) {
+    if (!Array.isArray(groups)) continue;
+    const kept: unknown[] = [];
+    for (const g of groups) {
+      const group = g as { command?: unknown; hooks?: Array<{ command?: unknown }> };
+      if (typeof group.command === 'string') {
+        if (!isForgenHookCommand(group.command, pkgRoot)) kept.push(g);
+        continue;
+      }
+      if (!Array.isArray(group.hooks)) { kept.push(g); continue; }
+      const inner = group.hooks.filter((h) => !(typeof h.command === 'string' && isForgenHookCommand(h.command, pkgRoot)));
+      if (inner.length === group.hooks.length) kept.push(g);
+      else if (inner.length > 0) kept.push({ ...group, hooks: inner });
+    }
+    if (kept.length === 0) delete hooksConfig[event];
+    else hooksConfig[event] = kept;
+  }
+}
+
+export function applyForgenSettings(settings: Json, pkgRoot: string, shimPath: string | null): SettingsApplyResult {
+  const hooksConfig = (settings.hooks as Record<string, unknown[]>) ?? {};
+  removeForgenHooks(hooksConfig, pkgRoot);
+
+  // settings.json 컨텍스트는 ${CLAUDE_PLUGIN_ROOT} 를 풀지 않는다. shim 이 있으면 그 경로, 없으면 절대경로.
   const generated = generateHooksJson({
     pluginRoot: path.join(pkgRoot, 'dist'),
     runtime: 'claude',
     releaseMode: true,
+    ...(shimPath ? { shimPath } : {}),
   });
   let count = 0;
-  for (const events of Object.values(generated.hooks)) {
-    for (const group of events) {
-      const g = group as { hooks?: unknown[] };
-      if (Array.isArray(g.hooks)) count += g.hooks.length;
-    }
-  }
-  if (dryRun) return count;
-
-  let settings: Record<string, unknown> = {};
-  if (fs.existsSync(settingsPath)) {
-    try { settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8')); } catch { /* fallthrough */ }
-  }
-
-  const hooksConfig = (settings.hooks as Record<string, unknown[]>) ?? {};
-  // 기존 forgen hook 제거 (path 에 pkgRoot 또는 CLAUDE_PLUGIN_ROOT 포함된 entry)
-  for (const [event, entries] of Object.entries(hooksConfig)) {
-    if (!Array.isArray(entries)) continue;
-    const filtered = entries.filter((entry) => {
-      const e = entry as { hooks?: Array<{ command?: string }> };
-      if (!Array.isArray(e.hooks)) return true;
-      // forgen-managed entry 식별: pkgRoot 또는 CLAUDE_PLUGIN_ROOT 또는 'forgen' 포함
-      return !e.hooks.some(
-        (h) => typeof h.command === 'string' &&
-          (h.command.includes(pkgRoot) || h.command.includes('CLAUDE_PLUGIN_ROOT') || h.command.includes('/forgen-local/forgen/')),
-      );
-    });
-    if (filtered.length === 0) delete hooksConfig[event];
-    else hooksConfig[event] = filtered;
-  }
-  // forgen 측 entry 추가
   for (const [event, entries] of Object.entries(generated.hooks)) {
     if (!hooksConfig[event]) hooksConfig[event] = [];
-    (hooksConfig[event] as unknown[]).push(...entries);
+    hooksConfig[event].push(...entries);
+    for (const g of entries) count += g.hooks.length;
   }
   settings.hooks = hooksConfig;
 
-  // enabledPlugins 등록
-  const enabled = (settings.enabledPlugins as Record<string, boolean>) ?? {};
-  enabled[PLUGIN_KEY] = true;
-  settings.enabledPlugins = enabled;
+  const statusLine = applyStatusLineAuto(settings, forgenStatuslineCommand(shimPath));
 
-  fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
-  fs.writeFileSync(settingsPath, `${JSON.stringify(settings, null, 2)}\n`);
-  return count;
+  // 플러그인 등록 잔재와 래퍼가 남긴 env, 구형 settings.mcpServers 항목 정리
+  const enabled = settings.enabledPlugins as Json | undefined;
+  if (enabled && PLUGIN_KEY in enabled) {
+    delete enabled[PLUGIN_KEY];
+    if (Object.keys(enabled).length === 0) delete settings.enabledPlugins;
+  }
+  const env = settings.env as Json | undefined;
+  if (env) {
+    for (const k of LEGACY_WRAPPER_ENV_KEYS) delete env[k];
+    if (Object.keys(env).length === 0) delete settings.env;
+  }
+  const legacyMcp = settings.mcpServers as Json | undefined;
+  if (legacyMcp && 'forgen-compound' in legacyMcp) {
+    delete legacyMcp['forgen-compound'];
+    if (Object.keys(legacyMcp).length === 0) delete settings.mcpServers;
+  }
+  return { hooks: count, statusLine };
+}
+
+function installSettings(opts: { pkgRoot: string; settingsPath: string; shimPath: string | null; dryRun: boolean }): SettingsApplyResult {
+  const update = (): SettingsApplyResult => {
+    const settings = readJsonObject(opts.settingsPath);
+    const before = JSON.stringify(settings);
+    const r = applyForgenSettings(settings, opts.pkgRoot, opts.shimPath);
+    if (!opts.dryRun) writeJsonIfChanged(opts.settingsPath, before, settings);
+    return r;
+  };
+  if (opts.dryRun) return update();
+  // 래퍼·실행 중인 세션과 read-modify-write 가 겹치면 한쪽이 유실된다.
+  try {
+    return withFileLockSync(opts.settingsPath, update);
+  } catch (e) {
+    if (e instanceof FileLockError) return update();
+    throw e;
+  }
 }
 
 // ── 4. MCP register ────────────────────────────────────────────────────
@@ -256,31 +306,26 @@ interface McpRegisterOutcome {
   alreadyPresent: boolean;
 }
 
-function registerMcpInClaudeJson(opts: { pkgRoot: string; claudeJsonPath: string; dryRun: boolean }): McpRegisterOutcome {
-  const { pkgRoot, claudeJsonPath, dryRun } = opts;
-  const serverPath = path.join(pkgRoot, 'dist', 'mcp', 'server.js');
-  const desired = { command: 'node', args: [serverPath] };
+function registerMcpInClaudeJson(opts: { pkgRoot: string; claudeJsonPath: string; shimPath: string | null; dryRun: boolean }): McpRegisterOutcome {
+  const { pkgRoot, claudeJsonPath, shimPath, dryRun } = opts;
+  const desired = shimPath
+    ? { command: shimPath, args: ['mcp/server.js'] }
+    : { command: 'node', args: [path.join(pkgRoot, 'dist', 'mcp', 'server.js')] };
 
-  let claudeJson: Record<string, unknown> = {};
-  if (fs.existsSync(claudeJsonPath)) {
-    try { claudeJson = JSON.parse(fs.readFileSync(claudeJsonPath, 'utf-8')); } catch { /* ignore */ }
-  }
-  const mcpServers = (claudeJson.mcpServers as Record<string, unknown>) ?? {};
-  const existing = mcpServers['forgen-compound'] as Record<string, unknown> | undefined;
+  const claudeJson = readJsonObject(claudeJsonPath);
+  const before = JSON.stringify(claudeJson);
+  const mcpServers = (claudeJson.mcpServers as Json) ?? {};
+  const existing = mcpServers['forgen-compound'] as { command?: unknown; args?: unknown } | undefined;
   const alreadyPresent =
     existing !== undefined &&
-    existing.command === 'node' &&
-    Array.isArray((existing as { args?: unknown }).args) &&
-    JSON.stringify((existing as { args: unknown[] }).args) === JSON.stringify(desired.args);
+    existing.command === desired.command &&
+    JSON.stringify(existing.args) === JSON.stringify(desired.args);
 
-  if (dryRun) {
-    return { registered: !alreadyPresent, alreadyPresent };
+  if (!dryRun && !alreadyPresent) {
+    mcpServers['forgen-compound'] = { ...(existing ?? {}), ...desired };
+    claudeJson.mcpServers = mcpServers;
+    writeJsonIfChanged(claudeJsonPath, before, claudeJson);
   }
-
-  mcpServers['forgen-compound'] = desired;
-  claudeJson.mcpServers = mcpServers;
-  fs.mkdirSync(path.dirname(claudeJsonPath), { recursive: true });
-  fs.writeFileSync(claudeJsonPath, `${JSON.stringify(claudeJson, null, 2)}\n`);
   return { registered: !alreadyPresent, alreadyPresent };
 }
 
@@ -373,6 +418,59 @@ function installVerifySkill(opts: { pkgRoot: string; skillsDir: string; dryRun: 
   return 'installed';
 }
 
+function ensureShimPathOnly(homeDir: string): string | null {
+  return shimSupported() ? forgenRunShimPath(homeDir) : null;
+}
+
+// ── 7. 전역 ch-* agents ────────────────────────────────────────────────
+
+/** 설치할 agent 내용 — frontmatter 바로 뒤에 forgen 표식을 넣는다(소유 판정은 hasManagedSkillMarker 와 같은 위치 규칙). */
+function withManagedMarker(content: string): string {
+  const text = content.replace(/\r\n/g, '\n');
+  const close = text.startsWith('---\n') ? text.indexOf('\n---\n', 3) : -1;
+  if (close === -1) return text;
+  return `${text.slice(0, close + 5)}\n${FORGEN_MANAGED_MARKER}\n${text.slice(close + 5).replace(/^\n+/, '\n')}`;
+}
+
+/**
+ * assets/claude/agents/*.md → ~/.claude/agents/ch-*.md. 표식이 있는 forgen 파일만 갱신·정리하고,
+ * 사용자가 만들었거나 수정해 표식이 없는 파일, 심링크는 건드리지 않는다.
+ */
+export function installGlobalAgents(opts: { pkgRoot: string; agentsDir: string; dryRun?: boolean }): { installed: number; removed: number } {
+  const { pkgRoot, agentsDir } = opts;
+  const dryRun = opts.dryRun ?? false;
+  const sourceDir = path.join(pkgRoot, 'assets', 'claude', 'agents');
+  if (!fs.existsSync(sourceDir)) return { installed: 0, removed: 0 };
+  const valid = new Set<string>();
+  let installed = 0;
+  if (!dryRun) fs.mkdirSync(agentsDir, { recursive: true });
+  for (const file of fs.readdirSync(sourceDir).filter((f) => f.endsWith('.md'))) {
+    const name = `ch-${file}`;
+    valid.add(name);
+    const dest = path.join(agentsDir, name);
+    const content = withManagedMarker(fs.readFileSync(path.join(sourceDir, file), 'utf-8'));
+    try {
+      if (fs.lstatSync(dest).isSymbolicLink()) continue;
+      const cur = fs.readFileSync(dest, 'utf-8');
+      if (cur === content) continue;
+      if (!hasManagedSkillMarker(cur)) continue; // 사용자 파일
+    } catch { /* 없음 — 설치 */ }
+    if (!dryRun) fs.writeFileSync(dest, content);
+    installed += 1;
+  }
+  let removed = 0;
+  try {
+    for (const name of fs.readdirSync(agentsDir)) {
+      if (!name.startsWith('ch-') || !name.endsWith('.md') || valid.has(name)) continue;
+      const f = path.join(agentsDir, name);
+      if (fs.lstatSync(f).isSymbolicLink() || !hasManagedSkillMarker(fs.readFileSync(f, 'utf-8'))) continue;
+      if (!dryRun) fs.unlinkSync(f);
+      removed += 1;
+    }
+  } catch { /* 디렉토리 없음 */ }
+  return { installed, removed };
+}
+
 // ── public ─────────────────────────────────────────────────────────────
 
 export function planClaudeInstall(opts: ClaudeInstallOptions): ClaudeInstallResult {
@@ -382,40 +480,76 @@ export function planClaudeInstall(opts: ClaudeInstallOptions): ClaudeInstallResu
   const homeDir = opts.homeDir ?? os.homedir();
   const dryRun = opts.dryRun ?? false;
   const registerMcp = opts.registerMcp ?? true;
-  const version = readPkgVersion(opts.pkgRoot);
+  const { pkgRoot } = opts;
 
   const claudeDir = path.join(homeDir, '.claude');
-  const pluginsDir = path.join(claudeDir, 'plugins');
-  const cacheDir = path.join(pluginsDir, 'cache', 'forgen-local', 'forgen', version);
   const slashCommandsDir = path.join(claudeDir, 'commands', 'forgen');
   const settingsPath = path.join(claudeDir, 'settings.json');
   const claudeJsonPath = path.join(homeDir, '.claude.json');
   const skillsDir = path.join(claudeDir, 'skills');
+  const agentsDir = path.join(claudeDir, 'agents');
 
-  const pluginCacheWritten = writePluginCache({ pkgRoot: opts.pkgRoot, cacheDir, pluginsDir, version, dryRun });
-  const slashCommandsCount = writeSlashCommands({ pkgRoot: opts.pkgRoot, targetDir: slashCommandsDir, dryRun });
-  const hooksInjected = injectHooksIntoSettings({ pkgRoot: opts.pkgRoot, settingsPath, dryRun });
+  const errors: string[] = [];
+  const step = <T>(label: string, fallback: T, fn: () => T): T => {
+    try { return fn(); } catch (e) { errors.push(`${label}: ${errMsg(e)}`); return fallback; }
+  };
+
+  // 1. shim (dry-run 이면 경로만 계산)
+  let shimPath: string | null = null;
+  let shimStatus = 'unsupported';
+  if (dryRun) {
+    const probe = ensureShimPathOnly(homeDir);
+    shimPath = probe;
+    shimStatus = probe ? 'dry-run' : 'unsupported';
+  } else {
+    const shim = ensureForgenRunShim(pkgRoot, homeDir);
+    shimPath = shim.path;
+    shimStatus = shim.status;
+    if (shim.status === 'foreign' || shim.status === 'error') {
+      errors.push(`shim: ${shim.status === 'foreign' ? 'a user file already exists at the shim path' : 'could not write the shim'}; falling back to absolute paths`);
+    }
+  }
+
+  const legacyPluginCleaned = dryRun ? false : step('legacy plugin cleanup', false, () => cleanLegacyPluginFiles(homeDir));
+  const slashCommandsCount = step('slash commands', 0, () => writeSlashCommands({ pkgRoot, targetDir: slashCommandsDir, dryRun }));
+  const settings = step<SettingsApplyResult>('settings.json', { hooks: 0, statusLine: 'unchanged' }, () =>
+    installSettings({ pkgRoot, settingsPath, shimPath, dryRun }));
   const mcp = registerMcp
-    ? registerMcpInClaudeJson({ pkgRoot: opts.pkgRoot, claudeJsonPath, dryRun })
+    ? step<McpRegisterOutcome>('~/.claude.json MCP', { registered: false, alreadyPresent: false }, () =>
+      registerMcpInClaudeJson({ pkgRoot, claudeJsonPath, shimPath, dryRun }))
     : { registered: false, alreadyPresent: false };
-  const skills = installDevGuideSkills({ pkgRoot: opts.pkgRoot, skillsDir, dryRun });
+  const skills = step<SkillsInstallOutcome>('dev-guide skills', { skillsPath: skillsDir, skillsInstalled: 0, skillsRemoved: 0 }, () =>
+    installDevGuideSkills({ pkgRoot, skillsDir, dryRun }));
   const verifySkill: VerifySkillStatus = (opts.installVerifySkill ?? true)
-    ? installVerifySkill({ pkgRoot: opts.pkgRoot, skillsDir, dryRun })
+    ? step<VerifySkillStatus>('verify skill', 'skipped', () => installVerifySkill({ pkgRoot, skillsDir, dryRun }))
     : 'skipped';
+  const agents = step('agents', { installed: 0, removed: 0 }, () => installGlobalAgents({ pkgRoot, agentsDir, dryRun }));
+
+
+  // 이미 등록된 sweep cron 을 shim 경유로 옮긴다. postinstall·forgen install claude·doctor --repair 가 모두 여기를 지난다.
+  if (!dryRun && shimPath) {
+    refreshCronAfterUpgrade(homeDir);
+  }
 
   return {
     homeDir,
-    pluginCachePath: cacheDir,
-    pluginCacheWritten,
+    shimPath,
+    shimStatus,
     slashCommandsPath: slashCommandsDir,
     slashCommandsCount,
     settingsPath,
-    hooksInjected,
+    hooksInjected: settings.hooks,
+    statusLine: settings.statusLine,
     mcpRegistered: mcp.registered,
     mcpAlreadyPresent: mcp.alreadyPresent,
     skillsPath: skills.skillsPath,
     skillsInstalled: skills.skillsInstalled,
     skillsRemoved: skills.skillsRemoved,
     verifySkill,
+    agentsPath: agentsDir,
+    agentsInstalled: agents.installed,
+    agentsRemoved: agents.removed,
+    legacyPluginCleaned,
+    errors,
   };
 }

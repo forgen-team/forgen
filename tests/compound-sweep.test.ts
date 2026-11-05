@@ -15,8 +15,8 @@ describe('selectSweepCandidates (ADR-011 compound backstop)', () => {
     expect(r).toHaveLength(0);
   });
 
-  it('promptCount < 최소(10) 제외', () => {
-    const r = selectSweepCandidates([meta('thin', 1, 5)], {}, opts);
+  it('promptCount < 최소(1, D9) 제외 — 사용자 발화가 없는 세션만', () => {
+    const r = selectSweepCandidates([meta('thin', 1, 0)], {}, opts);
     expect(r).toHaveLength(0);
   });
 

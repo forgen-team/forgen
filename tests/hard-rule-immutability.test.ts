@@ -110,7 +110,7 @@ describe('Hard rule immutability (C2)', () => {
         timestamp: '2026-04-22T00:00:00Z', source_component: 'mcp',
         summary: 'fix dangerous rule now',
         axis_refs: ['quality_safety'],
-        candidate_rule_refs: [],
+        candidate_rule_refs: [r.rule_id],
         confidence: 0.9,
         raw_payload: { target: 'dangerous', kind: 'fix-now' },
       },

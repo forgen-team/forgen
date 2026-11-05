@@ -12,8 +12,10 @@ describe('P1-S1: auto-compound-runner restricts Bash to forgen compound', () => 
   const srcPath = path.join(__dirname, '..', 'src', 'core', 'auto-compound-runner.ts');
   const content = fs.readFileSync(srcPath, 'utf-8');
 
-  it('execClaudeRetry 인자에 `Bash(forgen compound:*)` allowlist 패턴 포함', () => {
-    expect(content).toMatch(/Bash\(forgen compound:\*\)/);
+  it('중첩 추출 호출은 모델에 도구를 아예 주지 않는다 (--tools "" — Bash 허용 목록보다 강함)', () => {
+    const haiku = fs.readFileSync(path.join(__dirname, '..', 'src', 'core', 'extraction-haiku.ts'), 'utf-8');
+    expect(haiku).toMatch(/NESTED_ISOLATION_ARGS[^=]*=\s*\[\s*'--tools',\s*''/);
+    expect(content).toContain('callHaiku(');
   });
 
   it('전체 Bash 권한(인자 `Bash` 단독)이 더 이상 존재하지 않음', () => {

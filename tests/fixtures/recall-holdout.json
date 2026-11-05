@@ -1,0 +1,889 @@
+{
+ "version": 1,
+ "note": "외부 리뷰가 쓴 보류 세트(holdout). 사전을 고칠 때 이 세트를 보고 맞추지 않는다. 솔루션은 비식별(정답이 아닌 것은 distractor 이름, 도메인 단어 치환, 본문 일부).",
+ "solutions": [
+  {
+   "name": "distractor-01",
+   "where": "me",
+   "kind": "pattern",
+   "title": "distractor-01",
+   "content": "복잡한 아키텍처 설계 검증이 필요할 때, Fable(고능력 모델)을 단일 에이전트로 투입하여 사용자가 codebase 감사로 확보한 grounded 컨텍스트 위에서 설계안 생성 → 함께 비판적으로 검증. 병렬 에이전트 금지 규칙을 지키면서도 고신뢰 설계 결정 가능; Fable이 사용자 놓친 부분(좀비 의존성, 아키텍처 모순)도 포착.",
+   "context": "",
+   "legacyTags": [
+    "fable",
+    "grounded",
+    "아키텍처",
+    "설계",
+    "검증",
+    "에이전트",
+    "사용자",
+    "architecture",
+    "Fable"
+   ]
+  },
+  {
+   "name": "distractor-02",
+   "where": "me",
+   "kind": "pattern",
+   "title": "distractor-02",
+   "content": "큰 작업이나 중단 후 복귀 시 미커밋 변경이 의도한 트랙만인지 검증. git diff --name-only | wc -l로 규모 파악(44개 파일이면 신호), 파일 목록을 트랙별 분류(storage-adapter→T1/T2, migration-0032→metrics, justified.ts→layout). 여러 트랙이 섞여 있으면 한 트랙만 선별 커밋 후 다음 단계는 supervised 복귀 후 함께 정하기. supervise",
+   "context": "",
+   "legacyTags": [
+    "트랙",
+    "git",
+    "diff",
+    "복귀",
+    "supervised",
+    "track",
+    "classification",
+    "commit"
+   ]
+  },
+  {
+   "name": "model-access-403-grant-not-auth-error",
+   "where": "me",
+   "kind": "pattern",
+   "title": "model-access-403-grant-not-auth-error",
+   "content": "무엇: 'Access to this model requires an access grant' 403 오류는 인증 문제가 아니라 해당 모델에 대한 접근 권한 문제이므로 /login으로 해결되지 않는다. 세션에서 어시스턴트가 이 오류에 /login을 안내했는데, 이는 잘못된 진단이었다. 왜: 오류 메시지의 원인(모델 접근 grant)과 조치(로그인 재인증)가 다르며, 잘못 안내하면 사용자가 불필요한 인증 절차를 반복하게 된다. 어",
+   "context": "",
+   "legacyTags": [
+    "모델",
+    "access",
+    "grant",
+    "model",
+    "403",
+    "오류",
+    "접근",
+    "login",
+    "Access"
+   ]
+  },
+  {
+   "name": "model-recalibration-after-native-platform-convergence",
+   "where": "me",
+   "kind": "pattern",
+   "title": "model-recalibration-after-native-platform-convergence",
+   "content": "플랫폼이 동적 워크플로우, 적응형 사고를 native 기본화한 후 모델 성능·비용 기준 전수 재측정 필수. 왜: Sonnet 5가 Opus급 성능(저가), native workflows로 에이전트 투입 오버헤드 절감. 어떻게: (1) 기존 주요 작업(코드감사, 설계, 구조감사) 리스트업 (2) Sonnet 5/Opus 4.8/Fable 5 병렬 실행 비교 (3) 토큰·응답시간·품질 측정 (4) 새로운 모델-작업 맵핑 가이드 수",
+   "context": "",
+   "legacyTags": [
+    "native",
+    "모델",
+    "성능",
+    "sonnet",
+    "model",
+    "recalibration",
+    "platform",
+    "convergence",
+    "Sonnet",
+    "Opus",
+    "Fable"
+   ]
+  },
+  {
+   "name": "plugin-rule-bloat-zombie-detection-and-cleanup",
+   "where": "me",
+   "kind": "pattern",
+   "title": "plugin-rule-bloat-zombie-detection-and-cleanup",
+   "content": "플랫폼이 native 기능으로 통합한 구 플러그인(예: tenetx)이 ~/.claude/rules/에 중복 파일(56K, 13개)을 계속 생성하는 좀비 상태. 왜: 플랫폼 진화(native 지원)에도 플러그인이 활성(settings.json)으로 남아 컨텍스트 오염. 어떻게: (1) settings.json에서 비활성 플러그인 확인 (2) rules/ 파일 git status/clean으로 자동생성 여부 판정 (3) 안전하게",
+   "context": "",
+   "legacyTags": [
+    "플러그인",
+    "플랫폼",
+    "native",
+    "rules",
+    "파일",
+    "settings",
+    "json",
+    "plugin"
+   ]
+  },
+  {
+   "name": "presign-redirect-pattern-for-largefile-serving",
+   "where": "me",
+   "kind": "pattern",
+   "title": "presign-redirect-pattern-for-largefile-serving",
+   "content": "다운로드/썸네일 같은 대용량 바이트 서빙에서 서버 스트림 프록시 대신 storage.presignGet() → 302 리다이렉트 사용. presign 가능 공간(S3/NAS)이면 원본이 서버를 거치지 않아 대역폭·CPU 절감. Range/resume은 스토리지 네이티브 처리, 서버 정책(비밀번호·다운로드 카운트)은 리다이렉트 전 검증. local/폴백은 기존 스트림 보존으로 회귀 방지.",
+   "context": "",
+   "legacyTags": [
+    "서버",
+    "presign",
+    "다운로드",
+    "스트림",
+    "리다이렉트",
+    "redirect",
+    "pattern",
+    "largefile",
+    "Range",
+    "presignGet"
+   ]
+  },
+  {
+   "name": "distractor-03",
+   "where": "me",
+   "kind": "pattern",
+   "title": "distractor-03",
+   "content": "RSS 인사이트→LLM 아이디어 추출→CEO(비즈니스 가치)/비평가(기술 리스크)/개발자(구현 복잡도) 3인 페르소나 리뷰. semaphore 동시성 제한, SHA256 중복 제거. 필터링은 LLM 합성 후(전이 아님). 세션 쿠키 전파로 서비스 간 사용자 컨텍스트 유지.",
+   "context": "",
+   "legacyTags": [
+    "rss",
+    "프로덕트",
+    "아이디어",
+    "3인",
+    "에이전트",
+    "리뷰",
+    "인사이트",
+    "llm",
+    "추출",
+    "ceo",
+    "비즈니스",
+    "가치",
+    "비평가",
+    "기술",
+    "리스크",
+    "개발자",
+    "구현",
+    "복잡도",
+    "페르소나",
+    "semaphore",
+    "동시성",
+    "제한",
+    "sha256",
+    "중복",
+    "제거",
+    "필터링은",
+    "합성",
+    "전이",
+    "아님",
+    "세션",
+    "쿠키",
+    "전파로",
+    "서비스",
+    "사용자",
+    "컨텍스트",
+    "유지"
+   ]
+  },
+  {
+   "name": "rule-renderer-context-budget-constraint",
+   "where": "me",
+   "kind": "pattern",
+   "title": "rule-renderer-context-budget-constraint",
+   "content": "개인화 규칙 렌더링을 고정 예산(4000자/30규칙)으로 제약. cross-session 학습은 coverage ≈83%이지만 within-session은 null이므로, 무분별 렌더링은 컨텍스트 폭발만 초래. 구현: render_key로 의도 중복 제거 → facet 분포에서 신뢰도 >0.85 또는 <0.15만 필터링 → 4000자에서 절단 → 세션마다 재평가.",
+   "context": "",
+   "legacyTags": [
+    "렌더링",
+    "4000자",
+    "session",
+    "rule",
+    "renderer",
+    "context",
+    "budget",
+    "constraint"
+   ]
+  },
+  {
+   "name": "typescript-test-double-composition-over-inheritance",
+   "where": "me",
+   "kind": "pattern",
+   "title": "typescript-test-double-composition-over-inheritance",
+   "content": "추상 어댑터(StorageAdapter)를 상속한 테스트 더블에서 일부 메서드만 오버라이드하면 presignPut(): Promise&lt;never&gt; 같은 타입 시그니처 불일치 발생. 상속 대신 컴포지션(inner adapter 감싸기 + 선택적 메서드 오버라이드)으로 해결하면 타입 안전성 유지 + 보일러플레이트 최소화. direct-upload.test의 패턴 검증됨.",
+   "context": "",
+   "legacyTags": [
+    "test",
+    "메서드",
+    "오버라이드",
+    "타입",
+    "typescript",
+    "double",
+    "composition",
+    "over",
+    "StorageAdapter",
+    "Promise",
+    "presignPut"
+   ]
+  },
+  {
+   "name": "workflow-job-히스토리-아티팩트-관리",
+   "where": "me",
+   "kind": "pattern",
+   "title": "workflow-job-히스토리-아티팩트-관리",
+   "content": "비동기 워크플로우: job 생성→상태 폴링→완료 시 결과 조회. Artifact retention: TTL cleanup + blob split + 예외 규칙. 히스토리 API: 검색+날짜 프리셋+정렬+에러 요약. Source 1:1 모드: 입력 소스와 출력 1대1 매핑.",
+   "context": "",
+   "legacyTags": [
+    "workflow",
+    "job",
+    "히스토리",
+    "아티팩트",
+    "관리",
+    "비동기",
+    "워크플로우",
+    "생성",
+    "상태",
+    "폴링",
+    "완료",
+    "결과",
+    "조회",
+    "artifact",
+    "retention",
+    "ttl",
+    "cleanup",
+    "blob",
+    "split",
+    "예외",
+    "규칙",
+    "api",
+    "검색",
+    "날짜",
+    "프리셋",
+    "정렬",
+    "에러",
+    "요약",
+    "source",
+    "모드",
+    "입력",
+    "소스와",
+    "출력",
+    "1대1",
+    "매핑"
+   ]
+  },
+  {
+   "name": "distractor-04",
+   "where": "me",
+   "kind": "pattern",
+   "title": "distractor-04",
+   "content": "주로 TypeScript 코드를 작성합니다",
+   "context": "Detected from 107 write operations",
+   "legacyTags": [
+    "content",
+    "typescript",
+    "code",
+    "workflow"
+   ]
+  },
+  {
+   "name": "distractor-05",
+   "where": "me",
+   "kind": "pattern",
+   "title": "distractor-05",
+   "content": "긴 문서/파일을 자주 작성합니다 (평균 1000자 이상)",
+   "context": "Detected from 107 write operations",
+   "legacyTags": [
+    "style",
+    "long-form",
+    "detailed",
+    "workflow"
+   ]
+  },
+  {
+   "name": "zombie-dependency-detection-plugin-architecture",
+   "where": "me",
+   "kind": "pattern",
+   "title": "zombie-dependency-detection-plugin-architecture",
+   "content": "플러그인 기반 시스템에서 이전 도구가 새 버전에 흡수되었는데 플러그인이 여전히 활성 상태로 규칙/파일 중복 생성되는 문제. 원인: 도구 진화 시 기존 플러그인을 자동 비활성화하지 않음. 해결: ~/.claude/plugins + ~/.claude/rules 정기 감사 → 파일 생성 시간/내용으로 중복 추적 → settings.json에서 obsolete 플러그인 명시 비활성화.",
+   "context": "",
+   "legacyTags": [
+    "플러그인",
+    "도구",
+    "파일",
+    "중복",
+    "claude",
+    "zombie",
+    "dependency",
+    "detection"
+   ]
+  },
+  {
+   "name": "규칙-채굴-중복-제거-및-병합",
+   "where": "me",
+   "kind": "pattern",
+   "title": "규칙-채굴-중복-제거-및-병합",
+   "content": "같은 교정에서 나온 규칙들(axis_hint/kind 동일)이 매 채굴마다 새로 생성되어 규칙 파일 213개 중 182개가 중복. 교정 이력 클러스터링으로 자동 merge 제안 또는 dedup pass 추가해서 규칙 신호대잡음비 개선.",
+   "context": "",
+   "legacyTags": [
+    "중복",
+    "교정",
+    "채굴",
+    "병합",
+    "나온",
+    "규칙들",
+    "axis",
+    "hint"
+   ]
+  },
+  {
+   "name": "규칙정의-vs-현장관행-명시적분리",
+   "where": "me",
+   "kind": "pattern",
+   "title": "규칙정의-vs-현장관행-명시적분리",
+   "content": "자료 구축 시 공식 규칙 정의와 실제 현장 관행(픽업게임, 지역 행사, 셀프콜)을 혼동하면 사용자 실제 플레이와 괴리 발생. 각 용어마다 (1) 공식 규칙서 버전 (2) 대상/코치 인터뷰·발언 (3) 행사 공고·지역 관행을 명시적으로 분리·저장. 출처 명시로 향후 쿼리 시 올바른 컨텍스트 제공 가능하게.",
+   "context": "",
+   "legacyTags": [
+    "공식",
+    "실제",
+    "관행",
+    "지역",
+    "행사",
+    "규칙정",
+    "현장관행",
+    "명시적분리"
+   ]
+  },
+  {
+   "name": "데이터-보호-약속-저장공유삭제-명시",
+   "where": "me",
+   "kind": "pattern",
+   "title": "데이터-보호-약속-저장공유삭제-명시",
+   "content": "저장/공유/삭제 기능이 분리되어 있을 때, 각 단계의 개인정보 경계·보관기간·공개범위를 기능 설계 단계에서 미리 문서화. 특히 사진 공유 시 '누가 언제까지 볼 수 있는가' + '삭제 조건/기한'을 코드 전에 명시하여 베타/출시 단계 법률 이슈 선제.",
+   "context": "",
+   "legacyTags": [
+    "공유",
+    "삭제",
+    "데이터",
+    "보호",
+    "약속",
+    "저장공유삭제",
+    "명시",
+    "저장"
+   ]
+  },
+  {
+   "name": "distractor-06",
+   "where": "me",
+   "kind": "pattern",
+   "title": "distractor-06",
+   "content": "자료 구축 시 시스템 제약(로컬 파일 접근 불가, 특정 영상 스니펫만 확인, 원문 미검증 등)을 명시적으로 명기. 제약을 숨기고 진행하면 완성도 저하 시 오너 신뢰 손상이 크지만, 처음부터 제한을 투명하게 하면 기대값이 올바르게 설정되고 이후 추가 조사의 근거가 명확해진다.",
+   "context": "",
+   "legacyTags": [
+    "제약",
+    "데이터",
+    "수집",
+    "투명성",
+    "신뢰성",
+    "기반",
+    "자료",
+    "구축"
+   ]
+  },
+  {
+   "name": "distractor-07",
+   "where": "me",
+   "kind": "pattern",
+   "title": "distractor-07",
+   "content": "같은 대상(대상)에 '비슷함' vs '배울점' 같이 서로 다른 선택 기준을 적용할 때, 혼합하면 사용자가 동시에 두 조건을 고려해야 해 인지 부하 증가. 각 기준별로 별도 섹션/필터/경로를 구성하고, 각각의 목적 차이를 명확하게 안내하라.",
+   "context": "",
+   "legacyTags": [
+    "선택",
+    "기준",
+    "도메인",
+    "명시적",
+    "분리",
+    "대상",
+    "대상",
+    "비슷함"
+   ]
+  },
+  {
+   "name": "distractor-08",
+   "where": "me",
+   "kind": "pattern",
+   "title": "distractor-08",
+   "content": " 슛폼 분석 자료 구축 시, 대상/대상이 '영향받았다고 생각하는 것'과 '실제로 배운 것'을 구분하는 검증 방법론. 방법: 명시적 인터뷰 언급 수집 + 해당 영상/플레이 분석 + 시간적 변화 추적(초기 참고→이후 변경). 이렇게 하면 팬심과 실제 학습 영향을 분리하여 자료 신뢰성을 높이고, 피상적 관찰을 배제할 수 있다.",
+   "context": "",
+   "legacyTags": [
+    "자료",
+    "분석",
+    "실제",
+    "도메인",
+    "선호",
+    "학습소스",
+    "삼각검증",
+    ""
+   ]
+  },
+  {
+   "name": "분석-서브에이전트-모델-한도-429-조기종료-대응",
+   "where": "me",
+   "kind": "pattern",
+   "title": "분석-서브에이전트-모델-한도-429-조기종료-대응",
+   "content": "무엇: 병렬 분석 서브에이전트가 특정 모델의 사용 한도(429)로 조기 종료되면, 같은 작업을 다른 모델로 재스폰하거나 메인 스레드에서 직접 수행한다. 왜: 한도 실패는 결과를 비운 채 끝나서 완료로 오인하기 쉽다. 적용: task-notification의 status가 failed이면 누락된 항목을 명시하고, 한도 걸린 모델을 피해 재실행한 뒤 실제 산출물이 있는지 확인한 다음 다음 단계로 넘어간다.",
+   "context": "",
+   "legacyTags": [
+    "모델",
+    "분석",
+    "서브에이전트",
+    "429",
+    "조기종료",
+    "대응",
+    "무엇",
+    "병렬"
+   ]
+  },
+  {
+   "name": "distractor-09",
+   "where": "me",
+   "kind": "pattern",
+   "title": "distractor-09",
+   "content": "기존 자료(67명 대상 동작)를 설계에 인용할 때 원본 출처·수집 시점·신뢰도를 명시하고 재확인하지 않으면, 시간 경과로 적용 조건이 흐려진다. 설계 리뷰 단계에서 인용된 모든 데이터의 출처와 현재 유효성을 명확히 기술하고, 필요하면 외부 출처를 재검증하라.",
+   "context": "",
+   "legacyTags": [
+    "출처",
+    "설계",
+    "유효성",
+    "재검증",
+    "기존",
+    "자료",
+    "67명",
+    "대상"
+   ]
+  },
+  {
+   "name": "외부-실사용-진단-리포트-라벨링-교차검증",
+   "where": "me",
+   "kind": "pattern",
+   "title": "외부-실사용-진단-리포트-라벨링-교차검증",
+   "content": "무엇: 외부에서 받은 실사용 진단 리포트의 증상마다 [실측]/[추정]/[미확인] 라벨을 붙이고, 소스 코드와 실제 실행 환경 상태로 항목별 재현·확인을 한 뒤 판정한다. 왜: 리포트는 증상 목록이지 전수 점검 결과가 아니고, [추정]을 사실로 굳히면 잘못된 수정으로 이어진다. 적용: 항목마다 라벨을 먼저 붙이고, [추정]은 재현 명령이나 파일 증거로 승격하거나 기각하며, [미확인]은 원인 판정을 보류한 채 남긴다.",
+   "context": "",
+   "legacyTags": [
+    "리포트",
+    "추정",
+    "외부",
+    "실사용",
+    "진단",
+    "미확인",
+    "라벨",
+    "붙이고"
+   ]
+  },
+  {
+   "name": "웹검색-대체경로-공식기관문서우선",
+   "where": "me",
+   "kind": "pattern",
+   "title": "웹검색-대체경로-공식기관문서우선",
+   "content": "도메인 자료( 등) 구축 시 웹 인덱싱·색인 조회 실패 → 공식 기관 문서(협회 규칙서, PDF, 학위논문 저장소)로 전략적 대체. 공식협회·규칙서·학술저장소 우선, 실패 시 Wayback/압축 아카이브 시도. 비영어권·스포츠·특수 도메인은 일반 검색 인덱싱이 약하므로 공식문서 우선이 효율적.",
+   "context": "",
+   "legacyTags": [
+    "도메인",
+    "인덱싱",
+    "실패",
+    "규칙서",
+    "우선",
+    "웹검색",
+    "대체경",
+    "공식기관문서우선",
+    "Wayback"
+   ]
+  },
+  {
+   "name": "distractor-10",
+   "where": "me",
+   "kind": "pattern",
+   "title": "distractor-10",
+   "content": "입력 없음 제약 아래서 리텐션을 높을 때, 기능 추가만으로는 입력 의존도를 높여 비입력일 재방문이 감소. 기존 입력 데이터를 활용한 비교·분석·학습 흐름을 강화하여, 입력 없는 날에도 가치 있는 활동을 제공하는 설계로 우선하라.",
+   "context": "",
+   "legacyTags": [
+    "입력",
+    "제약",
+    "재방문",
+    "흐름",
+    "설계",
+    "기반",
+    "없음",
+    "아래서"
+   ]
+  },
+  {
+   "name": "distractor-11",
+   "where": "me",
+   "kind": "pattern",
+   "title": "distractor-11",
+   "content": "전문 트레이너가 레퍼런스 모델(참고 영상/대상)을 추천할 때 3가지 축으로 필터링: (1) 신체조건 유사성(체격/체형/팔 길이) (2) 팀 내 역할(포지션/플레이 타입) (3) 특정 스킬셋(픽앤롤, 드리블 등). 일반적 '좋은 대상' 추천보다는 조건부 매칭 모델이 더 유용한 학습이 되며, 후학자가 정확히 어떤 상황에 적용 가능한지 판단하기 쉬워진다.",
+   "context": "",
+   "legacyTags": [
+    "조건부",
+    "역할",
+    "매칭",
+    "모델",
+    "대상",
+    "모델링",
+    "3축",
+    "전문"
+   ]
+  },
+  {
+   "name": "차단-로그-오탐-확인-불가-개선",
+   "where": "me",
+   "kind": "pattern",
+   "title": "차단-로그-오탐-확인-불가-개선",
+   "content": "차단된 명령어가 기록되지 않아서 사용자가 인정한 차단과 거짓양성을 구분 불가. 차단 로그에 '인정/바이패스/자동승인' 태그를 추가해서 오탐률 측정 + 가드 신뢰도 가시화.",
+   "context": "",
+   "legacyTags": [
+    "차단",
+    "로그",
+    "오탐",
+    "개선",
+    "차단된",
+    "명령어",
+    "기록되지",
+    "않아서"
+   ]
+  },
+  {
+   "name": "distractor-12",
+   "where": "me",
+   "kind": "pattern",
+   "title": "distractor-12",
+   "content": "같은 개념(속도, 거리 범위 등)이 표·안내·화면에서 다르게 설명되면 사용자 혼동 + 추가 수정 부채 발생. 기능 설계 완료 시 document cross-reference 체크리스트로 검증: 같은 지표가 여러 UI/문서 위치에서 동일한 의미로만 쓰이도록.",
+   "context": "",
+   "legacyTags": [
+    "측정",
+    "기반",
+    "설명",
+    "충돌",
+    "감지",
+    "개념",
+    "속도",
+    "거리"
+   ]
+  },
+  {
+   "name": "distractor-13",
+   "where": "me",
+   "kind": "pattern",
+   "title": "distractor-13",
+   "content": "동일한 설명(필름 범례, 속도 의미, 공격카드 기호)이 여러 카드에 반복되고 11px 글자로 빽빽할 때, 핵심만 인라인으로 남기고 상세는 ⓘ 아이콘/collapse/modal로 분리. 특히 분류 근거(예: '5m vs 4.6m 차이')는 카드에 남기되, 일반적 용어(속도 정의)는 도움말로 옮김.",
+   "context": "",
+   "legacyTags": [
+    "속도",
+    "카드",
+    "폰ui",
+    "정보밀",
+    "반복설명",
+    "collapse화",
+    "동일한",
+    "설명"
+   ]
+  },
+  {
+   "name": "프로필-점진적-수렴-시각화",
+   "where": "me",
+   "kind": "pattern",
+   "title": "프로필-점진적-수렴-시각화",
+   "content": "450회 교정 이력이 있는데 4축 프로필이 0.50 그대로라서 누적 효과가 보이지 않음. 축별 교정 빈도 추이 차트 + reclass 누적 히스토그램으로 '내 스타일이 이렇게 바뀌었다'를 체감시켜서 도구의 학습 신뢰도 증가.",
+   "context": "",
+   "legacyTags": [
+    "프로필",
+    "교정",
+    "누적",
+    "점진적",
+    "수렴",
+    "시각화",
+    "450회",
+    "이력"
+   ]
+  }
+ ],
+ "cases": [
+  {
+   "id": 1,
+   "prompt": "Presigned URL로 큰 파일 다운로드 리다이렉트 처리하는 API 만들어줘",
+   "expect": [
+    "presign-redirect-pattern-for-largefile-serving"
+   ],
+   "src": "run.mjs"
+  },
+  {
+   "id": 2,
+   "prompt": "How do I serve large files from S3 without proxying through my server?",
+   "expect": [
+    "presign-redirect-pattern-for-largefile-serving"
+   ],
+   "src": "run.mjs"
+  },
+  {
+   "id": 3,
+   "prompt": "테스트에서 mock 대신 fake 객체 쓰고 싶은데 상속 말고 합성으로 어떻게 해?",
+   "expect": [
+    "typescript-test-double-composition-over-inheritance"
+   ],
+   "src": "run.mjs"
+  },
+  {
+   "id": 4,
+   "prompt": "Claude 모델 호출이 403 나오는데 로그인은 되어 있어",
+   "expect": [
+    "model-access-403-grant-not-auth-error"
+   ],
+   "src": "run.mjs"
+  },
+  {
+   "id": 5,
+   "prompt": "플러그인이 중복으로 설치돼서 좀비 프로세스처럼 남아있는데 정리 방법",
+   "expect": [
+    "zombie-dependency-detection-plugin-architecture",
+    "plugin-rule-bloat-zombie-detection-and-cleanup"
+   ],
+   "src": "run.mjs"
+  },
+  {
+   "id": 6,
+   "prompt": "서브에이전트 병렬로 돌리다 429 rate limit 맞았어 어떻게 대응해?",
+   "expect": [
+    "분석-서브에이전트-모델-한도-429-조기종료-대응"
+   ],
+   "src": "run.mjs"
+  },
+  {
+   "id": 7,
+   "prompt": "사용자 데이터 삭제 요청 시 공유된 항목도 같이 지워지는지 약관에 적어야 해?",
+   "expect": [
+    "데이터-보호-약속-저장공유삭제-명시"
+   ],
+   "src": "run.mjs"
+  },
+  {
+   "id": 8,
+   "prompt": "규칙 파일이 너무 길어서 컨텍스트 예산 초과하는데 렌더러 어떻게 자르지",
+   "expect": [
+    "rule-renderer-context-budget-constraint"
+   ],
+   "src": "run.mjs"
+  },
+  {
+   "id": 9,
+   "prompt": "workflow 작업 결과 artifact retention 며칠로 할까",
+   "expect": [
+    "workflow-job-히스토리-아티팩트-관리"
+   ],
+   "src": "run.mjs"
+  },
+  {
+   "id": 10,
+   "prompt": "React에서 useEffect 의존성 배열 경고 어떻게 고치지?",
+   "expect": [],
+   "src": "run.mjs"
+  },
+  {
+   "id": 11,
+   "prompt": "SQL 쿼리 인덱스 타서 느린 이유 분석해줘",
+   "expect": [],
+   "src": "run.mjs"
+  },
+  {
+   "id": 12,
+   "prompt": "이 함수 이름 좀 더 읽기 쉽게 바꿔줘",
+   "expect": [],
+   "src": "run.mjs"
+  },
+  {
+   "id": 13,
+   "prompt": "Write a Python script that parses a CSV and prints the top 5 rows by revenue",
+   "expect": [],
+   "src": "run.mjs"
+  },
+  {
+   "id": 14,
+   "prompt": "git 커밋 메시지 컨벤션 알려줘",
+   "expect": [],
+   "src": "run.mjs"
+  },
+  {
+   "id": 15,
+   "prompt": "docker compose에서 환경변수 어떻게 넘겨?",
+   "expect": [],
+   "src": "run.mjs"
+  },
+  {
+   "id": 16,
+   "prompt": "다크모드에서 버튼 색상이 안 바뀌어요",
+   "expect": [],
+   "src": "run.mjs"
+  },
+  {
+   "id": 17,
+   "prompt": "Explain the difference between a mutex and a semaphore in Go",
+   "expect": [],
+   "src": "run.mjs"
+  },
+  {
+   "id": 18,
+   "prompt": "이벤트 핸들러에서 스크롤 위치 저장하고 복원하는 코드 짜줘",
+   "expect": [],
+   "src": "run.mjs"
+  },
+  {
+   "id": 19,
+   "prompt": "JSON 응답 파싱 실패할 때 에러 처리 어떻게 해?",
+   "expect": [],
+   "src": "run.mjs"
+  },
+  {
+   "id": 20,
+   "prompt": "프로젝트 접근 권한 설정하는 UI 디자인 검토해줘",
+   "expect": [],
+   "src": "run.mjs"
+  },
+  {
+   "id": 21,
+   "prompt": "모바일 화면에서 리스트 로딩 스켈레톤 넣고 싶어",
+   "expect": [],
+   "src": "run.mjs"
+  },
+  {
+   "id": 22,
+   "prompt": "Add a limit parameter to the pagination endpoint and remove the old one",
+   "expect": [],
+   "src": "run.mjs"
+  },
+  {
+   "id": 23,
+   "prompt": "ZIP 파일 스트림으로 내려받는 기능 만들어줘",
+   "expect": [],
+   "src": "run.mjs"
+  },
+  {
+   "id": 24,
+   "prompt": "Sonnet 모델 성능이 갑자기 바뀐 것 같은데 recalibration 다시 해야 해?",
+   "expect": [
+    "model-recalibration-after-native-platform-convergence"
+   ],
+   "src": "run2.mjs"
+  },
+  {
+   "id": 25,
+   "prompt": "테스트용 stub 클래스를 상속하면 메서드 override가 깨져요, 합성으로 바꾸려는데",
+   "expect": [
+    "typescript-test-double-composition-over-inheritance"
+   ],
+   "src": "run2.mjs"
+  },
+  {
+   "id": 26,
+   "prompt": "Rule renderer 가 4000자 넘으면 어떻게 잘라야 하나",
+   "expect": [
+    "rule-renderer-context-budget-constraint"
+   ],
+   "src": "run2.mjs"
+  },
+  {
+   "id": 27,
+   "prompt": "워크플로우 job 상태를 폴링해서 완료되면 결과 조회하는 API 설계",
+   "expect": [
+    "workflow-job-히스토리-아티팩트-관리"
+   ],
+   "src": "run2.mjs"
+  },
+  {
+   "id": 28,
+   "prompt": "블록된 명령이 로그에 안 남아서 오탐인지 확인이 안 돼",
+   "expect": [
+    "차단-로그-오탐-확인-불가-개선"
+   ],
+   "src": "run2.mjs"
+  },
+  {
+   "id": 29,
+   "prompt": "교정 이력이 쌓일수록 프로필이 수렴하는 걸 시각화하려고",
+   "expect": [
+    "프로필-점진적-수렴-시각화"
+   ],
+   "src": "run2.mjs"
+  },
+  {
+   "id": 30,
+   "prompt": "공식 규칙이랑 현장 관행이 다른 경우 어떻게 분리해서 문서화하지",
+   "expect": [
+    "규칙정의-vs-현장관행-명시적분리"
+   ],
+   "src": "run2.mjs"
+  },
+  {
+   "id": 31,
+   "prompt": "external diagnostic report 를 받았을 때 증상별로 라벨 붙이고 교차검증",
+   "expect": [
+    "외부-실사용-진단-리포트-라벨링-교차검증"
+   ],
+   "src": "run2.mjs"
+  },
+  {
+   "id": 32,
+   "prompt": "규칙 채굴 결과에서 중복된 교정을 병합하고 싶어",
+   "expect": [
+    "규칙-채굴-중복-제거-및-병합"
+   ],
+   "src": "run2.mjs"
+  },
+  {
+   "id": 33,
+   "prompt": "Dedupe mined rules and merge similar corrections",
+   "expect": [
+    "규칙-채굴-중복-제거-및-병합"
+   ],
+   "src": "run2.mjs"
+  },
+  {
+   "id": 34,
+   "prompt": "웹 검색이 막힐 때 공식 기관 문서로 우회하는 규칙",
+   "expect": [
+    "웹검색-대체경로-공식기관문서우선"
+   ],
+   "src": "run2.mjs"
+  },
+  {
+   "id": 35,
+   "prompt": "Claude Code plugin 이 rule 을 너무 많이 넣어서 settings 가 비대해졌어",
+   "expect": [
+    "plugin-rule-bloat-zombie-detection-and-cleanup"
+   ],
+   "src": "run2.mjs"
+  },
+  {
+   "id": 36,
+   "prompt": "API 키 접근 권한 에러 났을 때 디버깅 순서",
+   "expect": [],
+   "src": "run2.mjs"
+  },
+  {
+   "id": 37,
+   "prompt": "새 기능 설계 문서 작성 템플릿 줘",
+   "expect": [],
+   "src": "run2.mjs"
+  },
+  {
+   "id": 38,
+   "prompt": "Review the PR and run the tests before merging",
+   "expect": [],
+   "src": "run2.mjs"
+  },
+  {
+   "id": 39,
+   "prompt": "데이터베이스 마이그레이션 롤백 전략",
+   "expect": [],
+   "src": "run2.mjs"
+  },
+  {
+   "id": 40,
+   "prompt": "성능 측정 벤치마크 결과를 표로 정리해줘",
+   "expect": [],
+   "src": "run2.mjs"
+  },
+  {
+   "id": 41,
+   "prompt": "사용자 삭제 API 에서 soft delete 구현",
+   "expect": [],
+   "src": "run2.mjs"
+  },
+  {
+   "id": 42,
+   "prompt": "에이전트 프롬프트 모델 선택 기준",
+   "expect": [],
+   "src": "run2.mjs"
+  },
+  {
+   "id": 43,
+   "prompt": "브랜치 변경사항 diff 요약해서 보여줘",
+   "expect": [],
+   "src": "run2.mjs"
+  }
+ ]
+}

@@ -6,6 +6,7 @@
 
 import * as path from 'node:path';
 import { STATE_DIR } from './paths.js';
+import { unreadable } from './flow-status.js';
 import { readJsonlWindow, ROTATED_KEEP_DAYS, isRealBlock, effectiveVerdicts, readReceipt } from '../engine/lifecycle/signals.js';
 
 const isTTY = process.stdout.isTTY;
@@ -57,6 +58,13 @@ function formatTime(iso: string): string {
 export async function handleExplain(args: string[]): Promise<void> {
   // ADR-017 D1: `--blocks` 는 실세션의 실제 차단만 보여준다(테스트 유래 'default' 세션·
   // advise(correction)·명시 우회 제외). 원시 로그는 `forgen inspect`.
+  // 읽기 실패와 진짜 0건을 구분: state 를 읽을 수 없으면 "No blocks recorded" 가 아니라 오류.
+  const readErr = unreadable(path.join(STATE_DIR, 'enforcement'));
+  if (readErr) {
+    console.error(`\n  ${C.red}차단 기록을 읽을 수 없습니다${C.reset} — ${readErr}\n  (0건이 아니라 읽기 실패입니다. 권한을 확인하세요: ${path.join(STATE_DIR, 'enforcement')})\n`);
+    process.exitCode = 1;
+    return;
+  }
   const violations = readViolations().filter((v) => isRealBlock(v as { kind?: unknown; session_id?: unknown }));
 
   if (violations.length === 0) {

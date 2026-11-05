@@ -55,7 +55,7 @@ const commands: Command[] = [
       }
       // ADR-012: Haiku 추출 동의 토글. `forgen compound consent on|off|status`
       if (args[0] === 'consent') {
-        const { getHaikuConsentState, setHaikuCompoundConsent } = await import('./core/compound-consent.js');
+        const { getHaikuConsentState, setHaikuCompoundConsent, HAIKU_SCOPE_TEXT, apiBillingNote } = await import('./core/compound-consent.js');
         const sub = args[1];
         if (sub === 'on' || sub === 'off') {
           setHaikuCompoundConsent(sub === 'on');
@@ -64,8 +64,9 @@ const commands: Command[] = [
           const s = getHaikuConsentState();
           console.log(
             `[forgen] auto-compound Haiku 추출: ${s.enabled ? 'ON' : 'OFF'} (source: ${s.source})\n` +
-            '  ON  = 세션 요약을 Haiku 로 전송해 행동패턴 추론 (본인 쿼터, redaction 적용)\n' +
-            '  OFF = 결정론 교정→룰 승급만 (egress 0, 입증된 δ 경로는 유지)\n' +
+            `  ON  (기본값) = ${HAIKU_SCOPE_TEXT}\n` +
+            (apiBillingNote() ? `  ! ${apiBillingNote()}\n` : '') +
+            '  OFF = 결정론 교정→룰 승급·세션 검색만 (전송 없음)\n' +
             '  변경: forgen compound consent on|off  (env: FORGEN_AUTO_COMPOUND=1 / FORGEN_NO_AUTO_COMPOUND=1)',
           );
         }
@@ -82,14 +83,17 @@ const commands: Command[] = [
       const sub = args[0];
       if (sub === 'promote' && args[1]) {
         const { promoteSolution } = await import('./engine/skill-promoter.js');
-        const triggers = args.includes('--trigger')
-          ? args.slice(args.indexOf('--trigger') + 1).filter(a => !a.startsWith('-'))
-          : undefined;
-        const result = promoteSolution(args[1], triggers);
+        const outIdx = args.indexOf('--out');
+        const result = promoteSolution(args[1], {
+          install: args.includes('--install'),
+          out: outIdx >= 0 ? args[outIdx + 1] : undefined,
+          force: args.includes('--force'),
+        });
         if (result.success) {
-          console.log(`\n  ✓ Promoted: ${args[1]} → ${result.skillPath}\n`);
+          console.log(`\n  ✓ Promoted: ${args[1]}\n${(result.paths ?? []).map((p) => `    ${p}`).join('\n')}\n`);
         } else {
           console.log(`\n  ✗ ${result.reason}\n`);
+          process.exitCode = 1;
         }
       } else if (sub === 'list') {
         const { listSkills } = await import('./engine/skill-promoter.js');
@@ -99,13 +103,22 @@ const commands: Command[] = [
         } else {
           console.log(`\n  Promoted Skills (${skills.length}):\n`);
           for (const s of skills) {
-            console.log(`    ${s.name} [${s.status}] triggers: ${s.triggers.join(', ')}`);
+            console.log(`    ${s.name} [${s.status}] ${s.description}`);
           }
           console.log('');
         }
       } else {
-        console.log('  Usage:\n    forgen skill promote <solution-name> [--trigger "keyword"]\n    forgen skill list');
+        console.log('  Usage:\n    forgen skill promote <solution-name> [--install] [--out <dir>] [--force]\n    forgen skill list');
+        if (sub) { console.error(`[forgen] Unknown skill subcommand: ${sub}`); process.exitCode = 1; }
       }
+    },
+  },
+  {
+    name: 'way',
+    description: 'Your way of working: summary, export to other models, import, collect host memory',
+    handler: async (args) => {
+      const { handleWay } = await import('./way/cli.js');
+      await handleWay(args);
     },
   },
   {
@@ -182,6 +195,7 @@ const commands: Command[] = [
         }
       } else {
         console.log('Usage:\n  forgen config hooks [--regenerate]\n  forgen config default-host [claude|codex|ask]');
+        if (sub) { console.error(`[forgen] Unknown config subcommand: ${sub}`); process.exitCode = 1; }
       }
     },
   },
@@ -209,6 +223,8 @@ const commands: Command[] = [
       const target = args[0] && knownSubs.has(args[0]) ? args[0] : args[0]?.startsWith('--') ? undefined : args[0];
       if (target !== undefined && !knownSubs.has(target)) {
         console.log('Usage:\n  forgen install [claude|codex|opencode|both] [--dry-run] [--no-mcp] [--no-notify] [--no-verify-skill]\n\n  No arg → interactive 3-choice (Claude/Codex/Both). opencode: 명시 타겟(P1 실험적).\n  --no-notify: Codex config.toml 에 notify 폴백을 등록하지 않음.\n  --no-verify-skill: Claude ~/.claude/skills/verify 를 설치하지 않음.');
+        console.error(`[forgen] Unknown install target: ${target}`);
+        process.exitCode = 1;
         return;
       }
       const dryRun = args.includes('--dry-run');
@@ -225,6 +241,7 @@ const commands: Command[] = [
         return;
       }
       console.log(renderResult(result, dryRun));
+      if (result.claude?.errors.length) process.exitCode = 1;
     },
   },
   {
@@ -251,12 +268,13 @@ const commands: Command[] = [
         }
       } else {
         console.log('Usage:\n  forgen maintenance --backfill [--phase A|B|all] [--force] [--dry-run]');
+        if (args.length > 0) { console.error(`[forgen] Unknown maintenance option: ${args.join(' ')}`); process.exitCode = 1; }
       }
     },
   },
   {
     name: 'dev',
-    description: 'Developer/maintenance utilities: dev <probe-workflow|parity|migrate|regress-map>',
+    description: 'Developer/maintenance utilities: dev <probe-workflow|migrate|regress-map>',
     handler: async (args) => {
       const { handleDev } = await import('./core/dev-cli.js');
       await handleDev(args);
@@ -283,13 +301,14 @@ const commands: Command[] = [
     description: 'Diagnostics (--quick fast check, --prune-state GC, --repair auto-fix, --reclaim legacy-rules scan)',
     handler: async (args) => {
       const { runDoctor } = await import('./core/doctor.js');
-      await runDoctor({
+      const failed = await runDoctor({
         pruneState: args.includes('--prune-state'),
         repair: args.includes('--repair'),
         quick: args.includes('--quick'),
         reclaim: args.includes('--reclaim'),
         verbose: args.includes('--verbose'),
       });
+      if (failed > 0) process.exitCode = 1;
     },
   },
   // install --plugin 제거됨 — postinstall이 유일한 설치 경로
@@ -395,10 +414,19 @@ async function handleRuleNamespace(args: string[]): Promise<void> {
     forgen rule classify [--apply] [--force]
                                            Propose enforce_via for legacy rules
     forgen rule unmerge-cluster <id>       Undo a W3-2 correction-cluster merge (restore originals)
+    forgen rule revive <id-or-prefix> [--reason ".."]   Bring a removed/archived rule back as permanent
+    forgen rule snapshot                   Snapshot rules, corrections, solutions
+    forgen rule restore [<name> --yes]     List snapshots or restore one
+    forgen rule set-project <id> <key>|--global         Limit a rule to one project
+    forgen rule classify-projects --project <key> --keywords a,b [--apply]
+    forgen rule import-pack <pack> [--project <key>] [--apply]
     forgen rule merge-mined [--apply]      ADR-017 D3: merge mined (auto:) rules among themselves,
                                            link same-concept ones to explicit rules (dry-run by default)
     forgen rule unmerge <id>               Restore originals of a merged/linked rule (alias of unmerge-cluster)
-    forgen rule enforce <id-or-prefix>     ADR-017 D1: restore blocking for a rule auto-demoted to advise
+    forgen rule recover [--apply <id...>]  Find your corrections that did not survive as active rules
+    forgen rule enforce <id-or-prefix>     Turn on blocking for a rule (semantic rules only record by default)
+    forgen rule merge-explicit [--apply <id...>]  list proposed merges (with ids); apply only the listed ids
+    forgen rule restore-demoted [--apply]  restore precision-auto-demoted (advise) rules to their previous mode (preview by default)
     forgen rule advise <id-or-prefix>      Record-only mode (no block); hard rules refused
 `);
     return;
@@ -439,6 +467,45 @@ async function handleRuleNamespace(args: string[]): Promise<void> {
     case 'advise': {
       const { handleEnforceMode } = await import('./engine/rule-toggle-cli.js');
       await handleEnforceMode(rest, sub === 'advise' ? 'advise' : 'block');
+      return;
+    }
+    case 'merge-explicit': {
+      const { handleMergeExplicit } = await import('./engine/rule-toggle-cli.js');
+      await handleMergeExplicit(rest);
+      return;
+    }
+    case 'restore-demoted': {
+      const { handleRestoreDemoted } = await import('./engine/rule-toggle-cli.js');
+      await handleRestoreDemoted(rest);
+      return;
+    }
+    case 'set-project':
+    case 'classify-projects':
+    case 'import-pack': {
+      const { handleSetProject, handleClassifyProjects, handleImportPack } = await import('./engine/rule-project-cli.js');
+      if (sub === 'set-project') handleSetProject(rest);
+      else if (sub === 'classify-projects') handleClassifyProjects(rest);
+      else handleImportPack(rest);
+      return;
+    }
+    case 'revive': {
+      const { handleRuleRevive } = await import('./engine/rule-recovery-cli.js');
+      handleRuleRevive(rest);
+      return;
+    }
+    case 'recover': {
+      const { handleRuleRecover } = await import('./engine/rule-recovery-cli.js');
+      handleRuleRecover(rest);
+      return;
+    }
+    case 'snapshot': {
+      const { handleRuleSnapshot } = await import('./engine/rule-recovery-cli.js');
+      handleRuleSnapshot();
+      return;
+    }
+    case 'restore': {
+      const { handleRuleRestore } = await import('./engine/rule-recovery-cli.js');
+      handleRuleRestore(rest);
       return;
     }
     case 'merge-mined': {
@@ -508,6 +575,11 @@ async function main() {
     console.log(PKG_VERSION);
     return;
   }
+  if (args[0] !== 'statusline') {
+    const { nodeEngineWarning } = await import('./core/node-engine.js');
+    const w = nodeEngineWarning();
+    if (w) console.error(w);
+  }
   // W3-3: OpenCode plugin 슬림이 per-tool-call 로 호출하는 경량 브릿지 (heavy init 우회).
   if (args[0] === 'opencode-guard') {
     const { runOpencodeGuard } = await import('./host/opencode/guard-cli.js');
@@ -534,7 +606,7 @@ async function main() {
     const RENAMED: Record<string, string> = {
       stats: 'status', health: 'status', dashboard: 'status --overview', me: 'status --profile',
       recall: 'status --compound', explain: 'status --blocks', 'last-block': 'status --blocks',
-      watch: 'status --live', 'probe-workflow': 'dev probe-workflow', parity: 'dev parity',
+      watch: 'status --live', 'probe-workflow': 'dev probe-workflow',
       migrate: 'dev migrate', 'regress-map': 'dev regress-map', onboarding: 'forge --onboarding',
     };
     let hint: string;
@@ -649,16 +721,45 @@ function printHelp() {
     forgen init                     Initialize project (+ starter-pack solutions)
     forgen config hooks             Hook management
     forgen mcp                      MCP server management
-    forgen skill promote|list       Skill management
+    forgen skill promote|list       Skill management (promote writes a standard SKILL.md; --install → ~/.claude/skills)
+    forgen way [--all|--json]       Your way of working in one screen: rules you said vs inferred, enforced vs advisory
+    forgen way export --target <agents-md|claude-rules|skill|system-prompt|gemini|cursor|workflow|json>
+                                    [--project k] [--budget n] [--out dir] [--force]  (stdout preview unless --out)
+    forgen way import <file.json> [--apply]       Round-trip edits back into rules (preview by default)
+    forgen way collect-memory [--dir path] [--apply]   Read Claude memory feedback_*.md as rule candidates
+    forgen way draft <skill|workflow> "<topic>" [--project k] [--out dir] [--no-llm]
+                                    Gather related rules/solutions/corrections and draft a SKILL.md or host-neutral workflow checklist
+                                    with an isolated Haiku call (preview unless --out; evidence ids go in a sidecar file)
     forgen notepad show|add|clear   Session notepad
-    forgen doctor [--quick|--prune-state|--repair]   System diagnostics
+    forgen doctor [--quick|--prune-state|--repair]   System diagnostics (runs hooks/MCP/statusLine for real; exit 1 on failure)
     forgen uninstall                Remove forgen
+    forgen install [claude|codex|opencode|both]   Register forgen into a host (hooks·MCP·statusLine)
+    forgen statusline [install]     Claude Code HUD; \`install\` registers it in settings.json
+    forgen block <id> --ok|--fp     Judge a block receipt (correct / false positive)
+    forgen learn fix-up|quarantine|fitness   Solution maintenance
+    forgen maintenance --backfill   Observability backfill
+    forgen dev <probe-workflow|migrate|regress-map>   Developer/maintenance utilities
+
+  Rule shortcuts (same as \`forgen rule <sub>\`; kept for scripts):
+    forgen classify-enforce         = rule classify
+    forgen rule-meta-scan           = rule health-scan
+    forgen lifecycle-scan           = rule scan
+    forgen suppress-rule <id>       = rule suppress
+    forgen activate-rule <id>       = rule activate
+
+  Host bridges (called by editors/plugins, not by hand):
+    forgen opencode-guard           OpenCode per-tool-call guard
+    forgen opencode-context         OpenCode compaction context
 
   Harness mode (default):
     Wraps Claude (or Codex) with personalization, auto-compound, and safety hooks.
 `);
 }
 
-main().catch(() => {
+main().catch((err) => {
+  // 이전에는 사유 없이 exit 1 만 해서 권한·파싱 오류가 "출력 0바이트 실패" 로 보였다.
+  const msg = err instanceof Error ? (process.env.FORGEN_DEBUG ? (err.stack ?? err.message) : err.message) : String(err);
+  console.error(`[forgen] 오류: ${msg}`);
+  console.error('  자세한 스택: FORGEN_DEBUG=1 forgen <명령>   진단: forgen doctor');
   process.exit(1);
 });

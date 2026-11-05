@@ -46,8 +46,8 @@ describe('stats-cli enhanced fields (v0.5.0)', () => {
     const output = renderStats(snap);
     expect(output).toContain('Weekly trend');
     expect(output).toContain('Blocks');
-    expect(output).toContain('Recalls');
-    expect(output).toContain('Extractions');
+    expect(output).toContain('Recall hits');
+    expect(output).toContain('Saved');
   });
 
   it('topRules7d has max 3 entries', () => {

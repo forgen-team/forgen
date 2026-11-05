@@ -101,6 +101,14 @@ export function ensureObservabilitySchema(db: SqliteDb): void {
       CREATE INDEX IF NOT EXISTS idx_se_solution ON solution_events(solution_id, ts);
       CREATE INDEX IF NOT EXISTS idx_se_session  ON solution_events(session_id, ts);
       CREATE INDEX IF NOT EXISTS idx_se_type     ON solution_events(event_type, ts);
+      CREATE TABLE IF NOT EXISTS gate_verdicts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts INTEGER NOT NULL,
+        session_id TEXT,
+        solution_id TEXT NOT NULL,
+        gate TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_gv_ts ON gate_verdicts(ts);
     `);
     const row = db.prepare(
       `SELECT version FROM schema_version WHERE component = 'observability'`
@@ -187,6 +195,56 @@ export function querySurfacedWithin(sessionId: string, minutesWindow: number): S
   } finally {
     try { db?.close(); } catch { /* ignore */ }
   }
+}
+
+/**
+ * 게이트 판정 기록 (D5). matched 이벤트는 hit-rate 집계를 위해 (세션, 솔루션, 소스) 5분 중복 제거를 거치므로
+ * 같은 후보가 연달아 탈락한 프롬프트가 한 번으로만 세어진다. 분포는 중복 제거 없이 프롬프트마다 센다 — 별도 테이블.
+ */
+export function recordGateVerdict(opts: { sessionId?: string; solutionId: string; gate: string; ts?: number }): void {
+  let db: SqliteDb | null = null;
+  try {
+    db = openObsDb();
+    if (!db) return;
+    ensureObservabilitySchema(db);
+    db.prepare(`INSERT INTO gate_verdicts (ts, session_id, solution_id, gate) VALUES (?, ?, ?, ?)`)
+      .run(opts.ts ?? Date.now(), opts.sessionId ?? null, opts.solutionId, opts.gate);
+  } catch (e) {
+    log.debug('recordGateVerdict 실패', e);
+  } finally {
+    try { db?.close(); } catch { /* ignore */ }
+  }
+}
+
+/**
+ * 최근 N일 게이트 판정 분포 (D5). gate_verdicts(중복 제거 없음)를 센다.
+ * gate_verdicts 가 생기기 전의 구기록은 matched 이벤트의 meta.gate 로 보충한다 (없으면 'unrecorded').
+ */
+export function queryGateDistribution(days = 30): Record<string, number> {
+  let db: SqliteDb | null = null;
+  const out: Record<string, number> = {};
+  try {
+    db = openObsDb();
+    if (!db) return out;
+    ensureObservabilitySchema(db);
+    const since = Date.now() - days * 24 * 60 * 60 * 1000;
+    const first = db.prepare(`SELECT MIN(ts) AS t FROM gate_verdicts`).get() as { t: number | null } | undefined;
+    const legacyUntil = first?.t ?? Number.MAX_SAFE_INTEGER;
+    for (const r of db.prepare(`SELECT gate, COUNT(*) AS n FROM gate_verdicts WHERE ts > ? GROUP BY gate`).all(since) as Array<{ gate: string; n: number }>) {
+      out[r.gate] = (out[r.gate] ?? 0) + r.n;
+    }
+    const rows = db.prepare(`SELECT meta FROM solution_events WHERE event_type = 'matched' AND ts > ? AND ts < ?`).all(since, legacyUntil) as Array<{ meta: string | null }>;
+    for (const r of rows) {
+      let gate = 'unrecorded';
+      try { const g = (JSON.parse(r.meta ?? '{}') as { gate?: unknown }).gate; if (typeof g === 'string') gate = g; } catch { /* meta 없음 */ }
+      out[gate] = (out[gate] ?? 0) + 1;
+    }
+  } catch (e) {
+    log.debug('queryGateDistribution 실패', e);
+  } finally {
+    try { db?.close(); } catch { /* ignore */ }
+  }
+  return out;
 }
 
 /** 30/90/180일 hit-rate 집계. solutionId 지정 시 단일 솔루션만. */

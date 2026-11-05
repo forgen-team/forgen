@@ -34,7 +34,17 @@ export interface SolutionFrontmatter {
   updated: string;
   supersedes: string | null;
   extractedBy: 'auto' | 'manual';
+  /**
+   * 적용 프로젝트 키(룰의 `projects` 와 같은 키: git 저장소 폴더 이름 소문자). 없으면 전역.
+   * 구버전 파서는 모르는 키를 무시하므로 호환된다(검증이 추가 키를 거부하지 않는다).
+   */
+  projects?: string[];
+  /** 은퇴 사유 (D6). stale=기간 경과, contradicted=반증, manual=사용자 지정. 없으면 사유 미상(구버전 은퇴). */
+  retiredReason?: RetiredReason;
+  retiredAt?: string;
 }
+
+export type RetiredReason = 'stale' | 'contradicted' | 'manual';
 
 export interface SolutionV3 {
   frontmatter: SolutionFrontmatter;
@@ -50,6 +60,8 @@ export interface SolutionIndexEntry {
   type: SolutionType;
   scope: 'me' | 'team' | 'project' | 'universal';
   tags: string[];
+  /** 적용 프로젝트 키 (없으면 전역). */
+  projects?: string[];
   /**
    * Pre-expanded tag set, computed at index build time via the term normalizer.
    * Contains `tags` plus every related match term from the canonical families
@@ -415,6 +427,53 @@ const KO_STOPWORDS = new Set([
   '최종',
 ]);
 
+/**
+ * 솔루션 태그에서만 빼는 템플릿·메타 단어 (D5). "무엇: … 왜: … 어떻게: …" 형식과 설명문에서 태그로 새어 나오고, 대부분의 솔루션에 있어
+ * 변별력이 없다. 룰 클러스터링·룰 관련도 같은 다른 extractTags 소비자는 이 단어를 그대로 쓰므로 `solution: true` 일 때만 적용한다.
+ */
+export const KO_TEMPLATE_WORDS = new Set([
+  '무엇',
+  '실제',
+  '실제로',
+  '파일',
+  '왜냐',
+  '주의',
+  '예시',
+  '대신',
+  '기존',
+  '해당',
+  '각각',
+  '항상',
+  '반드시',
+  '때문',
+  '위해',
+  '통해',
+  '경우',
+  '사용자에게',
+  '않는다',
+  '않다',
+  '있다',
+  '없다',
+  '말고',
+  '하지',
+]);
+
+/** 동사 활용 꼴("나오면", "확인하려면", "반복되면") — 주제어가 아니다. "화면"·"표면" 같은 명사는 걸리지 않는 어미만 쓴다. */
+const KO_VERBAL_NOISE_RE = /(?:으면|오면|우면|하면|되면|려면|라면|하거나|는지|은지)$/;
+
+/**
+ * 조사 제거가 어간을 자르는 명사 ("고빈도"→"고빈"). 끝 글자가 조사(도·이·가·의·과·와·만·로)와 같은 흔한 명사만 보호한다.
+ * 목록은 보수적으로 — 새 항목은 실제로 잘린 사례가 확인될 때만 추가한다.
+ */
+export const KO_PROTECTED_NOUNS = new Set([
+  '고빈도', '저빈도', '빈도', '강도', '속도', '정도', '온도', '밀도', '각도', '난이도', '신뢰도', '완성도', '정확도',
+  '중요도', '만족도', '유사도', '관련도', '해상도', '투명도', '적합도', '이해도', '인지도', '선호도', '활용도', '진척도',
+  '숙련도', '충실도', '채도', '명도', '습도', '농도', '연도', '제도', '태도', '지도', '정보밀도', '우선도', '가시도',
+  '차이', '사이', '아이', '높이', '길이', '깊이', '넓이', '나이', '다이', '라이', '모이', '세이',
+  '평가', '고가', '저가', '단가', '물가', '시가', '대가', '원가', '지가', '공과', '성과', '효과', '결과', '교과', '연과',
+  '의의', '회의', '합의', '동의', '논의', '심의', '건의', '주의', '계의',
+]);
+
 /** 영어 불용어 */
 export const EN_STOPWORDS = new Set([
   'the',
@@ -482,9 +541,19 @@ export const KO_SUFFIXES = [
   '합니다',
   '입니다',
   '됩니다',
+  '에서는',
+  '으로는',
+  '에게는',
   '에서',
   '까지',
   '으로',
+  '이랑',
+  '에게',
+  '한테',
+  '부터',
+  '처럼',
+  '보다',
+  '마다',
   '하는',
   '하고',
   '했다',
@@ -506,6 +575,7 @@ export const KO_SUFFIXES = [
 ];
 
 export function stripKoSuffix(word: string): string {
+  if (KO_PROTECTED_NOUNS.has(word)) return word;
   for (const suffix of KO_SUFFIXES) {
     if (word.endsWith(suffix) && word.length > suffix.length) {
       return word.slice(0, -suffix.length);
@@ -533,7 +603,7 @@ const MAX_TAGS = 8;
  * representation of every existing solution, requiring an index rebuild and
  * a fresh `ROUND3_BASELINE` measurement on every downstream PR.
  */
-export function extractTags(text: string): string[] {
+export function extractTags(text: string, opts: { solution?: boolean } = {}): string[] {
   const cleaned = text.toLowerCase().replace(/[^가-힣a-z0-9\s]/g, ' ');
 
   const words = cleaned.split(/\s+/).filter(Boolean);
@@ -544,8 +614,9 @@ export function extractTags(text: string): string[] {
     if (isKorean && w.length >= 2) {
       const base = normalizeColloquialKo(w);
       if (base === null) continue;
+      if (opts.solution && KO_VERBAL_NOISE_RE.test(base) && base.length >= 3) continue;
       const stem = stripKoSuffix(base);
-      if (stem.length >= 2 && !KO_STOPWORDS.has(stem)) {
+      if (stem.length >= 2 && !KO_STOPWORDS.has(stem) && !(opts.solution && KO_TEMPLATE_WORDS.has(stem))) {
         freq.set(stem, (freq.get(stem) ?? 0) + 1);
       }
     } else if (!isKorean && w.length > 2 && !EN_STOPWORDS.has(w)) {
@@ -558,6 +629,11 @@ export function extractTags(text: string): string[] {
     .sort((a, b) => b[1] - a[1])
     .slice(0, MAX_TAGS)
     .map(([tag]) => tag);
+}
+
+/** 솔루션 태그 추출 (저장·질의 공통): extractTags + 템플릿 단어·활용형 제거. */
+export function extractSolutionTags(text: string): string[] {
+  return extractTags(text, { solution: true });
 }
 
 // ── Compound-tag expansion (R4-T1) ──
@@ -697,7 +773,7 @@ export function expandQueryBigrams(tags: readonly string[]): string[] {
  * 쿼리 사이드만 확장하므로 인덱스 재구축·ROUND3_BASELINE 재측정이 불필요
  * (expandQueryBigrams와 같은 계약).
  */
-const KO_CONJUGATION_RE = /^([가-힣]{2,}?)(했|하|해|됐|되|돼)[가-힣]*$/;
+const KO_CONJUGATION_RE = /^([가-힣]{2,}?)(했|하|해|됐|되|돼|할)[가-힣]*$/;
 
 export function expandQueryKoreanStems(tags: readonly string[]): string[] {
   const out = new Set<string>(tags);

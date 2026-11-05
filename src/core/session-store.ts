@@ -57,13 +57,15 @@ function openDb(): SqliteDb | null {
     // Node.js 22+ experimental node:sqlite
     const { DatabaseSync } = require('node:sqlite');
     const db = new DatabaseSync(DB_PATH);
-    db.exec(`PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA busy_timeout=1000;`);
+    db.exec('PRAGMA busy_timeout=8000;'); // 다른 러너가 쓰는 중이어도 최대 8초 대기 (WAL 전환·스키마 생성 포함이라 가장 먼저)
+    db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;');
     db.exec(`
       CREATE TABLE IF NOT EXISTS sessions (
         id TEXT PRIMARY KEY,
         cwd TEXT NOT NULL,
         started_at TEXT NOT NULL,
-        message_count INTEGER DEFAULT 0
+        message_count INTEGER DEFAULT 0,
+        indexed_offset INTEGER
       );
       CREATE TABLE IF NOT EXISTS messages (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -73,6 +75,9 @@ function openDb(): SqliteDb | null {
         timestamp TEXT NOT NULL
       );
     `);
+
+    // 구버전 DB: 증분 인덱싱용 컬럼 추가 (이미 있으면 실패 → 무시)
+    try { db.exec('ALTER TABLE sessions ADD COLUMN indexed_offset INTEGER'); } catch { /* exists */ }
 
     // FTS5 가상 테이블 생성 (미지원 시 LIKE 폴백)
     try {
@@ -100,149 +105,98 @@ function openDb(): SqliteDb | null {
   }
 }
 
-/** Codex content array → flat string. content: [{type: 'input_text', text: ...}, ...] */
-function extractCodexText(content: unknown): string {
-  if (!Array.isArray(content)) return '';
-  const parts: string[] = [];
-  for (const item of content) {
-    if (item && typeof item === 'object' && 'text' in item && typeof (item as { text: unknown }).text === 'string') {
-      parts.push((item as { text: string }).text);
-    }
-  }
-  return parts.join('\n').trim();
-}
-
 /**
- * v0.4.8 (A1): Codex transcript JSONL 을 SQLite 에 인덱싱.
+ * Transcript JSONL 을 SQLite 에 **증분** 인덱싱 (Claude·Codex 스키마 공통, D9).
  *
- * Codex schema (Claude 와 다름):
- *   {type: 'response_item', payload: {type: 'message', role: 'user'|'assistant',
- *    content: [{type: 'input_text'|'output_text', text: '...'}]}}
- *
- * 결정 (v0.4.8 A1): Claude/Codex 통합 abstraction 대신 분기 함수 두 개로
- * 처리. 미래에 host 가 추가될 때 통합 추상화로 리팩터.
+ * - sessions.indexed_offset 바이트부터 스트림으로 읽어 새 메시지만 추가한다 → 긴 세션을 여러 번
+ *   돌려도 중복 없음(멱등). 파일이 줄었으면(교체) 그 세션을 지우고 처음부터.
+ * - 주입 텍스트(스킬 본문·system-reminder 등)는 classifyEntry 가 걸러 검색 잡음을 만들지 않는다.
+ * - 이전 구현은 Claude 의 실제 스키마(`message.content`)가 아니라 top-level `content` 만 읽어
+ *   직접 실행·래퍼 구분 없이 메시지가 0건이었다.
+ * - 호출처: 러너(auto-compound-runner, SessionEnd/Stop/SessionStart 어느 경로든) + 래퍼 종료 후.
  */
-export async function indexCodexSession(cwd: string, transcriptPath: string, sessionId: string): Promise<void> {
+export async function indexTranscript(cwd: string, transcriptPath: string, sessionId: string): Promise<{ added: number; offset: number } | null> {
   const db = openDb();
-  if (!db) return;
-
+  if (!db) return null;
   try {
-    const existing = db.prepare('SELECT id FROM sessions WHERE id = ?').get(sessionId);
-    if (existing) return;
-
-    const content = fs.readFileSync(transcriptPath, 'utf-8');
-    const lines = content.split('\n').filter(Boolean);
-
-    db.prepare(
-      'INSERT INTO sessions (id, cwd, started_at, message_count) VALUES (?, ?, ?, 0)'
-    ).run(sessionId, cwd, new Date().toISOString());
-
-    let messageCount = 0;
-    const insertMsg = db.prepare(
-      'INSERT INTO messages (session_id, role, content, timestamp) VALUES (?, ?, ?, ?)'
-    );
-
-    for (const line of lines) {
-      try {
-        const entry = JSON.parse(line);
-        if (entry.type !== 'response_item' || !entry.payload) continue;
-        const role = entry.payload.role;
-        if (role !== 'user' && role !== 'assistant') continue;
-        const rawText = extractCodexText(entry.payload.content);
-        if (!rawText) continue;
-
-        // W2-5 (private 태그): FTS 인덱스는 session-search 로 재노출되므로 <private>
-        // 범위를 인덱싱 전에 제거한다. 통째 private 메시지는 인덱싱하지 않는다.
-        const text = stripPrivate(rawText).cleaned;
-        if (!text.trim()) continue;
-
-        const truncated = text.slice(0, 10000);
-        const ts = typeof entry.timestamp === 'string' ? entry.timestamp : '';
-        const result = insertMsg.run(sessionId, role, truncated, ts);
-        if (fts5Available) {
-          try {
-            db.prepare('INSERT INTO messages_fts(rowid, content) VALUES (?, ?)').run(result.lastInsertRowid, truncated);
-          } catch { /* FTS sync failure */ }
-        }
-        messageCount++;
-      } catch { /* skip malformed lines */ }
+    const { streamTranscriptLines, classifyEntry } = await import('./transcript-summary.js');
+    const size = fs.statSync(transcriptPath).size;
+    // 쓰기 잠금을 먼저 잡고 오프셋을 읽는다 — 러너 2개가 같은 세션을 동시에 돌려도 중복 삽입 없음.
+    db.exec('BEGIN IMMEDIATE');
+    let inTx = true;
+    try {
+    const existing = db.prepare('SELECT indexed_offset AS off, message_count AS n FROM sessions WHERE id = ?').get(sessionId) as { off: number | null; n: number } | undefined;
+    let from = 0;
+    if (existing) {
+      if (existing.off === null || existing.off === undefined || existing.off > size) {
+        // 구버전 행(오프셋 없음) 또는 파일 교체: 이 세션의 메시지를 지우고 처음부터.
+        deleteSessionMessages(db, sessionId);
+        db.prepare('UPDATE sessions SET message_count = 0, indexed_offset = 0 WHERE id = ?').run(sessionId);
+      } else {
+        from = existing.off;
+      }
+    } else {
+      db.prepare('INSERT INTO sessions (id, cwd, started_at, message_count, indexed_offset) VALUES (?, ?, ?, 0, 0)')
+        .run(sessionId, cwd, new Date().toISOString());
     }
+    if (from >= size) { db.exec('COMMIT'); inTx = false; return { added: 0, offset: from }; }
 
-    db.prepare('UPDATE sessions SET message_count = ? WHERE id = ?').run(messageCount, sessionId);
-    log.debug(`Codex 세션 인덱싱 완료: ${sessionId} (${messageCount} messages)`);
-  } catch (e) {
-    log.debug('Codex 세션 인덱싱 실패', e);
-  } finally {
-    try { db.close(); } catch { /* ignore */ }
-  }
-}
-
-/**
- * Transcript JSONL을 SQLite에 인덱싱. (Claude schema)
- */
-export async function indexSession(cwd: string, transcriptPath: string, sessionId: string): Promise<void> {
-  const db = openDb();
-  if (!db) return;
-
-  try {
-    const existing = db.prepare('SELECT id FROM sessions WHERE id = ?').get(sessionId);
-    if (existing) return;
-
-    const content = fs.readFileSync(transcriptPath, 'utf-8');
-    const lines = content.split('\n').filter(Boolean);
-
-    db.prepare(
-      'INSERT INTO sessions (id, cwd, started_at, message_count) VALUES (?, ?, ?, 0)'
-    ).run(sessionId, cwd, new Date().toISOString());
-
-    let messageCount = 0;
-    const insertMsg = db.prepare(
-      'INSERT INTO messages (session_id, role, content, timestamp) VALUES (?, ?, ?, ?)'
-    );
-
-    for (const line of lines) {
-      try {
-        const entry = JSON.parse(line);
-        let role = '';
-        let text = '';
-
-        if ((entry.type === 'user' || entry.type === 'queue-operation') && typeof entry.content === 'string') {
-          role = 'user';
-          text = entry.content;
-        } else if (entry.type === 'assistant') {
-          role = 'assistant';
-          text = typeof entry.content === 'string'
-            ? entry.content
-            : Array.isArray(entry.content)
-              ? entry.content.filter((c: { type: string }) => c.type === 'text').map((c: { text: string }) => c.text).join('\n')
-              : '';
-        }
-
-        if (role && text) {
-          // W2-5 (private 태그): FTS 인덱스가 session-search 로 재노출되므로 <private>
-          // 범위를 제거 후 인덱싱. 통째 private 메시지는 스킵.
-          const cleanText = stripPrivate(text).cleaned;
-          if (!cleanText.trim()) continue;
-          const truncated = cleanText.slice(0, 10000);
-          const result = insertMsg.run(sessionId, role, truncated, entry.timestamp ?? '');
-          // FTS5 인덱스 동기화
-          if (fts5Available) {
-            try {
-              db.prepare('INSERT INTO messages_fts(rowid, content) VALUES (?, ?)').run(result.lastInsertRowid, truncated);
-            } catch { /* FTS sync failure — search may miss this message */ }
+    const insertMsg = db.prepare('INSERT INTO messages (session_id, role, content, timestamp) VALUES (?, ?, ?, ?)');
+    const insertFts = fts5Available ? db.prepare('INSERT INTO messages_fts(rowid, content) VALUES (?, ?)') : null;
+    let added = 0;
+    let endOffset = from;
+    {
+      endOffset = await streamTranscriptLines(transcriptPath, from, (line) => {
+        if (!line || !(line.includes('"type":"user"') || line.includes('"type":"assistant"')
+          || line.includes('"type":"queue-operation"') || line.includes('"type":"response_item"'))) return;
+        try {
+          const entry = JSON.parse(line);
+          const c = classifyEntry(entry);
+          if (!c) return;
+          // W2-5 (private 태그): FTS 인덱스는 session-search 로 재노출되므로 <private> 범위를 제거 후 인덱싱.
+          const text = stripPrivate(c.text).cleaned;
+          if (!text.trim()) return;
+          const truncated = text.slice(0, 10000);
+          const ts = typeof entry.timestamp === 'string' ? entry.timestamp : '';
+          const result = insertMsg.run(sessionId, c.role, truncated, ts);
+          if (insertFts) {
+            try { insertFts.run(result.lastInsertRowid, truncated); } catch { /* FTS sync failure */ }
           }
-          messageCount++;
-        }
-      } catch { /* skip malformed lines */ }
+          added++;
+        } catch { /* skip malformed lines */ }
+      });
+      db.prepare('UPDATE sessions SET message_count = message_count + ?, indexed_offset = ? WHERE id = ?').run(added, endOffset, sessionId);
+      db.exec('COMMIT');
+      inTx = false;
     }
-
-    db.prepare('UPDATE sessions SET message_count = ? WHERE id = ?').run(messageCount, sessionId);
-    log.debug(`세션 인덱싱 완료: ${sessionId} (${messageCount} messages)`);
+    log.debug(`세션 인덱싱: ${sessionId} +${added} messages (offset ${from}→${endOffset})`);
+    return { added, offset: endOffset };
+    } finally {
+      if (inTx) { try { db.exec('ROLLBACK'); } catch { /* ignore */ } }
+    }
   } catch (e) {
     log.debug('세션 인덱싱 실패', e);
+    return null;
   } finally {
     try { db.close(); } catch { /* ignore */ }
   }
+}
+
+function deleteSessionMessages(db: SqliteDb, sessionId: string): void {
+  if (fts5Available) {
+    const rows = db.prepare('SELECT id, content FROM messages WHERE session_id = ?').all(sessionId) as Array<{ id: number; content: string }>;
+    const del = db.prepare("INSERT INTO messages_fts(messages_fts, rowid, content) VALUES ('delete', ?, ?)");
+    for (const r of rows) { try { del.run(r.id, r.content); } catch { /* ignore */ } }
+  }
+  db.prepare('DELETE FROM messages WHERE session_id = ?').run(sessionId);
+}
+
+/** 하위 호환 이름 (Claude/Codex 공통 구현으로 위임). */
+export async function indexSession(cwd: string, transcriptPath: string, sessionId: string): Promise<void> {
+  await indexTranscript(cwd, transcriptPath, sessionId);
+}
+export async function indexCodexSession(cwd: string, transcriptPath: string, sessionId: string): Promise<void> {
+  await indexTranscript(cwd, transcriptPath, sessionId);
 }
 
 /**

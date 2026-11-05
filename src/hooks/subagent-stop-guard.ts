@@ -30,6 +30,7 @@ import { STATE_DIR } from '../core/paths.js';
 import { runMetaGuards } from '../checks/_shared/meta-guard-dispatch.js';
 import { guardModeForModel, readSessionModel } from '../checks/_shared/model-profile.js';
 import { recordViolation } from '../engine/lifecycle/signals.js';
+import { isMainModule } from './shared/is-main.js';
 import {
   incrementBlockCount,
   resetBlockCount,
@@ -169,7 +170,7 @@ export async function main(): Promise<void> {
   }
 }
 
-const isMain = import.meta.url === `file://${process.argv[1]}`;
+const isMain = isMainModule(import.meta.url);
 if (isMain) {
   void main();
 }

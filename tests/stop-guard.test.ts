@@ -367,7 +367,7 @@ describe('rulesFromStore (Rule.enforce_via → internal SpikeRule shape)', () =>
       category: 'quality',
       scope: 'me',
       trigger: 'completion-evidence',
-      policy: 'e2e before done',
+      policy: 'e2e before done: e2e-result.json, a.json, x',
       strength: 'strong',
       source: 'explicit_correction',
       status: 'active',
@@ -465,7 +465,7 @@ describe('stop-guard stdin e2e (fake Stop hook JSON → stdout)', () => {
     // Isolate child from developer's real ~/.forgen/me/rules by pointing HOME
     // to a throwaway sandbox dir. stop-guard.ts reads loadActiveRules() first;
     // with empty sandbox ~/.forgen, it falls back to scenarios.json.
-    const childHome = `/tmp/forgen-stop-guard-child-${process.pid}-${Math.random().toString(36).slice(2, 8)}`;
+    const childHome = `${process.env.TMPDIR ?? '/tmp'}/forgen-stop-guard-child-${process.pid}-${Math.random().toString(36).slice(2, 8)}`;
     fs.mkdirSync(childHome, { recursive: true });
     return { ...process.env, ...extras, HOME: childHome };
   }

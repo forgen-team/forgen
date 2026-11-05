@@ -25,6 +25,8 @@ export const codexCapabilities: HostCapabilities = {
       expression: 'PreToolUse + `hookSpecificOutput.permissionDecision:"deny"` + `permissionDecisionReason`',
       source:
         'codex-rs/hooks/schema/generated/pre-tool-use.command.output.schema.json — PreToolUsePermissionDecisionWire enum ["allow","deny","ask"]',
+      mitigation:
+        '스키마 enum 에는 "ask" 가 있지만 Codex 0.163 런타임은 "unsupported permissionDecision:ask" 로 훅을 실패 처리한다 → projection.ts 가 ask 를 deny + 안내로 바꾼다 (가드 무력화 금지).',
     },
     'inject-context': {
       status: 'supported',

@@ -110,7 +110,18 @@ describe('V8: correction → rule → cross-session activation', () => {
     expect(hasStopMech).toBe(true);
 
     // ── Session 2: 독립 spawn stop-guard 가 같은 HOME 에서 rule 로드 ──
-    // trigger 발언 → block 기대
+    // 의미 룰은 기본이 기록만: 다음 세션에 판정되지만 차단하지 않는다
+    const defaultResp = callStopGuard(TEST_HOME, '기능 구현이 완성됐습니다.');
+    expect(defaultResp.exitCode).toBe(0);
+    expect(defaultResp.decision).not.toBe('block');
+    const violations = path.join(TEST_HOME, '.forgen', 'state', 'enforcement', 'violations.jsonl');
+    expect(fs.readFileSync(violations, 'utf-8')).toContain('"kind":"correction"');
+
+    // 실제 CLI `forgen rule enforce` 로 켜면 다음 세션에서 차단한다
+    const enforce = spawnSync(process.execPath, [path.join(process.cwd(), 'dist', 'cli.js'), 'rule', 'enforce', ruleContent.rule_id], {
+      encoding: 'utf-8', cwd: TEST_HOME, env: { ...process.env, HOME: TEST_HOME, FORGEN_HOME: path.join(TEST_HOME, '.forgen') },
+    });
+    expect(enforce.stdout).toContain('advise → block');
     const triggerResp = callStopGuard(TEST_HOME, '기능 구현이 완성됐습니다.');
     expect(triggerResp.exitCode).toBe(0);
     expect(triggerResp.decision).toBe('block');

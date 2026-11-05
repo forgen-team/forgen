@@ -114,6 +114,23 @@ export function policySimilarity(a: string, b: string): number {
 }
 
 /**
+ * R9 — "같은 개념" 판정. 유사도 임계 하나만으로는 뜻이 다른 룰을 묶었다
+ * (유사도 0.30 = 임계값인 쌍이 링크됨, "구조 파악 중단 금지" 가 병렬 진행 룰에 흡수돼 뜻이 사라짐).
+ * 두 조건을 모두 요구한다:
+ *   1. 유사도가 임계를 **초과**(경계값 제외)
+ *   2. (제거) 어조 극성 가드는 쓰지 않는다 — 실측에서 진짜 쌍("검증 필수 … 판단 금지", 0.38)과 뜻이 다른 쌍(0.34)을
+ *      유사도·극성으로 가를 수 없었다. 대신 병합 자체를 사용자 확인 뒤로 옮기고(runCorrectionClustering confirmed),
+ *      클러스터 내부 상반(T5)은 통합에서 제외한다.
+ *   3. 상투어 제거 후 공유 태그가 2개 이상 — 태그 1개 우연 일치로는 묶지 않는다
+ */
+export function isSameConcept(a: string, b: string, tau: number = CLUSTER_SIMILARITY_TAU): boolean {
+  const tagsA = new Set(extractTags(stripPolicyBoilerplate(a)));
+  const tagsB = extractTags(stripPolicyBoilerplate(b));
+  if (tagsB.filter((t) => tagsA.has(t)).length < 2) return false;
+  return policySimilarity(a, b) > tau;
+}
+
+/**
  * Laplace 계승법칙 (rule of succession, 1814).
  * s = 일관 교정 횟수, f = 모순(반박) 횟수. 지속 선호일 사후평균 = (s+1)/(s+f+2).
  * N회 일관·모순0 → (N+1)/(N+2): N=1→0.67, N=2→0.75, N=3→0.80, N=5→0.86.
@@ -176,7 +193,7 @@ export function clusterCorrectionRules(
 
     for (let i = 0; i < group.length; i++) {
       for (let j = i + 1; j < group.length; j++) {
-        if (policySimilarity(group[i].policy, group[j].policy) >= CLUSTER_SIMILARITY_TAU) {
+        if (isSameConcept(group[i].policy, group[j].policy, CLUSTER_SIMILARITY_TAU)) {
           union(i, j);
         }
       }
@@ -289,8 +306,8 @@ export function findMostSimilarRule<T extends { policy: string }>(
   let best: { rule: T; similarity: number } | null = null;
   for (const c of candidates) {
     if ((c.policy?.length ?? 0) < MIN_POLICY_LEN) continue;
+    if (!isSameConcept(policy, c.policy, tau)) continue;
     const similarity = policySimilarity(policy, c.policy);
-    if (similarity < tau) continue;
     if (!best || similarity > best.similarity) best = { rule: c, similarity };
   }
   return best;

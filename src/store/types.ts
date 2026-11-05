@@ -32,7 +32,7 @@ export type TrustPolicy = '가드레일 우선' | '승인 완화' | '완전 신�
 export type RuleCategory = 'quality' | 'autonomy' | 'communication' | 'workflow' | 'safety';
 export type RuleScope = 'me' | 'session';
 export type RuleStrength = 'soft' | 'default' | 'strong' | 'hard';
-export type RuleSource = 'onboarding' | 'explicit_correction' | 'behavior_inference' | 'pack_overlay';
+export type RuleSource = 'onboarding' | 'explicit_correction' | 'behavior_inference' | 'pack_overlay' | 'imported';
 export type RuleStatus = 'active' | 'suppressed' | 'removed' | 'superseded';
 
 // ── Enforcement axis (ADR-001) ──────────────────────────────────────────────
@@ -134,6 +134,14 @@ export interface LifecycleState {
  */
 export const CURRENT_RULE_SCHEMA_VERSION = 1;
 
+export interface RuleStatusChange {
+  at: string;
+  from: RuleStatus;
+  to: RuleStatus;
+  reason: string;
+  by: string;
+}
+
 export interface Rule {
   /** R5-B3: 미래 breaking schema change 를 위한 version 필드. 없으면 v0 (pre-0.4.0) 으로 취급. */
   schema_version?: number;
@@ -149,6 +157,14 @@ export interface Rule {
   render_key: string;
   created_at: string;
   updated_at: string;
+  /** 이 프로젝트들에서만 적용. 없으면 전역. rule-scope.ts 참고. */
+  projects?: string[];
+  /** source 'imported' 일 때 가져온 곳(파일 경로 등). 사용자 발화가 아니라는 표시이기도 하다. */
+  imported_from?: string;
+  /** 세션 임시 룰의 소유 세션. 다른 실행 중인 세션의 임시 룰을 정리하지 않기 위해 쓴다. */
+  session_id?: string;
+  /** 상태 전이 기록. 활성 룰을 비활성으로 바꾸려면 사유가 있어야 한다(saveRule 이 강제). */
+  status_history?: RuleStatusChange[];
   /**
    * 이 rule 이 어떤 hook/verifier 로 강제되는가. optional — 기존 rule 은 null.
    * `forgen classify-enforce` 명령이 기존 rule 을 자동 분류하여 채운다.
@@ -157,7 +173,8 @@ export interface Rule {
   enforce_via?: EnforceSpec[];
   /**
    * ADR-017 D1: precision 자동 강등. 'advise' 면 Mech-A/B 가 차단 대신 기록(kind:'correction')만 한다.
-   * 하드 룰(strength 'hard')과 builtin 은 자동으로 'advise' 가 되지 않는다. 미지정 = 'block'.
+   * 하드 룰(strength 'hard')과 builtin 은 자동으로 'advise' 가 되지 않는다.
+   * 미지정 = rule-detectability.effectiveEnforceMode 가 결정(의미 룰은 기록만, 결정적 탐지기·hard 는 차단).
    */
   enforce_mode?: 'block' | 'advise';
   /**
@@ -342,6 +359,10 @@ export interface CorrectionRequest {
    * 차단 메시지가 "당신의 말" 로 인용한다. <private> 필터 후 저장.
    */
   user_quote?: string;
+  /** 이 교정이 폐기·대체·수정하려는 기존 룰. 지목이 없으면 기존 룰은 바뀌지 않는다. */
+  rule_id?: string;
+  /** 이 프로젝트에만 적용되는 교정이면 프로젝트 키. */
+  projects?: string[];
 }
 
 export interface CorrectionResult {

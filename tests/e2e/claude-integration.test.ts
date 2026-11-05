@@ -117,7 +117,7 @@ describe('Level 1: Hook Protocol — hookEventName + additionalContext', () => {
 
   it('시나리오 3: solution-injector → additionalContext 경로 사용', async () => {
     // 테스트용 솔루션 준비
-    const solutionsDir = path.join(os.homedir(), '.forgen', 'me', 'solutions');
+    const solutionsDir = path.join(E2E_TEST_HOME, '.forgen', 'me', 'solutions');
     const testSolution = path.join(solutionsDir, 'e2e-test-solution.md');
     const solutionExists = fs.existsSync(testSolution);
 
@@ -126,8 +126,15 @@ describe('Level 1: Hook Protocol — hookEventName + additionalContext', () => {
       fs.writeFileSync(testSolution, [
         '---',
         'name: e2e-test-solution',
-        'type: solution',
+        'version: 1',
+        'status: verified',
+        'type: pattern',
+        'scope: me',
         'confidence: 0.80',
+        'created: 2026-11-01',
+        'updated: 2026-11-01',
+        'supersedes: null',
+        'extractedBy: manual',
         'tags: [e2e, testing, verification, forgen]',
         'identifiers: [runE2ETest, verifyHookProtocol]',
         'evidence: { injected: 5, reflected: 3, negative: 0, sessions: 3, reExtracted: 0 }',
@@ -147,14 +154,9 @@ describe('Level 1: Hook Protocol — hookEventName + additionalContext', () => {
       expect(output).not.toBeNull();
       expect(output!.continue).toBe(true);
 
-      // 솔루션이 매칭되면 additionalContext가 있어야 함
-      if (output!.hookSpecificOutput) {
-        const hookOutput = output!.hookSpecificOutput as Record<string, unknown>;
-        expect(hookOutput.hookEventName).toBe('UserPromptSubmit');
-        expect(hookOutput.additionalContext).toBeDefined();
-        expect(typeof hookOutput.additionalContext).toBe('string');
-      }
-      // 매칭 안 되면 continue: true만 있으면 OK (솔루션 매칭은 태그 의존)
+      const hookOutput = output!.hookSpecificOutput as Record<string, unknown>;
+      expect(hookOutput.hookEventName).toBe('UserPromptSubmit');
+      expect(hookOutput.additionalContext as string).toContain('e2e-test-solution');
     } finally {
       // 테스트용 솔루션 정리
       if (!solutionExists && fs.existsSync(testSolution)) {
@@ -186,7 +188,8 @@ describe('Level 1: Hook Protocol — hookEventName + additionalContext', () => {
 
   it('시나리오 8: session-recovery → additionalContext + "SessionStart"', { timeout: 15_000 }, async () => {
     // 테스트용 모드 상태 파일 생성
-    const stateDir = path.join(os.homedir(), '.forgen', 'state');
+    // hook 프로세스가 보는 홈에 써야 한다. 다른 홈에 쓰고 조건부로 검사해서 그동안 아무것도 검증하지 못했다.
+    const stateDir = path.join(E2E_TEST_HOME, '.forgen', 'state');
     const testState = path.join(stateDir, 'ralph-state.json');
     const stateExists = fs.existsSync(testState);
 
@@ -196,7 +199,8 @@ describe('Level 1: Hook Protocol — hookEventName + additionalContext', () => {
         active: true,
         startedAt: new Date().toISOString(),
         prompt: 'E2E test recovery prompt',
-        sessionId: 'prev-session',
+        // H6: 같은 세션(resume/compact)일 때만 복구된다 — 새 세션에는 주입되지 않는다.
+        sessionId: 'new-test-session',
       }));
     }
 
@@ -209,14 +213,9 @@ describe('Level 1: Hook Protocol — hookEventName + additionalContext', () => {
       expect(output).not.toBeNull();
       expect(output!.continue).toBe(true);
 
-      // 활성 모드가 있으면 SessionStart additionalContext
-      if (output!.hookSpecificOutput) {
-        const hookOutput = output!.hookSpecificOutput as Record<string, unknown>;
-        expect(hookOutput.hookEventName).toBe('SessionStart');
-        expect(hookOutput.additionalContext).toBeDefined();
-        const ctx = hookOutput.additionalContext as string;
-        expect(ctx).toContain('ralph');
-      }
+      const hookOutput = output!.hookSpecificOutput as Record<string, unknown>;
+      expect(hookOutput.hookEventName).toBe('SessionStart');
+      expect(hookOutput.additionalContext as string).toContain('ralph');
     } finally {
       if (!stateExists && fs.existsSync(testState)) {
         fs.unlinkSync(testState);
@@ -224,7 +223,7 @@ describe('Level 1: Hook Protocol — hookEventName + additionalContext', () => {
     }
   });
 
-  it('시나리오 9: secret-filter → approveWithWarning (systemMessage)', async () => {
+  it('시나리오 9: secret-filter → 모델 컨텍스트(additionalContext) + UI systemMessage (D12-B)', async () => {
     const result = await runHook(path.join(DIST_HOOKS, 'secret-filter.js'), {
       tool_name: 'Bash',
       tool_input: { command: 'cat /tmp/test.env' },
@@ -239,8 +238,11 @@ describe('Level 1: Hook Protocol — hookEventName + additionalContext', () => {
     expect(output!.systemMessage).toBeDefined();
     expect(typeof output!.systemMessage).toBe('string');
     expect((output!.systemMessage as string)).toContain('Sensitive');
-    // hookSpecificOutput은 없어야 함 (additionalContext 아님)
-    expect(output!.hookSpecificOutput).toBeUndefined();
+    // D12-B: 경고가 사용자 화면에만 가던 결함(H1) — PostToolUse additionalContext 로 모델에도 전달된다
+    const hso = output!.hookSpecificOutput as { hookEventName?: string; additionalContext?: string } | undefined;
+    expect(hso?.hookEventName).toBe('PostToolUse');
+    expect(hso?.additionalContext).toContain('민감 정보');
+    expect(JSON.stringify(output)).not.toContain('supersecret123');
   });
 
   it('시나리오 10: plugin.json → author가 object 형식', () => {

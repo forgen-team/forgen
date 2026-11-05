@@ -8,6 +8,7 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { actedOnEvidence } from '../engine/acted-on-evidence.js';
 import { createLogger } from '../core/logger.js';
 
 const log = createLogger('post-tool-use');
@@ -26,7 +27,7 @@ import { appendImplicitFeedback } from '../store/implicit-feedback-store.js';
 // ADR-010 W2-2: usage-telemetry 기록 제거 — native /usage 이관. (hot path I/O 절감)
 import { emitSolutionEvent, querySurfacedWithin } from '../core/observability-store.js';
 import { parseSolutionV3 } from '../engine/solution-format.js';
-import { ME_SOLUTIONS } from '../core/paths.js';
+import { defaultSolutionDirs } from '../engine/solution-index.js';
 
 // ── Types ──
 
@@ -344,7 +345,7 @@ async function main(): Promise<void> {
     if (target) {
       try {
         const [
-          { loadActiveRules },
+          { loadEnforcedRules },
           { recordViolation, matchedFragment },
           { compileSafeRegex, safeRegexTest },
           { preprocessForMatch },
@@ -354,7 +355,7 @@ async function main(): Promise<void> {
           import('./shared/safe-regex.js'),
           import('./shared/command-parser.js'),
         ]);
-        const rules = loadActiveRules();
+        const rules = loadEnforcedRules(typeof data.cwd === 'string' ? data.cwd : undefined);
 
         // Mech-A pattern_match dispatcher — match_target 은 **rule-per-rule**.
         // AWS key / DROP 류 secret/dangerous SQL 은 파일 content 에 들어있어도
@@ -408,13 +409,16 @@ async function main(): Promise<void> {
   try {
     const recentSurfaces = querySurfacedWithin(sessionId, 5);
     if (recentSurfaces.length > 0 && toolName) {
-      const toolNameLower = toolName.toLowerCase();
+      const actionText = [toolInput.file_path, toolInput.filePath, toolInput.command, toolInput.content, toolInput.new_string, toolInput.pattern]
+        .filter((v): v is string => typeof v === 'string').join('\n').slice(0, 20_000);
       const seen = new Set<string>();
       for (const surf of recentSurfaces) {
         if (seen.has(surf.solutionId)) continue;
         seen.add(surf.solutionId);
-        const filePath = path.join(ME_SOLUTIONS, `${surf.solutionId}.md`);
-        if (!fs.existsSync(filePath)) continue;
+        // 주입기와 같은 목록(me + 설치된 팩 + cwd 프로젝트)에서 찾는다. me 만 읽으면 팩·프로젝트 솔루션은 영원히 acted_on 이 없다.
+        const filePath = defaultSolutionDirs(typeof data.cwd === 'string' ? data.cwd : undefined)
+          .map((d) => path.join(d.dir, `${surf.solutionId}.md`)).find((f) => fs.existsSync(f));
+        if (!filePath) continue;
         let raw: string;
         try { raw = fs.readFileSync(filePath, 'utf-8'); } catch { continue; }
         const sol = parseSolutionV3(raw);
@@ -422,16 +426,16 @@ async function main(): Promise<void> {
         const tags = sol.frontmatter.tags ?? [];
         const identifiers = sol.frontmatter.identifiers ?? [];
         if (tags.length === 0 && identifiers.length === 0) continue;
-        const hit = tags.some(t => toolNameLower.includes(t.toLowerCase()))
-                 || identifiers.some(id => toolNameLower.includes(id.toLowerCase()));
-        if (!hit) continue;
+        // 도구 **이름**이 아니라 도구가 실제로 건드린 것(파일 경로·명령·쓴 내용)에서 증거를 찾는다. 증거 기준은 acted-on-evidence.ts.
+        const ev = actedOnEvidence({ tags, identifiers }, actionText);
+        if (!ev.ok) continue;
         emitSolutionEvent({
           sessionId,
           solutionId: surf.solutionId,
           eventType: 'acted_on',
           signalSource: 'tool-pattern',
           signalScore: 0.30,
-          meta: { tool: toolName, surface_ts: surf.ts },
+          meta: { tool: toolName, surface_ts: surf.ts, evidence: ev.hits.slice(0, 4) },
         });
       }
     }

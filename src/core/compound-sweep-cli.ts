@@ -15,6 +15,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { STATE_DIR } from './paths.js';
+import { forgenRunShimPath } from '../host/claude-shim.js';
 import { runAutoCompound } from './spawn.js';
 import { createLogger } from './logger.js';
 import { pruneRemovedRules } from '../store/rule-store.js';
@@ -45,7 +46,7 @@ export interface SweepOpts {
 export const DEFAULT_SWEEP_OPTS: Omit<SweepOpts, 'nowMs'> = {
   windowMs: 24 * 60 * 60 * 1000,
   staleMs: 2 * 60 * 60 * 1000,
-  minPrompts: 10,
+  minPrompts: 1, // D9: 짧은 세션도 승급·인덱싱 대상
   maxPerRun: 5,
 };
 
@@ -224,7 +225,7 @@ export function runCompoundSweep(opts: { dryRun?: boolean } & Partial<Omit<Sweep
         continue;
       }
       // 실제 spawn 된 경우만 sweptAt 기록 (리뷰 SEV-2: dedup-skip/실패를 완료로 오기록 금지).
-      const status = runAutoCompound(c.cwd, c.transcriptPath, c.sessionId, c.promptCount);
+      const status = runAutoCompound(c.cwd, c.transcriptPath, c.sessionId, c.promptCount, true); // 끝난 세션 — 조금 남은 구간도 처리
       if (status === 'spawned') {
         state[c.sessionId] = { sweptAt: nowMs };
         swept.push(c.sessionId);
@@ -256,6 +257,52 @@ function shq(s: string): string {
 /** crontab 라인 구성 (순수 — 테스트 가능). 경로는 shell-quote(리뷰 SEV-2). */
 export function buildCronLine(nodePath: string, cliPath: string, logPath: string, schedule = CRON_SCHEDULE): string {
   return `${schedule} ${shq(nodePath)} ${shq(cliPath)} compound sweep >> ${shq(logPath)} 2>&1 ${CRON_MARKER}`;
+}
+
+/** shim 경유 라인. 패키지 경로·node 버전이 바뀌어도 cron 을 다시 고칠 필요가 없다. */
+export function buildShimCronLine(shimPath: string, logPath: string, schedule = CRON_SCHEDULE, sweepArgs = ''): string {
+  return `${schedule} ${shq(shimPath)} 'cli.js' compound sweep${sweepArgs} >> ${shq(logPath)} 2>&1 ${CRON_MARKER}`;
+}
+
+const SWEEP_LINE = /^\s*(@\w+|\S+\s+\S+\s+\S+\s+\S+\s+\S+)\s+.*?\bcompound sweep(.*?)\s*>>\s*(.+?)\s+2>&1\s+#/;
+
+/**
+ * 이미 등록된 forgen 라인만 shim 경유로 바꾼다. 일정·sweep 옵션·로그 경로는 유지한다.
+ * 등록이 없으면 추가하지 않고, 형식을 알 수 없는 라인(사용자가 고친 라인)은 건드리지 않는다.
+ */
+export function refreshCronText(existing: string, shimPath: string): { text: string; changed: boolean } {
+  let changed = false;
+  const lines = existing.split('\n').map((l) => {
+    if (!l.includes(CRON_MARKER)) return l;
+    const m = SWEEP_LINE.exec(l);
+    if (!m) return l;
+    const next = `${m[1]} ${shq(shimPath)} 'cli.js' compound sweep${m[2]} >> ${m[3]} 2>&1 ${CRON_MARKER}`;
+    if (next !== l) changed = true;
+    return next;
+  });
+  return { text: lines.join('\n'), changed };
+}
+
+function realPath(p: string): string {
+  try { return fs.realpathSync(p); } catch { return path.resolve(p); }
+}
+
+/**
+ * 업그레이드 때 호출. 옛 라인은 사라질 수 있는 패키지 경로를 직접 가리킨다.
+ * crontab 은 HOME·FORGEN_HOME 으로 격리되지 않으므로, 실제 계정 홈의 기본 설치일 때만 건드린다.
+ * cron 갱신 실패가 설치를 실패로 만들지 않는다. 옛 라인은 그대로 남고 다음 설치 때 다시 시도한다.
+ */
+export function refreshCronAfterUpgrade(homeDir: string = os.homedir()): 'updated' | 'unchanged' | 'skipped' | 'failed' {
+  if (process.platform === 'win32' || process.env.FORGEN_HOME) return 'skipped';
+  if (realPath(homeDir) !== realPath(os.userInfo().homedir)) return 'skipped';
+  let existing: string;
+  try { existing = readCrontab(); } catch { return 'skipped'; }
+  const { text, changed } = refreshCronText(existing, forgenRunShimPath(homeDir));
+  if (!changed) return 'unchanged';
+  try {
+    execFileSync('crontab', ['-'], { input: text, encoding: 'utf-8', stdio: ['pipe', 'ignore', 'ignore'] });
+    return 'updated';
+  } catch { return 'failed'; }
 }
 
 /** 기존 crontab 에서 forgen 라인을 upsert/제거 (순수 — 테스트 가능). */
@@ -299,7 +346,8 @@ export function installCron(): CronOpResult {
   const nodePath = process.execPath;
   const cliPath = distCliPath();
   const logPath = path.join(STATE_DIR, 'compound-sweep.log');
-  const line = buildCronLine(nodePath, cliPath, logPath);
+  const shim = forgenRunShimPath();
+  const line = process.platform !== 'win32' && fs.existsSync(shim) ? buildShimCronLine(shim, logPath) : buildCronLine(nodePath, cliPath, logPath);
   if (process.platform === 'win32') {
     return {
       ok: false,
@@ -390,8 +438,8 @@ export function compoundSweepCli(args: string[]): void {
     console.log(
       `[forgen compound sweep --prune-removed] candidates=${r.candidates.length} ` +
       (apply
-        ? `deleted=${r.deleted.length}`
-        : `(dry-run — add --apply to delete)${r.candidates.length ? ` [${r.candidates.map((id) => id.slice(0, 8)).join(', ')}]` : ''}`),
+        ? `archived=${r.deleted.length}`
+        : `(dry-run — add --apply to archive)${r.candidates.length ? ` [${r.candidates.map((id) => id.slice(0, 8)).join(', ')}]` : ''}`),
     );
     return;
   }

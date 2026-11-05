@@ -82,9 +82,13 @@ export function isSyntheticSession(sessionId: unknown): boolean {
   return typeof sessionId !== 'string' || SYNTHETIC_SESSION_IDS.has(sessionId) || !UUID_RE.test(sessionId);
 }
 
-/** FORGEN_SYNTHETIC=1 (eval/probe 러너가 설정) 이면 기록에 synthetic:true 를 붙인다. */
+/**
+ * FORGEN_SYNTHETIC=1 (eval/probe 러너가 설정) 이면 기록에 synthetic:true 를 붙인다.
+ * FORGEN_NESTED_RUN=1 (추출·block-judge 등 forgen 이 띄운 중첩 실행)도 사용자 세션이 아니므로 같은 취급 —
+ * 중첩 실행 안에서 난 위반이 실사용자의 차단/우회 집계(precision 강등·T3·stats)를 오염시키지 않게 한다.
+ */
 export function syntheticStamp(): { synthetic?: true } {
-  return process.env.FORGEN_SYNTHETIC === '1' ? { synthetic: true } : {};
+  return process.env.FORGEN_SYNTHETIC === '1' || process.env.FORGEN_NESTED_RUN === '1' ? { synthetic: true } : {};
 }
 
 /** 엔트리 단위 합성 판정: 명시적 synthetic 플래그 또는 합성 세션 id. */
@@ -209,15 +213,53 @@ export interface RulePrecision {
   precision: number | null;
 }
 
+const JUDGE_EPOCH_PATH = path.join(ENFORCEMENT_DIR, 'judge-epoch.json');
+
+/**
+ * D12-C: 주제 게이트 도입 이전의 Stop 판정은 "무관한 룰이 무관한 완료 보고를 막은" 오탐이 섞여 있어 그 룰의 정밀도 근거가 아니다.
+ * `forgen rule restore-demoted --apply` 가 이 시각을 기록하고, precisionByRule 은 이 시각 이전의 stop-guard(store 룰) 차단을 세지 않는다.
+ */
+export function readJudgeEpoch(): number {
+  try { return Date.parse(JSON.parse(fs.readFileSync(JUDGE_EPOCH_PATH, 'utf-8')).at) || 0; } catch { return 0; }
+}
+export function writeJudgeEpoch(now: number = Date.now()): void {
+  fs.mkdirSync(ENFORCEMENT_DIR, { recursive: true });
+  fs.writeFileSync(JUDGE_EPOCH_PATH, `${JSON.stringify({ at: new Date(now).toISOString(), reason: 'topic-gate: earlier stop-guard verdicts are not precision evidence' })}\n`);
+}
+
+const RULE_EPOCHS_PATH = path.join(ENFORCEMENT_DIR, 'rule-epochs.json');
+
+/**
+ * 룰별 정밀도 기준 시각. `rule restore-demoted --apply` 가 **복구한 룰에만** 기록한다 — 전역 epoch 는 다른 모든 룰의
+ * 정밀도 기록까지 지우므로 쓰지 않는다. 이 시각 이전의 그 룰 차단은 정밀도에 세지 않는다(복구 즉시 재강등 방지).
+ */
+export function readRuleEpochs(): Record<string, number> {
+  try {
+    const raw = JSON.parse(fs.readFileSync(RULE_EPOCHS_PATH, 'utf-8')) as Record<string, string>;
+    return Object.fromEntries(Object.entries(raw).map(([k, v]) => [k, Date.parse(v) || 0]));
+  } catch { return {}; }
+}
+export function writeRuleEpoch(ruleId: string, now: number = Date.now()): void {
+  fs.mkdirSync(ENFORCEMENT_DIR, { recursive: true });
+  let cur: Record<string, string> = {};
+  try { cur = JSON.parse(fs.readFileSync(RULE_EPOCHS_PATH, 'utf-8')); } catch { /* none */ }
+  cur[ruleId] = new Date(now).toISOString();
+  fs.writeFileSync(RULE_EPOCHS_PATH, `${JSON.stringify(cur, null, 1)}\n`);
+}
+
 /** 룰별 precision (실 차단만, 최근 N일). unsure 는 미판정으로 센다. */
 export function precisionByRule(violations: ViolationEntry[], verdicts: VerdictEntry[], days: number, now: number = Date.now()): Map<string, RulePrecision> {
   const cutoff = now - days * 24 * 3600 * 1000;
   const eff = effectiveVerdicts(verdicts);
   const out = new Map<string, RulePrecision>();
+  const epoch = readJudgeEpoch();
+  const ruleEpochs = readRuleEpochs();
   for (const v of violations) {
     if (!isRealBlock(v)) continue;
     const t = Date.parse(v.at);
     if (!Number.isFinite(t) || t < cutoff) continue;
+    if (epoch && t < epoch && v.source === 'stop-guard' && !v.rule_id.startsWith('builtin:')) continue;
+    if (t < (ruleEpochs[v.rule_id] ?? 0)) continue;
     const r = out.get(v.rule_id) ?? { rule_id: v.rule_id, correct: 0, false_positive: 0, unjudged: 0, precision: null };
     const verdict = v.violation_id ? eff.get(v.violation_id)?.verdict : undefined;
     if (verdict === 'correct') r.correct++;
@@ -254,6 +296,13 @@ export function pruneChecks(now: number = Date.now()): void {
 
 export function readChecks(): CheckEntry[] {
   return readJsonlWindow<CheckEntry>(CHECKS_PATH, CHECKS_TTL_MS / (24 * 3600 * 1000)).filter((c) => !isSyntheticEntry(c));
+}
+
+/** 룰별 "평가돼 통과한" 횟수 (checks.jsonl, 합성 제외). 준수 판정의 유일한 근거. */
+export function passCountsByRule(checks: CheckEntry[] = readChecks()): Map<string, number> {
+  const m = new Map<string, number>();
+  for (const c of checks) if (c.result === 'pass') m.set(c.rule_id, (m.get(c.rule_id) ?? 0) + 1);
+  return m;
 }
 
 /** 정규식 매칭 프래그먼트 추출 — 영수증 `matched` 필드용. */

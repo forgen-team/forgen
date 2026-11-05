@@ -120,12 +120,14 @@ describe('dist pre-tool-use — L1 rm -rf 룰 (격리 HOME)', () => {
     expect(ok.hookSpecificOutput?.permissionDecision).not.toBe('deny');
     expect(run(home, `${RM} rc9`, SP).hookSpecificOutput?.permissionDecision).not.toBe('deny'); // 상대 경로 + stdin cwd
     expect(run(home, `${RM} /tmp/claude-1001/../home/ubuntu/x`).hookSpecificOutput?.permissionDecision).toBe('deny');
-    const deny = run(home, `${RM} /home/ubuntu/.cache/probe`);
+    // D12-A: 홈 하위 일반 경로는 deny 가 아니라 사용자 확인 요청(ask), 시스템 루트 경로는 deny
+    expect(run(home, `${RM} /home/ubuntu/.cache/probe`).hookSpecificOutput?.permissionDecision).toBe('ask');
+    const deny = run(home, `${RM} /srv`);
     expect(deny.hookSpecificOutput?.permissionDecision).toBe('deny');
     expect(deny.hookSpecificOutput?.permissionDecisionReason).toContain('forgen block ');
     const all = fs.readFileSync(path.join(home, '.forgen', 'state', 'enforcement', 'violations.jsonl'), 'utf-8').trim().split('\n').map((l) => JSON.parse(l));
-    expect(all).toHaveLength(2); // 임시 폴더 건은 기록조차 안 함; traversal 건은 룰 deny(영수증 포함), 홈 건 deny
-    const v = all.filter((e) => String(e.message_preview).includes('.cache/probe'));
+    expect(all).toHaveLength(3); // 임시 폴더 건은 기록조차 안 함; traversal·/srv 는 deny(영수증 포함), probe 는 ask(kind:correction)
+    const v = all.filter((e) => String(e.message_preview).includes(`${RM} /srv`));
     expect(v).toHaveLength(1);
     expect(v[0].kind).toBe('deny');
     expect(v[0].violation_id).toMatch(/^[0-9a-f-]{36}$/);
@@ -133,7 +135,7 @@ describe('dist pre-tool-use — L1 rm -rf 룰 (격리 HOME)', () => {
     expect(v[0].target_kind).toBe('command');
     expect(v[0].target_hash).toMatch(/^[0-9a-f]{16}$/);
     const receipt = fs.readFileSync(path.join(home, '.forgen', 'state', 'enforcement', 'receipts', `${v[0].violation_id}.txt`), 'utf-8');
-    expect(receipt).toBe(`${RM} /home/ubuntu/.cache/probe`);
+    expect(receipt).toBe(`${RM} /srv`);
   });
   it.skipIf(!exists)('advise 강등 룰은 차단 대신 경고 + kind:correction', () => {
     const home = seed();

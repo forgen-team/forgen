@@ -285,7 +285,7 @@ describe('INJECTION_CAPS 일관성', () => {
     expect(INJECTION_CAPS).not.toHaveProperty('perPromptTotal');
 
     expect(RULE_FILE_CAPS.perRuleFile).toBe(3000);
-    expect(RULE_FILE_CAPS.totalRuleFiles).toBe(15000);
+    expect(RULE_FILE_CAPS.totalRuleFiles).toBe(8500);
   });
 });
 

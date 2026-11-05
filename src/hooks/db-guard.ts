@@ -12,7 +12,7 @@ import { atomicWriteJSON } from './shared/atomic-write.js';
 import { isHookEnabled } from './hook-config.js';
 import { approve, approveWithWarning, denyOrObserve, failOpenWithTracking } from './shared/hook-response.js';
 import { STATE_DIR } from '../core/paths.js';
-import { preprocessForMatch } from './shared/command-parser.js';
+import { analyzeCommand } from './shared/command-analyzer.js';
 const FAIL_COUNTER_PATH = path.join(STATE_DIR, 'db-guard-fail-counter.json');
 const FAIL_CLOSE_THRESHOLD = 3;
 
@@ -41,6 +41,7 @@ export const DANGEROUS_SQL_PATTERNS: SqlPattern[] = [
 export function checkDangerousSql(
   toolName: string,
   toolInput: Record<string, unknown> | string,
+  cwd?: string,
 ): { action: 'block' | 'warn' | 'pass'; description?: string } {
   if (toolName !== 'Bash') return { action: 'pass' };
 
@@ -48,33 +49,24 @@ export function checkDangerousSql(
     ? toolInput
     : (toolInput.command as string ?? '');
 
-  // TEST-6 확장 (2026-04-24): DB CLI allowlist 기반 quote-aware 전처리.
-  //
-  // 결함: 이전에는 raw command 를 직접 매칭해 `git commit -m "... DROP TABLE ..."`
-  // 같은 quote 안 SQL 키워드까지 block (실증: 이번 세션 내 release 커밋 메시지 차단).
-  //
-  // 단순히 masked 만 쓰면 `psql -c "DROP TABLE users"` 같은 실 DB 실행의 True-Positive
-  // 까지 놓친다. 해법: masked 처리 후에도 **DB CLI 토큰** 이 보이면 진짜 실행 의도
-  // 라고 판단해 raw 를 검사, 아니면 masked 를 검사.
-  //   - `psql -c "DROP TABLE"` → masked: `psql -c ""` → psql 존재 → raw 검사 → block
-  //   - `git commit -m "DROP TABLE"` → masked: `git commit -m ""` → psql 없음 → masked 검사 → pass
-  //   - `DROP DATABASE production` (direct SQL) → masked 그대로 (quote 없음) → block
-  const maskedCommand = preprocessForMatch(command, 'masked');
-  const dbCliRe = /\b(psql|mysql|sqlite3?|pg_restore|mongosh|mysqldump|cockroach\s+sql|redis-cli)\b/i;
-  const hasDbCli = dbCliRe.test(maskedCommand);
-  const scanCommand = hasDbCli ? command : maskedCommand;
+  // D12-A: 같은 파서(command-analyzer)가 "SQL 로 실행될 수 있는 텍스트"만 골라준다 —
+  // DB CLI(psql/mysql/sqlite3/…)의 인자·heredoc·`echo … | psql` 입력, python/node -c 코드.
+  // `grep "DROP TABLE" f`, `echo DROP TABLE`, `git commit -m "…DROP TABLE…"` 은 실행 문맥이 아니라 통과한다.
+  const { sqlTexts } = analyzeCommand(command, { cwd: typeof cwd === 'string' ? cwd : undefined });
 
-  // 주석 제거 후 SQL에 대해 패턴 매칭 (주석 안 키워드 오차단 방지)
-  const sqlWithoutComments = scanCommand
-    .replace(/--[^\n]*/g, '')           // 라인 주석 제거
-    .replace(/\/\*[\s\S]*?\*\//g, '');  // 블록 주석 제거
+  for (const text of sqlTexts) {
+    // 주석 제거 후 SQL에 대해 패턴 매칭 (주석 안 키워드 오차단 방지)
+    const sqlWithoutComments = text
+      .replace(/--[^\n]*/g, '')           // 라인 주석 제거
+      .replace(/\/\*[\s\S]*?\*\//g, '');  // 블록 주석 제거
 
-  for (const { pattern, description, severity } of DANGEROUS_SQL_PATTERNS) {
-    if (pattern.test(sqlWithoutComments)) {
-      // DELETE/UPDATE — SQL 본문에서 WHERE 절이 있으면 통과
-      if (/DELETE\s+FROM/i.test(sqlWithoutComments) && /\bWHERE\s+/i.test(sqlWithoutComments)) continue;
-      if (/UPDATE\s+\w+\s+SET/i.test(sqlWithoutComments) && /\bWHERE\s+/i.test(sqlWithoutComments)) continue;
-      return { action: severity, description };
+    for (const { pattern, description, severity } of DANGEROUS_SQL_PATTERNS) {
+      if (pattern.test(sqlWithoutComments)) {
+        // DELETE/UPDATE — SQL 본문에서 WHERE 절이 있으면 통과
+        if (/DELETE\s+FROM/i.test(sqlWithoutComments) && /\bWHERE\s+/i.test(sqlWithoutComments)) continue;
+        if (/UPDATE\s+\w+\s+SET/i.test(sqlWithoutComments) && /\bWHERE\s+/i.test(sqlWithoutComments)) continue;
+        return { action: severity, description };
+      }
     }
   }
   return { action: 'pass' };
@@ -121,7 +113,7 @@ async function main(): Promise<void> {
   const toolName = data.tool_name ?? data.toolName ?? '';
   const toolInput = data.tool_input ?? data.toolInput ?? {};
 
-  const check = checkDangerousSql(toolName, toolInput);
+  const check = checkDangerousSql(toolName, toolInput, (data as { cwd?: string }).cwd);
   if (check.action === 'block') {
     console.log(denyOrObserve('db-guard', `[Forgen] Dangerous SQL blocked: ${check.description}`));
     return;

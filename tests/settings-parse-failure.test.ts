@@ -88,16 +88,14 @@ describe('settings-injector data loss defense (static source invariant)', () => 
     expect(src).not.toMatch(/log\.debug\([^)]*파싱 실패[^)]*빈 설정/);
   });
 
-  it('postinstall.js가 parse 실패 시 corrupt 보존 + throw 패턴 사용', () => {
+  it('설치 경로(install-claude)가 parse 실패 시 corrupt 보존 + 덮어쓰지 않고 throw, 쓰기는 atomic', () => {
     const src = fs.readFileSync(
-      path.join(__dirname, '..', 'scripts', 'postinstall.js'),
+      path.join(__dirname, '..', 'src', 'host', 'install-claude.ts'),
       'utf-8',
     );
-    // 두 번의 parse (settings + .claude.json) 모두 corrupt 보존 패턴을 가져야 함
+    // settings.json 과 .claude.json 모두 같은 readJsonObject 를 거친다
     expect(src).toMatch(/corrupt-\$\{Date\.now\(\)\}/);
-    expect(src).toMatch(/Preserved corrupt copy|preserved at/);
-    // settings.json 쓰기는 atomic (tmp + rename)
-    expect(src).toMatch(/SETTINGS_PATH\}\.tmp\.\$\{process\.pid\}/);
-    expect(src).toMatch(/renameSync\(tmpPath, SETTINGS_PATH\)/);
+    expect(src).toMatch(/left untouched/);
+    expect(src).toMatch(/renameSync\(tmp, file\)/);
   });
 });

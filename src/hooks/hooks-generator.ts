@@ -53,6 +53,8 @@ interface GenerateOptions {
    * 배포(prepack), 테스트 결정론, runtime 환경 분리에 사용.
    */
   releaseMode?: boolean;
+  /** 고정 shim 경로(claude). 있으면 명령을 `"<shim>" "hooks/x.js" args` 로 만든다 — node·패키지 경로 비의존. */
+  shimPath?: string;
 }
 
 function splitCommand(raw: string): { script: string; args: string[] } {
@@ -61,13 +63,18 @@ function splitCommand(raw: string): { script: string; args: string[] } {
   return { script: unquoted[0] ?? '', args: unquoted.slice(1) };
 }
 
-function quoteArg(raw: string): string {
-  return `"${raw.replace(/"/g, '\\"')}"`;
+/** Claude Code 는 hook 을 sh 로 실행한다. 큰따옴표 안에서 확장되는 문자도 이스케이프한다. */
+export function quoteArg(raw: string): string {
+  if (process.platform === 'win32') return `"${raw.replace(/"/g, '\\"')}"`;
+  return `"${raw.replace(/([\\"$`])/g, '\\$1')}"`;
 }
 
-function buildHookCommand(pluginRoot: string, rawScript: string, runtime: RuntimeHost): string {
+function buildHookCommand(pluginRoot: string, rawScript: string, runtime: RuntimeHost, shimPath?: string): string {
   const { script, args } = splitCommand(rawScript);
   const quotedArgs = args.map(quoteArg).join(' ');
+  if (shimPath && runtime === 'claude') {
+    return `${quoteArg(shimPath)} ${quoteArg(script)}${quotedArgs ? ` ${quotedArgs}` : ''}`;
+  }
   // Phase 2: host-runtime 위임 — Codex 표면 (codex-adapter 경유) 을 core 가 모르도록.
   return getHostRuntime(runtime).wrapHookCommand(pluginRoot, script, quotedArgs);
 }
@@ -139,7 +146,7 @@ export function generateHooksJson(options?: GenerateOptions): HooksJson {
     hooks[event] = [...byMatcher.entries()].map(([matcher, matcherEntries]) => ({
       matcher,
       hooks: matcherEntries.map(h => {
-        const command = buildHookCommand(pluginRoot, h.script, runtime);
+        const command = buildHookCommand(pluginRoot, h.script, runtime, options?.shimPath);
         const handler: HookCommand = { type: 'command', command, timeout: h.timeout };
         if (runtime === 'codex' && typeof h.codex?.additionalContextLimit === 'number') {
           handler.additionalContextLimit = h.codex.additionalContextLimit;

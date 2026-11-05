@@ -14,7 +14,7 @@ import { readStdinJSON } from './shared/read-stdin.js';
 import { isHookEnabled } from './hook-config.js';
 import { matchSolutions } from '../engine/solution-matcher.js';
 import { RELEVANCE_MATCH_GATE } from '../engine/relevance-gate.js';
-import { extractTags } from '../engine/solution-format.js';
+import { extractSolutionTags } from '../engine/solution-format.js';
 import { defaultNormalizer } from '../engine/term-normalizer.js';
 import { logMatchDecision } from '../engine/match-eval-log.js';
 import { resolveScope } from '../core/scope-resolver.js';
@@ -34,12 +34,89 @@ import { STATE_DIR } from '../core/paths.js';
 import { recordHookTiming } from './shared/hook-timing.js';
 import { appendPending, flushAccept } from '../engine/solution-outcomes.js';
 import { appendImplicitFeedback } from '../store/implicit-feedback-store.js';
-import { emitSolutionEvent, querySurfacedWithin } from '../core/observability-store.js';
+import { emitSolutionEvent, recordGateVerdict } from '../core/observability-store.js';
 import { parseSolutionV3 } from '../engine/solution-format.js';
-import { ME_SOLUTIONS } from '../core/paths.js';
 import { buildContextTokens } from '../engine/context-signals.js';
 
+/** 주입 게이트 탈락 사유 (D5). solution_events(matched).meta.gate 에 기록되고 status 가 분포를 보여 준다. */
+export type GateReason = 'below-relevance' | 'too-few-tags' | 'experiment-cap' | 'prompt-cap' | 'already-injected';
+export type GateVerdict = 'passed' | GateReason;
+
+export interface GateCandidate {
+  name: string;
+  relevance: number;
+  contextBonus?: number;
+  matchedTags: string[];
+  matchedIdentifiers?: string[];
+  status: string;
+}
+
+/** 매치된 태그 수를 개념 단위로 센다: 같은 동의어 계열(term-normalizer 의 canonical)에 속하면 하나. 계열이 없으면 태그 자체. */
+function distinctConcepts(tags: readonly string[]): number {
+  return new Set(tags.map((t) => defaultNormalizer.termToCanonicals.get(t.normalize('NFC'))?.[0] ?? t.toLowerCase())).size;
+}
+
+/**
+ * 후보별 게이트 판정 — 주입 목록과 탈락 사유를 함께 돌려준다. 게이트 조건 자체는 그대로다(완화·강화 없음):
+ * 맥락 가산 제외 relevance 하한, identifier 1개 또는 태그 2개 이상, experiment 1개 제한, 프롬프트당 개수 제한.
+ */
+export function evaluateGate<T extends GateCandidate>(
+  candidates: readonly T[],
+  opts: { minRelevanceFor: (name: string) => number; injected: ReadonlySet<string>; maxPerPrompt: number },
+): { toInject: T[]; verdicts: Map<string, GateVerdict> } {
+  const verdicts = new Map<string, GateVerdict>();
+  const toInject: T[] = [];
+  let experimentCount = 0;
+  for (const sol of candidates) {
+    if (opts.injected.has(sol.name)) { verdicts.set(sol.name, 'already-injected'); continue; }
+    // 맥락 가산은 순위에만 — relevance 하한 게이트는 가산 전 값으로 비교한다(맥락만으로 게이트 통과 금지).
+    if (sol.relevance - (sol.contextBonus ?? 0) < opts.minRelevanceFor(sol.name)) { verdicts.set(sol.name, 'below-relevance'); continue; }
+    const idMatches = sol.matchedIdentifiers?.length ?? 0;
+    // 같은 개념의 한영 쌍("플러그인"+"plugin", "캐시"+"cache")이 둘 다 맞았다고 태그 2개로 세지 않는다 — 동의어 사전이
+    // 늘면서 한 단어 매치가 게이트의 "2개 이상"을 혼자 통과하는 길이 생기는 것을 막는 강화다(완화 아님).
+    const tagMatches = Math.max(0, distinctConcepts(sol.matchedTags.filter((t) => !(sol.matchedIdentifiers ?? []).includes(t))));
+    // 맥락 토큰(cwd/최근 편집 파일)은 relevance 가산에만 쓰고 이 게이트의 태그 수에는 넣지 않는다.
+    // 실측(S16): 범용 프롬프트 토큰 1개 + 맥락 3개를 0.5 가중으로 합산하면 무관한 솔루션이 통과했다.
+    if (idMatches < 1 && tagMatches < 2) { verdicts.set(sol.name, 'too-few-tags'); continue; }
+    if (toInject.length >= opts.maxPerPrompt) { verdicts.set(sol.name, 'prompt-cap'); continue; }
+    if (sol.status === 'experiment') {
+      if (experimentCount >= 1) { verdicts.set(sol.name, 'experiment-cap'); continue; }
+      experimentCount++;
+    }
+    toInject.push(sol);
+    verdicts.set(sol.name, 'passed');
+  }
+  return { toInject, verdicts };
+}
+
+/** Observability P1: matched emit — top-5 후보 각각 기록. 게이트 판정(통과 또는 탈락 사유 enum)을 meta.gate 에 남긴다. */
+function emitMatchedEvents(
+  sessionId: string,
+  allMatched: ReadonlyArray<{ name: string; relevance: number; matchedTags: string[]; matchedIdentifiers?: string[] }>,
+  verdicts: ReadonlyMap<string, GateVerdict>,
+): void {
+  try {
+    for (const candidate of allMatched.slice(0, 5)) {
+      // 분포는 5분 중복 제거를 거치지 않는 별도 기록으로 센다.
+      recordGateVerdict({ sessionId, solutionId: candidate.name, gate: verdicts.get(candidate.name) ?? 'already-injected' });
+      emitSolutionEvent({
+        sessionId,
+        solutionId: candidate.name,
+        eventType: 'matched',
+        signalSource: 'matcher',
+        signalScore: candidate.relevance,
+        meta: {
+          matchedTags: candidate.matchedTags,
+          matchedIdentifiers: candidate.matchedIdentifiers,
+          gate: verdicts.get(candidate.name) ?? 'already-injected',
+        },
+      });
+    }
+  } catch (e) { log.debug('matched emit 실패', e); }
+}
+
 interface HookInput {
+  cwd?: string;
   prompt: string;
   session_id?: string;
 }
@@ -293,44 +370,11 @@ function backfillCacheTagsOnDisk(
   }
 }
 
-/**
- * 직전 5분 내 surfaced 된 솔루션이 현재 프롬프트와 키워드 매칭 시 acted_on emit.
- * tags/identifiers 가 없는 솔루션은 skip. fail-open.
+/*
+ * prompt-keyword acted_on 경로는 제거했다 (D6). 직전에 surfaced 된 솔루션의 태그가 사용자의 **다음 프롬프트**에 하나라도
+ * 들어 있으면 acted_on 이라고 기록했는데, 이는 같은 주제를 이어 말한 것일 뿐 솔루션이 쓰였다는 증거가 아니다
+ * (실데이터: 오탐 솔루션 하나에 16건, 전부 이 경로). acted_on 은 도구 사용·커밋처럼 행동의 흔적에서만 기록한다.
  */
-async function detectActOnFromPriorSurface(sessionId: string, promptLower: string): Promise<void> {
-  try {
-    const recentSurfaces = querySurfacedWithin(sessionId, 5);
-    if (recentSurfaces.length === 0) return;
-    const seen = new Set<string>();
-    for (const surf of recentSurfaces) {
-      if (seen.has(surf.solutionId)) continue;
-      seen.add(surf.solutionId);
-      // 솔루션 파일 로드 (ME_SOLUTIONS 기준)
-      const filePath = path.join(ME_SOLUTIONS, `${surf.solutionId}.md`);
-      if (!fs.existsSync(filePath)) continue;
-      let raw: string;
-      try { raw = fs.readFileSync(filePath, 'utf-8'); } catch { continue; }
-      const sol = parseSolutionV3(raw);
-      if (!sol) continue;
-      const tags = sol.frontmatter.tags ?? [];
-      const identifiers = sol.frontmatter.identifiers ?? [];
-      if (tags.length === 0 && identifiers.length === 0) continue;
-      const hit = tags.some(t => promptLower.includes(t.toLowerCase()))
-               || identifiers.some(id => promptLower.includes(id.toLowerCase()));
-      if (!hit) continue;
-      emitSolutionEvent({
-        sessionId,
-        solutionId: surf.solutionId,
-        eventType: 'acted_on',
-        signalSource: 'prompt-keyword',
-        signalScore: 0.20,
-        meta: { surface_ts: surf.ts },
-      });
-    }
-  } catch (e) {
-    log.debug('detectActOnFromPriorSurface 실패', e);
-  }
-}
 
 // ── Progressive Disclosure tiers (claude-mem 스타일 index→summary→full 대응) ──
 //
@@ -455,6 +499,12 @@ export function renderSolutionTiers(
   return rendered;
 }
 
+/** `/명령`, `!셸` 로 시작하는 프롬프트는 작업 설명이 아니라 명령이다. 첫 토큰에 `/` 가 더 있으면 경로이므로 명령이 아니다. */
+function isCommandPrompt(prompt: string): boolean {
+  const first = prompt.trimStart().split(/\s/, 1)[0] ?? '';
+  return /^!/.test(first) || /^\/[^/]*$/.test(first);
+}
+
 async function main(): Promise<void> {
   const _hookStart = Date.now();
   try {
@@ -470,19 +520,22 @@ async function main(): Promise<void> {
 
   const sessionId = input.session_id ?? 'default';
 
+  // 명령 프롬프트는 솔루션 회수 대상이 아니다 (실제 표본에서 오주입의 원인).
+  if (isCommandPrompt(input.prompt)) {
+    console.log(approve());
+    return;
+  }
+
   // ADR-017 D2: 턴 단위 룰 관련도 → state/turn-rules-<session>.json (statusline "관련 룰 N" · status --turn).
   // 프롬프트 주입에는 아무것도 보태지 않는다(토큰 비용 0). 원문 대신 sha256 앞 16자만 저장. 아래 어떤 early
   // return 보다 앞에 두어 솔루션 매칭 결과와 무관하게 매 턴 기록된다. 전부 fail-open.
   if (input.session_id) {
     try {
       const { relevantRules, writeTurnRules } = await import('../engine/rule-relevance.js');
-      const { loadActiveRules } = await import('../store/rule-store.js');
-      writeTurnRules(input.session_id, input.prompt, relevantRules(input.prompt, loadActiveRules()));
+      const { loadContextRules } = await import('../store/rule-store.js');
+      writeTurnRules(input.session_id, input.prompt, relevantRules(input.prompt, loadContextRules(input.cwd)));
     } catch (e) { log.debug('turn-rules 기록 실패', e); }
   }
-
-  // Observability P2: 직전 surfaced 솔루션과 현재 프롬프트 키워드 매칭 → acted_on emit
-  await detectActOnFromPriorSurface(sessionId, input.prompt.toLowerCase());
 
   // v1: 교정 감지 → correction-record 호출 유도 hint
   const correctionPatterns = /하지\s*마|그렇게\s*말고|앞으로는|이렇게\s*해|stop\s+doing|don'?t\s+do|always\s+do|never\s+do|아니\s*그게\s*아니라/i;
@@ -518,22 +571,6 @@ async function main(): Promise<void> {
   // matches는 새 주입 후보 (이미 injected는 제외).
   const contextTokens = buildContextTokens(cwd, input.session_id);
   const allMatched = matchSolutions(input.prompt, scope, cwd, contextTokens);
-  // Observability P1: matched emit — top-5 후보 각각 기록
-  try {
-    for (const candidate of allMatched.slice(0, 5)) {
-      emitSolutionEvent({
-        sessionId,
-        solutionId: candidate.name,
-        eventType: 'matched',
-        signalSource: 'matcher',
-        signalScore: candidate.relevance,
-        meta: {
-          matchedTags: candidate.matchedTags,
-          matchedIdentifiers: candidate.matchedIdentifiers,
-        },
-      });
-    }
-  } catch (e) { log.debug('matched emit 실패', e); }
   const matches = allMatched.filter(m => !injected.has(m.name));
 
   // T3: emit a ranking-decision record for offline analysis. Fail-open —
@@ -544,7 +581,7 @@ async function main(): Promise<void> {
   // experiment cap, session-cache disjoint) is intentionally NOT captured
   // here — the field's contract is "matcher's top, not final injection set".
   try {
-    const promptTags = extractTags(input.prompt);
+    const promptTags = extractSolutionTags(input.prompt);
     const normalizedQuery = defaultNormalizer.normalizeTerms(promptTags);
     logMatchDecision({
       source: 'hook',
@@ -564,6 +601,7 @@ async function main(): Promise<void> {
   // 기존 cache의 missing tags를 채울 수 있다. 이전엔 이 경로를 놓쳐서
   // backfill fix가 절반만 적용된 상태였다 (Codex/code-reviewer 발견).
   if (matches.length === 0) {
+    emitMatchedEvents(sessionId, allMatched, new Map()); // 전부 이미 주입된 후보 — 게이트 판정은 already-injected
     const earlyCachePath = path.join(STATE_DIR, `injection-cache-${sanitizeId(sessionId)}.json`);
     backfillCacheTagsOnDisk(earlyCachePath, allMatched);
     console.log(approve());
@@ -607,24 +645,14 @@ async function main(): Promise<void> {
     return MIN_INJECT_RELEVANCE;
   }
 
-  let experimentCount = 0;
-  const toInject: typeof matches = [];
-  for (const sol of matches) {
-    if (injected.has(sol.name)) continue;
-    // 맥락 가산은 순위에만 — relevance 하한 게이트는 가산 전 값으로 비교한다(맥락만으로 게이트 통과 금지).
-    if (sol.relevance - (sol.contextBonus ?? 0) < minRelevanceFor(sol.name)) continue;
-    const idMatches = sol.matchedIdentifiers?.length ?? 0;
-    const tagMatches = Math.max(0, sol.matchedTags.length - idMatches);
-    // 맥락 토큰(cwd/최근 편집 파일)은 relevance 가산에만 쓰고 이 게이트의 태그 수에는 넣지 않는다.
-    // 실측(S16): 범용 프롬프트 토큰 1개 + 맥락 3개를 0.5 가중으로 합산하면 무관한 솔루션이 통과했다.
-    if (idMatches < 1 && tagMatches < 2) continue;
-    if (sol.status === 'experiment') {
-      if (experimentCount >= 1) continue;
-      experimentCount++;
-    }
-    toInject.push(sol);
-    if (toInject.length >= Math.min(budget.solutionsPerPrompt, MAX_SOLUTIONS_PER_SESSION - injected.size)) break;
-  }
+  const gate = evaluateGate(allMatched, {
+    minRelevanceFor,
+    injected,
+    maxPerPrompt: Math.min(budget.solutionsPerPrompt, MAX_SOLUTIONS_PER_SESSION - injected.size),
+  });
+  const toInject = gate.toInject.filter(sol => !injected.has(sol.name));
+
+  emitMatchedEvents(sessionId, allMatched, gate.verdicts);
 
   // Progressive Disclosure: 매치 랭크에 따라 Tier 0(전문)/2(요약)/1(인덱스)로 나눠 렌더.
   // rank 순서는 toInject 자체(matchSolutions/applyRoiDemotions가 이미 relevance desc
@@ -725,9 +753,10 @@ async function main(): Promise<void> {
   // M-3 fix: effectiveToInject(commit이 검증한 disjoint set)만 evidence 갱신 →
   // 동시 hook이 같은 솔루션을 inject해도 한 번만 카운트됨.
   try {
-    const { updateSolutionEvidence } = await import('./pre-tool-use.js');
+    // pre-tool-use.js 를 import 하면 그 모듈의 main() 이 다시 돌아 stdout 에 JSON 이 두 개 나간다.
+    const { incrementEvidence } = await import('../engine/solution-writer.js');
     for (const sol of effectiveToInject) {
-      updateSolutionEvidence(sol.name, 'injected');
+      incrementEvidence(sol.name, 'injected');
     }
   } catch (e) { log.debug('evidence.injected counter 업데이트 실패', e); }
 

@@ -83,7 +83,7 @@ describe('handleForge --export', () => {
 describe('handleForge --reset', () => {
   it('soft reset deletes profile', async () => {
     saveProfile(createProfile('u', '균형형', '균형형', '승인 완화', 'onboarding'));
-    await handleForge(['--reset', 'soft']);
+    await handleForge(['--reset', 'soft', '--yes']);
     expect(fs.existsSync(tmpProfile)).toBe(false);
     expect(consoleLogs.join('\n')).toContain('Soft reset');
   });

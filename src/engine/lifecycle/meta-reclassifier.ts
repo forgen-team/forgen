@@ -16,6 +16,7 @@
  *   - 30 일 쿨다운.
  */
 
+import { enforceability } from '../rule-detectability.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { LifecycleEvent } from './types.js';
@@ -136,6 +137,8 @@ export function promoteMech(from: EnforcementMech): EnforcementMech | null {
 export interface PromotionCandidate {
   rule_id: string;
   injects_rolling_n: number;
+  /** D12-C: 실제 평가돼 통과한 기록 수(checks.jsonl) — 위반 0 이 준수라는 유일한 근거. */
+  checks_pass_n: number;
   violations_rolling_n: number;
   current_mechs: EnforcementMech[];
   reason: string;
@@ -144,14 +147,22 @@ export interface PromotionCandidate {
 /**
  * rolling N 개 inject 중 violation 0 → Mech 승급 후보.
  * inject 추적 인프라가 완비되기 전에는 `rolling_min_injects` (기본 20) 미만이면 skip.
+ *
+ * D12-C: "위반 0" 은 탐지기가 있고 실제로 평가돼 통과한 기록이 있을 때만 준수의 근거다.
+ *  - 탐지 불가(자문) 룰은 위반을 볼 수 없으므로 승급 대상이 아니다.
+ *  - 탐지 가능 룰도 `passCounts`(checks.jsonl 의 통과 수)가 `min_pass_checks` 이상이어야 한다.
  */
 export function scanSignalsForPromotion(options: {
   rules: Rule[];
   rolling_min_injects?: number;
+  /** 룰별 평가 통과 수. 생략하면 증거 없음(0)으로 본다 → 승급 후보 없음. */
+  passCounts?: Map<string, number>;
+  min_pass_checks?: number;
   cooldownDays?: number;
   ts?: number;
   signals: Map<string, import('./types.js').RuleSignals>;
 }): PromotionCandidate[] {
+  const minPass = options.min_pass_checks ?? 10;
   const minInjects = options.rolling_min_injects ?? 20;
   const out: PromotionCandidate[] = [];
   // R8-A1: promote 도 cooldown 적용. architect 예측대로 promote → demote → promote ping-pong 차단.
@@ -166,15 +177,19 @@ export function scanSignalsForPromotion(options: {
     if (!s) continue;
     if (s.injects_rolling_n < minInjects) continue;
     if (s.violations_rolling_n > 0) continue;
+    if (enforceability(rule) !== 'detectable') continue; // 자문 룰: 위반을 볼 수 없으니 "위반 0" 은 증거가 아니다
+    const passN = options.passCounts?.get(rule.rule_id) ?? 0;
+    if (passN < minPass) continue; // 평가돼 통과한 기록이 없으면 준수 근거 없음
     const mechs = (rule.enforce_via ?? []).map((spec) => spec.mech);
     const hasPromotable = mechs.some((m) => m === 'B' || m === 'C');
     if (!hasPromotable) continue;
     out.push({
       rule_id: rule.rule_id,
       injects_rolling_n: s.injects_rolling_n,
+      checks_pass_n: passN,
       violations_rolling_n: s.violations_rolling_n,
       current_mechs: [...new Set(mechs)],
-      reason: `rolling ${s.injects_rolling_n} injects, 0 violations — promotion candidate`,
+      reason: `${passN} evaluated passes, 0 violations (detectable rule) — promotion candidate`,
     });
   }
   return out;
@@ -216,8 +231,8 @@ export function applyPromotion(rule: Rule, candidate: PromotionCandidate, now: n
     to_mech: spec.mech,
     reason: 'consistent_adherence' as const,
     trigger_stats: {
-      window_n: candidate.injects_rolling_n,
-      adherence_rate: 1.0,
+      window_n: candidate.checks_pass_n,
+      adherence_rate: candidate.checks_pass_n / Math.max(1, candidate.checks_pass_n + candidate.violations_rolling_n),
     },
   })).filter((p) => p.from_mech !== p.to_mech);
 

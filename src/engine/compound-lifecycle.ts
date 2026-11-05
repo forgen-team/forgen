@@ -2,8 +2,9 @@ import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { createLogger } from '../core/logger.js';
-import type { SolutionFrontmatter, SolutionStatus } from './solution-format.js';
-import { parseFrontmatterOnly } from './solution-format.js';
+import type { RetiredReason, SolutionFrontmatter, SolutionStatus } from './solution-format.js';
+import { parseFrontmatterOnly, parseSolutionV3 } from './solution-format.js';
+import { defaultSolutionDirs } from './solution-index.js';
 import { mutateSolutionFile } from './solution-writer.js';
 
 const log = createLogger('compound-lifecycle');
@@ -201,7 +202,8 @@ export function isStale(fm: SolutionFrontmatter): boolean {
 
   if (fm.evidence.injected === 0) {
     // Never injected — check age
-    const created = new Date(fm.created).getTime();
+    // 복귀(reopen)한 솔루션은 updated 가 갱신되므로 둘 중 늦은 쪽을 기준으로 한다 (아니면 복귀 즉시 다시 stale).
+    const created = Math.max(new Date(fm.created).getTime(), new Date(fm.updated).getTime() || 0);
     const age = Date.now() - created;
     return age > ninetyDaysMs;
   }
@@ -228,8 +230,24 @@ export function updateSolutionFile(
   });
 }
 
+/**
+ * 은퇴 패치. 사유를 남기고, confidence 는 반증(contradicted)일 때만 0 으로 만든다.
+ * stale/manual 은 값어치가 없어서가 아니라 시간·사용자 판단 때문이라 confidence 를 보존해야 복귀(reopen)가 의미 있다.
+ */
+export function retirePatch(fm: SolutionFrontmatter, reason: RetiredReason): Partial<SolutionFrontmatter> {
+  return {
+    status: 'retired',
+    retiredReason: reason,
+    retiredAt: new Date().toISOString().split('T')[0],
+    ...(reason === 'contradicted' ? { confidence: 0 } : { confidence: fm.confidence }),
+  };
+}
+
 /** Run lifecycle check on all solutions */
-export function runLifecycleCheck(_sessionId: string = 'system'): LifecycleResult {
+export function runLifecycleCheck(_sessionId: string = 'system', opts: { dryRun?: boolean } = {}): LifecycleResult {
+  const dryRun = opts.dryRun === true;
+  // dry-run 이면 파일을 쓰지 않고 "바뀔 항목"만 결과에 담는다 (CLI 미리보기).
+  const apply = (file: string, patch: Parameters<typeof updateSolutionFile>[1]): boolean => (dryRun ? true : updateSolutionFile(file, patch));
   const result: LifecycleResult = { promoted: [], demoted: [], retired: [], contradictions: [] };
 
   // Meta-learning: load adaptive thresholds if available
@@ -256,7 +274,7 @@ export function runLifecycleCheck(_sessionId: string = 'system'): LifecycleResul
 
         // 1. Check stale
         if (isStale(fm)) {
-          if (updateSolutionFile(filePath, { status: 'retired', confidence: 0 })) {
+          if (apply(filePath, retirePatch(fm, 'stale'))) {
             result.retired.push(fm.name);
           }
           continue;
@@ -266,10 +284,9 @@ export function runLifecycleCheck(_sessionId: string = 'system'): LifecycleResul
         const demoteTo = checkConfidenceDemotion(fm);
         if (demoteTo) {
           if (
-            updateSolutionFile(filePath, {
-              status: demoteTo,
-              confidence: statusConfidence(demoteTo),
-            })
+            apply(filePath, demoteTo === 'retired'
+              ? retirePatch(fm, 'contradicted') // experiment 의 confidence 가 하한 아래 = 반증 누적의 결과
+              : { status: demoteTo, confidence: statusConfidence(demoteTo) })
           ) {
             result.demoted.push(`${fm.name}: ${fm.status} → ${demoteTo}`);
           }
@@ -279,7 +296,7 @@ export function runLifecycleCheck(_sessionId: string = 'system'): LifecycleResul
         // 3. Circuit breaker BEFORE promotion — negative evidence takes priority
         const cbThreshold = CIRCUIT_BREAKER_THRESHOLDS[fm.status];
         if (cbThreshold !== undefined && fm.evidence.negative >= cbThreshold) {
-          if (updateSolutionFile(filePath, { status: 'retired', confidence: 0 })) {
+          if (apply(filePath, retirePatch(fm, 'contradicted'))) {
             result.retired.push(`${fm.name} (circuit-breaker:${fm.status})`);
           }
           continue;
@@ -295,7 +312,7 @@ export function runLifecycleCheck(_sessionId: string = 'system'): LifecycleResul
             const next = nextStatus(fm.status);
             if (next) {
               if (
-                updateSolutionFile(filePath, { status: next, confidence: statusConfidence(next) })
+                apply(filePath, { status: next, confidence: statusConfidence(next) })
               ) {
                 result.promoted.push(`${fm.name}: ${fm.status} → ${next}`);
               }
@@ -309,7 +326,7 @@ export function runLifecycleCheck(_sessionId: string = 'system'): LifecycleResul
           const effectiveCwd = process.env.FORGEN_CWD ?? process.env.COMPOUND_CWD ?? process.cwd();
           if (checkIdentifierStaleness(fm, effectiveCwd)) {
             const newConf = Math.max(0, fm.confidence - 0.2);
-            if (updateSolutionFile(filePath, { confidence: newConf })) {
+            if (apply(filePath, { confidence: newConf })) {
               result.demoted.push(`${fm.name}: identifier-stale (confidence → ${newConf})`);
             }
           }
@@ -371,6 +388,93 @@ export function detectContradictions(dirs: string[]): string[] {
   }
 
   return contradictions;
+}
+
+/** 영문·한글 낱말 집합의 Jaccard 유사도 (0~1). 같은 이름이라도 내용이 다르면 복귀 대상이 아니다. */
+export function contentSimilarity(a: string, b: string): number {
+  const tokens = (t: string) => new Set((t.toLowerCase().match(/[a-z0-9가-힣]{2,}/g) ?? []));
+  const A = tokens(a);
+  const B = tokens(b);
+  if (A.size === 0 || B.size === 0) return 0;
+  let inter = 0;
+  for (const t of A) if (B.has(t)) inter++;
+  return inter / (A.size + B.size - inter);
+}
+
+/** 재추출 내용이 은퇴본과 이만큼 비슷해야 "같은 내용이 다시 나왔다"고 본다. */
+export const REOPEN_MIN_SIMILARITY = 0.5;
+
+/** me + 설치된 팩 + cwd 프로젝트 솔루션 디렉터리에서 이름으로 파일을 찾는다 (심볼릭 링크 제외). */
+function findSolutionFile(solutionName: string, cwd?: string): { filePath: string; fm: SolutionFrontmatter; raw: string } | null {
+  for (const { dir } of defaultSolutionDirs(cwd)) {
+    if (!fs.existsSync(dir)) continue;
+    for (const file of fs.readdirSync(dir).filter((f) => f.endsWith('.md'))) {
+      const filePath = path.join(dir, file);
+      try { if (fs.lstatSync(filePath).isSymbolicLink()) continue; } catch { continue; }
+      const raw = fs.readFileSync(filePath, 'utf-8');
+      const fm = parseFrontmatterOnly(raw);
+      if (fm && fm.name === solutionName) return { filePath, fm, raw };
+    }
+  }
+  return null;
+}
+
+/**
+ * 은퇴한 솔루션을 후보 상태로 되돌린다 (D6 복귀 경로). me·팩·프로젝트 솔루션 모두 대상.
+ * - 은퇴 전 등급을 지킨다: 보존된 confidence 가 verified(0.75)/mature(0.9) 이상이면 그 등급으로 복귀, 아니면 candidate.
+ * - 은퇴 사유/시각 제거, updated=오늘(오래됨 판정 리셋).
+ * - contradicted 와 사유 미상(구버전 은퇴, 반증이었을 수 있다)은 negative 증거를 0 으로 되돌린다 — 그대로 두면 회로 차단기가 바로 다시 은퇴시킨다.
+ */
+export function reopenSolution(solutionName: string, cwd?: string): { ok: boolean; reason?: string; previous?: RetiredReason | 'unknown'; status?: SolutionStatus } {
+  const found = findSolutionFile(solutionName, cwd);
+  if (!found) return { ok: false, reason: 'not-found' };
+  const { filePath, fm } = found;
+  if (fm.status !== 'retired') return { ok: false, reason: 'not-retired' };
+  const previous = fm.retiredReason ?? 'unknown';
+  let restored: SolutionStatus = 'candidate';
+  const ok = mutateSolutionFile(filePath, (sol) => {
+    const f = sol.frontmatter;
+    restored = f.confidence >= statusConfidence('mature') ? 'mature' : f.confidence >= statusConfidence('verified') ? 'verified' : 'candidate';
+    f.status = restored;
+    f.confidence = f.confidence > 0 ? f.confidence : statusConfidence('candidate');
+    delete f.retiredReason;
+    delete f.retiredAt;
+    if (previous === 'contradicted' || previous === 'unknown') f.evidence.negative = 0;
+    return true;
+  });
+  return ok ? { ok: true, previous, status: restored } : { ok: false, reason: 'write-failed' };
+}
+
+/** 사용자가 직접 끈다. 사유 manual — confidence 는 보존하고 재추출돼도 자동으로 되살리지 않는다. */
+export function deactivateSolution(solutionName: string): boolean {
+  if (!fs.existsSync(ME_SOLUTIONS)) return false;
+  for (const file of fs.readdirSync(ME_SOLUTIONS).filter((f) => f.endsWith('.md'))) {
+    const filePath = path.join(ME_SOLUTIONS, file);
+    try { if (fs.lstatSync(filePath).isSymbolicLink()) continue; } catch { continue; }
+    const fm = parseFrontmatterOnly(fs.readFileSync(filePath, 'utf-8'));
+    if (!fm || fm.name !== solutionName || fm.status === 'retired') continue;
+    return updateSolutionFile(filePath, retirePatch(fm, 'manual'));
+  }
+  return false;
+}
+
+export type ReExtractOutcome = 'reopened' | 'different' | 'blocked' | 'none';
+
+/**
+ * 재추출된 솔루션과 같은 이름의 은퇴본이 있을 때의 처리. 이름만으로 복귀시키지 않고 **내용이 비슷할 때만** 복귀한다.
+ *  - 'reopened'  내용이 비슷하고 stale/사유 미상 → 복귀
+ *  - 'blocked'   내용이 비슷하지만 manual(사용자가 끔)·contradicted(반증됨) → 되살리지 않음 (새 추출은 버려도 된다)
+ *  - 'different' 이름만 같고 내용이 다르다 → 복귀하지 않는다. 호출자는 새 추출을 버리면 안 된다
+ *  - 'none'      은퇴본 없음
+ */
+export function reopenIfReExtracted(solutionName: string, newContent: string, cwd?: string): ReExtractOutcome {
+  const found = findSolutionFile(solutionName, cwd);
+  if (!found || found.fm.status !== 'retired') return 'none';
+  const oldBody = parseSolutionV3(found.raw)?.content ?? found.raw;
+  const newBody = parseSolutionV3(newContent)?.content ?? newContent;
+  if (contentSimilarity(oldBody, newBody) < REOPEN_MIN_SIMILARITY) return 'different';
+  if (found.fm.retiredReason === 'manual' || found.fm.retiredReason === 'contradicted') return 'blocked';
+  return reopenSolution(solutionName, cwd).ok ? 'reopened' : 'none';
 }
 
 /** Manual verify command: immediately promote to verified */

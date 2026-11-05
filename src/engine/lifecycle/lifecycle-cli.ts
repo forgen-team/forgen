@@ -8,7 +8,8 @@
 import * as path from 'node:path';
 import { loadAllRules, saveRule, syncRuleCounters } from '../../store/rule-store.js';
 import { STATE_DIR } from '../../core/paths.js';
-import { collectSignals, deriveRuleCounters, readViolationsWindow, ROTATED_KEEP_DAYS, isConfirmedBypass, isSyntheticEntry } from './signals.js';
+import { enforceability } from '../rule-detectability.js';
+import { collectSignals, deriveRuleCounters, passCountsByRule, readViolationsWindow, ROTATED_KEEP_DAYS, isConfirmedBypass, isSyntheticEntry } from './signals.js';
 import { detect as detectT2 } from './trigger-t2-violation.js';
 import { detect as detectT3 } from './trigger-t3-bypass.js';
 import { detect as detectT4 } from './trigger-t4-decay.js';
@@ -55,7 +56,7 @@ export async function handleLifecycleScan(args: string[]): Promise<void> {
   ];
 
   const demotionCandidates = scanDriftForDemotion({ rules, drift, now });
-  const promotionCandidates = scanSignalsForPromotion({ rules, signals, ts: now });
+  const promotionCandidates = scanSignalsForPromotion({ rules, signals, ts: now, passCounts: passCountsByRule() });
 
   console.log(`\n  Lifecycle Scan — ${rules.length} rule(s)  (${apply ? 'APPLY' : 'dry-run'})\n`);
   console.log(`  Signals: violations.jsonl=${violations.length} (synthetic-session excluded ${syntheticExcluded})  bypass_confirmed=${bypassConfirmed}  drift.jsonl=${drift.length}\n`);
@@ -76,7 +77,11 @@ export async function handleLifecycleScan(args: string[]): Promise<void> {
   };
 
   if (events.length === 0 && demotionCandidates.length === 0 && promotionCandidates.length === 0) {
-    console.log('  No lifecycle events. System stable.\n');
+    // "System stable" 은 오해 소지가 있었다: 위반을 볼 수 없는 자문 룰이 있으면 '이벤트 없음'은 '문제 없음'이 아니다.
+    const advisoryN = rules.filter((r) => r.status === 'active' && enforceability(r) === 'advisory').length;
+    console.log(`  이벤트 없음 (이 스캔이 본 신호 기준).`);
+    if (advisoryN > 0) console.log(`  ※ 활성 룰 ${advisoryN}개는 자문(위반 탐지 불가) — '위반 0'이 준수를 뜻하지 않으며 승급 근거로도 쓰지 않습니다.\n`);
+    else console.log('');
     if (apply) console.log(`  Counters synced: ${applyCounters()} rule(s).\n`);
     return;
   }

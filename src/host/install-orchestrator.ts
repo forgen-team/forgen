@@ -141,7 +141,10 @@ export function renderResult(result: OrchestratorResult, dryRun: boolean): strin
   if (result.claude) {
     lines.push('');
     lines.push('  Claude:');
-    lines.push(`    plugin cache: ${result.claude.pluginCachePath}`);
+    lines.push(`    shim: ${result.claude.shimPath ? `${result.claude.shimPath} (${result.claude.shimStatus})` : 'not used (absolute paths)'}`);
+    lines.push(`    statusLine: ${result.claude.statusLine}${result.claude.statusLine === 'custom' ? ' (another statusLine is set — left as is; `forgen statusline install --force|--chain`)' : ''}`);
+    lines.push(`    agents: ${result.claude.agentsInstalled} ch-*.md → ${result.claude.agentsPath}`);
+    if (result.claude.legacyPluginCleaned) lines.push('    removed leftover forgen@forgen-local plugin cache');
     lines.push(`    slash commands: ${result.claude.slashCommandsCount} → ${result.claude.slashCommandsPath}`);
     lines.push(`    settings.json hooks: ${result.claude.hooksInjected}`);
     lines.push(`    MCP: ${result.claude.mcpAlreadyPresent ? 'already present' : (result.claude.mcpRegistered ? 'registered' : 'skipped')}`);
@@ -152,6 +155,7 @@ export function renderResult(result: OrchestratorResult, dryRun: boolean): strin
       skipped: 'skipped (--no-verify-skill)',
     };
     lines.push(`    verify skill: ${verifyLine[result.claude.verifySkill]}`);
+    for (const e of result.claude.errors) lines.push(`    ✗ FAILED ${e}`);
   }
   if (result.codex) {
     lines.push('');
@@ -161,6 +165,9 @@ export function renderResult(result: OrchestratorResult, dryRun: boolean): strin
     lines.push(`    MCP: ${result.codex.mcpAlreadyPresent ? 'already present' : (result.codex.mcpRegistered ? 'registered' : 'skipped')}`);
     lines.push(`    skills: ${result.codex.skillsInstalled} commands + ${result.codex.devGuideSkillsInstalled} dev-guide → ${result.codex.skillsPath}`);
     lines.push(`    agents: ${result.codex.agentsInstalled} ch-*.toml → ${result.codex.agentsPath}${result.codex.multiAgentEnabled ? '' : '  (⚠ config.toml 에 [features] multi_agent = true 가 없어 Codex 가 spawn 하지 못함 — 추가 권장)'}`);
+    lines.push(`    AGENTS.md: ${result.codex.agentsMdPath}`);
+    for (const p of result.codex.staleAgentsMdCleaned) lines.push(`    cleaned old forgen block (your other content kept): ${p}`);
+    if (result.codex.agentsOverridePath) lines.push(`    ⚠ ${result.codex.agentsOverridePath} exists — Codex reads only that file at this level, so the forgen block in AGENTS.md is NOT read. Move the block there or remove the override.`);
     lines.push(`    rules: injected per session via SessionStart hook (<forgen-rules host="codex">)`);
     const t = result.codex.hookTrust;
     if (t.total > 0 && t.trusted === t.total) {
@@ -190,6 +197,7 @@ export function renderResult(result: OrchestratorResult, dryRun: boolean): strin
     lines.push(`    plugin: ${result.opencode.pluginInstalled ? 'installed' : 'skipped'} → ${result.opencode.pluginPath}`);
     lines.push(`    MCP: ${result.opencode.mcpAlreadyPresent ? 'already present' : (result.opencode.mcpRegistered ? 'registered' : 'skipped')}`);
     lines.push(`    AGENTS.md rules: ${result.opencode.agentsMdInjected ? 'injected' : 'skipped'}`);
+    for (const p of result.opencode.staleAgentsMdCleaned ?? []) lines.push(`    cleaned old forgen block (your other content kept): ${p}`);
     lines.push('    note: 완료가드/context 주입은 후속 증분 (projection/inject 미완).');
   }
   lines.push('');

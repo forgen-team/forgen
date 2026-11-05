@@ -40,7 +40,6 @@ describe('renderCodexRulesBlock', () => {
     expect(out).toContain('<!-- v1-rules.md -->');
     expect(out).toContain('mock 으로 완료 선언 금지');
     expect(out).toContain('<!-- project-context.md -->');
-    expect(out).toContain('.claude/rules/');
   });
 
   it('빈/공백 파일만 있으면 null', async () => {
@@ -65,10 +64,10 @@ describe('renderCodexRulesBlock', () => {
   });
 });
 
-describe('buildCodexRulesContext', () => {
+describe('buildRulesContext', () => {
   it('generateClaudeRuleFiles 산출(정적 security/anti-pattern + v1 rules)을 블록으로 만든다', async () => {
-    const { buildCodexRulesContext } = await load();
-    const out = await buildCodexRulesContext(isolatedHome, '## Must Not\n- 사용자 confirm 없는 rm -rf 금지');
+    const { buildRulesContext } = await load();
+    const out = await buildRulesContext(isolatedHome, '## Must Not\n- 사용자 confirm 없는 rm -rf 금지', 'codex');
     expect(out).not.toBeNull();
     expect(out).toContain('<!-- project-context.md -->');
     expect(out).toContain('<!-- v1-rules.md -->');

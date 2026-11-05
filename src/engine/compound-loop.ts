@@ -2,7 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { ME_SOLUTIONS, ME_RULES } from '../core/paths.js';
 import { resolveScope } from '../core/scope-resolver.js';
-import { serializeSolutionV3, extractTags, DEFAULT_EVIDENCE, slugify } from './solution-format.js';
+import { serializeSolutionV3, extractSolutionTags, DEFAULT_EVIDENCE, slugify } from './solution-format.js';
 import type { SolutionV3, SolutionType } from './solution-format.js';
 
 export interface CompoundInsight {
@@ -16,6 +16,10 @@ export interface CompoundInsight {
   /** 분류 근거 */
   reason: string;
   source: 'session' | 'manual';
+  /** 적용 조건·출처 (솔루션 `## Context` 칸). 없으면 빈 칸. */
+  context?: string;
+  /** 적용 프로젝트 키들 (없으면 전역). */
+  projects?: string[];
 }
 
 /** 키워드 기반으로 인사이트를 개인/팀으로 자동 분류 */
@@ -65,17 +69,37 @@ export async function runCompoundLoop(cwd: string, insights: CompoundInsight[]):
       }
 
       // 중복 체크
+      let target = destPath;
       if (fs.existsSync(destPath)) {
-        skipped.push(`${insight.title}: already exists`);
-        continue;
+        // 은퇴한 같은 이름의 솔루션: 내용이 비슷할 때만 복귀시킨다 (D6). 내용이 다르면 새 추출을 버리지 않고 다른 이름으로 저장한다.
+        let differentFromRetired = false;
+        if (insight.type === 'solution' || insight.type === 'pattern') {
+          const { reopenIfReExtracted } = await import('./compound-lifecycle.js');
+          const outcome = reopenIfReExtracted(path.basename(destPath, '.md'), insight.content, cwd);
+          if (outcome === 'reopened') {
+            saved.push(`${insight.scope}/${insight.type}: ${insight.title} (reopened from retired)`);
+            continue;
+          }
+          if (outcome === 'different') {
+            differentFromRetired = true;
+            const base = destPath.replace(/\.md$/, '');
+            let n = 2;
+            while (fs.existsSync(`${base}-${n}.md`)) n++;
+            target = `${base}-${n}.md`;
+          }
+        }
+        if (!differentFromRetired) {
+          skipped.push(`${insight.title}: already exists`);
+          continue;
+        }
       }
 
       // 디렉토리 생성
-      fs.mkdirSync(path.dirname(destPath), { recursive: true });
+      fs.mkdirSync(path.dirname(target), { recursive: true });
 
       // 파일 저장
-      const fileContent = formatInsight(insight);
-      fs.writeFileSync(destPath, fileContent);
+      const fileContent = formatInsight(insight, path.basename(target, '.md'));
+      fs.writeFileSync(target, fileContent);
       saved.push(`${insight.scope}/${insight.type}: ${insight.title}`);
     } catch (err) {
       skipped.push(`${insight.title}: ${(err as Error).message}`);
@@ -129,25 +153,26 @@ function inferIdentifiers(title: string, content: string): string[] {
   return all.slice(0, 10); // max 10 identifiers
 }
 
-function formatInsight(insight: CompoundInsight): string {
+function formatInsight(insight: CompoundInsight, name?: string): string {
   const today = new Date().toISOString().split('T')[0];
   const solution: SolutionV3 = {
     frontmatter: {
-      name: slugify(insight.title),
+      name: name ?? slugify(insight.title),
       version: 1,
       status: 'candidate',
       confidence: 0.5,
       type: mapInsightType(insight.type),
       scope: insight.scope as 'me' | 'team' | 'project',
-      tags: extractTags(`${insight.title} ${insight.content}`),
+      tags: extractSolutionTags(`${insight.title} ${insight.content}`),
       identifiers: inferIdentifiers(insight.title, insight.content),
       evidence: { ...DEFAULT_EVIDENCE },
       created: today,
       updated: today,
       supersedes: null,
       extractedBy: insight.source === 'manual' ? 'manual' : 'auto',
+      ...(insight.projects?.length ? { projects: insight.projects } : {}),
     },
-    context: '',
+    context: insight.context ?? '',
     content: insight.content,
   };
   return serializeSolutionV3(solution);
@@ -229,7 +254,8 @@ export async function handleCompound(args: string[]): Promise<void> {
                                      Rollback unused auto-extracted solutions since date
 
   Lifecycle:
-    forgen compound --lifecycle      Run promotion/demotion/circuit-breaker check
+    forgen compound --lifecycle [--apply]
+                                     Preview promotion/demotion/circuit-breaker changes (--apply to write)
     forgen compound --verify <name>  Manually promote solution to verified
 
   Export/Import (whole store, tar.gz):
@@ -318,8 +344,10 @@ export async function handleCompound(args: string[]): Promise<void> {
   // --- lifecycle command ---
   if (args.includes('--lifecycle') || args.includes('lifecycle')) {
     const { runLifecycleCheck } = await import('./compound-lifecycle.js');
-    const result = runLifecycleCheck();
-    console.log('\n  Compound Lifecycle Check\n');
+    // 상태를 바꾸는 명령이라 기본은 미리보기. --apply 를 줘야 실제로 승급·강등·폐기한다.
+    const apply = args.includes('--apply');
+    const result = runLifecycleCheck('system', { dryRun: !apply });
+    console.log(`\n  Compound Lifecycle Check${apply ? '' : ' (미리보기 — 아무것도 바꾸지 않았습니다)'}\n`);
     if (result.promoted.length) {
       console.log('  Promoted:');
       for (const p of result.promoted) console.log(`    ↑ ${p}`);
@@ -338,6 +366,8 @@ export async function handleCompound(args: string[]): Promise<void> {
     }
     if (!result.promoted.length && !result.demoted.length && !result.retired.length && !result.contradictions.length) {
       console.log('  No lifecycle changes needed.\n');
+    } else if (!apply) {
+      console.log('\n  적용하려면: forgen compound --lifecycle --apply');
     }
     console.log();
     return;
@@ -400,10 +430,40 @@ export async function handleCompound(args: string[]): Promise<void> {
     return;
   }
 
+  // --- reopen / retired (D6: 은퇴 복귀 경로) ---
+  if (args[0] === 'reopen') {
+    const name = args[1];
+    if (!name || name.startsWith('--')) { console.log('  Usage: forgen compound reopen <solution-name>\n'); return; }
+    const { reopenSolution } = await import('./compound-lifecycle.js');
+    const r = reopenSolution(name, process.cwd());
+    if (r.ok) console.log(`\n  ✓ Reopened: ${name} (이전 은퇴 사유: ${r.previous}) → ${r.status ?? 'candidate'}\n`);
+    else console.log(`\n  Reopen 실패: ${name} (${r.reason})\n`);
+    return;
+  }
+  if (args[0] === 'deactivate') {
+    const name = args[1];
+    if (!name || name.startsWith('--')) { console.log('  Usage: forgen compound deactivate <solution-name>   (사용자가 끔 — retiredReason=manual, 자동 복귀 없음)\n'); return; }
+    const { deactivateSolution } = await import('./compound-lifecycle.js');
+    console.log(deactivateSolution(name) ? `\n  ✓ Deactivated: ${name} (manual). 되돌리기: forgen compound reopen ${name}\n` : `\n  Deactivate 실패: ${name} (없거나 이미 은퇴)\n`);
+    return;
+  }
+  if (args[0] === 'retired') {
+    const { listRetired } = await import('./compound-cli.js');
+    listRetired();
+    return;
+  }
+
   // --- retag command ---
   if (args.includes('retag') || args.includes('--retag')) {
     const { retagSolutions } = await import('./compound-cli.js');
-    retagSolutions();
+    retagSolutions(args.includes('--apply')); // 상태를 바꾸므로 기본은 미리보기
+    return;
+  }
+
+  // --- habits command (습관 로그를 솔루션에서 behavior 로 분리) ---
+  if (args[0] === 'habits' || args.includes('--habits')) {
+    const { migrateHabitLogs } = await import('./compound-cli.js');
+    migrateHabitLogs(args.includes('--apply'));
     return;
   }
 
@@ -497,15 +557,16 @@ export async function handleCompound(args: string[]): Promise<void> {
   // 인자가 없거나 알 수 없는 플래그만 있으면 수동 추가/interactive가 아닌 것으로 간주
   const knownFlags = [
     '--solution', '--rule', '--convention', '--pattern', '--to', '--pause-auto', '--resume-auto',
-    '--lifecycle', '--verify', '--save', '--interactive',
-    'list', 'inspect', 'remove', 'rollback', 'retag', 'lifecycle',
+    '--lifecycle', '--apply', '--verify', '--save', '--interactive', '--project',
+    'list', 'inspect', 'remove', 'rollback', 'retag', 'lifecycle', 'habits', '--habits', 'reopen', 'retired', 'deactivate',
     '--list', '--inspect', '--remove', '--rollback', '--retag', '--since', 'interactive',
     'export', 'import', '--output', '--out', '--dry-run',
   ];
   const hasTypeFlag = knownFlags.some(f => args.includes(f));
 
   if (!hasTypeFlag) {
-    console.log('  Unknown compound arguments. Run `forgen compound --help` for usage.\n');
+    console.error(`  Unknown compound arguments: ${args.join(' ')}\n  Run \`forgen compound --help\` for usage.\n`);
+    process.exitCode = 1;
     return;
   }
 
@@ -539,7 +600,15 @@ async function handleManualAdd(
   // --solution/--rule 다음 인자들이 제목과 내용 (-- 접두사 인자 필터)
   const typeFlag = `--${type}`;
   const flagIdx = args.indexOf(typeFlag);
-  const positionalArgs = args.slice(flagIdx + 1).filter(a => !a.startsWith('--'));
+  // --context <text>: 값이 위치 인자로 새지 않도록 플래그와 함께 제거.
+  const ctxIdx = args.indexOf('--context');
+  const context = ctxIdx !== -1 ? args[ctxIdx + 1] : undefined;
+  const prjIdx = args.indexOf('--project');
+  const projectOpt = prjIdx !== -1 && args[prjIdx + 1] && !args[prjIdx + 1].startsWith('--') ? args[prjIdx + 1].toLowerCase() : undefined;
+  const argsNoPrj = prjIdx !== -1 ? [...args.slice(0, prjIdx), ...args.slice(prjIdx + 2)] : args;
+  const ctxIdx2 = argsNoPrj.indexOf('--context');
+  const argsNoCtx = ctxIdx2 !== -1 ? [...argsNoPrj.slice(0, ctxIdx2), ...argsNoPrj.slice(ctxIdx2 + 2)] : argsNoPrj;
+  const positionalArgs = argsNoCtx.slice(argsNoCtx.indexOf(typeFlag) + 1).filter(a => !a.startsWith('--'));
   const title = positionalArgs[0];
   const content = positionalArgs.slice(1).join(' ');
 
@@ -560,6 +629,8 @@ async function handleManualAdd(
     classification,
     reason,
     source: 'manual',
+    ...(context && !context.startsWith('--') ? { context: context.slice(0, 600) } : {}),
+    ...(projectOpt ? { projects: [projectOpt] } : {}),
   };
 
   const result = await runCompoundLoop(cwd, [insight]);

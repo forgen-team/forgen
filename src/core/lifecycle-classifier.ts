@@ -24,19 +24,29 @@ export interface LifecycleClass {
   acted_90d: number;
   matched_180d: number;
   ageDays: number;
+  /** 전체 acted_on 신호가 너무 적어 acted 로 hot/warm/cold 를 가를 수 없는 기간이었는가 */
+  signalWeak?: boolean;
 }
+
+/** 90일 동안 전체 솔루션의 acted_on 합이 이보다 적으면 "신호가 약한 기간"으로 본다. */
+export const WEAK_SIGNAL_TOTAL_ACTED = 3;
 
 /** 분류 로직 — §5.2 */
 export function classifyOne(
   _solutionId: string,
   ageDays: number,
   rates: HitRateRow,
+  signalWeak = false,
 ): Lifecycle {
   // new: age ≤ 30d
   if (ageDays <= 30) return 'new';
 
   // dead: matched_180d == 0 AND age > 30d
   if (rates.matched_180d === 0) return 'dead';
+
+  // acted 신호가 약한 기간: acted 없음을 "안 쓰임"으로 읽으면 전부 cold 로 무너진다.
+  // 실제로 주입(surfaced)된 솔루션은 판정 보류(warm), 매칭만 되고 주입 안 된 것만 cold.
+  if (signalWeak) return rates.surfaced_90d >= 1 ? 'warm' : 'cold';
 
   // hot: acted_90d >= 3 AND (acted_90d / max(surfaced_90d, 1)) >= 0.4
   const hitRate = rates.acted_90d / Math.max(rates.surfaced_90d, 1);
@@ -76,6 +86,9 @@ export function classifySolutions(): LifecycleClass[] {
   }
 
   const now = Date.now();
+  let totalActed = 0;
+  for (const r of rateMap.values()) totalActed += r.acted_90d;
+  const signalWeak = totalActed < WEAK_SIGNAL_TOTAL_ACTED;
 
   for (const file of files) {
     const filePath = path.join(ME_SOLUTIONS, file);
@@ -110,7 +123,7 @@ export function classifySolutions(): LifecycleClass[] {
       last_event_ts: 0,
     };
 
-    const lifecycle = classifyOne(solutionId, ageDays, rates);
+    const lifecycle = classifyOne(solutionId, ageDays, rates, signalWeak);
 
     const hitRate = rates.surfaced_90d > 0
       ? rates.acted_90d / rates.surfaced_90d
@@ -125,6 +138,7 @@ export function classifySolutions(): LifecycleClass[] {
       acted_90d: rates.acted_90d,
       matched_180d: rates.matched_180d,
       ageDays,
+      signalWeak,
     });
   }
 

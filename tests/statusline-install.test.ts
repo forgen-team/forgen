@@ -24,8 +24,12 @@ describe('isForgenStatusline', () => {
     expect(isForgenStatusline('"/usr/bin/node" "/x/node_modules/@wooojin/forgen/dist/cli.js" statusline')).toBe(true);
     expect(isForgenStatusline('bash -c \'"/Users/u/.bun/bin/bun" "$(ls -td ~/.claude/plugins/cache/claude-hud/*/ | head -1)src/index.ts"\'')).toBe(false);
   });
-  it('명령은 현재 node·cli.js 절대 경로 — PATH/nvm 무관', () => {
-    const c = forgenStatuslineCommand();
+  it('기본 명령은 고정 shim 경유 — node 버전·패키지 위치와 무관', () => {
+    expect(forgenStatuslineCommand()).toMatch(/[\\/]forgen-run" "cli\.js" statusline$/);
+    expect(isForgenStatusline(forgenStatuslineCommand())).toBe(true);
+  });
+  it('shim 을 못 쓰는 환경은 현재 node·cli.js 절대 경로', () => {
+    const c = forgenStatuslineCommand(null);
     expect(c).toContain(process.execPath);
     expect(c).toMatch(/[\\/]cli\.js" statusline$/); // src 에서 돌면 src/cli.js, dist 에서는 dist/cli.js
   });

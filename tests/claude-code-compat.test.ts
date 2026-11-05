@@ -123,23 +123,24 @@ describe('Claude Code compatibility', () => {
 
   // ── env vars 검증 ────────────────────────────────────────────────────────
 
-  it('FORGEN_V1 env var가 settings.json에 존재한다', async () => {
+  it('래퍼는 세션 env(FORGEN_*)를 settings.json 에 쓰지 않고, 이전에 남은 키는 지운다', async () => {
+    fs.mkdirSync(TEST_CLAUDE_DIR, { recursive: true });
+    fs.writeFileSync(TEST_SETTINGS_PATH, JSON.stringify({ env: { FORGEN_CWD: '/stale', FORGEN_V1: '1', COMPOUND_HARNESS: '1', MY_VAR: 'keep' } }));
     await prepareHarness(TEST_CWD);
 
     const settings = JSON.parse(fs.readFileSync(TEST_SETTINGS_PATH, 'utf-8'));
-    expect(settings.env).toBeDefined();
-    expect(settings.env.FORGEN_V1).toBe('1');
+    expect(settings.env).toEqual({ MY_VAR: 'keep' });
   });
 
   // ── statusLine 검증 ──────────────────────────────────────────────────────
 
-  it('statusLine이 type: "command" 이고 command가 "forgen"로 시작한다', async () => {
+  it('statusLine이 type: "command" 이고 고정 shim 경유(forgen-run cli.js statusline)다', async () => {
     await prepareHarness(TEST_CWD);
 
     const settings = JSON.parse(fs.readFileSync(TEST_SETTINGS_PATH, 'utf-8'));
     expect(settings.statusLine).toBeDefined();
     expect(settings.statusLine.type).toBe('command');
     expect(typeof settings.statusLine.command).toBe('string');
-    expect(settings.statusLine.command.startsWith('forgen')).toBe(true);
+    expect(settings.statusLine.command).toMatch(/forgen-run" "cli\.js" statusline$/);
   });
 });

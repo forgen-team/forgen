@@ -72,7 +72,7 @@ describe('promoteSessionCandidates — render_key upsert (A)', () => {
     const originalCreatedAt = rule1!.created_at;
 
     // TTL/cap 은퇴 시뮬레이션 (retireStaleAutoMinedRules 가 하는 것과 동일한 status 전이)
-    updateRuleStatus(originalId, 'removed');
+    updateRuleStatus(originalId, 'removed', 'test');
     const filesBeforeReMine = ruleFilesCount();
 
     // 같은 개념이 다른 세션(=새 evidence_id)에서 재차 채굴됨
@@ -224,7 +224,7 @@ describe('pruneRemovedRules (D)', () => {
     expect(fs.existsSync(path.join(ME_RULES, 'old-removed.json'))).toBe(true);
   });
 
-  it('apply: retention 지난 removed 파일만 실제 unlink', () => {
+  it('apply: retention 지난 removed 파일만 archive 로 이동하고 내용을 보존', () => {
     const old = new Date(Date.now() - 10 * 24 * 3600_000).toISOString();
     const recent = new Date(Date.now() - 1 * 24 * 3600_000).toISOString();
     writeRuleFile('old-removed', 'removed', old);
@@ -234,6 +234,8 @@ describe('pruneRemovedRules (D)', () => {
     const r = pruneRemovedRules({ retentionMs: 7 * 24 * 3600_000, apply: true });
     expect(r.deleted).toEqual(['old-removed']);
     expect(fs.existsSync(path.join(ME_RULES, 'old-removed.json'))).toBe(false);
+    const archived = path.join(TMP_HOME, 'me', 'rules-archive', 'old-removed.json');
+    expect(JSON.parse(fs.readFileSync(archived, 'utf-8')).status).toBe('removed');
     expect(fs.existsSync(path.join(ME_RULES, 'recent-removed.json'))).toBe(true);
     expect(fs.existsSync(path.join(ME_RULES, 'old-active.json'))).toBe(true);
   });

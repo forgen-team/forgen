@@ -69,7 +69,7 @@ describe('doctor W2-1 boundary (ADR-010)', () => {
     expect(output).not.toContain('Quick Wins');
     // forgen 고유 진단은 유지된다
     expect(output).toContain('[State Hygiene]');
-    expect(output).toContain('[Codex Parity]');
+    expect(output).not.toContain('[Codex Parity]');
   });
 
   it('hook timing table is verbose-only (collection stays, display demoted)', async () => {

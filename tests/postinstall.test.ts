@@ -119,9 +119,12 @@ describe('postinstall', () => {
       expect(settings.hooks.UserPromptSubmit).toBeDefined();
       const hasForgenHook = settings.hooks.UserPromptSubmit.some(
         (h: { hooks?: Array<{ command?: string }> }) =>
-          h.hooks?.some((cmd: { command?: string }) => cmd.command?.includes('dist/hooks/')),
+          h.hooks?.some((cmd: { command?: string }) => /forgen-run"? "hooks\//.test(cmd.command ?? '')),
       );
       expect(hasForgenHook).toBe(true);
+      // 설치 시점 node·패키지 경로는 settings 가 아니라 shim 내용에만 있다
+      expect(JSON.stringify(settings.hooks)).not.toContain('/dist/hooks/');
+      expect(fs.readFileSync(path.join(COMPOUND_HOME, 'bin', 'forgen-run'), 'utf-8')).toContain(path.resolve(__dirname, '..'));
     });
 
     it('should preserve custom hooks when adding forgen hooks', () => {
@@ -148,11 +151,11 @@ describe('postinstall', () => {
       expect(settings.someOtherSetting).toBe(true);
     });
 
-    it('should set COMPOUND_HARNESS env marker', () => {
+    it('settings.env 에 하네스 마커를 쓰지 않는다 (래퍼가 자식 env 로 넘긴다)', () => {
       runPostinstall();
 
       const settings = JSON.parse(fs.readFileSync(SETTINGS_PATH, 'utf-8'));
-      expect(settings.env?.COMPOUND_HARNESS).toBe('1');
+      expect(settings.env?.COMPOUND_HARNESS).toBeUndefined();
     });
 
     it('corrupted settings.json → 원본 보존 + .corrupt-<ts> 백업 + 쓰기 abort (audit fix #2/#10)', () => {
@@ -178,56 +181,36 @@ describe('postinstall', () => {
     });
   });
 
-  // ── Plugin registration ──
+  // ── 플러그인 등록 없음 (D1) ──
 
-  describe('plugin', () => {
-    it('should create .claude-plugin/plugin.json in cache dir', () => {
+  describe('plugin 등록 제거', () => {
+    it('캐시·installed_plugins·enabledPlugins 를 만들지 않는다', () => {
       runPostinstall();
 
-      // ~/.claude/plugins/cache/forgen-local/forgen/{version}/.claude-plugin/plugin.json
-      const cacheBase = path.join(TEST_HOME, '.claude', 'plugins', 'cache', 'forgen-local', 'forgen');
-      expect(fs.existsSync(cacheBase)).toBe(true);
-      const versions = fs.readdirSync(cacheBase);
-      expect(versions.length).toBeGreaterThan(0);
-      const pluginJson = path.join(cacheBase, versions[0], '.claude-plugin', 'plugin.json');
-      expect(fs.existsSync(pluginJson)).toBe(true);
-    });
-
-    it('should register in installed_plugins.json', () => {
-      runPostinstall();
-
-      const installedPath = path.join(TEST_HOME, '.claude', 'plugins', 'installed_plugins.json');
-      expect(fs.existsSync(installedPath)).toBe(true);
-      const data = JSON.parse(fs.readFileSync(installedPath, 'utf-8'));
-      expect(data.plugins['forgen@forgen-local']).toBeDefined();
-      expect(data.plugins['forgen@forgen-local'][0].scope).toBe('user');
-    });
-
-    it('should add to enabledPlugins in settings.json', () => {
-      runPostinstall();
-
+      expect(fs.existsSync(path.join(TEST_HOME, '.claude', 'plugins', 'cache', 'forgen-local'))).toBe(false);
+      expect(fs.existsSync(path.join(TEST_HOME, '.claude', 'plugins', 'installed_plugins.json'))).toBe(false);
       const settings = JSON.parse(fs.readFileSync(SETTINGS_PATH, 'utf-8'));
-      expect(settings.enabledPlugins?.['forgen@forgen-local']).toBe(true);
+      expect(settings.enabledPlugins?.['forgen@forgen-local']).toBeUndefined();
     });
 
-    it('plugin cache 가 assets/claude/commands/ 를 포함한다 (§7.2 자산 분리 후)', () => {
+    it('이전 설치가 남긴 forgen@forgen-local 잔재를 정리하고 다른 플러그인은 보존한다', () => {
+      const cache = path.join(TEST_HOME, '.claude', 'plugins', 'cache', 'forgen-local', 'forgen', '0.6.8');
+      fs.mkdirSync(path.dirname(cache), { recursive: true });
+      fs.symlinkSync(path.resolve(__dirname, '..'), cache, 'dir');
+      fs.writeFileSync(path.join(TEST_HOME, '.claude', 'plugins', 'installed_plugins.json'), JSON.stringify({ version: 2, plugins: { 'forgen@forgen-local': [{}], 'other@mk': [{}] } }));
+      const settings0 = JSON.parse(fs.readFileSync(SETTINGS_PATH, 'utf-8'));
+      settings0.enabledPlugins = { 'forgen@forgen-local': true, 'other@mk': true };
+      fs.writeFileSync(SETTINGS_PATH, JSON.stringify(settings0));
+
       runPostinstall();
 
-      const cacheBase = path.join(TEST_HOME, '.claude', 'plugins', 'cache', 'forgen-local', 'forgen');
-      const versions = fs.readdirSync(cacheBase);
-      const commandsDir = path.join(cacheBase, versions[0], 'assets', 'claude', 'commands');
-      expect(fs.existsSync(commandsDir)).toBe(true);
-      const files = fs.readdirSync(commandsDir).filter((f: string) => f.endsWith('.md'));
-      expect(files.length).toBeGreaterThan(0);
-    });
-
-    it('should not duplicate on reinstall', () => {
-      runPostinstall();
-      runPostinstall();
-
-      const installedPath = path.join(TEST_HOME, '.claude', 'plugins', 'installed_plugins.json');
-      const data = JSON.parse(fs.readFileSync(installedPath, 'utf-8'));
-      expect(data.plugins['forgen@forgen-local'].length).toBe(1);
+      expect(fs.existsSync(path.join(TEST_HOME, '.claude', 'plugins', 'cache', 'forgen-local'))).toBe(false);
+      // 심링크가 가리키던 패키지 자체는 지워지지 않는다
+      expect(fs.existsSync(path.resolve(__dirname, '..', 'package.json'))).toBe(true);
+      const installed = JSON.parse(fs.readFileSync(path.join(TEST_HOME, '.claude', 'plugins', 'installed_plugins.json'), 'utf-8'));
+      expect(Object.keys(installed.plugins)).toEqual(['other@mk']);
+      const settings = JSON.parse(fs.readFileSync(SETTINGS_PATH, 'utf-8'));
+      expect(settings.enabledPlugins).toEqual({ 'other@mk': true });
     });
   });
 

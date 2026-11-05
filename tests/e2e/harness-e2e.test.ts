@@ -367,16 +367,15 @@ describe('Scenario 3: Security Guard Pipeline', () => {
       expect(blocked).toBe(true);
     });
 
-    it('git push --force를 경고한다', async () => {
+    it('git push --force는 확인을 요청한다 (ask)', async () => {
       const result = await runHook('pre-tool-use.js', {
         tool_name: 'Bash',
         tool_input: { command: 'git push --force origin main' },
         session_id: 'e2e-security-force-push',
       });
 
-      // --force는 severity: warn → 경고 메시지가 systemMessage에 있어야 함
-      const warned = result.systemMessage !== undefined && result.systemMessage.length > 0;
-      expect(warned).toBe(true);
+      // --force 는 원격 이력을 덮어쓰므로 사용자 확인(ask) 요청
+      expect((result as { hookSpecificOutput?: { permissionDecision?: string } }).hookSpecificOutput?.permissionDecision).toBe('ask');
     });
 
     it('안전한 Bash 명령은 통과한다', async () => {

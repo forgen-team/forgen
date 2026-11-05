@@ -3,7 +3,7 @@
  *
  * 입력: Evidence(type='explicit_correction') + rules[].
  * 로직:
- *   1. evidence.axis_refs 에 rule.category 매칭 OR evidence.summary 에 rule.render_key 토큰 포함 → rule 매칭
+ *   1. candidate_rule_refs 또는 raw_payload.target_rule_id 가 rule 을 지목 → rule 매칭. 그 외 전이 없음.
  *   2. correction kind 에 따라 suggested_action 결정:
  *      - 'avoid-this' (이 rule 을 따르지 말아라) → retire
  *      - 'fix-now'   (이 rule 을 수정해야 한다) → flag (사용자 후속 편집 대기)
@@ -12,7 +12,7 @@
  * 출력: LifecycleEvent[]. 순수 — IO 없음.
  */
 
-import type { Evidence, Rule, RuleCategory } from '../../store/types.js';
+import type { Evidence, Rule } from '../../store/types.js';
 import type { LifecycleEvent } from './types.js';
 
 export interface T1Input {
@@ -23,37 +23,16 @@ export interface T1Input {
   ts?: number;
 }
 
-const CATEGORY_AXIS_MAP: Record<RuleCategory, string[]> = {
-  quality: ['quality_safety', 'quality'],
-  autonomy: ['autonomy'],
-  communication: ['communication_style', 'communication'],
-  workflow: ['workflow', 'judgment_philosophy'],
-  safety: ['quality_safety', 'safety'],
-};
-
+/**
+ * 교정이 이 룰을 **rule_id 로 명시 지목**했는가.
+ *
+ * 추측 매칭은 하지 않는다. 축 + 토큰 겹침은 실데이터 전이 9건 중 8건이 오탐이었고(드리블 교정의
+ * "사용자" 토큰으로 한국어 답변 룰이 retire), target 슬러그 일치는 같은 교정을 반복하면 그 교정으로
+ * 만든 룰을 스스로 폐기한다. 지목은 correction-record 의 rule_id 인자로만 한다.
+ */
 function matchesRule(evidence: Evidence, rule: Rule): boolean {
-  // 가장 강한 신호: 사용자가 명시적으로 rule_id 지목.
   if (evidence.candidate_rule_refs.includes(rule.rule_id)) return true;
-
-  // 그 외: axis 일치만으로는 과매칭 (예: "typescript-any" correction 이 "early-return"
-  // rule 까지 끌어오는 FP). axis AND 키워드 둘 다 요구.
-  const axes = CATEGORY_AXIS_MAP[rule.category] ?? [];
-  const axisMatch = axes.some((a) => evidence.axis_refs.includes(a));
-  if (!axisMatch) return false;
-
-  const keyTokens = rule.render_key
-    .split(/[._-]/)
-    .filter((t) => t.length >= 3);
-  if (keyTokens.length === 0) return false;
-
-  const summaryLower = evidence.summary.toLowerCase();
-  const targetToken = ((evidence.raw_payload as Record<string, unknown> | undefined)?.target ?? '')
-    .toString()
-    .toLowerCase();
-  return keyTokens.some((t) => {
-    const tokLower = t.toLowerCase();
-    return summaryLower.includes(tokLower) || (targetToken?.includes(tokLower));
-  });
+  return (evidence.raw_payload as Record<string, unknown> | undefined)?.target_rule_id === rule.rule_id;
 }
 
 export function detect(input: T1Input): LifecycleEvent[] {

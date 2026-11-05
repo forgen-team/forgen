@@ -216,6 +216,56 @@ export const DEFAULT_MATCH_TERMS: MatchTermEntry[] = [
 
   // ── Logging ──
   { canonical: 'logging', matchTerms: ['log', 'trace', 'monitor', '로깅', '로그'] },
+
+  // ── D5 한영 동의어 (짧은 사전) ──
+  // 원칙: 한국어↔영어 1:1 짝만 둔다. 평가 픽스처에 나온 낱말·넓은 일반어(access, limit, rate, store, 변경 등)는 넣지 않는다.
+  // 실측: 솔루션 태그는 한국어·영어가 섞여 저장되고 프롬프트는 어느 쪽으로도 온다. 같은 개념의 한 쌍만 묶는다.
+  // 넓은 계열(예: '상태' ↔ 'state' ↔ 'store')은 오탐을 키우므로 만들지 않는다.
+  { canonical: 'widget', matchTerms: ['위젯'] },
+  { canonical: 'loading', matchTerms: ['로딩', 'skeleton', '스켈레톤'] },
+  { canonical: 'empty', matchTerms: ['빈상태', '빈화면'] },
+  { canonical: 'token', matchTerms: ['토큰'] },
+  { canonical: 'darkmode', matchTerms: ['다크모드', 'dark-mode', '다크', '어두운'] },
+  { canonical: 'color', matchTerms: ['색상', '배경색', '컬러', '색'] },
+  { canonical: 'scroll', matchTerms: ['스크롤'] },
+  { canonical: 'render', matchTerms: ['렌더', '렌더링', '리렌더', '리렌더링', 'rerender', 'rendering'] },
+  { canonical: 'event', matchTerms: ['이벤트'] },
+  { canonical: 'frame', matchTerms: ['프레임', 'fps', 'raf'] },
+  { canonical: 'subagent', matchTerms: ['서브에이전트', 'sub-agent'] },
+  { canonical: 'parallel', matchTerms: ['병렬', 'concurrent', 'concurrency'] },
+  { canonical: 'ratelimit', matchTerms: ['rate-limit', '429', '레이트리밋'] },
+  { canonical: 'mock', matchTerms: ['stub', 'fake', '더블'] },
+  { canonical: 'inheritance', matchTerms: ['상속', 'extends'] },
+  { canonical: 'composition', matchTerms: ['합성', 'compose'] },
+  { canonical: 'stream', matchTerms: ['스트림', 'sse', '실시간', 'realtime', 'streaming'] },
+  { canonical: 'query', matchTerms: ['쿼리', 'react-query', 'tanstack'] },
+  { canonical: 'parse', matchTerms: ['파싱', 'parsing'] },
+  { canonical: 'codeblock', matchTerms: ['코드블록', '펜스', 'fence', '마크다운', 'markdown', 'codefence'] },
+  { canonical: 'mutex', matchTerms: ['락'] },
+  { canonical: 'bot', matchTerms: ['봇'] },
+  { canonical: 'model', matchTerms: ['모델'] },
+  { canonical: 'measure', matchTerms: ['측정', 'benchmark'] },
+  { canonical: 'plugin', matchTerms: ['플러그인'] },
+  { canonical: 'duplicate', matchTerms: ['중복', 'dedupe', 'dedup'] },
+  { canonical: 'zombie', matchTerms: ['좀비', 'orphan', '고아'] },
+  { canonical: 'block', matchTerms: ['차단', 'blocked', 'blocking'] },
+  { canonical: 'falsepositive', matchTerms: ['오탐', 'false-positive'] },
+  { canonical: 'feed', matchTerms: ['피드', 'rss'] },
+  { canonical: 'preset', matchTerms: ['프리셋'] },
+  { canonical: 'onboarding', matchTerms: ['온보딩'] },
+  { canonical: 'filter', matchTerms: ['필터', 'filtering'] },
+  { canonical: 'commit', matchTerms: ['커밋'] },
+  { canonical: 'diff', matchTerms: ['변경사항'] },
+  { canonical: 'download', matchTerms: ['다운로드'] },
+  { canonical: 'redirect', matchTerms: ['리다이렉트'] },
+  { canonical: 'mobile', matchTerms: ['모바일', '폰', 'phone'] },
+  { canonical: 'collapse', matchTerms: ['접기', '접고', 'accordion', '펼침'] },
+  { canonical: 'forbidden', matchTerms: ['403', '거절'] },
+  { canonical: 'privacy', matchTerms: ['privacy', '프라이버시', '개인정보'] },
+  { canonical: 'delete', matchTerms: ['삭제'] },
+  { canonical: 'save', matchTerms: ['저장', 'persist'] },
+  { canonical: 'design', matchTerms: ['설계'] },
+  { canonical: 'source', matchTerms: ['출처', 'citation'] },
 ];
 
 /**

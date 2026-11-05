@@ -193,6 +193,22 @@ describe('classifySolutions', () => {
     expect(found?.hitRate).toBeCloseTo(0.6);
   });
 
+  it('acted 신호가 거의 없는 기간: 주입된 솔루션을 전부 cold 로 무너뜨리지 않는다', () => {
+    for (const n of ['s1', 's2', 's3']) writeSolution(n, '2025-01-01');
+    writeSolution('only-matched', '2025-01-01');
+    const row = (id: string, surfaced: number, matched: number) => ({
+      solutionId: id, matched_30d: matched, surfaced_30d: surfaced, acted_30d: 0,
+      matched_90d: matched, surfaced_90d: surfaced, acted_90d: 0, matched_180d: matched, surfaced_180d: surfaced, acted_180d: 0, last_event_ts: Date.now(),
+    });
+    mockQueryHitRate.mockReturnValue([row('s1', 6, 8), row('s2', 1, 3), row('s3', 4, 4), row('only-matched', 0, 2)]);
+    const by = new Map(classifySolutions().map((r) => [r.solutionId, r]));
+    expect(by.get('s1')?.lifecycle).toBe('warm');
+    expect(by.get('s2')?.lifecycle).toBe('warm');
+    expect(by.get('s3')?.lifecycle).toBe('warm');
+    expect(by.get('only-matched')?.lifecycle).toBe('cold');
+    expect(by.get('s1')?.signalWeak).toBe(true);
+  });
+
   it('age calculation: created 2025-01-01 → ageDays > 30', () => {
     writeSolution('age-test', '2025-01-01');
     const result = classifySolutions();

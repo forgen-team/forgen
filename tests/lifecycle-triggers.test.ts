@@ -58,13 +58,32 @@ function evidence(overrides: Partial<Evidence> = {}): Evidence {
 }
 
 describe('T1 — explicit_correction', () => {
-  it('matches rule by axis + render_key token overlap', () => {
-    const r = rule({ rule_id: 'r1', category: 'quality' });
-    const ev = evidence({ axis_refs: ['quality_safety'] });
+  it('correction-record 의 rule_id 지목이면 매칭', () => {
+    const r = rule({ rule_id: 'r1', category: 'quality', render_key: 'quality_safety.verbose-errors' });
+    const ev = evidence({ axis_refs: ['quality_safety'], raw_payload: { target_rule_id: 'r1' } });
     const events = detectT1({ evidence: ev, rules: [r] });
     expect(events).toHaveLength(1);
     expect(events[0].rule_id).toBe('r1');
     expect(events[0].kind).toBe('t1_explicit_correction');
+  });
+
+  it('target 슬러그가 같아도 지목이 없으면 전이하지 않는다 (같은 교정 반복이 자기 룰을 폐기하던 경로)', () => {
+    const r = rule({ rule_id: 'r1', render_key: 'quality_safety.verbose-errors' });
+    const ev = evidence({ raw_payload: { target: 'verbose-errors' } });
+    expect(detectT1({ evidence: ev, rules: [r], correction_kind: 'avoid-this' })).toHaveLength(0);
+  });
+
+  it('축 일치 + 토큰 겹침만으로는 전이하지 않는다 (무관한 교정이 룰을 죽이던 회귀)', () => {
+    const r = rule({
+      rule_id: 'r-korean', category: 'workflow', strength: 'strong',
+      render_key: 'workflow.owner-reply-language',
+    });
+    const ev = evidence({
+      axis_refs: ['judgment_philosophy'],
+      summary: 'owner 에게 드리블 구분을 묻지 말 것',
+      raw_payload: { target: 'owner dribble question' },
+    });
+    expect(detectT1({ evidence: ev, rules: [r], correction_kind: 'avoid-this' })).toHaveLength(0);
   });
 
   it('axis matches but no key-token overlap → NOT matched (prevents FP)', () => {
@@ -86,20 +105,20 @@ describe('T1 — explicit_correction', () => {
 
   it('correction_kind=avoid-this → retire', () => {
     const r = rule({ rule_id: 'r1' });
-    const ev = evidence();
+    const ev = evidence({ candidate_rule_refs: ['r1'] });
     const events = detectT1({ evidence: ev, rules: [r], correction_kind: 'avoid-this' });
     expect(events[0].suggested_action).toBe('retire');
   });
 
   it('correction_kind=prefer-from-now → supersede', () => {
     const r = rule({ rule_id: 'r1' });
-    const events = detectT1({ evidence: evidence(), rules: [r], correction_kind: 'prefer-from-now' });
+    const events = detectT1({ evidence: evidence({ candidate_rule_refs: ['r1'] }), rules: [r], correction_kind: 'prefer-from-now' });
     expect(events[0].suggested_action).toBe('supersede');
   });
 
   it('correction_kind=fix-now → flag (default)', () => {
     const r = rule({ rule_id: 'r1' });
-    const events = detectT1({ evidence: evidence(), rules: [r], correction_kind: 'fix-now' });
+    const events = detectT1({ evidence: evidence({ candidate_rule_refs: ['r1'] }), rules: [r], correction_kind: 'fix-now' });
     expect(events[0].suggested_action).toBe('flag');
   });
 

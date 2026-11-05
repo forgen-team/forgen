@@ -1,0 +1,59 @@
+{
+ "user_id": "default",
+ "model_version": "2.0",
+ "axes": {
+  "quality_safety": {
+   "score": 0.3796,
+   "facets": {
+    "verification_depth": 0.5,
+    "stop_threshold": 0.5,
+    "change_conservatism": 0.5
+   },
+   "confidence": 0.7700000000000002
+  },
+  "autonomy": {
+   "score": 0.5903,
+   "facets": {
+    "confirmation_independence": 0.5,
+    "assumption_tolerance": 0.5,
+    "scope_expansion_tolerance": 0.5,
+    "approval_threshold": 0.5
+   },
+   "confidence": 0.5900000000000001
+  },
+  "judgment_philosophy": {
+   "score": 0.627,
+   "facets": {
+    "minimal_change_bias": 0.5,
+    "abstraction_bias": 0.5,
+    "evidence_first_bias": 0.5
+   },
+   "confidence": 0.7900000000000003
+  },
+  "communication_style": {
+   "score": 0.6839,
+   "facets": {
+    "verbosity": 0.5,
+    "structure": 0.5,
+    "teaching_bias": 0.5
+   },
+   "confidence": 0.5900000000000001
+  }
+ },
+ "base_packs": {
+  "quality_pack": "보수형",
+  "autonomy_pack": "확인 우선형",
+  "judgment_pack": "구조적접근형",
+  "communication_pack": "상세형"
+ },
+ "trust_preferences": {
+  "desired_policy": "가드레일 우선",
+  "source": "onboarding"
+ },
+ "metadata": {
+  "created_at": "2026-05-11T06:01:34.251Z",
+  "updated_at": "2026-11-04T14:14:31.451Z",
+  "last_onboarding_at": "2026-05-11T06:01:34.251Z",
+  "last_reclassification_at": "2026-11-04T14:14:31.451Z"
+ }
+}

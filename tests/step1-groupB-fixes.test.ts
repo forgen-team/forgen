@@ -45,7 +45,7 @@ describe('P0-4: pre-tool-use reorders reminder check (IO avoided on 90% calls)',
     // 호출 컨텍스트를 정확히 잡음: `if (shouldShowReminderIO())` vs
     // `= getActiveReminders();` (함수 정의 `function getActiveReminders()` 제외)
     const showIdx = codeOnly.indexOf('if (shouldShowReminderIO())');
-    const getIdx = codeOnly.indexOf('= getActiveReminders();');
+    const getIdx = codeOnly.indexOf('= getActiveReminders(sessionId);');
     expect(showIdx).toBeGreaterThan(-1);
     expect(getIdx).toBeGreaterThan(-1);
     expect(getIdx).toBeGreaterThan(showIdx);

@@ -56,7 +56,7 @@ describe('correction-cluster-runner (W3-2 integration)', () => {
     writeRule('c', 'quality', '실제 동작 검증 후에만 완료 선언 프로덕션 확인 필수');
 
     const { runCorrectionClustering } = await import('../src/engine/correction-cluster-runner.js');
-    const merges = await runCorrectionClustering();
+    const merges = await runCorrectionClustering({ confirmed: true });
 
     expect(merges.length).toBe(1);
     expect(merges[0].memberIds.sort()).toEqual(['a', 'b', 'c']);
@@ -80,7 +80,7 @@ describe('correction-cluster-runner (W3-2 integration)', () => {
     writeRule('h1', 'safety', 'rm -rf 사용자 확인 없이 실행 금지 위험 명령 차단', { strength: 'hard' });
     writeRule('h2', 'safety', 'rm -rf 사용자 확인 없이 실행 금지 위험 명령 차단', { strength: 'hard' });
     const { runCorrectionClustering } = await import('../src/engine/correction-cluster-runner.js');
-    expect((await runCorrectionClustering()).length).toBe(0);
+    expect((await runCorrectionClustering({ confirmed: true })).length).toBe(0);
     expect(readRule('h1').status).toBe('active');
   });
 
@@ -89,7 +89,7 @@ describe('correction-cluster-runner (W3-2 integration)', () => {
     writeRule('b', 'quality', '완료 선언 전 실제 검증 필수 라우트 존재만으로 완성 판단 금지');
 
     const { runCorrectionClustering, unmergeCluster } = await import('../src/engine/correction-cluster-runner.js');
-    const merges = await runCorrectionClustering();
+    const merges = await runCorrectionClustering({ confirmed: true });
     expect(merges.length).toBe(1);
     const mergedId = merges[0].mergedRuleId;
 
@@ -107,7 +107,7 @@ describe('correction-cluster-runner (W3-2 integration)', () => {
     expect(readRule(mergedId).status).toBe('removed');
 
     // re-running does NOT re-merge (suppressed)
-    const merges2 = await runCorrectionClustering();
+    const merges2 = await runCorrectionClustering({ confirmed: true });
     expect(merges2.length).toBe(0);
   });
 
@@ -116,13 +116,13 @@ describe('correction-cluster-runner (W3-2 integration)', () => {
     writeRule('b', 'quality', '완료 선언 전 실제 검증 필수 라우트 존재만으로 완성 판단 금지');
 
     const { runCorrectionClustering } = await import('../src/engine/correction-cluster-runner.js');
-    const first = await runCorrectionClustering();
+    const first = await runCorrectionClustering({ confirmed: true });
     expect(first.length).toBe(1);
     const mergedId = first[0].mergedRuleId;
 
     // a new similar correction arrives in a later session
     writeRule('c', 'quality', '실제 동작 검증 후에만 완료 선언 프로덕션 확인 필수');
-    const second = await runCorrectionClustering();
+    const second = await runCorrectionClustering({ confirmed: true });
 
     // absorbed into the SAME merged rule — no new merged rule (no chain)
     expect(second.length).toBe(1);
@@ -145,13 +145,13 @@ describe('correction-cluster-runner (W3-2 integration)', () => {
   it('no-op when fewer than 2 candidates', async () => {
     writeRule('only', 'quality', '완료 선언 전 실제 검증 프로덕션 확인 필수');
     const { runCorrectionClustering } = await import('../src/engine/correction-cluster-runner.js');
-    expect((await runCorrectionClustering()).length).toBe(0);
+    expect((await runCorrectionClustering({ confirmed: true })).length).toBe(0);
   });
 
   it('ignores non-correction sources (only explicit_correction clustered)', async () => {
     writeRule('a', 'quality', '완료 선언 전에 실제 동작을 검증하라 프로덕션 환경 확인', { source: 'behavior_inference' });
     writeRule('b', 'quality', '완료 선언 전 실제 검증 필수 라우트 존재만으로 완성 판단 금지', { source: 'behavior_inference' });
     const { runCorrectionClustering } = await import('../src/engine/correction-cluster-runner.js');
-    expect((await runCorrectionClustering()).length).toBe(0);
+    expect((await runCorrectionClustering({ confirmed: true })).length).toBe(0);
   });
 });

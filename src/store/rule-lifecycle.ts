@@ -10,7 +10,7 @@
  * 등 버그 클러스터의 공통 뿌리. 이 factory 가 그 뿌리를 차단.
  */
 
-import type { Rule, LifecycleState, MetaPromotion } from './types.js';
+import type { Rule, LifecycleState, MetaPromotion, RuleStatus } from './types.js';
 
 /** safe non-negative integer normalization — 파일 corruption / 다중 writer race 방어. */
 export function safeCount(n: unknown): number {
@@ -65,5 +65,15 @@ export function appendMetaPromotion(lifecycle: LifecycleState, promotion: MetaPr
   return {
     ...lifecycle,
     meta_promotions: [...lifecycle.meta_promotions, promotion],
+  };
+}
+
+/** 상태 전이 + 사유 기록. 순수. 룰 상태를 바꾸는 모든 경로는 이 함수를 거친다. */
+export function withStatusChange(rule: Rule, to: RuleStatus, reason: string, by: string, nowIso: string = new Date().toISOString()): Rule {
+  if (rule.status === to) return rule;
+  return {
+    ...rule,
+    status: to,
+    status_history: [...(rule.status_history ?? []), { at: nowIso, from: rule.status, to, reason, by }],
   };
 }
