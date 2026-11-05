@@ -18,7 +18,10 @@ process.env.FORGEN_NO_BLOCK_JUDGE ??= '1';
 // 격리 안 한 실행이 실제 ~/.forgen 에 quarantine 363행, preflight 마커 236개, /tmp/forgen* 3,100개를 남겼다.
 if (!process.env.FORGEN_TEST_SANDBOX) {
   process.env.FORGEN_TEST_REAL_HOME = os.homedir();
-  const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'forgen-test-sandbox-'));
+  // macOS 의 기본 임시 폴더 /var/folders 는 재귀 삭제 면제 경로다. 샌드박스 HOME·cwd 가 그 아래 있으면
+  // 위험 명령 테스트의 대상이 전부 임시 경로로 판정되므로, Linux 처럼 면제되지 않는 /tmp 아래에 둔다.
+  const sandboxBase = process.platform === 'darwin' ? '/tmp' : os.tmpdir();
+  const sandbox = fs.mkdtempSync(path.join(sandboxBase, 'forgen-test-sandbox-'));
   process.env.FORGEN_TEST_SANDBOX = sandbox;
   process.env.FORGEN_TEST_SANDBOX_OWNER = String(process.pid);
   process.env.HOME = path.join(sandbox, 'home');
