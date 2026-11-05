@@ -44,6 +44,8 @@ export function processCorrection(req: CorrectionRequest): CorrectionResult {
       ...(req.user_quote ? { user_quote: req.user_quote } : {}),
       ...(req.rule_id ? { target_rule_id: req.rule_id } : {}),
       ...(req.projects?.length ? { projects: req.projects } : {}),
+      // 모델은 자기 세션 ID 를 확실히 알 수 없다. ID 가 어긋나도 승급되도록 표시한다(소비되면 다시 승급되지 않음).
+      ...(req.kind === 'prefer-from-now' || req.kind === 'avoid-this' ? { pending_promotion: true } : {}),
     },
   });
   appendEvidence(evidence); // T1 lifecycle trigger fires here for explicit_correction

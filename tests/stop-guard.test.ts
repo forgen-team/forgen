@@ -367,7 +367,7 @@ describe('rulesFromStore (Rule.enforce_via → internal SpikeRule shape)', () =>
       category: 'quality',
       scope: 'me',
       trigger: 'completion-evidence',
-      policy: 'e2e before done',
+      policy: 'e2e before done: e2e-result.json, a.json, x',
       strength: 'strong',
       source: 'explicit_correction',
       status: 'active',

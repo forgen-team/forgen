@@ -97,14 +97,10 @@ describe('복구', () => {
     expect(() => reviveRule('nope', 'x')).toThrow(/no rule/);
   });
 
-  it('본문에 없는 증거 파일 게이트는 되살릴 때 떼고, 본문에 있는 게이트는 남긴다', () => {
-    const gate = (file: string) => ({ mech: 'A', hook: 'Stop', verifier: { kind: 'artifact_check', params: { path: file } } });
-    const base = createRule({ category: 'workflow', scope: 'me', trigger: 't', policy: '완료 전에 e2e-result.json 증거를 확인', strength: 'default', source: 'explicit_correction', render_key: 'w.gate' });
-    const stale = { ...base, rule_id: 'stale-gate', policy: '프로덕션 환경을 먼저 확인', status: 'suppressed', enforce_via: [gate('.forgen/state/e2e-result.json')] };
-    const kept = { ...base, rule_id: 'kept-gate', status: 'suppressed', enforce_via: [gate('.forgen/state/e2e-result.json')] };
-    saveRule(stale as never); saveRule(kept as never);
-    expect(reviveRule('stale-gate', 'x').enforce_via).toEqual([]);
-    expect(reviveRule('kept-gate', 'x').enforce_via).toHaveLength(1);
+  it('되살릴 때 게이트를 지우지 않는다 (낡은 게이트는 평가 때 건너뛴다)', () => {
+    const base = createRule({ category: 'workflow', scope: 'me', trigger: 't', policy: '프로덕션 환경을 먼저 확인', strength: 'default', source: 'explicit_correction', render_key: 'w.gate' });
+    saveRule({ ...base, rule_id: 'stale-gate', status: 'suppressed', enforce_via: [{ mech: 'A', hook: 'Stop', verifier: { kind: 'artifact_check', params: { path: '.forgen/state/e2e-result.json' } } }] } as never);
+    expect(reviveRule('stale-gate', 'x').enforce_via).toHaveLength(1);
     saveRule(make({ rule_id: 'aa-1' })); saveRule(make({ rule_id: 'aa-2' }));
     expect(() => reviveRule('aa', 'x')).toThrow(/ambiguous/);
   });

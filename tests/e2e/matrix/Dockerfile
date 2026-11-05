@@ -1,5 +1,5 @@
 FROM node:22-bookworm-slim
-RUN apt-get update -qq && apt-get install -y -qq tmux curl git ca-certificates procps python3 jq >/dev/null 2>&1; \
+RUN apt-get update -qq && apt-get install -y -qq tmux curl git ca-certificates procps python3 jq cron >/dev/null 2>&1; \
     npm i -g @anthropic-ai/claude-code >/dev/null 2>&1; claude --version
 RUN useradd -m -s /bin/bash dev
 USER dev

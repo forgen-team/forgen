@@ -1,6 +1,7 @@
 /**
  * 룰 복구 수단.
  *   forgen rule revive <id|prefix> [--reason "..."]  비활성·보관 룰을 영구 활성 룰로 되살린다
+ *   forgen rule recover [--apply <id...>] [--project <키>]  활성 룰로 남지 못한 내 교정을 찾아 복구
  *   forgen rule snapshot                             룰·교정·솔루션 스냅샷
  *   forgen rule restore <이름> --yes                  스냅샷으로 되돌림(직전 상태를 먼저 스냅샷)
  */
@@ -9,8 +10,10 @@ import * as path from 'node:path';
 import { FORGEN_HOME, ME_DIR, ME_RULES, ME_RULES_ARCHIVE } from '../core/paths.js';
 import { atomicWriteJSON, safeReadJSON } from '../hooks/shared/atomic-write.js';
 import { withStatusChange } from '../store/rule-lifecycle.js';
-import { saveRule } from '../store/rule-store.js';
-import type { Rule } from '../store/types.js';
+import { createRule, saveRule } from '../store/rule-store.js';
+import { loadEvidenceByType } from '../store/evidence-store.js';
+import type { Evidence, Rule } from '../store/types.js';
+import { applyProposal, classify } from './enforce-classifier.js';
 
 const SNAPSHOT_ROOT = path.join(FORGEN_HOME, 'backups');
 const SNAPSHOT_DIRS = ['rules', 'rules-archive', 'behavior', 'solutions'];
@@ -43,13 +46,6 @@ export function reviveRule(prefix: string, reason: string): Rule {
     lifecycle: rule.lifecycle ? { ...rule.lifecycle, phase: 'active', superseded_by: undefined, merged_into: undefined } : rule.lifecycle,
   };
   delete revived.session_id;
-  // 옛 분류기는 본문에 없는 증거 파일(e2e-result.json)을 게이트로 붙였다. 그대로 되살리면 모든 완료 보고가 막힌다.
-  const specs = revived.enforce_via?.filter((spec) => {
-    if (spec.verifier?.kind !== 'artifact_check') return true;
-    const artifact = String(spec.verifier.params?.path ?? '');
-    return artifact.length > 0 && revived.policy.includes(path.basename(artifact));
-  });
-  if (specs) revived.enforce_via = specs;
   saveRule(revived);
   if (archived) fs.rmSync(file, { force: true });
   return revived;
@@ -128,5 +124,126 @@ export function handleRuleRestore(args: string[]): void {
     console.log(`✓ [forgen] restored ${name}. 직전 상태: ${safety}`);
   } catch (e) {
     fail(e instanceof Error ? e.message : String(e));
+  }
+}
+
+const normPolicy = (s: string) => s.replace(/\s+/g, ' ').trim();
+
+/** 사용자 룰만 읽는다. 실행 위치의 프로젝트 룰에 따라 결과가 달라지면 안 된다. */
+function userRules(): Rule[] {
+  const out: Rule[] = [];
+  for (const dir of [ME_RULES, ME_RULES_ARCHIVE]) {
+    if (!fs.existsSync(dir)) continue;
+    for (const name of fs.readdirSync(dir)) {
+      if (!name.endsWith('.json')) continue;
+      const rule = safeReadJSON<Rule | null>(path.join(dir, name), null);
+      if (rule?.rule_id && typeof rule.policy === 'string') out.push(rule);
+    }
+  }
+  return out;
+}
+
+function offByUser(rule: Rule): boolean {
+  const last = rule.status_history?.at(-1);
+  return !!last && (last.by === 'cli' || last.reason?.startsWith('user:'));
+}
+
+export interface LostCorrection { evidence: Evidence; rule: Rule | null }
+
+/**
+ * 사용자가 직접 한 교정 중 활성 룰로 남지 못한 것. 예전 버전의 세션 정리·승급 실패로 사라진 교정을
+ * 업그레이드한 사용자가 스스로 찾아 복구할 수 있게 한다. 같은 문장은 최신 1건만.
+ * 제외: fix-now(원래 세션 한정), 사용자가 직접 끈 룰, 병합돼 대표 룰이 살아 있는 룰.
+ */
+export function findLostCorrections(): LostCorrection[] {
+  const rules = userRules();
+  const byId = new Map(rules.map((r) => [r.rule_id, r]));
+  const byEvidence = new Map<string, Rule[]>();
+  const byPolicy = new Map<string, Rule[]>();
+  const put = (map: Map<string, Rule[]>, key: string, rule: Rule) => { map.set(key, [...(map.get(key) ?? []), rule]); };
+  for (const r of rules) {
+    put(byPolicy, normPolicy(r.policy), r);
+    for (const ref of r.evidence_refs ?? []) put(byEvidence, ref, r);
+  }
+  const order: Record<string, number> = { suppressed: 0, superseded: 1, removed: 2 };
+  const seen = new Set<string>();
+  const out: LostCorrection[] = [];
+  const evidence = loadEvidenceByType('explicit_correction').sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+  for (const ev of evidence) {
+    const text = normPolicy(ev.summary ?? '');
+    if (!text || seen.has(text)) continue;
+    seen.add(text);
+    if ((ev.raw_payload as { kind?: string } | undefined)?.kind === 'fix-now') continue;
+    const same = [...new Set([...(byEvidence.get(ev.evidence_id) ?? []), ...(byPolicy.get(text) ?? [])])];
+    const alive = same.some((r) => r.status === 'active' || offByUser(r) || (r.clustered_into && byId.get(r.clustered_into)?.status === 'active'));
+    if (alive) continue;
+    same.sort((a, b) => (order[a.status] ?? 9) - (order[b.status] ?? 9));
+    out.push({ evidence: ev, rule: same[0] ?? null });
+  }
+  return out.sort((a, b) => a.evidence.timestamp.localeCompare(b.evidence.timestamp));
+}
+
+export function recoverCorrection(lost: LostCorrection, projects?: string[]): Rule {
+  const scoped = projects?.length ? { projects } : {};
+  if (lost.rule) {
+    const revived = reviveRule(lost.rule.rule_id, 'user: rule recover');
+    if (revived.strength === 'hard' || !projects?.length) return revived;
+    const next = { ...revived, ...scoped };
+    saveRule(next);
+    return next;
+  }
+  const { evidence } = lost;
+  const raw = (evidence.raw_payload ?? {}) as { kind?: string; target?: string; axis_hint?: string };
+  const axis = raw.axis_hint ?? 'workflow';
+  const target = raw.target || evidence.summary.slice(0, 80);
+  const created = createRule({
+    category: axis === 'quality_safety' ? 'quality' : axis === 'autonomy' ? 'autonomy' : 'workflow',
+    scope: 'me',
+    trigger: target,
+    policy: evidence.summary,
+    strength: raw.kind === 'avoid-this' ? 'strong' : 'default',
+    source: 'explicit_correction',
+    evidence_refs: [evidence.evidence_id],
+    render_key: `${axis}.${evidence.evidence_id.slice(0, 8)}`,
+    ...scoped,
+  });
+  let rule = created;
+  try { rule = applyProposal(created, classify(created)); } catch { /* 분류 실패해도 룰은 남긴다 */ }
+  saveRule(rule);
+  return rule;
+}
+
+export function handleRuleRecover(args: string[]): void {
+  const lost = findLostCorrections();
+  const projectIdx = args.indexOf('--project');
+  const project = projectIdx >= 0 ? args[projectIdx + 1]?.toLowerCase() : undefined;
+  if (projectIdx >= 0 && !project) fail('usage: forgen rule recover [--apply <id...>] [--project <키>]');
+  const applyIdx = args.indexOf('--apply');
+  if (applyIdx < 0) {
+    if (lost.length === 0) { console.log('복구할 교정이 없습니다.'); return; }
+    console.log(`활성 룰로 남지 못한 교정 ${lost.length}건 (미리보기)`);
+    for (const { evidence, rule } of lost) {
+      console.log(`  ${evidence.evidence_id.slice(0, 8)}  ${evidence.timestamp.slice(0, 10)}  ${rule ? rule.status : '룰 없음'}  ${evidence.summary.slice(0, 80)}`);
+    }
+    console.log('복구: forgen rule recover --apply <id...> [--project <키>]  (--project 를 빼면 전역)');
+    return;
+  }
+  const ids = args.slice(applyIdx + 1).filter((a, i, all) => !a.startsWith('--') && all[i - 1] !== '--project');
+  if (ids.length === 0) fail('복구할 ID 를 지정하세요. 미리보기: forgen rule recover');
+  // ID 가 하나라도 잘못되면 아무것도 바꾸지 않는다. 적용 중 실패한 항목은 알리고 나머지는 계속한다.
+  const picked = ids.map((id) => {
+    const found = lost.filter((l) => l.evidence.evidence_id.startsWith(id));
+    if (found.length !== 1) fail(`"${id}" 와 일치하는 복구 대상이 ${found.length}건입니다. 아무것도 복구하지 않았습니다.`);
+    return found[0];
+  });
+  for (const item of picked) {
+    try {
+      const rule = recoverCorrection(item, project ? [project] : undefined);
+      console.log(`✓ [forgen] 복구 ${rule.rule_id.slice(0, 8)} (${rule.projects?.join(',') ?? '전역'}) ${rule.policy.slice(0, 70)}`);
+      if (project && rule.strength === 'hard') console.log('  hard 룰은 프로젝트로 좁힐 수 없어 전역으로 복구했습니다.');
+    } catch (e) {
+      console.error(`✗ [forgen] ${item.evidence.evidence_id.slice(0, 8)} 복구 실패: ${e instanceof Error ? e.message : String(e)}`);
+      process.exitCode = 1;
+    }
   }
 }

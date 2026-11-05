@@ -136,7 +136,7 @@ const REMINDER_COUNTER_PATH = path.join(STATE_DIR, 'reminder-counter.json');
  *
  * D12-A: 명령 문자열 전체에 정규식을 대던 방식을 버리고 command-analyzer 의 실제 파싱 결과를 쓴다.
  *  - block: 되돌릴 수 없는 파괴(루트/홈 재귀 삭제, mkfs, 장치 쓰기, 다운로드→셸) — 항상 차단
- *  - ask  : 오너 룰 "사용자 확인 없는 rm -rf 금지" — 임시(claude-*) 경로가 아닌 재귀 삭제는 확인을 요청
+ *  - ask  : 기본 룰 "사용자 확인 없는 rm -rf 금지" — 임시(claude-*) 경로가 아닌 재귀 삭제는 확인을 요청
  *  - warn : 정책 유지(git reset --hard, git clean -f, force push, chmod 777, eval)
  * 정규식 테이블(dangerous-patterns.json + 사용자 커스텀)은 파서가 모르는 잔여 패턴(fork bomb 등)에만 쓴다.
  */
@@ -488,7 +488,7 @@ async function main(): Promise<void> {
         const matchTok = re.regex.exec(target)?.[0] ?? '';
         // D12-A: rm 계열 판정은 command-analyzer 가 한다 — 정규식은 `rm -r -f`·`bash -c`·`xargs` 를 놓치고
         // 따옴표 속 문자열을 잡는다. 파서가 "삭제 없음/임시 경로"로 보면 룰도 통과, root/home 이면 룰 deny(영수증 포함),
-        // 그 외 재귀 삭제는 오너 룰 "확인 없는 rm -rf 금지"에 따라 차단 대신 사용자 확인 요청(ask).
+        // 그 외 재귀 삭제는 기본 룰 "확인 없는 rm -rf 금지"에 따라 차단 대신 사용자 확인 요청(ask).
         let askOnly = false;
         if (/^\s*rm\b/.test(matchTok)) {
           const worstDel = worstFinding(analyzeCommand(command, { cwd: hookCwd }).findings.filter((f) => DELETE_FINDING_IDS.has(f.id)));
@@ -593,7 +593,7 @@ async function main(): Promise<void> {
     if (process.env.FORGEN_USER_CONFIRMED === '1') {
       try { const { recordViolation } = await import('../engine/lifecycle/signals.js'); recordViolation({ rule_id: check.ruleId ?? 'builtin:ask', session_id: sessionId, source: 'pre-tool-guard', kind: 'bypass_confirmed', message_preview: `[FORGEN_USER_CONFIRMED=1 bypass] ${bashCmd.slice(0, 120)}` }); } catch { /* fail-open */ }
     } else {
-      console.log(ask(`${advisories.length ? `${advisories.join('\n')}\n` : ''}[Forgen] 사용자 확인 필요 — ${check.description}\n오너 룰: 확인 없는 재귀 삭제 금지 (임시 작업 폴더 /tmp/claude-* 는 면제).\nCommand: ${check.command}\n${ASK_NONINTERACTIVE_HINT}`));
+      console.log(ask(`${advisories.length ? `${advisories.join('\n')}\n` : ''}[Forgen] 사용자 확인 필요 — ${check.description}\n규칙: 확인 없는 재귀 삭제 금지 (임시 작업 폴더 /tmp/claude-* 는 면제).\nCommand: ${check.command}\n${ASK_NONINTERACTIVE_HINT}`));
       return;
     }
   }

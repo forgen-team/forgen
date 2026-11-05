@@ -27,6 +27,18 @@ function specDetectable(spec: EnforceSpec): boolean {
   }
 }
 
+/**
+ * 옛 분류기는 본문에 없는 증거 파일(e2e-result.json 등)을 게이트로 붙였다. 그런 게이트는 어떤 사용자에게든
+ * 모든 완료 보고를 막으므로 평가하지 않는다. 룰 파일을 고치는 마이그레이션 없이 모든 설치에 적용된다.
+ */
+export function artifactGateIsStale(rule: Pick<Rule, 'policy' | 'trigger'>, spec: EnforceSpec): boolean {
+  if (spec.verifier?.kind !== 'artifact_check') return false;
+  const file = String(spec.verifier.params?.path ?? '').split(/[\\/]/).pop() ?? '';
+  // 디렉터리·패턴처럼 구체적 파일명이 아니면 판정할 근거가 없다. 차단을 풀지 않는다.
+  if (!file || /[*?[\]{}]/.test(file)) return false;
+  return !`${rule.trigger ?? ''}\n${rule.policy}`.includes(file);
+}
+
 export function enforceability(rule: Pick<Rule, 'enforce_via'>): Enforceability {
   return (rule.enforce_via ?? []).some(specDetectable) ? 'detectable' : 'advisory';
 }
@@ -44,14 +56,14 @@ export function effectiveEnforceMode(rule: Pick<Rule, 'enforce_mode' | 'strength
 }
 
 /** 이 룰의 Stop spec 이 위반 시 실제로 차단하는가. Stop spec 이 없으면 false. */
-export function stopBlocks(rule: Pick<Rule, 'enforce_mode' | 'strength' | 'enforce_via'>): boolean {
-  return (rule.enforce_via ?? []).some((s) => s.hook === 'Stop' && !!s.verifier && effectiveEnforceMode(rule, s) === 'block');
+export function stopBlocks(rule: Pick<Rule, 'enforce_mode' | 'strength' | 'enforce_via' | 'policy' | 'trigger'>): boolean {
+  return (rule.enforce_via ?? []).some((s) => s.hook === 'Stop' && !!s.verifier && !artifactGateIsStale(rule, s) && effectiveEnforceMode(rule, s) === 'block');
 }
 
 /** 표시용: 위반 시 실제로 막는 룰인가. Stop 은 차단 정책을, 나머지 hook 은 결정적 탐지기와 advise 여부를 본다. */
-export function ruleEnforced(rule: Pick<Rule, 'enforce_mode' | 'strength' | 'enforce_via'>): boolean {
+export function ruleEnforced(rule: Pick<Rule, 'enforce_mode' | 'strength' | 'enforce_via' | 'policy' | 'trigger'>): boolean {
   return (rule.enforce_via ?? []).some((s) => {
-    if (!s.verifier) return false;
+    if (!s.verifier || artifactGateIsStale(rule, s)) return false;
     return s.hook === 'Stop' ? effectiveEnforceMode(rule, s) === 'block' : specDetectable(s) && rule.enforce_mode !== 'advise';
   });
 }

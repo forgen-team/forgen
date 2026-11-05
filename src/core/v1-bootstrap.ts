@@ -15,6 +15,7 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { promoteSessionCandidates } from '../store/evidence-store.js';
 import * as crypto from 'node:crypto';
 import { FORGEN_HOME, ME_DIR, ME_RULES, ME_BEHAVIOR, V1_RECOMMENDATIONS_DIR, V1_SESSIONS_DIR, STATE_DIR, V1_RAW_LOGS_DIR, ME_SOLUTIONS, SESSIONS_DIR } from './paths.js';
 import { checkLegacyProfile, runLegacyCutover } from './legacy-detector.js';
@@ -95,6 +96,13 @@ export function bootstrapV1Session(cwd?: string): V1BootstrapResult {
     legacyBackupPath = runLegacyCutover();
   }
 
+  // 세션 종료 추출이 못 돈 환경에서도 교정을 잃지 않게 먼저 승급한다. 프로필이 없어도 룰은 주입되므로 프로필 확인보다 앞선다.
+  try {
+    promoteSessionCandidates(crypto.randomUUID());
+  } catch {
+    // 승급 실패는 세션 시작을 막지 않음. 표시가 남아 있어 다음 기회에 다시 시도한다.
+  }
+
   // 2. Profile 로드
   if (!profileExists()) {
     return {
@@ -136,7 +144,7 @@ export function bootstrapV1Session(cwd?: string): V1BootstrapResult {
   // 4. Rules 로드 + Session 합성
   const sessionId = crypto.randomUUID();
 
-  // 이전 세션의 scope:'session' 임시 규칙 정리
+  // 이전 세션의 scope:'session' 임시 규칙 정리.
   try {
     cleanupStaleSessionRules(sessionId);
   } catch {

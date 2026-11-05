@@ -40,7 +40,7 @@ import type { Rule, EnforceSpec } from '../store/types.js';
 import { recordViolation, recordCheck, rotateIfBig } from '../engine/lifecycle/signals.js';
 import { compileSafeRegex, safeRegexTest } from './shared/safe-regex.js';
 import { relevantRules, readTurnRules } from '../engine/rule-relevance.js';
-import { topicGateApplies, effectiveEnforceMode } from '../engine/rule-detectability.js';
+import { artifactGateIsStale, topicGateApplies, effectiveEnforceMode } from '../engine/rule-detectability.js';
 
 const HOOK_NAME = 'stop-guard';
 
@@ -134,7 +134,7 @@ export function rulesFromStore(rules: Rule[]): SpikeRule[] {
     for (let i = 0; i < specs.length; i++) {
       const spec: EnforceSpec = specs[i];
       if (spec.hook !== 'Stop') continue;
-      if (!spec.verifier) continue;
+      if (!spec.verifier || artifactGateIsStale(rule, spec)) continue;
       if (spec.verifier.kind !== 'self_check_prompt' && spec.verifier.kind !== 'artifact_check' && spec.verifier.kind !== 'tool_evidence' && spec.verifier.kind !== 'language_ratio') continue;
 
       out.push({

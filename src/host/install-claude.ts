@@ -20,6 +20,7 @@ import { generateHooksJson } from '../hooks/hooks-generator.js';
 import { applyStatusLineAuto, forgenStatuslineCommand } from '../core/statusline-install.js';
 import { ensureForgenRunShim, forgenRunShimPath, isForgenRunCommand, shimSupported } from './claude-shim.js';
 import { hasManagedSkillMarker, installSkillFile, removeOwnedDevGuideSkills } from './managed-marker.js';
+import { refreshCronAfterUpgrade } from '../core/compound-sweep-cli.js';
 import { HOOK_REGISTRY } from '../hooks/hook-registry.js';
 import { FileLockError, withFileLockSync } from '../hooks/shared/file-lock.js';
 
@@ -523,6 +524,12 @@ export function planClaudeInstall(opts: ClaudeInstallOptions): ClaudeInstallResu
     ? step<VerifySkillStatus>('verify skill', 'skipped', () => installVerifySkill({ pkgRoot, skillsDir, dryRun }))
     : 'skipped';
   const agents = step('agents', { installed: 0, removed: 0 }, () => installGlobalAgents({ pkgRoot, agentsDir, dryRun }));
+
+
+  // 이미 등록된 sweep cron 을 shim 경유로 옮긴다. postinstall·forgen install claude·doctor --repair 가 모두 여기를 지난다.
+  if (!dryRun && shimPath) {
+    refreshCronAfterUpgrade(homeDir);
+  }
 
   return {
     homeDir,

@@ -268,6 +268,7 @@ export async function runDoctor(opts: DoctorOptions = {}): Promise<number> {
   // 리뷰 SEV-3 (c): critic-review 룰의 트리거가 stale(skip-review 시그널 미포함)이면 발견 nudge.
   // "고쳤는데 기존 유저에겐 안 닿는" 상태 방지 — 재-bake 명령을 안내한다.
   section('Rules');
+  printProbes(bySection.get('Rules') ?? []);
   try {
     const [{ loadActiveRules }, { needsCriticTriggerMigration }] = await Promise.all([
       import('../store/rule-store.js'),

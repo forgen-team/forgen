@@ -393,6 +393,12 @@ export async function collectProbes(opts: VerifyOptions): Promise<Probe[]> {
   } finally {
     try { fs.rmSync(probeHome, { recursive: true, force: true }); } catch { /* ignore */ }
   }
+  // 예전 버전에서 활성 룰로 남지 못한 교정. npm 은 postinstall 출력을 숨기므로 여기서 알린다. 실패로 세지 않는다.
+  try {
+    const { findLostCorrections } = await import('../engine/rule-recovery-cli.js');
+    const lost = findLostCorrections().length;
+    if (lost > 0) add({ section: 'Rules', label: `활성 룰로 남지 못한 교정 ${lost}건`, ok: false, info: true, hint: '확인: forgen rule recover' });
+  } catch { /* 안내일 뿐 */ }
   return probes;
 }
 

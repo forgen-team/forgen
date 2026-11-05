@@ -7,10 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.9] — 2026-11-05 — 실사용 신뢰성 재정비
+
 ### Added
+- **`forgen rule recover`.** 예전 버전에서 활성 룰로 남지 못한 내 교정을 찾아 골라서 복구한다. 업그레이드 때 건수를 안내한다.
 - **`forgen way draft skill|workflow "<주제>"`.** 주제와 관련된 룰·솔루션·교정 원문을 모아 격리된 Haiku 중첩 호출로 SKILL.md(또는 호스트 중립 단계 체크리스트) 초안을 쓴다. 미리보기가 기본, `--out` 일 때만 파일. 근거 항목 id 는 옆 파일(SOURCES.md), 전송 전 비밀 마스킹·`<private>` 제외, Haiku 불가 시 관련 항목 묶음을 사유와 함께 출력.
 
 ### Fixed
+- **교정 승급.** 모델이 넘긴 세션 ID 가 실제와 달라도 prefer-from-now·avoid-this 교정이 영구 룰이 된다. 세션 시작에서도 승급해 12시간 정리로 사라지지 않는다. 프로젝트가 다른 같은 교정이 합쳐질 때 범위를 잃지 않는다.
+- 업그레이드 시 이미 등록된 sweep cron 을 shim 경유로 갱신한다(일정·옵션 유지). 옛 라인은 패키지 경로를 직접 가리켰다.
+- 룰 본문에 없는 증거 파일 게이트(옛 분류기 산물)를 평가하지 않는다. 모든 완료 보고가 막히던 원인.
 - **컨텍스트 거짓 경고.** context-guard 가 프롬프트 글자 수 120K 를 "컨텍스트 20%"로 보고 모델에게 "지금 즉시 /compact, 작업을 마무리하지 말고"를 주입하던 것을 없앴다. 이제 statusline 페이로드·transcript usage 의 창 대비 비율이 70% 이상일 때만 사용자에게 보이는 안내를 내고, 모르면 아무것도 하지 않는다.
 - **동의어 사전 과적합.** 측정 픽스처에 맞춘 낱말(막혔는지·내려받·목객체·json.parse·presign 등)과 넓은 계열(access·permission·limit·rate·store·변경 등)을 뺐다. 보류(holdout) 세트 tests/fixtures/recall-holdout.json 추가.
 - **acted_on.** 2글자 한글 태그, camelCase/snake_case 표기, 팩·프로젝트 솔루션을 인식. 신호가 약한 기간(전체 acted_on 3건 미만)에는 lifecycle 이 주입된 솔루션을 전부 cold 로 분류하지 않는다.

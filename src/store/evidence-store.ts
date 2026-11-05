@@ -233,6 +233,21 @@ function retireStaleAutoMinedRules(now: number): void {
  */
 const RULE_STORE_MUTATE_LOCK = path.join(ME_RULES, '.rule-store-mutate');
 
+/**
+ * 같은 render_key 교정을 기존 룰에 합칠 때의 적용 범위. 프로젝트 범위를 잃지 않게 합집합으로 합친다.
+ * 전역 룰은 전역으로 남고, 범위 없는 교정(this_project_only 기본값)이 프로젝트 룰을 전역으로 넓히지도 않는다.
+ * 꺼졌거나 은퇴한 룰이 되살아날 때는 예전 범위가 아니라 이번 교정의 범위를 따른다.
+ */
+function mergedRuleProjects(
+  existing: { status: string; projects?: string[] },
+  incoming: unknown,
+): string[] | undefined {
+  const next = Array.isArray(incoming) && incoming.length > 0 ? (incoming as string[]) : undefined;
+  if (existing.status !== 'active') return next;
+  if (!existing.projects?.length) return undefined;
+  return next ? [...new Set([...existing.projects, ...next])] : existing.projects;
+}
+
 export function promoteSessionCandidates(sessionId: string): number {
   // withFileLockSync 는 O_CREAT 로 lock 파일을 만들 뿐 부모 디렉터리는 만들지 않는다 —
   // 첫 rule 승급 이전(=아직 ME_RULES 없음)에도 락을 잡을 수 있어야 하므로 선행 mkdir.
@@ -246,7 +261,11 @@ export function promoteSessionCandidates(sessionId: string): number {
     // 세션 종료 시 promoteSessionCandidates 를 호출하므로 이 경로가 세션당 1회 보장된다.)
     retireStaleAutoMinedRules(Date.now());
 
-    const candidates = loadPromotionCandidates().filter(e => e.session_id === sessionId);
+    const candidates = loadPromotionCandidates().filter((e) => {
+      if (e.session_id === sessionId) return true;
+      const pending = (e.raw_payload as Record<string, unknown>)?.pending_promotion === true;
+      return pending && (e.candidate_rule_refs ?? []).length === 0;
+    });
     if (candidates.length === 0) return 0;
 
     let promoted = 0;
@@ -333,7 +352,15 @@ export function promoteSessionCandidates(sessionId: string): number {
         // rule_id/created_at 은 그대로 두고 status 만 'active' 로 되돌린다 — 재활성화된
         // rule 은 다음 retireStaleAutoMinedRules() 호출 때 기존 나이 기준으로 다시
         // 은퇴 여부가 평가된다(의도된 동작, thrash 아님: 최소 1세션은 유효하게 주입됨).
-        saveRule({ ...existingRule, status: 'active', evidence_refs: evidenceRefs, strength });
+        const { projects: _previousProjects, ...existingWithoutProjects } = existingRule;
+        const projects = mergedRuleProjects(existingRule, payload?.projects);
+        saveRule({
+          ...existingWithoutProjects,
+          ...(projects ? { projects } : {}),
+          status: 'active',
+          evidence_refs: evidenceRefs,
+          strength,
+        });
         saveEvidence({
           ...candidate,
           candidate_rule_refs: [...(candidate.candidate_rule_refs ?? []), existingRule.rule_id],
