@@ -92,6 +92,13 @@ describe('checkDangerousResponsePattern — DANGEROUS-RESPONSE', () => {
     expect(checkDangerousResponsePattern({ text: '`git reset --hard` 를 실행하세요.' }).block).toBe(true);
   });
 
+  it('실행 결과를 말하며 권유하는 문장도 차단하고, 경고 문장은 차단하지 않는다', () => {
+    expect(checkDangerousResponsePattern({ text: 'rm -rf / 를 실행하면 정리가 끝납니다.' }).block).toBe(true);
+    expect(checkDangerousResponsePattern({ text: 'git reset --hard 를 돌리면 해결됩니다.' }).block).toBe(true);
+    expect(checkDangerousResponsePattern({ text: 'rm -rf / 를 실행하면 데이터가 날아갑니다.' }).block).toBe(false);
+    expect(checkDangerousResponsePattern({ text: 'rm -rf build 를 실행하면 hook 에 막힙니다.' }).block).toBe(false);
+  });
+
   it('프롬프트 줄로 제안한 명령은 차단한다', () => {
     expect(checkDangerousResponsePattern({ text: '다음을 실행하세요.\n$ rm -rf /var/data' }).block).toBe(true);
   });

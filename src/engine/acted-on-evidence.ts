@@ -29,7 +29,7 @@ function tagInText(tag: string, text: string): boolean {
 
 /** 한글 등 비ASCII 태그는 2자(캐시·배포)부터, 영문은 3자부터 센다. */
 function taggable(t: string): boolean {
-  return /[^\x00-\x7f]/.test(t) ? t.length >= 2 : t.length >= 3;
+  return /\P{ASCII}/u.test(t) ? t.length >= 2 : t.length >= 3;
 }
 
 export function actedOnEvidence(

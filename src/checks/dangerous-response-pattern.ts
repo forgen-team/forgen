@@ -67,8 +67,8 @@ export interface DangerousResultMatch {
  * 그 밖의 줄은 실행을 권유하는 문장일 때만 포함한다. 설명·금지 속 언급은 제외한다. 실제 실행은 PreToolUse 가 막으므로, 언급을 막으면 안전 효과 없이
  * "이런 명령은 위험하다"는 정상 답변까지 차단한다. 이 가드의 대상은 사용자가 복사해 실행할 제안이다.
  */
-const RUN_CUE = /\b(run|execute|try|use|alternative)\b|대안|실행(하세요|해\s*주세요|하시면|해\s*보세요|하면\s*됩니다)|입력하세요|치세요|돌리세요/i;
-const NOT_A_SUGGESTION = /금지|안\s*됩|안\s*돼|않|하지\s*마|위험|차단(됩|합|했)|오탐|예시|never|don'?t|do not|avoid|unsafe|dangerous/i;
+const RUN_CUE = /\b(run|execute|try|use|alternative)\b|대안|실행(하세요|해\s*주세요|하시면|해\s*보세요|하면)|입력(하세요|하면)|치세요|돌리(세요|면)/i;
+const NOT_A_SUGGESTION = /금지|안\s*됩|안\s*돼|않|하지\s*마|위험|차단(됩|합|했)|막(힙|습|았|혀)|날아|사라|오탐|예시|never|don'?t|do not|avoid|unsafe|dangerous/i;
 
 export function extractSuggestedCommands(text: string): string {
   const out: string[] = [];
