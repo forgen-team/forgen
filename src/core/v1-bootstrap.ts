@@ -20,9 +20,10 @@ import { FORGEN_HOME, ME_DIR, ME_RULES, ME_BEHAVIOR, V1_RECOMMENDATIONS_DIR, V1_
 import { checkLegacyProfile, runLegacyCutover } from './legacy-detector.js';
 import { detectRuntimeCapability } from './runtime-detector.js';
 import { backupCorruptProfile, loadProfile, profileExists, recomputeIfNeverReclassified } from '../store/profile-store.js';
-import { loadActiveRules, cleanupStaleSessionRules, markRulesInjected } from '../store/rule-store.js';
+import { loadContextRules, cleanupStaleSessionRules, markRulesInjected } from '../store/rule-store.js';
 import { composeSession } from '../preset/preset-manager.js';
-import { renderRules, DEFAULT_CONTEXT } from '../renderer/rule-renderer.js';
+import { renderRulesDetailed, DEFAULT_CONTEXT  } from '../renderer/rule-renderer.js';
+import { recordRenderReport } from '../renderer/render-report.js';
 import { saveSessionState, loadRecentSessions } from '../store/session-state-store.js';
 import { loadEvidenceBySession } from '../store/evidence-store.js';
 import { computeSessionSignals, detectMismatch, type MismatchSignal, type MismatchResult } from '../forge/mismatch-detector.js';
@@ -66,7 +67,24 @@ export interface V1BootstrapResult {
 
 // ── Main Bootstrap ──
 
-export function bootstrapV1Session(): V1BootstrapResult {
+/**
+ * 프로필이 없어도(온보딩 전, 손상) 쌓아 둔 룰은 주입한다. 프로필은 4축 표시용이고 룰 본문과 무관하다.
+ * 프로필이 없다고 교정이 전부 무시되면 환경에 따라 규칙이 사라지는 셈이다.
+ */
+function renderWithoutProfile(cwd?: string): string | null {
+  try {
+    const rules = loadContextRules(cwd);
+    if (rules.length === 0) return null;
+    const state = { warnings: [] } as unknown as SessionEffectiveState;
+    const result = renderRulesDetailed(rules, state, null as unknown as Profile, DEFAULT_CONTEXT);
+    recordRenderReport(result);
+    return result.text;
+  } catch {
+    return null;
+  }
+}
+
+export function bootstrapV1Session(cwd?: string): V1BootstrapResult {
   // 0. 디렉토리 준비
   ensureV1Directories();
 
@@ -84,7 +102,7 @@ export function bootstrapV1Session(): V1BootstrapResult {
       legacyBackupPath,
       corruptProfileBackupPath: null,
       session: null,
-      renderedRules: null,
+      renderedRules: renderWithoutProfile(cwd),
       profile: null,
       mismatch: null,
     };
@@ -106,7 +124,7 @@ export function bootstrapV1Session(): V1BootstrapResult {
       legacyBackupPath,
       corruptProfileBackupPath,
       session: null,
-      renderedRules: null,
+      renderedRules: renderWithoutProfile(cwd),
       profile: null,
       mismatch: null,
     };
@@ -125,7 +143,7 @@ export function bootstrapV1Session(): V1BootstrapResult {
     // 정리 실패는 세션 시작을 막지 않음
   }
 
-  const personalRules = loadActiveRules();
+  const personalRules = loadContextRules(cwd);
 
   const session = composeSession({
     session_id: sessionId,
@@ -140,13 +158,15 @@ export function bootstrapV1Session(): V1BootstrapResult {
 
   // 6. Rule 렌더링
   const allRules = [...personalRules];
-  const renderedRules = renderRules(allRules, session, profile, DEFAULT_CONTEXT);
+  const rendered = renderRulesDetailed(allRules, session, profile, DEFAULT_CONTEXT);
+  const renderedRules = rendered.text;
 
   // 6b. Inject tracking (ADR-002 Meta signal) — rendered rules count as injected.
   // Fail-open: tracking failure must not block bootstrap.
   try {
-    const injected = allRules.filter((r) => r.status === 'active').map((r) => r.rule_id);
+    const injected = rendered.included.map((r) => r.rule_id);
     if (injected.length > 0) markRulesInjected(injected);
+    recordRenderReport(rendered);
   } catch { /* ignore */ }
 
   // 7. Mismatch 감지 (최근 3세션 rolling)

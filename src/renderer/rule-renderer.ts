@@ -24,8 +24,8 @@ export interface RenderContext {
 
 export const DEFAULT_CONTEXT: RenderContext = {
   surface: 'session_start',
-  max_rules: 30,
-  max_chars: 4000,
+  max_rules: 60,
+  max_chars: 7000, // 룰 블록 상한 안쪽. 넘치면 우선순위로 고르고 빠진 룰을 표시한다.
   include_pack_summary: false,
 };
 
@@ -46,8 +46,18 @@ const CATEGORY_TO_SECTION: Record<string, SectionName> = {
 // ── Dedupe: render_key 충돌 해소 ──
 
 const SCOPE_RANK: Record<RuleScope, number> = { session: 0, me: 1 };
-const STRENGTH_RANK: Record<RuleStrength, number> = { hard: 0, strong: 1, default: 2, soft: 3 };
-const SOURCE_RANK: Record<RuleSource, number> = { explicit_correction: 0, onboarding: 1, behavior_inference: 2, pack_overlay: 3 };
+export const STRENGTH_RANK: Record<RuleStrength, number> = { hard: 0, strong: 1, default: 2, soft: 3 };
+const SOURCE_RANK: Record<RuleSource, number> = { explicit_correction: 0, onboarding: 1, behavior_inference: 2, pack_overlay: 3, imported: 2 };
+
+/** 순위 비교(작을수록 먼저). 렌더러의 예산 우선순위·render_key 중복 제거와 forgen way 내보내기가 같은 기준을 쓴다. */
+export interface RankKey { strength: RuleStrength; source: RuleSource; updated_at: string; id: string }
+export function compareRank(a: RankKey, b: RankKey): number {
+  return (STRENGTH_RANK[a.strength] - STRENGTH_RANK[b.strength])
+    || (SOURCE_RANK[a.source] - SOURCE_RANK[b.source])
+    || b.updated_at.localeCompare(a.updated_at)
+    || a.id.localeCompare(b.id);
+}
+export const rankKeyOf = (r: Rule): RankKey => ({ strength: r.strength, source: r.source, updated_at: r.updated_at, id: r.rule_id });
 
 function dedupeByRenderKey(rules: Rule[]): Rule[] {
   const groups = new Map<string, Rule[]>();
@@ -66,13 +76,7 @@ function dedupeByRenderKey(rules: Rule[]): Rule[] {
     group.sort((a, b) => {
       const scopeDiff = SCOPE_RANK[a.scope] - SCOPE_RANK[b.scope];
       if (scopeDiff !== 0) return scopeDiff;
-      const strengthDiff = STRENGTH_RANK[a.strength] - STRENGTH_RANK[b.strength];
-      if (strengthDiff !== 0) return strengthDiff;
-      const sourceDiff = SOURCE_RANK[a.source] - SOURCE_RANK[b.source];
-      if (sourceDiff !== 0) return sourceDiff;
-      const timeDiff = b.updated_at.localeCompare(a.updated_at);
-      if (timeDiff !== 0) return timeDiff;
-      return a.rule_id.localeCompare(b.rule_id);
+      return compareRank(rankKeyOf(a), rankKeyOf(b));
     });
     result.push(group[0]);
   }
@@ -86,7 +90,8 @@ function ruleToText(rule: Rule): string {
   // hard 강도는 태그 생략 (Must Not 섹션이 이미 의미를 전달)
   // ADR-017 D0: explicit 교정 룰엔 출처 날짜 꼬리표 — 사용자가 "내가 언제 말한 것" 을 식별.
   if (rule.strength === 'hard') return `${rule.policy}${originTag(rule)}`;
-  return `[${rule.category}|${rule.strength}] ${rule.policy}${originTag(rule)}`;
+  const project = rule.projects?.length ? `|${rule.projects.join(',')}` : '';
+  return `[${rule.category}|${rule.strength}${project}] ${rule.policy}${originTag(rule)}`;
 }
 
 function trustPolicySummary(policy: TrustPolicy): string {
@@ -127,17 +132,19 @@ function communicationPackRules(pack: CommunicationPack): string[] {
 const FACET_HIGH = 0.85;
 const FACET_LOW = 0.15;
 
-interface FacetRule {
+export interface FacetRule {
   section: SectionName;
   rule: string;
 }
 
-function facetDrivenRules(profile: Profile): FacetRule[] {
+export function facetDrivenRules(profile: Profile | null | undefined): FacetRule[] {
   const out: FacetRule[] = [];
-  const q = profile.axes.quality_safety.facets;
-  const a = profile.axes.autonomy.facets;
-  const j = profile.axes.judgment_philosophy.facets;
-  const c = profile.axes.communication_style.facets;
+  // 프로필이 없거나 축이 비어 있으면 생략(null 안전) — 렌더가 프로필 부재로 깨지면 안 된다.
+  const q = profile?.axes?.quality_safety?.facets;
+  const a = profile?.axes?.autonomy?.facets;
+  const j = profile?.axes?.judgment_philosophy?.facets;
+  const c = profile?.axes?.communication_style?.facets;
+  if (!q || !a || !j || !c) return out;
 
   // Quality
   if (q.verification_depth >= FACET_HIGH) {
@@ -193,90 +200,102 @@ function facetDrivenRules(profile: Profile): FacetRule[] {
 
 // ── Main Render ──
 
-export function renderRules(
+export interface RenderResult {
+  text: string;
+  /** 실제 본문에 들어간 룰. 주입 카운트는 이 목록만 올린다. */
+  included: Rule[];
+  /** 예산 초과로 빠진 룰. 조용히 사라지지 않게 본문과 상태 파일에 표시한다. */
+  omitted: Rule[];
+}
+
+/** 예산이 모자랄 때 먼저 지키는 순서: hard → strong → 사용자 교정 → 최신. */
+function byPriority(a: Rule, b: Rule): number {
+  return compareRank(rankKeyOf(a), rankKeyOf(b));
+}
+
+export function renderRulesDetailed(
   rules: Rule[],
   state: SessionEffectiveState,
-  profile: Profile,
+  profile: Profile | null | undefined,
   ctx: RenderContext = DEFAULT_CONTEXT,
-): string {
-  // 1. active만 수집
-  const active = rules.filter(r => r.status === 'active');
+): RenderResult {
+  const deduped = dedupeByRenderKey(rules.filter((r) => r.status === 'active')).sort(byPriority);
 
-  // 2. dedupe by render_key
-  const deduped = dedupeByRenderKey(active);
+  initLocaleFromConfig();
+  const ecStrings = RULE_RENDERER[getLocale()];
+  // 교정 기록 지시는 학습 루프의 입구다. 룰 예산과 무관하게 항상 앞쪽에 둔다.
+  const evidenceBlock = [
+    `## ${ecStrings.evidenceCollectionHeader}`,
+    ...ecStrings.evidenceCollectionRules.map((r) => `- ${r}`),
+  ].join('\n');
+  const warningsBlock = state.warnings.length > 0
+    ? `## Warnings\n${state.warnings.map((w) => `- ${w}`).join('\n')}`
+    : '';
 
-  // 3. hard constraints 먼저
-  const hardRules = deduped.filter(r => r.strength === 'hard');
-  const otherRules = deduped.filter(r => r.strength !== 'hard');
-
-  // 4. category별 그룹
   const sections = new Map<SectionName, string[]>();
   for (const name of SECTION_ORDER) sections.set(name, []);
 
-  for (const rule of hardRules) {
-    sections.get('Must Not')?.push(ruleToText(rule));
-  }
-
-  for (const rule of otherRules) {
-    const section = CATEGORY_TO_SECTION[rule.category] ?? 'Working Defaults';
-    sections.get(section)?.push(ruleToText(rule));
-  }
-
-  // 5. trust policy + pack 기본 규칙 주입
+  // pack 요약은 룰보다 먼저 예산을 쓴다(켜져 있을 때만).
   if (ctx.include_pack_summary) {
-    sections.get('Working Defaults')?.unshift(`Trust: ${trustPolicySummary(state.effective_trust_policy)}`);
-
-    // judgment pack 기본 규칙
-    for (const rule of judgmentPackRules(state.judgment_pack)) {
-      sections.get('Working Defaults')?.push(rule);
-    }
-    // communication pack 기본 규칙
-    for (const rule of communicationPackRules(state.communication_pack)) {
-      sections.get('How To Report')?.push(rule);
-    }
-
-    // 4축 facet 극단값 → 추가 규칙 (12-bucket pack 위에 연속 값 차별화).
-    // 각 facet 0.5 default 이고 자동 갱신 ±0.1 단위이므로, 0.85/0.15 임계값은
-    // 여러 세션에 걸친 강한 신호 누적 후에만 발화한다.
-    for (const fr of facetDrivenRules(profile)) {
-      sections.get(fr.section)?.push(fr.rule);
-    }
+    sections.get('Working Defaults')?.push(`Trust: ${trustPolicySummary(state.effective_trust_policy)}`);
+    for (const rule of judgmentPackRules(state.judgment_pack)) sections.get('Working Defaults')?.push(rule);
+    for (const rule of communicationPackRules(state.communication_pack)) sections.get('How To Report')?.push(rule);
   }
 
-  // 6. 섹션 조립 (AI-optimized: 간결한 태그 형식)
+  const OMITTED_NOTE_RESERVE = 120;
+  const headerChars = SECTION_ORDER.reduce((n, name) => n + name.length + 6, 0);
+  let used = evidenceBlock.length + warningsBlock.length + headerChars + OMITTED_NOTE_RESERVE;
+  for (const items of sections.values()) for (const item of items) used += item.length + 3;
+
+  const included: Rule[] = [];
+  const omitted: Rule[] = [];
+  for (const rule of deduped) {
+    const text = ruleToText(rule);
+    if (used + text.length + 3 > ctx.max_chars || included.length >= ctx.max_rules) {
+      omitted.push(rule);
+      continue;
+    }
+    used += text.length + 3;
+    included.push(rule);
+    const section: SectionName = rule.strength === 'hard'
+      ? 'Must Not'
+      : (CATEGORY_TO_SECTION[rule.category] ?? 'Working Defaults');
+    sections.get(section)?.push(text);
+  }
+
+  // R8: 4축 프로필을 렌더에 연결한다. 이전에는 `include_pack_summary`(항상 false) 뒤에 있어 facet 값을 바꿔도
+  // 주입본이 같았다. 0.85/0.15 를 넘는 facet 의 규칙만 넣고, 룰이 예산을 다 쓴 뒤 남는 자리에만 들어간다(예산 최하위).
+  // 임계값 근거: 기본 0.5, 자동 갱신 ±0.1 단위 → 극단값은 여러 세션의 강한 신호가 누적된 뒤에만 도달한다.
+  let facetOmitted = 0;
+  for (const fr of facetDrivenRules(profile)) {
+    const text = `[profile] ${fr.rule}`;
+    if (used + text.length + 3 > ctx.max_chars) { facetOmitted++; continue; }
+    used += text.length + 3;
+    sections.get(fr.section)?.push(text);
+  }
+
   const parts: string[] = [];
-
-  let totalChars = 0;
-  let totalRules = 0;
-
+  const mustNot = sections.get('Must Not') ?? [];
+  if (mustNot.length > 0) parts.push(`## Must Not\n${mustNot.map((i) => `- ${i}`).join('\n')}`);
+  parts.push(evidenceBlock);
   for (const name of SECTION_ORDER) {
+    if (name === 'Must Not') continue;
     const items = sections.get(name) ?? [];
-    if (items.length === 0) continue;
-
-    const header = `## ${name}`;
-    const body = items.map(item => `- ${item}`).join('\n');
-    const section = `${header}\n${body}`;
-
-    if (totalChars + section.length > ctx.max_chars) break;
-    if (totalRules + items.length > ctx.max_rules) break;
-
-    parts.push(section);
-    totalChars += section.length;
-    totalRules += items.length;
+    if (items.length > 0) parts.push(`## ${name}\n${items.map((i) => `- ${i}`).join('\n')}`);
   }
-
-  // 7. Evidence Collection 지시 (항상 포함, 로케일)
-  initLocaleFromConfig();
-  const ecStrings = RULE_RENDERER[getLocale()];
-  parts.push([
-    `## ${ecStrings.evidenceCollectionHeader}`,
-    ...ecStrings.evidenceCollectionRules.map(r => `- ${r}`),
-  ].join('\n'));
-
-  // 8. warnings
-  if (state.warnings.length > 0) {
-    parts.push(`## Warnings\n${state.warnings.map(w => `- ${w}`).join('\n')}`);
+  if (omitted.length > 0 || facetOmitted > 0) {
+    parts.push(`## Omitted\n- ${omitted.length} lower-priority rules${facetOmitted ? ` and ${facetOmitted} profile rules` : ''} omitted (budget). List: forgen rule list`);
   }
+  if (warningsBlock) parts.push(warningsBlock);
 
-  return parts.join('\n\n');
+  return { text: parts.join('\n\n'), included, omitted };
+}
+
+export function renderRules(
+  rules: Rule[],
+  state: SessionEffectiveState,
+  profile: Profile | null | undefined,
+  ctx: RenderContext = DEFAULT_CONTEXT,
+): string {
+  return renderRulesDetailed(rules, state, profile, ctx).text;
 }

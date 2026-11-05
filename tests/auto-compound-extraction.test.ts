@@ -50,11 +50,10 @@ describe('Part B — solution extraction 계약 (source guard, corrected fix v2)
   it('모델 텍스트를 파싱해 forgen 을 직접 실행한다 (결정론적 쓰기)', () => {
     // --solution "제목" "설명" 파싱 정규식 + forgen 절대경로 execFileSync 호출.
     expect(RUNNER_SRC).toContain('--solution');
-    expect(RUNNER_SRC).toMatch(/execFileSync\(\s*forgenBin/);
-    expect(RUNNER_SRC).toContain("'compound', '--solution'");
-    // forgen 은 node 형제 바이너리 절대경로 — sparse PATH 의존 제거.
+    expect(RUNNER_SRC).toMatch(/execFileSync\(process\.execPath, \[cliJs, 'compound', '--solution'/);
+    // forgen 은 러너와 같은 패키지의 cli.js 를 같은 node 로 직접 실행 — sparse PATH·다른 버전 전역 forgen 의존 제거.
     expect(RUNNER_SRC).toContain('path.dirname(process.execPath)');
-    expect(RUNNER_SRC).toContain("path.join(nodeBinDir, 'forgen')");
+    expect(RUNNER_SRC).toContain("'..', 'cli.js'");
   });
 
   it('파싱된 solution 을 저장 전 injection/content 필터로 검증한다', () => {

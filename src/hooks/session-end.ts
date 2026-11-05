@@ -23,13 +23,13 @@ import { fileURLToPath } from 'node:url';
 import { createLogger } from '../core/logger.js';
 import { readStdinJSON } from './shared/read-stdin.js';
 import { isHookEnabled } from './hook-config.js';
-import { approve } from './shared/hook-response.js';
+import { approve, failOpenWithTracking } from './shared/hook-response.js';
 import { recordHookTiming } from './shared/hook-timing.js';
 
 const log = createLogger('session-end');
 
-/** session-recovery 와 동일 임계값 — 짧은 세션은 compound 가치가 없다. */
-export const MIN_USER_MESSAGES = 10;
+/** D9: 임계값 1 — 짧은 세션에도 교정 승급·sessions.db 인덱싱이 필요하다. Haiku 추출 여부는 러너가 판단. */
+export const MIN_USER_MESSAGES = 1;
 
 export interface SessionEndInput {
   session_id?: string;
@@ -96,23 +96,25 @@ export async function main(): Promise<void> {
     if (transcript && fs.existsSync(transcript)) {
       try { count = await countSessionUserMessages(transcript); } catch (e) { log.debug('user message count 실패', e); }
     }
+    // 앞 200KB 에 사용자 메시지가 없어도(큰 도구 출력으로 시작하는 세션) 파일이 더 크면 러너를 돌린다.
+    try { if (count === 0 && transcript && fs.statSync(transcript).size > COUNT_SCAN_BYTES) count = 1; } catch { /* ignore */ }
     if (shouldRunSessionEndCompound(input, count)) {
       const cwd = input.cwd ?? process.cwd();
       const sessionId = input.session_id ?? path.basename(transcript, '.jsonl');
-      const status = runAutoCompound(cwd, transcript, sessionId, count);
+      const status = runAutoCompound(cwd, transcript, sessionId, count, true);
       log.debug(`SessionEnd auto-compound: ${status} (reason=${input.reason ?? '?'}, msgs=${count})`);
     }
     console.log(approve());
   } catch (e) {
     log.debug('session-end 실패 (fail-open)', e);
-    console.log(approve());
+    console.log(failOpenWithTracking('session-end', e));
   } finally {
     recordHookTiming('session-end', Date.now() - start, 'SessionEnd');
   }
 }
 
 if (process.argv[1] && fs.realpathSync(path.resolve(process.argv[1])) === fileURLToPath(import.meta.url)) {
-  main().catch(() => {
-    console.log(approve());
+  main().catch((e) => {
+    console.log(failOpenWithTracking('session-end', e));
   });
 }

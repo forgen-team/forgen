@@ -17,6 +17,7 @@ import { sanitizeId } from './shared/sanitize-id.js';
 import { isHookEnabled } from './hook-config.js';
 import { approve, approveWithWarning, failOpenWithTracking } from './shared/hook-response.js';
 import { STATE_DIR } from '../core/paths.js';
+import { analyzeCommand, worstFinding } from './shared/command-analyzer.js';
 
 interface PermissionInput {
   tool_name?: string;
@@ -57,14 +58,15 @@ export function classifyTool(
 }
 
 /** autopilot 모드 활성 여부 확인 */
-function isAutopilotActive(): boolean {
+function isAutopilotActive(sessionId: string): boolean {
   const modes = ['autopilot', 'ralph', 'ultrawork'];
   for (const mode of modes) {
     const statePath = path.join(STATE_DIR, `${mode}-state.json`);
     try {
       if (fs.existsSync(statePath)) {
         const data = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
-        if (data.active) return true;
+        // H6: 다른 세션의 autopilot 상태가 이 세션의 권한 흐름에 새지 않게 세션 범위로 한정
+        if (data.active && data.sessionId === sessionId) return true;
       }
     } catch (e) { log.debug(`mode state file parse failed: ${mode}`, e); }
   }
@@ -101,6 +103,25 @@ async function main(): Promise<void> {
   const toolName = data.tool_name ?? data.toolName ?? '';
   const sessionId = data.session_id ?? 'default';
 
+  // H11: 이전엔 문구(systemMessage)만 내고 결정을 내리지 않았다. 되돌릴 수 없는 위험 명령(root/home 삭제, mkfs 등)은
+  // 권한 요청 단계에서도 실제로 거부 결정을 낸다. 그 외는 Claude 기본 권한 흐름(대화상자)에 맡긴다.
+  if (toolName === 'Bash') {
+    const toolInput = data.tool_input ?? data.toolInput ?? {};
+    const command = typeof toolInput.command === 'string' ? toolInput.command : '';
+    const worst = worstFinding(analyzeCommand(command, { cwd: (data as { cwd?: string }).cwd }).findings);
+    if (worst && (worst.action === 'block' || worst.action === 'deny')) {
+      logPermissionRequest(sessionId, toolName, 'deny');
+      console.log(JSON.stringify({
+        continue: true,
+        hookSpecificOutput: {
+          hookEventName: 'PermissionRequest',
+          decision: { behavior: 'deny', message: `[Forgen] Dangerous command denied: ${worst.description}` },
+        },
+      }));
+      return;
+    }
+  }
+
   // Audit note #4 (2026-04-21): `approve()` / `approveWithWarning()` 둘 다
   // Claude Code hook protocol에서 `permissionDecision: 'allow'`를 설정하지
   // 않는다. 따라서 본 훅은 실제로 도구 실행을 "승인(force-allow)"하지 않고,
@@ -117,7 +138,7 @@ async function main(): Promise<void> {
   }
 
   // autopilot 모드가 아니면 기본 동작 (Claude Code 기본 권한 흐름)
-  if (!isAutopilotActive()) {
+  if (!isAutopilotActive(sessionId)) {
     logPermissionRequest(sessionId, toolName, 'pass-through');
     console.log(approve());
     return;

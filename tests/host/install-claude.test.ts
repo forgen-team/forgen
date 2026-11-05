@@ -27,8 +27,8 @@ afterEach(() => {
 describe('planClaudeInstall', () => {
   it('빈 homeDir 에 install 시 4 자산 모두 작성 + count 반환', () => {
     const r = planClaudeInstall({ pkgRoot: PKG_ROOT, homeDir: tmpHome });
-    expect(r.pluginCacheWritten).toBe(true);
-    expect(fs.existsSync(r.pluginCachePath)).toBe(true);
+    expect(r.errors).toEqual([]);
+    expect(fs.existsSync(r.shimPath as string)).toBe(true);
     expect(r.slashCommandsCount).toBeGreaterThan(0);
     expect(fs.existsSync(r.slashCommandsPath)).toBe(true);
     expect(fs.existsSync(r.settingsPath)).toBe(true);
@@ -36,19 +36,21 @@ describe('planClaudeInstall', () => {
     expect(r.mcpRegistered).toBe(true);
   });
 
-  it('settings.json 의 forgen hooks 가 절대경로 박제 (CLAUDE_PLUGIN_ROOT 변수 미해석 회귀 차단)', () => {
-    // settings.json 컨텍스트에서는 ${CLAUDE_PLUGIN_ROOT} 가 Claude Code 에 의해 풀리지 않음 →
-    // "Hook command references ${CLAUDE_PLUGIN_ROOT} but the hook is not associated with a plugin" 에러.
-    // postinstall.js 와 동일하게 절대경로로 박혀야 함.
+  it('settings.json 의 hook 은 고정 shim 경유 — node·패키지 절대경로도 CLAUDE_PLUGIN_ROOT 도 없다', () => {
     const r = planClaudeInstall({ pkgRoot: PKG_ROOT, homeDir: tmpHome });
     const settings = JSON.parse(fs.readFileSync(r.settingsPath, 'utf-8'));
     expect(settings.hooks).toBeDefined();
-    expect(settings.enabledPlugins?.['forgen@forgen-local']).toBe(true);
+    expect(settings.enabledPlugins).toBeUndefined();
     const allCommands = Object.values(settings.hooks as Record<string, Array<{ hooks: Array<{ command: string }> }>>)
       .flat()
       .flatMap((g) => g.hooks.map((h) => h.command));
-    expect(allCommands.every((c) => !c.includes('CLAUDE_PLUGIN_ROOT'))).toBe(true);
-    expect(allCommands.some((c) => c.includes(path.join(PKG_ROOT, 'dist', 'hooks')))).toBe(true);
+    expect(allCommands).toHaveLength(23);
+    for (const c of allCommands) {
+      expect(c.startsWith(`"${r.shimPath}" "hooks/`)).toBe(true);
+      expect(c).not.toContain('CLAUDE_PLUGIN_ROOT');
+      expect(c).not.toContain(PKG_ROOT);
+    }
+    expect(fs.existsSync(path.join(tmpHome, '.claude', 'plugins'))).toBe(false);
   });
 
   it('사용자 비-forgen hook 보존 + 사용자 비-forgen MCP 보존', () => {
@@ -71,9 +73,9 @@ describe('planClaudeInstall', () => {
     const preCommands = (settings.hooks.PreToolUse as Array<{ hooks: Array<{ command: string }> }>)
       .flatMap((g) => g.hooks.map((h) => h.command));
     expect(preCommands).toContain('node /home/user/my-hook.js');
-    // forgen entry 도 절대경로로 존재 (CLAUDE_PLUGIN_ROOT 변수 박제 금지)
+    // forgen entry 는 shim 경유로 존재 (CLAUDE_PLUGIN_ROOT 변수 박제 금지)
     expect(preCommands.every((c) => !c.includes('CLAUDE_PLUGIN_ROOT'))).toBe(true);
-    expect(preCommands.some((c) => c.includes(path.join(PKG_ROOT, 'dist', 'hooks')))).toBe(true);
+    expect(preCommands.some((c) => c.startsWith(`"${r.shimPath}" "hooks/`))).toBe(true);
 
     const claudeJson = JSON.parse(fs.readFileSync(path.join(tmpHome, '.claude.json'), 'utf-8'));
     expect(claudeJson.mcpServers['user-mcp']).toBeDefined();
@@ -90,8 +92,7 @@ describe('planClaudeInstall', () => {
 
   it('dryRun=true: 파일 미작성', () => {
     const r = planClaudeInstall({ pkgRoot: PKG_ROOT, homeDir: tmpHome, dryRun: true });
-    expect(r.pluginCacheWritten).toBe(false);
-    expect(fs.existsSync(r.pluginCachePath)).toBe(false);
+    expect(fs.existsSync(r.shimPath as string)).toBe(false);
     expect(fs.existsSync(r.slashCommandsPath)).toBe(false);
     expect(fs.existsSync(r.settingsPath)).toBe(false);
     // count 는 *예상값* 으로 보고 (실 작성은 없지만 결과는 지표 제공)
@@ -109,7 +110,7 @@ describe('planClaudeInstall', () => {
     const r = planClaudeInstall({ pkgRoot: PKG_ROOT, homeDir: tmpHome });
     expect(r.homeDir).toBe(tmpHome);
     expect(r.settingsPath).toBe(path.join(tmpHome, '.claude', 'settings.json'));
-    expect(r.pluginCachePath.startsWith(tmpHome)).toBe(true);
+    expect((r.shimPath as string).startsWith(tmpHome)).toBe(true);
   });
 
   it('잘못된 pkgRoot 는 명확한 에러', () => {

@@ -45,7 +45,7 @@ export interface SweepOpts {
 export const DEFAULT_SWEEP_OPTS: Omit<SweepOpts, 'nowMs'> = {
   windowMs: 24 * 60 * 60 * 1000,
   staleMs: 2 * 60 * 60 * 1000,
-  minPrompts: 10,
+  minPrompts: 1, // D9: 짧은 세션도 승급·인덱싱 대상
   maxPerRun: 5,
 };
 
@@ -224,7 +224,7 @@ export function runCompoundSweep(opts: { dryRun?: boolean } & Partial<Omit<Sweep
         continue;
       }
       // 실제 spawn 된 경우만 sweptAt 기록 (리뷰 SEV-2: dedup-skip/실패를 완료로 오기록 금지).
-      const status = runAutoCompound(c.cwd, c.transcriptPath, c.sessionId, c.promptCount);
+      const status = runAutoCompound(c.cwd, c.transcriptPath, c.sessionId, c.promptCount, true); // 끝난 세션 — 조금 남은 구간도 처리
       if (status === 'spawned') {
         state[c.sessionId] = { sweptAt: nowMs };
         swept.push(c.sessionId);
@@ -390,8 +390,8 @@ export function compoundSweepCli(args: string[]): void {
     console.log(
       `[forgen compound sweep --prune-removed] candidates=${r.candidates.length} ` +
       (apply
-        ? `deleted=${r.deleted.length}`
-        : `(dry-run — add --apply to delete)${r.candidates.length ? ` [${r.candidates.map((id) => id.slice(0, 8)).join(', ')}]` : ''}`),
+        ? `archived=${r.deleted.length}`
+        : `(dry-run — add --apply to archive)${r.candidates.length ? ` [${r.candidates.map((id) => id.slice(0, 8)).join(', ')}]` : ''}`),
     );
     return;
   }

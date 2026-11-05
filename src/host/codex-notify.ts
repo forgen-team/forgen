@@ -36,7 +36,7 @@ export const CODEX_HOOKS_SILENT_PATH = path.join(STATE_DIR, 'codex-hooks-silent.
 /** silent 플래그 유효기간 — 이보다 오래된 관측은 doctor 가 무시한다. */
 const SILENT_TTL_MS = 24 * 60 * 60 * 1000;
 /** Stop 훅 경로와 같은 "의미 있는 세션" 임계. */
-const MIN_USER_PROMPTS = 10;
+const MIN_USER_PROMPTS = 1; // D9: 메시지 수 게이트 제거 — 짧은 세션의 교정도 승급
 
 export interface CodexNotifyPayload {
   type?: string;

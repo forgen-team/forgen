@@ -13,9 +13,9 @@ describe('doctor --quick (v0.5.0)', () => {
     }
     const output = logs.join('\n');
     expect(output).toContain('Tools');
-    expect(output).toContain('Plugins');
+    expect(output).toContain('Tools');
     expect(output).toContain('Directories');
-    expect(output).toContain('Initialization Status');
+    expect(output).toContain('Data');
     // quick mode should NOT include Environment or Hook Health
     expect(output).not.toContain('Inside tmux session');
     expect(output).not.toContain('Hook Health');

@@ -191,28 +191,29 @@ async function defaultExec(prompt: string): Promise<string> {
 
 /**
  * precision 강등: 7d 판정 ≥ DEMOTE_MIN_JUDGED 이고 precision < DEMOTE_PRECISION_BELOW 이면 enforce_mode='advise'.
- * 하드 룰·builtin 제외(ADR-017 D1). 이미 advise 면 no-op. 복귀는 사용자 명시(`forgen rule enforce <id>`).
+ * 하드 룰·builtin 제외(ADR-017 D1). 이미 advise 면 no-op. 사용자가 `forgen rule enforce` 로 켠 룰(명시 block)도 제외.
  */
 export function maybeDemote(ruleId: string, now: number = Date.now()): boolean {
   const rule = loadRule(ruleId);
-  if (!rule || rule.strength === 'hard' || rule.enforce_mode === 'advise') return false;
+  if (!rule || rule.strength === 'hard' || rule.enforce_mode) return false;
   const violations = readViolationsWindow(7, now);
   const p = precisionByRule(violations, readVerdicts(), 7, now).get(ruleId);
   if (!p || p.precision === null) return false;
   if (p.correct + p.false_positive < DEMOTE_MIN_JUDGED || p.precision >= DEMOTE_PRECISION_BELOW) return false;
+  const prevMode = rule.enforce_mode ?? 'block';
   rule.enforce_mode = 'advise';
   saveRule(rule);
   try {
     fs.mkdirSync(STATE_DIR, { recursive: true });
     fs.appendFileSync(path.join(STATE_DIR, 'enforcement', 'demotions.jsonl'),
-      `${JSON.stringify({ at: new Date(now).toISOString(), rule_id: ruleId, precision: p.precision, judged: p.correct + p.false_positive })}\n`);
+      `${JSON.stringify({ at: new Date(now).toISOString(), rule_id: ruleId, precision: p.precision, judged: p.correct + p.false_positive, prev_mode: prevMode, reason: 'precision-auto' })}\n`);
   } catch { /* best-effort */ }
   return true;
 }
 
 /** 가장 최근 강등 기록(표시용). 없으면 null. */
-export function lastDemotion(ruleId: string): { at: string; precision: number; judged: number } | null {
-  const rows = readJsonlSafe<{ at: string; rule_id: string; precision: number; judged: number }>(path.join(STATE_DIR, 'enforcement', 'demotions.jsonl'));
+export function lastDemotion(ruleId: string): { at: string; precision: number; judged: number; prev_mode?: 'block' | 'advise'; reason?: string } | null {
+  const rows = readJsonlSafe<{ at: string; rule_id: string; precision: number; judged: number; prev_mode?: 'block' | 'advise'; reason?: string }>(path.join(STATE_DIR, 'enforcement', 'demotions.jsonl'));
   for (let i = rows.length - 1; i >= 0; i--) if (rows[i].rule_id === ruleId) return rows[i];
   return null;
 }

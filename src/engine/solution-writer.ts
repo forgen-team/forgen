@@ -66,7 +66,7 @@ export type SolutionMutator = (solution: SolutionV3) => boolean;
  * 결함이 발생하면 false 반환 (lock timeout, parse 실패, mutator throw 모두).
  * 운영 관측성은 PR2c 후속 hardening에서 다룬다 (현재는 log.debug로만).
  */
-export function mutateSolutionFile(filePath: string, mutator: SolutionMutator): boolean {
+export function mutateSolutionFile(filePath: string, mutator: SolutionMutator, opts: { touchUpdated?: boolean } = {}): boolean {
   try {
     return withFileLockSync(filePath, () => {
       let content: string;
@@ -92,7 +92,7 @@ export function mutateSolutionFile(filePath: string, mutator: SolutionMutator): 
       }
       if (!modified) return false;
 
-      solution.frontmatter.updated = new Date().toISOString().split('T')[0];
+      if (opts.touchUpdated !== false) solution.frontmatter.updated = new Date().toISOString().split('T')[0];
       atomicWriteText(filePath, serializeSolutionV3(solution));
       return true;
     });

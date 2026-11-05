@@ -358,6 +358,11 @@ export async function handleStatuslineWith(payload: StdinPayload, nowMs: number 
     const { sanitizeId } = await import('../hooks/shared/sanitize-id.js');
     cacheSessionModel(sanitizeId(payload.session_id), payload.model.id);
   }
+  // (1b) 실제 컨텍스트 사용량 — context-guard 가 창 대비 비율로 판단하도록 세션별 파일에 남긴다.
+  if (payload.session_id) {
+    const { writeContextWindow } = await import('../hooks/context-usage.js');
+    writeContextWindow(payload.session_id, payload.context_window);
+  }
 
   // (2) D5 샘플 기록 — 매 호출. 압축은 **append 앞**에서(critic r2: append 직후면 mtime 이 항상 신선해
   // 정적 가드가 영원히 막혔다). 크기 ≥256KB·60초 정적일 때만 재작성, 2% 확률.

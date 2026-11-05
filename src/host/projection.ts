@@ -136,7 +136,7 @@ function resolveEventName(raw: Record<string, unknown>, input: HookEventInput): 
   return typeof candidate === 'string' && candidate.length > 0 ? candidate : undefined;
 }
 
-export const projectCodexToClaude: ProjectToClaudeEvent = (raw, input) => {
+const projectCommon: ProjectToClaudeEvent = (raw, input) => {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return { continue: true };
   const payload = raw as Record<string, unknown>;
   const eventName = resolveEventName(payload, input);
@@ -220,7 +220,27 @@ export const projectCodexToClaude: ProjectToClaudeEvent = (raw, input) => {
  * 교체하면 되도록 — `getProjection(host)` 가 단일 진입점.)
  */
 export const projectClaudeToClaude: ProjectToClaudeEvent = (raw, input) =>
-  projectCodexToClaude(raw, input);
+  projectCommon(raw, input);
+
+/** ask 를 지원하지 않는 호스트에서 쓰는 안내 꼬리. */
+export const ASK_UNSUPPORTED_NOTICE =
+  '[forgen] 이 호스트(Codex/OpenCode)는 확인 요청(ask)을 지원하지 않아 차단으로 처리했습니다. 의도한 작업이면 사용자가 직접 실행하거나 FORGEN_USER_CONFIRMED=1 을 설정해 다시 실행하세요.';
+
+/**
+ * Codex 사영 = 공통 사영 + PreToolUse `ask` → `deny` + 안내.
+ * Codex 0.163 바이너리는 `permissionDecision:"ask"` 를 "PreToolUse hook returned unsupported permissionDecision:ask"
+ * 로 거부(훅 실패 = 가드 무력화)한다. 스키마 enum 에는 있지만 런타임이 지원하지 않으므로, 확인이 필요한 명령을
+ * 조용히 통과시키지 않고 차단 + 사유로 바꾼다.
+ */
+export const projectCodexToClaude: ProjectToClaudeEvent = (raw, input) => {
+  const out = projectCommon(raw, input);
+  const hso = out.hookSpecificOutput;
+  if (hso && hso.hookEventName === 'PreToolUse' && hso.permissionDecision === 'ask') {
+    const reason = typeof hso.permissionDecisionReason === 'string' ? hso.permissionDecisionReason : '[forgen] confirmation required';
+    out.hookSpecificOutput = { ...hso, permissionDecision: 'deny', permissionDecisionReason: `${reason}\n${ASK_UNSUPPORTED_NOTICE}` };
+  }
+  return out;
+};
 
 /**
  * OpenCode projection — P1 파운데이션 fail-loud 스텁.

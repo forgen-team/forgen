@@ -1,0 +1,764 @@
+{
+ "version": 1,
+ "note": "실데이터 원문·비밀·개인 내용 없음. 솔루션은 비식별로 다시 쓴 것. legacyTags 는 수정 전(0.6.8) extractTags 가 저장 시 만든 태그를 박제한 것.",
+ "solutions": [
+  {
+   "name": "위젯-로딩-에러-빈상태-분리",
+   "where": "pack",
+   "kind": "pattern",
+   "title": "위젯 로딩 에러 빈상태 분리 렌더",
+   "content": "무엇: 데이터 위젯은 loading, error, empty 세 상태를 각각 별도 컴포넌트로 렌더한다. 왜: 상태를 한 분기에 섞으면 빈 화면과 에러가 구분되지 않는다. 어떻게: skeleton 은 loading 에만, 재시도 버튼은 error 에만 둔다.",
+   "legacyTags": [
+    "위젯",
+    "에러",
+    "렌더",
+    "loading",
+    "error",
+    "로딩",
+    "빈상태",
+    "분리"
+   ]
+  },
+  {
+   "name": "다크모드-배경색-시맨틱-토큰",
+   "where": "pack",
+   "kind": "pattern",
+   "title": "다크모드 배경색 시맨틱 토큰",
+   "content": "무엇: 다크모드 배경색은 hex 하드코딩 대신 시맨틱 design token 으로 참조한다. 왜: 테마가 늘어날 때 한 곳만 고치면 된다. 주의: 토큰 이름은 용도 기준(surface, border)으로 짓는다.",
+   "legacyTags": [
+    "다크모드",
+    "배경색",
+    "시맨틱",
+    "토큰",
+    "무엇",
+    "hex",
+    "하드코딩",
+    "대신"
+   ]
+  },
+  {
+   "name": "고빈도-이벤트-ref-raf-스로틀",
+   "where": "me",
+   "kind": "pattern",
+   "title": "고빈도 이벤트 ref raf 스로틀",
+   "content": "스크롤·마우스 이동 같은 고빈도 이벤트는 React state 로 받지 말고 ref 에 담아 requestAnimationFrame 으로 반영한다. state 로 받으면 매 이벤트마다 리렌더가 일어나 프레임이 떨어진다. 값이 화면에 안 보이면 반영 자체를 건너뛴다.",
+   "legacyTags": [
+    "고빈",
+    "이벤트",
+    "ref",
+    "state",
+    "반영",
+    "raf",
+    "스로틀",
+    "스크롤"
+   ]
+  },
+  {
+   "name": "병렬-서브에이전트-429-조기종료-대응",
+   "where": "me",
+   "kind": "troubleshoot",
+   "title": "병렬 서브에이전트 429 조기종료 대응",
+   "content": "서브에이전트를 병렬로 많이 띄우면 rate limit 429 에러로 중간에 끝난다. 동시 실행 수를 줄이고, 끝난 결과는 파일로 먼저 저장해 재개할 수 있게 한다. 429 후에는 지연을 두고 한 개씩 재시작한다.",
+   "legacyTags": [
+    "429",
+    "병렬",
+    "서브에이전트",
+    "조기종료",
+    "대응",
+    "띄우면",
+    "rate",
+    "limit"
+   ]
+  },
+  {
+   "name": "typescript-test-double-합성",
+   "where": "me",
+   "kind": "pattern",
+   "title": "typescript test double 상속 대신 합성",
+   "content": "typescript 테스트에서 추상 클래스를 상속해 mock 을 만들면 private 멤버 때문에 타입 에러가 난다. 상속 대신 인터페이스를 구현하는 객체를 합성해 test double 로 쓴다.",
+   "legacyTags": [
+    "typescript",
+    "test",
+    "double",
+    "상속",
+    "대신",
+    "합성",
+    "테스트",
+    "추상"
+   ]
+  },
+  {
+   "name": "sse-수신-react-query-캐시-반영",
+   "where": "pack",
+   "kind": "pattern",
+   "title": "SSE 수신 데이터 react query 캐시 반영",
+   "content": "SSE 로 받은 이벤트는 컴포넌트 state 에 쌓지 말고 queryClient.setQueryData 로 캐시에 반영한다. 그러면 같은 쿼리를 쓰는 화면이 함께 갱신된다. 연결이 끊기면 invalidate 로 다시 받는다.",
+   "legacyTags": [
+    "sse",
+    "캐시",
+    "반영",
+    "수신",
+    "데이터",
+    "react",
+    "query",
+    "이벤트"
+   ]
+  },
+  {
+   "name": "llm-json-응답-코드블록-제거-파싱",
+   "where": "pack",
+   "kind": "troubleshoot",
+   "title": "LLM JSON 응답 코드블록 제거 파싱",
+   "content": "LLM 이 준 JSON 을 바로 JSON.parse 하면 마크다운 코드 펜스 때문에 깨진다. 펜스와 앞뒤 설명을 먼저 벗겨 낸 뒤 파싱하고, 실패하면 한 번 더 요청한다. 필드는 스키마로 검증한다.",
+   "legacyTags": [
+    "json",
+    "llm",
+    "파싱",
+    "펜스",
+    "응답",
+    "코드블록",
+    "parse",
+    "마크다운"
+   ]
+  },
+  {
+   "name": "go-봇-상태-rwmutex",
+   "where": "pack",
+   "kind": "pattern",
+   "title": "go 봇 상태 rwmutex 보호",
+   "content": "go 에서 여러 goroutine 이 읽는 봇 상태는 sync.RWMutex 로 감싼다. 읽기는 RLock, 쓰기만 Lock 을 잡는다. 락을 잡은 채 네트워크 호출을 하지 않는다.",
+   "legacyTags": [
+    "rwmutex",
+    "보호",
+    "goroutine",
+    "sync",
+    "감싼다",
+    "읽기",
+    "rlock",
+    "쓰기"
+   ]
+  },
+  {
+   "name": "모델-교체-후-선택기준-재측정",
+   "where": "me",
+   "kind": "pattern",
+   "title": "새 모델 교체 후 모델 선택 기준 재측정",
+   "content": "새 모델이 나오면 기존 작업의 모델 선택 기준을 전수 다시 잰다. 무엇: 대표 작업 목록을 두 모델로 병렬 실행. 왜: 성능 대비 비용 순위가 바뀐다. 어떻게: 토큰, 응답시간, 품질을 같은 표에 기록한다.",
+   "legacyTags": [
+    "모델",
+    "선택",
+    "기준",
+    "교체",
+    "재측정",
+    "나오면",
+    "기존",
+    "전수"
+   ]
+  },
+  {
+   "name": "플러그인-룰-중복-좀비-정리",
+   "where": "me",
+   "kind": "pattern",
+   "title": "플러그인 룰 중복 좀비 정리",
+   "content": "플러그인이 룰 파일을 중복 생성하거나 제거 후에도 남기면 좀비 룰이 된다. 설치 목록과 룰 파일을 대조해 고아 파일을 찾아 정리한다. 삭제 전에 목록을 먼저 보여 준다.",
+   "legacyTags": [
+    "파일",
+    "플러그인",
+    "중복",
+    "좀비",
+    "정리",
+    "목록",
+    "생성하거나",
+    "후에"
+   ]
+  },
+  {
+   "name": "차단-로그-오탐-원인-기록",
+   "where": "me",
+   "kind": "pattern",
+   "title": "차단 로그 오탐 원인 기록",
+   "content": "차단 로그에서 오탐을 확인하려면 어떤 명령이 어떤 규칙에 걸렸는지 원문 일부를 함께 남겨야 한다. 규칙 이름만 있으면 사후에 판단할 수 없다. 비밀은 마스킹한다.",
+   "legacyTags": [
+    "차단",
+    "로그",
+    "오탐",
+    "원인",
+    "기록",
+    "확인하려면",
+    "명령",
+    "걸렸는지"
+   ]
+  },
+  {
+   "name": "rss-피드-프리셋-온보딩",
+   "where": "pack",
+   "kind": "pattern",
+   "title": "RSS 피드 프리셋 온보딩",
+   "content": "첫 실행 사용자에게 RSS 피드를 비워 두지 말고 주제별 프리셋을 고르게 한다. 프리셋 선택은 한 화면에서 끝내고 나중에 바꿀 수 있게 한다. feed URL 유효성은 선택 시점에 확인한다.",
+   "legacyTags": [
+    "프리셋",
+    "rss",
+    "피드",
+    "선택",
+    "온보딩",
+    "사용자에게",
+    "비워",
+    "두지"
+   ]
+  },
+  {
+   "name": "youtube-innertube-shorts-필터",
+   "where": "pack",
+   "kind": "pattern",
+   "title": "youtube innertube shorts 필터",
+   "content": "youtube innertube 응답에서 shorts 는 reelItemRenderer 로 오므로 목록 단계에서 제외한다. 자막 요청은 videoId 기준으로 별도 호출한다. 응답 구조가 자주 바뀌므로 필드 접근을 방어적으로 한다.",
+   "legacyTags": [
+    "youtube",
+    "innertube",
+    "shorts",
+    "응답",
+    "필터",
+    "reelitemrenderer",
+    "오므",
+    "목록"
+   ]
+  },
+  {
+   "name": "works-with-typescript",
+   "where": "me",
+   "kind": "decision",
+   "title": "works with typescript",
+   "content": "주로 TypeScript 코드를 작성합니다",
+   "habit": true,
+   "context": "Detected from 107 write operations",
+   "evidence": {
+    "injected": 3,
+    "reflected": 107
+   },
+   "legacyTags": [
+    "typescript",
+    "works",
+    "코드",
+    "작성"
+   ]
+  },
+  {
+   "name": "writes-long-content",
+   "where": "me",
+   "kind": "decision",
+   "title": "writes long content",
+   "content": "긴 문서와 코드를 자주 작성합니다",
+   "habit": true,
+   "context": "Detected from 52 write operations",
+   "evidence": {
+    "injected": 1,
+    "reflected": 52
+   },
+   "legacyTags": [
+    "writes",
+    "long",
+    "content",
+    "문서",
+    "코드",
+    "작성"
+   ]
+  },
+  {
+   "name": "커밋-전-diff-트랙-분류",
+   "where": "me",
+   "kind": "pattern",
+   "title": "커밋 전 diff 트랙 분류",
+   "content": "여러 작업이 섞인 working tree 는 커밋 전에 diff 를 트랙별로 분류한다. 무엇: 파일을 기능, 설정, 문서로 묶는다. 왜: 한 커밋에 섞이면 되돌리기 어렵다. 어떻게: git add -p 로 묶음 단위만 스테이징한다.",
+   "legacyTags": [
+    "커밋",
+    "diff",
+    "분류",
+    "트랙",
+    "섞인",
+    "working",
+    "tree",
+    "트랙별"
+   ]
+  },
+  {
+   "name": "설계-근거-출처-재검증",
+   "where": "me",
+   "kind": "pattern",
+   "title": "설계 근거 출처 유효성 재검증",
+   "content": "설계 문서의 근거 링크와 수치는 구현 직전에 출처가 아직 유효한지 다시 확인한다. 무엇: 인용한 문서 버전과 날짜. 왜: 오래된 근거로 결정하면 되돌리는 비용이 크다.",
+   "legacyTags": [
+    "설계",
+    "출처",
+    "문서",
+    "유효성",
+    "재검증",
+    "링크",
+    "수치",
+    "직전"
+   ]
+  },
+  {
+   "name": "대용량-파일-presign-리다이렉트",
+   "where": "me",
+   "kind": "pattern",
+   "title": "대용량 파일 presign 리다이렉트",
+   "content": "큰 파일은 서버가 중계하지 말고 presigned URL 로 리다이렉트해 스토리지에서 직접 내려받게 한다. 만료 시간은 짧게 두고 권한 확인은 리다이렉트 전에 끝낸다.",
+   "legacyTags": [
+    "파일",
+    "리다이렉트",
+    "대용량",
+    "presign",
+    "서버",
+    "중계하지",
+    "말고",
+    "presigned"
+   ]
+  },
+  {
+   "name": "모바일-화면-정보밀도-접기",
+   "where": "me",
+   "kind": "pattern",
+   "title": "모바일 화면 정보 밀도 접기",
+   "content": "작은 화면에서 같은 설명이 반복되면 첫 줄만 보이게 접고 펼침으로 나머지를 보여 준다. 핵심 숫자는 접지 않는다. 탭을 늘려 해결하지 않는다.",
+   "legacyTags": [
+    "화면",
+    "않는다",
+    "모바일",
+    "정보",
+    "접기",
+    "설명",
+    "반복되면",
+    "보이게"
+   ]
+  },
+  {
+   "name": "규칙-정의와-현장-관행-분리",
+   "where": "me",
+   "kind": "pattern",
+   "title": "규칙 정의와 현장 관행 분리",
+   "content": "공식 규칙 정의와 실제 현장에서 쓰이는 관행은 문서에서 칸을 나눠 적는다. 섞으면 어느 쪽이 기준인지 독자가 판단할 수 없다. 관행에는 적용 범위를 붙인다.",
+   "legacyTags": [
+    "정의",
+    "현장",
+    "관행",
+    "분리",
+    "공식",
+    "실제",
+    "쓰이",
+    "문서"
+   ]
+  },
+  {
+   "name": "데이터-보호-약속-저장-공유-삭제",
+   "where": "me",
+   "kind": "pattern",
+   "title": "데이터 보호 약속 저장 공유 삭제 명시",
+   "content": "사용자 데이터를 받는 화면에는 저장 위치, 공유 범위, 삭제 방법을 한 번에 보이게 쓴다. 약속은 실제 동작과 같아야 하며 지킬 수 없는 문구는 넣지 않는다.",
+   "legacyTags": [
+    "데이터",
+    "약속",
+    "저장",
+    "공유",
+    "삭제",
+    "보호",
+    "명시",
+    "사용자"
+   ]
+  },
+  {
+   "name": "클라우드-모델-접근-403-권한-부여",
+   "where": "me",
+   "kind": "troubleshoot",
+   "title": "클라우드 모델 접근 403 권한 부여",
+   "content": "모델 호출이 403 으로 거절되면 인증 오류가 아니라 모델 접근 권한을 부여하지 않은 경우가 많다. 콘솔에서 해당 모델의 access grant 를 먼저 확인한다.",
+   "legacyTags": [
+    "모델",
+    "접근",
+    "403",
+    "권한",
+    "클라우드",
+    "부여",
+    "호출",
+    "거절되면"
+   ]
+  },
+  {
+   "name": "재방문-흐름-제약-기반-설계",
+   "where": "me",
+   "kind": "pattern",
+   "title": "제약 기반 재방문 흐름 설계",
+   "content": "재방문을 늘리려면 알림을 늘리기보다 사용자가 다음에 할 일을 하나로 좁힌다. 제약이 있어야 흐름이 짧아진다. 첫 화면에서 이어서 하기를 먼저 보인다.",
+   "legacyTags": [
+    "제약",
+    "재방문",
+    "흐름",
+    "기반",
+    "설계",
+    "늘리려면",
+    "알림",
+    "늘리기보다"
+   ]
+  },
+  {
+   "name": "설계문서-정본-읽기-순서",
+   "where": "me",
+   "kind": "pattern",
+   "title": "설계문서 정본 읽기 순서",
+   "content": "무엇: 정본 문서와 보조 문서가 섞여 있을 때는 읽는 순서를 먼저 정한다. 실제 작업 전에 파일 목록을 확인하고 정본부터 읽는다. 파일 간 충돌은 정본이 이긴다.",
+   "legacyTags": [
+    "정본",
+    "순서",
+    "문서",
+    "파일",
+    "설계문서",
+    "읽기",
+    "무엇",
+    "보조"
+   ]
+  }
+ ],
+ "cases": [
+  {
+   "id": 1,
+   "prompt": "위젯 로딩 에러 빈 상태 skeleton 처리 어떻게 해?",
+   "expect": [
+    "위젯-로딩-에러-빈상태-분리"
+   ],
+   "note": "원표본 1"
+  },
+  {
+   "id": 2,
+   "prompt": "다크모드에서 배경색 토큰 어떻게 써야 해",
+   "expect": [
+    "다크모드-배경색-시맨틱-토큰"
+   ],
+   "note": "원표본 2"
+  },
+  {
+   "id": 3,
+   "prompt": "react 스크롤 이벤트 때문에 리렌더가 너무 많아 프레임 드랍",
+   "expect": [
+    "고빈도-이벤트-ref-raf-스로틀"
+   ],
+   "note": "원표본 3"
+  },
+  {
+   "id": 4,
+   "prompt": "subagent 병렬 분석 돌리다 429 rate limit 에러로 중간에 끝났어",
+   "expect": [
+    "병렬-서브에이전트-429-조기종료-대응"
+   ],
+   "note": "원표본 4"
+  },
+  {
+   "id": 5,
+   "prompt": "typescript 테스트에서 추상 클래스 상속해서 mock 만들면 타입 에러 나",
+   "expect": [
+    "typescript-test-double-합성"
+   ],
+   "note": "원표본 5"
+  },
+  {
+   "id": 6,
+   "prompt": "SSE로 받은 데이터를 react query 캐시에 반영하려면?",
+   "expect": [
+    "sse-수신-react-query-캐시-반영"
+   ],
+   "note": "원표본 6"
+  },
+  {
+   "id": 7,
+   "prompt": "LLM이 준 JSON 파싱이 마크다운 코드블록 때문에 깨져",
+   "expect": [
+    "llm-json-응답-코드블록-제거-파싱"
+   ],
+   "note": "원표본 7"
+  },
+  {
+   "id": 8,
+   "prompt": "go에서 봇 상태를 mutex로 관리하는 패턴",
+   "expect": [
+    "go-봇-상태-rwmutex"
+   ],
+   "note": "원표본 8"
+  },
+  {
+   "id": 9,
+   "prompt": "새 모델 나왔는데 모델 선택 기준 다시 재측정해야 하나",
+   "expect": [
+    "모델-교체-후-선택기준-재측정"
+   ],
+   "note": "원표본 9"
+  },
+  {
+   "id": 10,
+   "prompt": "플러그인 룰 파일이 중복되고 좀비처럼 남아있어 정리해줘",
+   "expect": [
+    "플러그인-룰-중복-좀비-정리"
+   ],
+   "note": "원표본 10"
+  },
+  {
+   "id": 11,
+   "prompt": "차단 로그에 오탐이 있는데 어떤 명령이 막혔는지 기록이 안 돼",
+   "expect": [
+    "차단-로그-오탐-원인-기록"
+   ],
+   "note": "원표본 11"
+  },
+  {
+   "id": 12,
+   "prompt": "fix the typescript build error in the test file",
+   "expect": [],
+   "note": "원표본 12: 습관 로그(works-with-typescript)는 솔루션이 아니다 — 없어야 함"
+  },
+  {
+   "id": 13,
+   "prompt": "how do I add an RSS feed preset onboarding",
+   "expect": [
+    "rss-피드-프리셋-온보딩"
+   ],
+   "note": "원표본 13"
+  },
+  {
+   "id": 14,
+   "prompt": "youtube innertube transcript shorts 필터",
+   "expect": [
+    "youtube-innertube-shorts-필터"
+   ],
+   "note": "원표본 14"
+  },
+  {
+   "id": 15,
+   "prompt": "위젯에서 로딩이랑 에러랑 빈 화면을 나눠서 보여주고 싶어",
+   "expect": [
+    "위젯-로딩-에러-빈상태-분리"
+   ],
+   "note": "조사/구어"
+  },
+  {
+   "id": 16,
+   "prompt": "dark mode 에서 색상을 토큰으로 관리하는 방법",
+   "expect": [
+    "다크모드-배경색-시맨틱-토큰"
+   ],
+   "note": "한영"
+  },
+  {
+   "id": 17,
+   "prompt": "스크롤할 때마다 state 가 바뀌어서 렌더가 폭주해",
+   "expect": [
+    "고빈도-이벤트-ref-raf-스로틀"
+   ],
+   "note": "구어"
+  },
+  {
+   "id": 18,
+   "prompt": "서브에이전트 여러 개 동시에 돌리니까 429 로 죽어",
+   "expect": [
+    "병렬-서브에이전트-429-조기종료-대응"
+   ],
+   "note": "구어"
+  },
+  {
+   "id": 19,
+   "prompt": "mock 객체를 abstract class 상속으로 만들었더니 타입이 안 맞아",
+   "expect": [
+    "typescript-test-double-합성"
+   ],
+   "note": "한영"
+  },
+  {
+   "id": 20,
+   "prompt": "실시간 이벤트 스트림을 쿼리 캐시와 동기화하는 법",
+   "expect": [
+    "sse-수신-react-query-캐시-반영"
+   ],
+   "note": "동의어"
+  },
+  {
+   "id": 21,
+   "prompt": "모델이 응답에 json 을 코드 펜스로 감싸서 줘서 파싱이 실패해",
+   "expect": [
+    "llm-json-응답-코드블록-제거-파싱"
+   ],
+   "note": "한영"
+  },
+  {
+   "id": 22,
+   "prompt": "고루틴 여러 개가 읽는 봇 상태에 락을 거는 방법",
+   "expect": [
+    "go-봇-상태-rwmutex"
+   ],
+   "note": "한영"
+  },
+  {
+   "id": 23,
+   "prompt": "커밋하기 전에 섞여 있는 변경을 나눠서 정리하고 싶어",
+   "expect": [
+    "커밋-전-diff-트랙-분류"
+   ],
+   "note": "구어"
+  },
+  {
+   "id": 24,
+   "prompt": "큰 파일 다운로드를 서버 거치지 않고 직접 받게 하려면 presigned url 쓰나?",
+   "expect": [
+    "대용량-파일-presign-리다이렉트"
+   ],
+   "note": "조사"
+  },
+  {
+   "id": 25,
+   "prompt": "폰 화면에서 같은 설명이 계속 반복돼서 너무 길어",
+   "expect": [
+    "모바일-화면-정보밀도-접기"
+   ],
+   "note": "동의어"
+  },
+  {
+   "id": 26,
+   "prompt": "모델 호출이 403 으로 거절돼. 인증은 맞는데",
+   "expect": [
+    "클라우드-모델-접근-403-권한-부여"
+   ],
+   "note": "구어"
+  },
+  {
+   "id": 27,
+   "prompt": "사용자 데이터를 어디에 저장하고 어떻게 지우는지 화면에 써야 해",
+   "expect": [
+    "데이터-보호-약속-저장-공유-삭제"
+   ],
+   "note": "구어"
+  },
+  {
+   "id": 28,
+   "prompt": "설계 문서에 인용한 근거 링크가 아직 유효한지 확인해야 해",
+   "expect": [
+    "설계-근거-출처-재검증"
+   ],
+   "note": "조사"
+  },
+  {
+   "id": 29,
+   "prompt": "겨우 이거 밖에 없다고? 문제 더 있을텐데 리뷰 한 번 더 돌려봐",
+   "expect": [],
+   "note": "실표본 재작성"
+  },
+  {
+   "id": 30,
+   "prompt": "이번 주 추천 하나가 좀 이상한 것 같은데 내 입장에서는 무슨 도움이 되나 싶어",
+   "expect": [],
+   "note": "실표본 재작성"
+  },
+  {
+   "id": 31,
+   "prompt": "커밋하고 배포해. 에러 원인은 아직 모르는 거지? 왜 실패했는지",
+   "expect": [],
+   "note": "실표본 재작성"
+  },
+  {
+   "id": 32,
+   "prompt": "아무래도 사용자가 대부분 초보일 텐데 그래서 기본 추천을 단순하게 하면 좋겠어",
+   "expect": [],
+   "note": "실표본 재작성"
+  },
+  {
+   "id": 33,
+   "prompt": "이 방식은 왜 특정 해상도부터 가능한 거지. 이것도 핵심인 거 같은데",
+   "expect": [],
+   "note": "실표본 재작성"
+  },
+  {
+   "id": 34,
+   "prompt": "오 다 좋다. 그림은 좀 없어보인다.. 3번은 갑자기 왜 물어보는지 모르겠네",
+   "expect": [],
+   "note": "실표본 재작성"
+  },
+  {
+   "id": 35,
+   "prompt": "이런 디자인 어때? 더보기는 없애자",
+   "expect": [],
+   "note": "실표본 재작성"
+  },
+  {
+   "id": 36,
+   "prompt": "체크박스도 이상해지고 버튼도 이상해지고 전체적으로 검증이 필요해보이는데",
+   "expect": [],
+   "note": "실표본 재작성"
+  },
+  {
+   "id": 37,
+   "prompt": "/plugin install some-plugin",
+   "expect": [],
+   "note": "C5 오탐 재현"
+  },
+  {
+   "id": 38,
+   "prompt": "! ls ~/.claude/",
+   "expect": [],
+   "note": "C5 오탐 재현"
+  },
+  {
+   "id": 39,
+   "prompt": "실제 파일 무엇 바꿨어?",
+   "expect": [],
+   "note": "템플릿 단어만"
+  },
+  {
+   "id": 40,
+   "prompt": "무엇을 실제로 어떻게 했는지 파일 기준으로 설명해줘",
+   "expect": [],
+   "note": "템플릿 단어만"
+  },
+  {
+   "id": 41,
+   "prompt": "오늘 점심 뭐 먹을까",
+   "expect": [],
+   "note": "무관"
+  },
+  {
+   "id": 42,
+   "prompt": "이 폴더 이름을 바꿔줘",
+   "expect": [],
+   "note": "무관"
+  },
+  {
+   "id": 43,
+   "prompt": "주말에 볼만한 영화 추천해줘",
+   "expect": [],
+   "note": "무관"
+  },
+  {
+   "id": 44,
+   "prompt": "typescript 로 hello world 출력하는 코드",
+   "expect": [],
+   "note": "습관 로그 함정"
+  },
+  {
+   "id": 45,
+   "prompt": "write a long email to my landlord about the heating",
+   "expect": [],
+   "note": "습관 로그 함정"
+  },
+  {
+   "id": 46,
+   "prompt": "다음 달 일정 정리해서 표로 만들어줘",
+   "expect": [],
+   "note": "무관"
+  },
+  {
+   "id": 47,
+   "prompt": "설명 좀 더 짧게 해줘",
+   "expect": [],
+   "note": "무관"
+  },
+  {
+   "id": 48,
+   "prompt": "파이썬으로 csv 읽어서 합계 구하는 스크립트",
+   "expect": [],
+   "note": "무관"
+  }
+ ]
+}

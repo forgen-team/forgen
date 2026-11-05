@@ -72,6 +72,10 @@ export interface CodexInstallResult {
   /** P3-3: AGENTS.md (cwd) 에 forgen rule block 인젝션 여부 */
   agentsMdPath: string;
   agentsMdInjected: boolean;
+  /** 예전 설치가 cwd·홈에 남긴 forgen 블록을 걷어낸 파일들 (dryRun 이면 걷어낼 파일들). */
+  staleAgentsMdCleaned: string[];
+  /** 같은 위치에 AGENTS.override.md 가 있으면 Codex 는 그것만 읽는다 — 그 경로. */
+  agentsOverridePath?: string;
   /** v0.4.9: dev-guide skills (~/.codex/skills) 설치 결과 */
   devGuideSkillsPath: string;
   devGuideSkillsInstalled: number;
@@ -672,9 +676,13 @@ export function planCodexInstall(opts: CodexInstallOptions): CodexInstallResult 
   // 7) P3-3 (US-013): cwd/AGENTS.md 에 forgen rules block 인젝션 (managed marker)
   //    Codex 가 AGENTS.md 를 자동 read (codex-rs/core/src/agents_md.rs 검증).
   //    pkgRoot 의 git repo root 의 AGENTS.md, 또는 explicit override.
-  const agentsMdPath = opts.agentsMdPath ?? resolveAgentsMdPath(opts.pkgRoot);
+  // E7: cwd 에 쓰지 않는다. Codex 전역 지침 파일은 $CODEX_HOME/AGENTS.md.
+  const agentsMdPath = opts.agentsMdPath ?? path.join(codexHome, 'AGENTS.md');
   const agentsResult = upsertForgenRulesInAgentsMd({ agentsMdPath, pkgRoot: opts.pkgRoot, dryRun: opts.dryRun ?? false });
+  const stale = opts.agentsMdPath ? { cleaned: [] as string[] } : cleanStaleAgentsMd({ hostDir: codexHome, targetPath: agentsMdPath, pkgRoot: opts.pkgRoot, dryRun: opts.dryRun ?? false });
   if (!opts.dryRun) recordAgentsMdInstall(codexHome, agentsMdPath);
+  const overridePath = path.join(path.dirname(agentsMdPath), 'AGENTS.override.md');
+  const agentsOverridePath = fs.existsSync(overridePath) ? overridePath : undefined;
 
   // 8) v0.4.9: dev-guide skills → ~/.codex/skills/forgen-<stack>-<skill>/SKILL.md
   const devGuideResult = installDevGuideSkillsToCodex({
@@ -714,6 +722,8 @@ export function planCodexInstall(opts: CodexInstallOptions): CodexInstallResult 
     skillsPath,
     agentsMdPath,
     agentsMdInjected: agentsResult.injected,
+    staleAgentsMdCleaned: stale.cleaned,
+    agentsOverridePath,
     devGuideSkillsPath: devGuideResult.devGuideSkillsPath,
     devGuideSkillsInstalled: devGuideResult.devGuideSkillsInstalled,
     devGuideSkillsRemoved: devGuideResult.devGuideSkillsRemoved,
@@ -1288,6 +1298,25 @@ export function removeForgenRulesEverywhere(opts: { hostDir: string; cwdAgentsMd
     else {
       try { fs.writeFileSync(path.join(opts.hostDir, AGENTS_MD_REGISTRY), `${JSON.stringify({ paths: keep }, null, 2)}\n`, 'utf-8'); } catch { /* best-effort */ }
     }
+  }
+  return { cleaned, failed };
+}
+
+/**
+ * 예전 설치가 cwd 나 ~/AGENTS.md 에 남긴 forgen 블록을 걷어낸다 (표식 블록만 — 사용자 글은 보존, 블록뿐인 파일은 삭제).
+ * 기록된 경로 + 지금 cwd 의 경로 + 홈의 AGENTS.md 가 대상이고, 새 설치 위치 자신은 건드리지 않는다.
+ */
+export function cleanStaleAgentsMd(opts: { hostDir: string; targetPath: string; pkgRoot: string; dryRun: boolean }): { cleaned: string[]; failed: Array<{ path: string; error: string }> } {
+  const target = path.resolve(opts.targetPath);
+  const candidates = [...new Set([...readAgentsMdInstalls(opts.hostDir), resolveAgentsMdPath(opts.pkgRoot), path.join(os.homedir(), 'AGENTS.md')].map((p) => path.resolve(p)))].filter((p) => p !== target);
+  const cleaned: string[] = [];
+  const failed: Array<{ path: string; error: string }> = [];
+  for (const p of candidates) {
+    try { if (removeForgenRulesFromAgentsMd({ agentsMdPath: p, dryRun: opts.dryRun }).removed) cleaned.push(p); } catch (e) { failed.push({ path: p, error: e instanceof Error ? e.message : String(e) }); }
+  }
+  if (!opts.dryRun) {
+    clearAgentsMdInstalls(opts.hostDir);
+    for (const f of failed) recordAgentsMdInstall(opts.hostDir, f.path); // 못 지운 곳은 기록에 남겨 uninstall 이 다시 시도한다
   }
   return { cleaned, failed };
 }

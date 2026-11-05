@@ -39,7 +39,7 @@ describe('T1 integration (appendEvidence → orchestrator)', () => {
       summary: 'stop including stack trace in errors — too verbose',
       axis_refs: ['quality_safety'],
       confidence: 0.9,
-      raw_payload: { kind: 'avoid-this', target: 'verbose-errors', axis_hint: 'quality_safety' },
+      raw_payload: { kind: 'avoid-this', target: 'verbose-errors', target_rule_id: rule.rule_id, axis_hint: 'quality_safety' },
     });
     const result = appendEvidence(evidence);
     expect(result.saved).toBe(true);
@@ -69,7 +69,7 @@ describe('T1 integration (appendEvidence → orchestrator)', () => {
       summary: 'prefer early-return going forward',
       axis_refs: ['judgment_philosophy'],
       confidence: 0.8,
-      raw_payload: { kind: 'prefer-from-now', target: 'early-return', axis_hint: 'judgment_philosophy' },
+      raw_payload: { kind: 'prefer-from-now', target: 'early-return', target_rule_id: rule.rule_id, axis_hint: 'judgment_philosophy' },
     });
     appendEvidence(evidence);
 
@@ -128,7 +128,7 @@ describe('T1 integration (appendEvidence → orchestrator)', () => {
       summary: 'retire-me is no longer wanted',
       axis_refs: ['quality_safety'],
       confidence: 0.9,
-      raw_payload: { kind: 'avoid-this', target: 'retire-me' },
+      raw_payload: { kind: 'avoid-this', target: 'retire-me', target_rule_id: rule.rule_id },
     });
     appendEvidence(evidence);
 

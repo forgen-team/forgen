@@ -2,7 +2,7 @@
  * Forgen v0.5.0 — Rendered Rules Manifest (ADR-010 W1-1)
  *
  * harness 가 렌더해 쓴 규칙 파일의 content-hash 원장.
- * reclaimer(`forgen migrate tenetx`)가 "forgen 이 쓴 그대로인 파일"과
+ * reclaimer(`forgen dev migrate tenetx`)가 "forgen 이 쓴 그대로인 파일"과
  * "사용자가 편집했거나 다른 도구가 쓴 파일"을 구분하는 유일한 근거다 —
  * native /doctor 는 비용만 알지 provenance 를 모른다.
  *
@@ -14,6 +14,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { createHash } from 'node:crypto';
+import { FORGEN_HOME } from './paths.js';
 
 export interface ManifestEntry {
   sha256: string;
@@ -72,4 +73,46 @@ export function matchesManifest(absPath: string, content: string, manifest: Rule
   const entry = manifest[absPath];
   if (!entry) return false;
   return entry.sha256 === sha256Of(content);
+}
+
+
+/** 파일별로 forgen 이 생성할 때 첫 줄에 쓰는 표제. 이 표제로 시작하는 파일만 회수한다. */
+const GENERATED_RULE_FILES: Record<string, string> = {
+  'v1-rules.md': '# Forgen v1 — Rendered Rules',
+  'project-context.md': '# Forgen — Security & Anti-Pattern',
+  'forge-behavioral.md': '# Forgen — Learned Patterns',
+  'user-profile.md': '# Forgen — User Profile',
+};
+
+function ruleDirsFor(cwd: string, home: string): string[] {
+  const dirs = [path.join(home, '.claude', 'rules')];
+  for (let cur = path.resolve(cwd); ; cur = path.dirname(cur)) {
+    if (cur === home || cur === path.dirname(cur)) break;
+    dirs.push(path.join(cur, '.claude', 'rules'));
+    if (fs.existsSync(path.join(cur, '.git'))) break;
+  }
+  return dirs;
+}
+
+/**
+ * 구버전이 .claude/rules/ 에 쓴 룰 파일 회수. 룰은 이제 SessionStart 컨텍스트로 들어가므로,
+ * 남겨 두면 옛 룰이 함께 주입된다(해제한 지시가 계속 적용되던 원인). 생성 표제로 시작하는 파일만
+ * 옮기고, 지우지 않고 backups 로 옮겨 되돌릴 수 있게 한다.
+ */
+export function reclaimRenderedRuleFiles(cwd: string, home: string = os.homedir(), nowMs: number = Date.now()): string[] {
+  const moved: string[] = [];
+  const backupDir = path.join(FORGEN_HOME, 'backups', 'reclaimed-rule-files');
+  for (const dir of ruleDirsFor(cwd, home)) {
+    for (const [name, header] of Object.entries(GENERATED_RULE_FILES)) {
+      const file = path.join(dir, name);
+      try {
+        if (fs.lstatSync(file).isSymbolicLink()) continue;
+        if (!fs.readFileSync(file, 'utf-8').startsWith(header)) continue;
+        fs.mkdirSync(backupDir, { recursive: true });
+        fs.renameSync(file, path.join(backupDir, `${nowMs}-${dir.replace(/[\\/:]/g, '_')}-${name}`));
+        moved.push(file);
+      } catch { /* 없거나 못 옮기면 건너뛴다 */ }
+    }
+  }
+  return moved;
 }

@@ -7,6 +7,8 @@ import { withFileLockSync } from '../hooks/shared/file-lock.js';
 import { atomicWriteText } from '../hooks/shared/atomic-write.js';
 import { createLogger } from '../core/logger.js';
 import { recordQuarantine, diagnoseFromRawContent } from './solution-quarantine.js';
+import { isHabitLog } from './solution-habit.js';
+import { ME_SOLUTIONS, PACKS_DIR } from '../core/paths.js';
 
 const log = createLogger('solution-index');
 
@@ -127,6 +129,7 @@ function buildIndex(dirs: SolutionDirConfig[]): SolutionIndex {
     let droppedRetired = 0;
     let droppedIoError = 0;
     let droppedSymlink = 0;
+    let droppedHabit = 0;
 
     for (const file of files) {
       try {
@@ -194,6 +197,11 @@ function buildIndex(dirs: SolutionDirConfig[]): SolutionIndex {
           droppedRetired++;
           continue;
         }
+        // 습관 로그(`works-with-typescript` 류)는 솔루션이 아니라 behavior 다 — 매처·검색 대상에서 뺀다.
+        if (isHabitLog(fm.name, content)) {
+          droppedHabit++;
+          continue;
+        }
 
         fileEntries.push({
           entry: {
@@ -203,6 +211,7 @@ function buildIndex(dirs: SolutionDirConfig[]): SolutionIndex {
             type: fm.type,
             scope: dirConfig.scope,
             tags: fm.tags,
+            ...(Array.isArray(fm.projects) && fm.projects.length ? { projects: fm.projects.filter((x): x is string => typeof x === 'string').map((x) => x.toLowerCase()) } : {}),
             // T2: pre-expand via the shared term normalizer. Once per solution
             // per index build, not once per solution per query. Safe to
             // recompute on rebuild (cheap: O(N_tags) Map lookups).
@@ -244,6 +253,9 @@ function buildIndex(dirs: SolutionDirConfig[]): SolutionIndex {
       log.debug(
         `${dir}: ${droppedMalformed} malformed, ${droppedIoError} i/o errors, ${droppedSymlink} symlinks skipped (${totalBad}/${totalScanned} files)`,
       );
+    }
+    if (droppedHabit > 0) {
+      log.debug(`${dir}: ${droppedHabit} habit-log entries excluded from matching (move with \`forgen compound habits --apply\`)`);
     }
     if (droppedRetired > 0) {
       log.debug(`${dir}: ${droppedRetired} retired solutions filtered (expected)`);
@@ -288,4 +300,23 @@ export function getOrBuildIndex(dirs: SolutionDirConfig[]): SolutionIndex {
 
 export function resetIndexCache(): void {
   cachedIndexes.clear();
+}
+
+
+/**
+ * 기본 솔루션 디렉터리 목록 — hook 매칭과 MCP 검색이 **같은 목록**을 쓴다(경로 일치).
+ * 설치된 팩의 solutions/ 와 cwd 의 project 스코프를 포함한다. 이름순 정렬로 우선순위가 결정적이다.
+ */
+export function defaultSolutionDirs(cwd?: string): SolutionDirConfig[] {
+  const dirs: SolutionDirConfig[] = [{ dir: ME_SOLUTIONS, scope: 'me' }];
+  try {
+    if (fs.existsSync(PACKS_DIR)) {
+      for (const entry of fs.readdirSync(PACKS_DIR).sort()) {
+        const solDir = path.join(PACKS_DIR, entry, 'solutions');
+        if (fs.existsSync(solDir)) dirs.push({ dir: solDir, scope: 'team' });
+      }
+    }
+  } catch { /* 팩 디렉터리 접근 실패는 무시 */ }
+  if (cwd) dirs.push({ dir: path.join(cwd, '.compound', 'solutions'), scope: 'project' });
+  return dirs;
 }

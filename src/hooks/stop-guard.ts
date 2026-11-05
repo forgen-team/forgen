@@ -35,15 +35,18 @@ import { appendImplicitFeedback } from '../store/implicit-feedback-store.js';
 import { atomicWriteJSON } from './shared/atomic-write.js';
 import { recordHookTiming } from './shared/hook-timing.js';
 import { isHookEnabled } from './hook-config.js';
-import { loadActiveRules } from '../store/rule-store.js';
+import { loadEnforcedRules } from '../store/rule-store.js';
 import type { Rule, EnforceSpec } from '../store/types.js';
 import { recordViolation, recordCheck, rotateIfBig } from '../engine/lifecycle/signals.js';
 import { compileSafeRegex, safeRegexTest } from './shared/safe-regex.js';
+import { relevantRules, readTurnRules } from '../engine/rule-relevance.js';
+import { topicGateApplies, effectiveEnforceMode } from '../engine/rule-detectability.js';
 
 const HOOK_NAME = 'stop-guard';
 
 // R6-F2: shared single source of truth.
 import { DEFAULT_STOP_TRIGGER_RE, DEFAULT_STOP_EXCLUDE_RE } from './shared/stop-triggers.js';
+import { isMainModule } from './shared/is-main.js';
 
 /**
  * Stuck-loop guard 임계치.
@@ -76,6 +79,8 @@ interface SpikeRule {
   origin?: { source: Rule['source']; evidence_refs: string[]; policy: string };
   /** ADR-017 D1: precision 강등 모드. 'advise' 면 차단 대신 기록(kind:'correction'). */
   enforce_mode?: 'block' | 'advise';
+  /** D12-C 주제 게이트용: 룰의 trigger/policy. store 룰에서만 채워진다(spike 룰은 없음 → 게이트 미적용). */
+  topic?: { trigger: string; policy: string; category: string };
 }
 
 interface ScenariosFile {
@@ -147,7 +152,8 @@ export function rulesFromStore(rules: Rule[]): SpikeRule[] {
         block_message: spec.block_message,
         system_tag: spec.system_tag,
         origin: { source: rule.source, evidence_refs: rule.evidence_refs ?? [], policy: rule.policy },
-        enforce_mode: rule.enforce_mode,
+        enforce_mode: effectiveEnforceMode(rule, spec),
+        topic: { trigger: rule.trigger ?? '', policy: rule.policy, category: rule.category },
       });
     }
   }
@@ -155,9 +161,9 @@ export function rulesFromStore(rules: Rule[]): SpikeRule[] {
 }
 
 /** 전체 로더 — rule-store 우선, 비어 있으면 spike fallback. */
-function loadStopRules(): SpikeRule[] {
+function loadStopRules(cwd?: string): SpikeRule[] {
   try {
-    const storeRules = rulesFromStore(loadActiveRules());
+    const storeRules = rulesFromStore(loadEnforcedRules(cwd));
     if (storeRules.length > 0) return storeRules;
   } catch {
     // fail-open: rule-store 로드 실패는 spike fallback 으로 자동 전이
@@ -372,22 +378,32 @@ export function evaluateStop(
   lastAssistantMessage: string,
   rules: SpikeRule[],
   recentTools: string[] = [],
-): { action: 'approve'; hit: null; passed: string[]; advised: Array<{ rule: SpikeRule; reason: string }> }
- | { action: 'block'; hit: SpikeRule; reason: string; passed: string[]; advised: Array<{ rule: SpikeRule; reason: string }> } {
+  ctx: { turnRuleIds?: ReadonlySet<string> } = {},
+): { action: 'approve'; hit: null; passed: string[]; advised: Array<{ rule: SpikeRule; reason: string }>; offTopic: string[] }
+ | { action: 'block'; hit: SpikeRule; reason: string; passed: string[]; advised: Array<{ rule: SpikeRule; reason: string }>; offTopic: string[] } {
+  const offTopic: string[] = [];
   // ADR-017 D2: 실제 평가돼 통과한 룰(passed)과, D1 advise 강등으로 차단 대신 기록만 하는 룰(advised)을 함께 반환.
   const passed: string[] = [];
   const advised: Array<{ rule: SpikeRule; reason: string }> = [];
   for (const rule of rules) {
     if (rule.hook !== 'Stop') continue;
     if (!messageTriggersRule(lastAssistantMessage, rule)) continue;
+    // D12-C 주제 게이트: 완료 키워드만으로 self_check 를 발동하던 방식은 무관한 룰(Deadeye 디자인 룰 등)이
+    // 무관한 완료 보고를 막는 오탐을 냈다(실데이터 판정 중 오탐 다수). 룰의 policy/trigger 와 직전 응답(또는 이번 턴
+    // 프롬프트에 관련 판정된 룰)이 관련 있을 때만 발동한다.
+    if (topicGateApplies(rule.verifier.kind, rule.topic?.category) && rule.topic) {
+      const onTopic = ctx.turnRuleIds?.has(rule.id)
+        || relevantRules(lastAssistantMessage, [{ rule_id: rule.id, trigger: rule.topic.trigger, policy: rule.topic.policy } as never]).length > 0;
+      if (!onTopic) { offTopic.push(rule.id); continue; }
+    }
     const result = evaluateVerifier(rule, recentTools, lastAssistantMessage);
     if (result.violated) {
       if (rule.enforce_mode === 'advise') { advised.push({ rule, reason: result.reason }); continue; }
-      return { action: 'block', hit: rule, reason: result.reason, passed, advised };
+      return { action: 'block', hit: rule, reason: result.reason, passed, advised, offTopic };
     }
     passed.push(rule.id);
   }
-  return { action: 'approve', hit: null, passed, advised };
+  return { action: 'approve', hit: null, passed, advised, offTopic };
 }
 
 interface BlockCounterState {
@@ -642,14 +658,15 @@ export async function main(): Promise<void> {
       }
     }
 
-    const rules = loadStopRules();
+    const rules = loadStopRules(typeof (input as { cwd?: unknown } | null)?.cwd === 'string' ? (input as { cwd: string }).cwd : undefined);
     if (rules.length === 0) {
       console.log(approveWithOptionalExtractionNotice());
       return;
     }
 
     const sessionId = input?.session_id ?? 'unknown';
-    const result = evaluateStop(lastMessage, rules, loadRecentToolNames(sessionId));
+    const turnRuleIds = new Set((readTurnRules(sessionId)?.rules ?? []).map((r) => r.rule_id));
+    const result = evaluateStop(lastMessage, rules, loadRecentToolNames(sessionId), { turnRuleIds });
 
     // ADR-017 D2: 실제 평가된 룰의 통과를 checks.jsonl 에 기록(violations 와 분리). D1: advise 강등 룰의
     // 위반은 kind:'correction' 으로 기록만 하고 차단하지 않는다.
@@ -736,7 +753,7 @@ export async function main(): Promise<void> {
   }
 }
 
-const isMain = import.meta.url === `file://${process.argv[1]}`;
+const isMain = isMainModule(import.meta.url);
 if (isMain) {
   void main();
 }

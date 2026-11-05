@@ -6,7 +6,7 @@
  * 통합해 표면을 줄이고 진입점을 일원화한다. 기존 render/compute 함수는 재사용만
  * 하고 재작성하지 않는다.
  *
- *   forgen status              요약 (health 헤더 + one-screen stats)
+ *   forgen status              요약 (학습 흐름 6단계 + one-screen stats)
  *   forgen status --compound   compound 상태 + 최근 회상 이력
  *   forgen status --profile    4축 프로필 + 최근 교정
  *   forgen status --rules      활성 룰
@@ -55,6 +55,12 @@ export async function handleStatus(args: string[]): Promise<void> {
   }
 
   const view = resolveView(args);
+  const unknownFlags = args.filter((a) => a.startsWith('-') && !resolveView([a]) && !['--watch', '--json', '--interval', '--limit', '--show'].includes(a.split('=')[0]));
+  if (unknownFlags.length > 0) {
+    console.error(`[forgen] 알 수 없는 status 옵션: ${unknownFlags.join(' ')}\n  views: --compound | --profile | --rules | --blocks [N] | --overview | --live | --turn`);
+    process.exitCode = 1;
+    return;
+  }
 
   switch (view) {
     case '--compound': {
@@ -105,10 +111,21 @@ export async function handleStatus(args: string[]): Promise<void> {
       return;
     }
     default: {
-      // 요약: health 헤더 + one-screen stats (둘 다 computeStats() 기반).
-      const { computeHealth, renderHealthLine } = await import('./health-cli.js');
+      // 요약: 학습 흐름(단계별 입력·마지막 성공·최근 건수) + one-screen stats. 점수(X/100)는 없다.
+      const { computeFlow, renderFlow, haikuStatus } = await import('./flow-status.js');
       const { computeStats, renderStats } = await import('./stats-cli.js');
-      console.log(renderHealthLine(computeHealth()));
+      console.log('\n  forgen status');
+      for (const l of renderFlow(computeFlow())) console.log(l);
+      console.log(`    Haiku 추출  ${haikuStatus().detail}`);
+      try {
+        const { queryGateDistribution } = await import('./observability-store.js');
+        const dist = queryGateDistribution(30);
+        const total = Object.values(dist).reduce((a, b) => a + b, 0);
+        if (total > 0) {
+          const ordered = Object.entries(dist).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v}`).join(' · ');
+          console.log(`    회수 게이트  최근 30일 후보 ${total}건: ${ordered}`);
+        }
+      } catch { /* 관측 DB 없음 */ }
       console.log(renderStats(computeStats()));
       console.log(
         `  ${dim('views:')} forgen status --compound | --profile | --rules | --blocks [N] | --live | --turn`,

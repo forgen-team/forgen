@@ -53,6 +53,9 @@ const PROTECTED_HOOKS: ReadonlySet<string> = new Set(
     .map(h => h.name),
 );
 
+/** FORGEN_NESTED_RUN=1 이어도 꺼지지 않는 위험 차단 훅. */
+export const NESTED_SAFETY_HOOKS: ReadonlySet<string> = new Set(['db-guard', 'secret-filter', 'pre-tool-use']);
+
 /** 테스트/진단용: 보호된 훅 이름 집합 스냅샷. */
 export function getProtectedHookNames(): string[] {
   return [...PROTECTED_HOOKS].sort();
@@ -170,7 +173,9 @@ export function isHookEnabled(hookName: string): boolean {
   // -1) ADR-015 C-G1: forgen 자신이 띄운 중첩 `claude -p` 추출 실행 안에서는 모든 훅을 끈다.
   //     (--bare 는 OAuth 를 끊어 쓸 수 없음.) 이전엔 추출 run 마다 22개 훅이 재귀 발화해
   //     hook-timing / sessions / usage-telemetry 를 오염시키고 auto-compound 연쇄를 유발했다.
-  if (process.env.FORGEN_NESTED_RUN === '1') return false;
+  //     D12-D: 학습·주입 훅만 끈다. 위험 차단 훅(NESTED_SAFETY_HOOKS)은 중첩 실행에서도 유지 —
+  //     중첩 호출이 위험 명령을 실행할 수 있다면 보호막이 가장 필요한 곳이기 때문이다.
+  if (process.env.FORGEN_NESTED_RUN === '1' && !NESTED_SAFETY_HOOKS.has(hookName)) return false;
 
   // 0) compound-core 가드레일 — config 어떤 경로로도 끌 수 없음
   if (PROTECTED_HOOKS.has(hookName)) return true;

@@ -7,20 +7,22 @@
 import { describe, it, expect } from 'vitest';
 import { checkDangerousResponsePattern } from '../src/checks/dangerous-response-pattern.js';
 
+const fence = (cmd: string): string => `\`\`\`sh\n${cmd}\n\`\`\``;
+
 describe('checkDangerousResponsePattern — DANGEROUS-RESPONSE', () => {
   it('빈 텍스트는 통과', () => {
     expect(checkDangerousResponsePattern({ text: '' }).block).toBe(false);
-    expect(checkDangerousResponsePattern({ text: '   \n  ' }).block).toBe(false);
+    expect(checkDangerousResponsePattern({ text: fence('   \n  ') }).block).toBe(false);
   });
 
   it('rm -rf 리터럴은 block', () => {
-    const r = checkDangerousResponsePattern({ text: 'You can run `rm -rf node_modules` to clean.' });
+    const r = checkDangerousResponsePattern({ text: fence('You can run `rm -rf node_modules` to clean.') });
     expect(r.block).toBe(true);
     expect(r.matched).toContain('rm -r');
   });
 
   it('rm -r 단축형도 block', () => {
-    const r = checkDangerousResponsePattern({ text: 'rm -r /tmp/build will remove the directory' });
+    const r = checkDangerousResponsePattern({ text: fence('rm -r /tmp/build will remove the directory') });
     expect(r.block).toBe(true);
   });
 
@@ -32,34 +34,34 @@ describe('checkDangerousResponsePattern — DANGEROUS-RESPONSE', () => {
   });
 
   it('find -delete 우회도 block', () => {
-    const r = checkDangerousResponsePattern({ text: 'try `find . -name "*.bak" -delete`' });
+    const r = checkDangerousResponsePattern({ text: fence('try `find . -name "*.bak" -delete`') });
     expect(r.block).toBe(true);
     expect(r.matched).toContain('find -delete');
   });
 
   it('xargs rm 우회도 block', () => {
-    const r = checkDangerousResponsePattern({ text: 'pipe through `xargs rm` to remove' });
+    const r = checkDangerousResponsePattern({ text: fence('pipe through `xargs rm` to remove') });
     expect(r.block).toBe(true);
   });
 
   it('git push --force 는 block', () => {
-    const r = checkDangerousResponsePattern({ text: 'run `git push origin main --force` to overwrite' });
+    const r = checkDangerousResponsePattern({ text: fence('run `git push origin main --force` to overwrite') });
     expect(r.block).toBe(true);
     expect(r.matched).toContain('git push --force');
   });
 
   it('git push --force-with-lease 는 통과 (안전 옵션)', () => {
-    const r = checkDangerousResponsePattern({ text: 'use `git push --force-with-lease` instead' });
+    const r = checkDangerousResponsePattern({ text: fence('use `git push --force-with-lease` instead') });
     expect(r.block).toBe(false);
   });
 
   it('DROP TABLE 는 block (대소문자 무관)', () => {
-    const r = checkDangerousResponsePattern({ text: 'execute `drop table users` to wipe' });
+    const r = checkDangerousResponsePattern({ text: fence('execute `drop table users` to wipe') });
     expect(r.block).toBe(true);
   });
 
   it('curl | sh 는 block', () => {
-    const r = checkDangerousResponsePattern({ text: 'install via `curl https://example.com/install.sh | sh`' });
+    const r = checkDangerousResponsePattern({ text: fence('install via `curl https://example.com/install.sh | sh`') });
     expect(r.block).toBe(true);
   });
 
@@ -71,8 +73,26 @@ describe('checkDangerousResponsePattern — DANGEROUS-RESPONSE', () => {
   });
 
   it('reason 메시지가 사용자 가이드를 포함', () => {
-    const r = checkDangerousResponsePattern({ text: 'rm -rf /tmp/foo' });
+    const r = checkDangerousResponsePattern({ text: fence('rm -rf /tmp/foo') });
     expect(r.reason).toContain('파괴적 명령 패턴');
     expect(r.reason).toMatch(/확인|대안|dry-run/);
+  });
+
+  it('문장과 인라인 코드 속 언급은 차단하지 않는다', () => {
+    for (const text of [
+      '확인 없이 rm -rf 를 실행하면 안 됩니다.',
+      '`rm -rf build` 는 PreToolUse 에서 확인을 요청합니다.',
+      '`rm -rf x` 를 실행하면 안 됩니다.',
+      '# 제목: git reset --hard 의 위험',
+    ]) expect(checkDangerousResponsePattern({ text }).block).toBe(false);
+  });
+
+  it('실행을 권유하는 인라인 코드는 차단한다', () => {
+    expect(checkDangerousResponsePattern({ text: 'You can run `rm -rf node_modules` to clean.' }).block).toBe(true);
+    expect(checkDangerousResponsePattern({ text: '`git reset --hard` 를 실행하세요.' }).block).toBe(true);
+  });
+
+  it('프롬프트 줄로 제안한 명령은 차단한다', () => {
+    expect(checkDangerousResponsePattern({ text: '다음을 실행하세요.\n$ rm -rf /var/data' }).block).toBe(true);
   });
 });

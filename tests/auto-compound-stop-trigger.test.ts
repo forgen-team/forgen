@@ -120,11 +120,74 @@ describe('context-guard Stop → auto-compound spawn', () => {
     }
   });
 
-  it('promptCount < 10 → no spawn (marker 없음)', () => {
+  it('5단계 리뷰: 마지막 러너 실행 이후 안 자랐고 못 넘긴 구간도 없으면 Stop 이 러너를 띄우지 않는다', () => {
+    const home = makeHome();
+    try {
+      const sid = 'sess-stop-processed';
+      seedContextState(home, sid, 3);
+      const tpath = seedTranscript(home, sid, 3);
+      const size = fs.statSync(tpath).size;
+      // 이 세션은 이미 끝까지 처리됨 (커서 = 크기 = runSize)
+      fs.writeFileSync(path.join(home, '.forgen', 'state', 'extraction-cursors.json'),
+        JSON.stringify({ [sid]: { offset: size, at: new Date().toISOString(), runSize: size } }));
+      const fakeRunnerPath = path.join(home, 'fake-runner.js');
+      fs.writeFileSync(fakeRunnerPath, `
+        const fs = require('node:fs'); const path = require('node:path');
+        const [,, cwd, , sessionId] = process.argv;
+        fs.mkdirSync(path.join(cwd, '.forgen', 'state'), { recursive: true });
+        fs.writeFileSync(path.join(cwd, '.forgen', 'state', 'fake-runner-invoked.json'), JSON.stringify({ sessionId }));
+      `);
+      const proc = spawnSync('node', [CONTEXT_GUARD], {
+        input: JSON.stringify({ session_id: sid, stop_hook_type: 'user', transcript_path: tpath }),
+        env: { ...process.env, HOME: home, FORGEN_CWD: home, FORGEN_AUTO_COMPOUND_RUNNER_PATH: fakeRunnerPath, FORGEN_TEST: '1' },
+        encoding: 'utf-8', timeout: 8000,
+      });
+      expect(proc.status).toBe(0);
+      const t = Date.now(); while (Date.now() - t < 800) { /* detached child 가 떴다면 marker 를 쓸 시간 */ }
+      expect(fs.existsSync(path.join(home, '.forgen', 'state', 'fake-runner-invoked.json'))).toBe(false);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  }, 15000);
+
+  it('D9: promptCount 2 (짧은 세션) 도 Stop 에서 러너를 띄운다 — 교정 승급이 메시지 수 게이트에 막히지 않는다', () => {
+    const home = makeHome();
+    try {
+      const sid = 'sess-stop-short';
+      seedContextState(home, sid, 2);
+      const tpath = seedTranscript(home, sid, 2);
+      const fakeRunnerPath = path.join(home, 'fake-runner.js');
+      fs.writeFileSync(fakeRunnerPath, `
+        const fs = require('node:fs');
+        const path = require('node:path');
+        const [,, cwd, , sessionId] = process.argv;
+        fs.mkdirSync(path.join(cwd, '.forgen', 'state'), { recursive: true });
+        fs.writeFileSync(path.join(cwd, '.forgen', 'state', 'fake-runner-invoked.json'), JSON.stringify({ sessionId }));
+      `);
+      const proc = spawnSync('node', [CONTEXT_GUARD], {
+        input: JSON.stringify({ session_id: sid, stop_hook_type: 'user', transcript_path: tpath }),
+        env: { ...process.env, HOME: home, FORGEN_CWD: home, FORGEN_AUTO_COMPOUND_RUNNER_PATH: fakeRunnerPath, FORGEN_TEST: '1' },
+        encoding: 'utf-8', timeout: 8000,
+      });
+      expect(proc.status).toBe(0);
+      const markerPath = path.join(home, '.forgen', 'state', 'fake-runner-invoked.json');
+      const deadline = Date.now() + 5000;
+      while (Date.now() < deadline && !fs.existsSync(markerPath)) {
+        const t = Date.now();
+        while (Date.now() - t < 50) { /* spin */ }
+      }
+      expect(fs.existsSync(markerPath)).toBe(true);
+      expect(JSON.parse(fs.readFileSync(markerPath, 'utf-8')).sessionId).toBe(sid);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  }, 15000);
+
+  it('promptCount 0 → no spawn (marker 없음) — D9: 10 미만 게이트 제거, 0 만 제외', () => {
     const home = makeHome();
     try {
       const sid = 'sess-small';
-      seedContextState(home, sid, 5);
+      seedContextState(home, sid, 0);
       const tpath = seedTranscript(home, sid, 5);
       const proc = runContextGuardStop(home, { session_id: sid, stop_hook_type: 'user', transcript_path: tpath });
       expect(proc.status).toBe(0);

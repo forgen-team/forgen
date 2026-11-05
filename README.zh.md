@@ -172,7 +172,7 @@ Claude 调用 `correction-record` MCP 工具。纠正作为结构化证据存储
 
 **Always on（确定性，egress 0）:** 你的明确纠正晋升为永久规则; 近乎重复的纠正被聚类并强化; facet 基于累积证据微调; 一个基于时间的 `compound sweep` 兜底机制（可选择挂到 cron）确保漫长或被中断的会话不会丢失这些学习。
 
-**Opt-in（`forgen compound consent on`）:** 后台的 Haiku 通道读取会话 transcript 的*脱敏（redacted）摘要*，提取可复用的解决方案、行为观察，以及上述柔性纠正。它**默认关闭** —— 除非你开启，否则 forgen 不会把你的对话发送到任何地方，且在发送前会剥离 secret / `<private>` 区间。`forgen doctor` 始终显示当前状态。
+**默认开启（用 `forgen compound consent off` 关闭）:** 后台的 Haiku 通道读取会话 transcript 的*摘要*（你的发言和助手的回复；回复中可能包含助手所读文件内容的片段），提取可复用的解决方案、行为观察，以及上述柔性纠正。发送前会屏蔽 secret 并排除 `<private>` 区间，且只发送到你自己账户的 Claude Haiku。若设置了 `ANTHROPIC_API_KEY`，这些调用会计入该 API 账户。首次会话会显示一次通知；`forgen status` 和 `forgen doctor` 始终显示当前状态和今日调用次数。
 
 如果你的纠正持续指向与当前 pack 不同的方向，3个会话后触发不匹配检测，推荐更换 pack。
 
@@ -278,7 +278,7 @@ forgen config default-host codex   # 设置持久默认主机
            v                                                |
   +------------------+                                      |
   |   会话结束        |   corrections -> rules (始终, egress 0)  |
-  |                  |   transcript 提取: opt-in (Haiku)        |
+  |                  |   transcript 提取: 默认开启 (Haiku)        |
   +--------+---------+                                      |
            |                                                |
            v                                                |
@@ -478,7 +478,7 @@ forgen --resume                 # 恢复上一个会话
 ### 个性化
 
 ```bash
-forgen onboarding               # 运行4题引导问卷
+forgen forge --onboarding               # 运行4题引导问卷
 forgen forge --profile          # 查看当前档案
 forgen forge --reset soft       # 重置档案 (soft / learning / full)
 forgen forge --export           # 导出档案
@@ -487,14 +487,14 @@ forgen forge --export           # 导出档案
 ### 状态查看
 
 ```bash
-forgen stats                    # 单屏 Trust Layer 仪表盘 (规则·纠正·block 7天)
-forgen last-block               # 最近一次拦截事件详情
+forgen status                    # 单屏 Trust Layer 仪表盘 (规则·纠正·block 7天)
+forgen status --blocks               # 最近一次拦截事件详情
 forgen inspect profile          # 4轴档案 + pack + facet
 forgen inspect rules            # 活跃/抑制的规则
 forgen inspect corrections      # 纠正历史 (alias: evidence)
 forgen inspect session          # 当前会话状态
 forgen inspect violations       # 最近的拦截记录 (--last N)
-forgen me                       # 个人仪表盘（inspect profile 的快捷方式）
+forgen status --profile                       # 个人仪表盘（inspect profile 的快捷方式）
 ```
 
 ### 规则管理
@@ -533,8 +533,13 @@ forgen compound --lifecycle     # 运行晋升/降级检查
 forgen compound --verify <名称> # 手动晋升为 verified
 forgen compound export          # 将知识导出为 tar.gz
 forgen compound import <路径>   # 导入知识归档
-forgen skill promote <名称>     # 将已验证的解决方案晋升为技能
+forgen skill promote <名称>  # 将已验证的解决方案晋升为标准 SKILL.md (--install → ~/.claude/skills)
 forgen skill list               # 列出已晋升的技能
+forgen way                       # 一屏查看你的工作方式 (你说过的规则 vs 推断, 强制 vs 建议)
+forgen way export --target agents-md   # 导出为 AGENTS.md | claude-rules | skill | system-prompt | gemini | cursor | workflow | json (预览, --out <dir> 写入)
+forgen way import way.json --apply     # 将你的修改写回规则
+forgen way collect-memory              # 读取 Claude 记忆 feedback_*.md 作为规则候选
+forgen way draft skill "<主题>"          # 用与主题相关的规则·方案·纠正原文起草 SKILL.md (`workflow`: 与宿主无关的清单)。隔离的 Haiku 调用, 默认预览, --out <dir> 写入 (旁边生成依据文件), Haiku 不可用时输出相关条目合集
 ```
 
 ### 系统
@@ -542,7 +547,7 @@ forgen skill list               # 列出已晋升的技能
 ```bash
 forgen init                     # 初始化项目
 forgen doctor                   # 系统诊断（10个类别 + 引擎成熟度）
-forgen dashboard                # 知识概览（6个板块）
+forgen status --overview                # 知识概览（6个板块）
 forgen config hooks             # 查看钩子状态 + 上下文预算
 forgen config hooks --regenerate # 重新生成钩子
 forgen mcp list                 # 列出已安装的 MCP 服务器

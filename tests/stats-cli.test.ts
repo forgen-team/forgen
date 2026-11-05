@@ -144,9 +144,9 @@ describe('forgen stats — R9-PA1', () => {
     // 1 solution file created today, 1 older
     fs.mkdirSync(solutionsDir, { recursive: true });
     const newFile = path.join(solutionsDir, 'new-pattern.md');
-    fs.writeFileSync(newFile, '---\ntitle: new\n---\n# body');
+    fs.writeFileSync(newFile, `---\nname: new\ncreated: ${todayIso}\n---\n# body`);
     const oldFile = path.join(solutionsDir, 'old-pattern.md');
-    fs.writeFileSync(oldFile, '---\ntitle: old\n---\n# body');
+    fs.writeFileSync(oldFile, `---\nname: old\ncreated: ${yesterday}\n---\n# body`);
     const staleTs = (now - 25 * 3600_000) / 1000;
     fs.utimesSync(oldFile, staleTs, staleTs);
 
@@ -161,7 +161,7 @@ describe('forgen stats — R9-PA1', () => {
     expect(rendered).toMatch(/Today \(assist\)/);
     expect(rendered).toMatch(/Recall hits/);
     expect(rendered).toMatch(/Surfaced/);
-    expect(rendered).toMatch(/Extracted/);
+    expect(rendered).toMatch(/Saved/);
   });
 
   it('render output includes all 7 numbers + labels', () => {
@@ -174,7 +174,7 @@ describe('forgen stats — R9-PA1', () => {
     const s = computeStats();
     const rendered = renderStats(s);
     expect(rendered).toMatch(/Active rules/);
-    expect(rendered).toMatch(/Corrections \(total\)/);
+    expect(rendered).toMatch(/Corrections \(you\)/);
     expect(rendered).toMatch(/Blocks/);
     expect(rendered).toMatch(/Bypass/);
     expect(rendered).toMatch(/Drift events/);

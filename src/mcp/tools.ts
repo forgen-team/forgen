@@ -51,6 +51,7 @@ export function registerTools(server: McpServer): void {
     async ({ query, type, status, limit }) => {
       const results = searchSolutions(query, {
         dirs: defaultSolutionDirs(getCwd()),
+        cwd: getCwd(),
         type,
         status,
         limit,
@@ -337,9 +338,11 @@ export function registerTools(server: McpServer): void {
         user_quote: z.string().optional().describe('The user\'s own words that prompted this correction, verbatim (not paraphrased). Shown back to the user as "what you said" when the rule later blocks or applies. Omit if you cannot quote verbatim.'),
         axis_hint: z.enum(['quality_safety', 'autonomy', 'judgment_philosophy', 'communication_style']).nullable()
           .describe('Which personalization axis this correction relates to (null if unclear)'),
+        this_project_only: z.boolean().optional().describe('true when the correction is specific to the current project (its domain, files, product). Omit for how-I-work preferences that apply everywhere.'),
+        rule_id: z.string().optional().describe('Full rule_id (see rule-list) ONLY when the user explicitly retires, replaces or amends that existing rule. Omit otherwise: existing rules are never changed by guessing.'),
       },
     },
-    async ({ session_id, kind, message, target, axis_hint, user_quote }) => {
+    async ({ session_id, kind, message, target, axis_hint, user_quote, rule_id, this_project_only }) => {
       try {
         // v1 session_id를 환경변수에서 가져옴 (하네스가 설정)
         const effectiveSessionId = session_id || process.env.FORGEN_SESSION_ID || 'unknown';
@@ -362,6 +365,8 @@ export function registerTools(server: McpServer): void {
         const cleanQuote = typeof user_quote === 'string' && user_quote.trim() && !isFullyPrivate(user_quote)
           ? stripPrivate(user_quote).cleaned.trim()
           : '';
+        const { projectKeyFor } = await import('../store/rule-scope.js');
+        const projectKey = this_project_only ? projectKeyFor(process.env.FORGEN_CWD ?? process.cwd()) : null;
         const result = processCorrection({
           session_id: effectiveSessionId,
           kind: kind as CorrectionKind,
@@ -369,6 +374,8 @@ export function registerTools(server: McpServer): void {
           target: cleanTarget,
           axis_hint: axis_hint as 'quality_safety' | 'autonomy' | 'judgment_philosophy' | 'communication_style' | null,
           ...(cleanQuote ? { user_quote: cleanQuote } : {}),
+          ...(rule_id ? { rule_id } : {}),
+          ...(projectKey ? { projects: [projectKey] } : {}),
         });
 
         // Outcome tracking (Phase 1): attribute this correction to any
@@ -389,6 +396,16 @@ export function registerTools(server: McpServer): void {
           `${userVisibleConfirm}${axis} — kind: ${kindLabel}`,
           `Evidence: ${result.evidence_event_id}`,
         ];
+        if (this_project_only) {
+          lines.push(projectKey ? `Project: ${projectKey} only` : 'Project: not inside a git project — recorded as global');
+        }
+        if (rule_id) {
+          const { loadRule } = await import('../store/rule-store.js');
+          const targetRule = loadRule(rule_id);
+          lines.push(targetRule
+            ? `Target rule ${rule_id}: status=${targetRule.status}, phase=${targetRule.lifecycle?.phase ?? 'active'}`
+            : `Target rule ${rule_id}: not found — no rule was changed`);
+        }
 
         if (result.temporary_rule) {
           lines.push(`Temporary rule: "${result.temporary_rule.policy}" (${result.temporary_rule.strength}, scope: ${result.temporary_rule.scope})`);

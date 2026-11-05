@@ -8,11 +8,13 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as crypto from 'node:crypto';
-import { ME_RULES } from '../core/paths.js';
+import { ME_RULES, ME_RULES_ARCHIVE } from '../core/paths.js';
 import { atomicWriteJSON, safeReadJSON } from '../hooks/shared/atomic-write.js';
 import type { Rule, RuleCategory, RuleScope, RuleStrength, RuleSource, RuleStatus } from './types.js';
 import { CURRENT_RULE_SCHEMA_VERSION } from './types.js';
-import { initLifecycle, bumpInject } from './rule-lifecycle.js';
+import { initLifecycle, bumpInject, withStatusChange } from './rule-lifecycle.js';
+import { withFileLockSync } from '../hooks/shared/file-lock.js';
+import { appliesForContext, appliesForEnforcement, projectKeyFor } from './rule-scope.js';
 
 function rulePath(ruleId: string): string {
   return path.join(ME_RULES, `${ruleId}.json`);
@@ -27,6 +29,8 @@ export function createRule(params: {
   source: RuleSource;
   evidence_refs?: string[];
   render_key: string;
+  session_id?: string;
+  projects?: string[];
 }): Rule {
   const now = new Date().toISOString();
   return {
@@ -40,12 +44,32 @@ export function createRule(params: {
     status: 'active',
     evidence_refs: params.evidence_refs ?? [],
     render_key: params.render_key,
+    ...(params.session_id ? { session_id: params.session_id } : {}),
+    ...(params.projects?.length ? { projects: params.projects } : {}),
     created_at: now,
     updated_at: now,
   };
 }
 
+/** 활성 룰을 사유 없이 비활성으로 바꾸려는 저장. 룰이 조용히 사라지는 것을 막는 불변식. */
+export class RuleTransitionError extends Error {
+  constructor(ruleId: string, to: RuleStatus) {
+    super(`rule ${ruleId}: active → ${to} requires a reason (use withStatusChange)`);
+    this.name = 'RuleTransitionError';
+  }
+}
+
 export function saveRule(rule: Rule): void {
+  const previous = safeReadJSON<Rule | null>(rulePath(rule.rule_id), null);
+  if (previous?.status === 'active' && rule.status !== 'active') {
+    // 이전 전이의 사유를 재사용하지 못하게, 디스크에 없는 새 기록이어야 한다.
+    // 호출자가 오래된 룰 객체를 들고 있어도 길이 비교처럼 오탐하지 않는다.
+    const last = rule.status_history?.at(-1);
+    const isNew = last && !previous.status_history?.some((h) => h.at === last.at && h.to === last.to && h.reason === last.reason);
+    if (!last?.reason || last.from !== 'active' || last.to !== rule.status || !isNew) {
+      throw new RuleTransitionError(rule.rule_id, rule.status);
+    }
+  }
   rule.updated_at = new Date().toISOString();
   // v0.4.1 audit-trail 불변식: rule 저장 시 lifecycle state 가 null/undefined 이면
   // active phase 기본값 주입. 이전에는 old rule 파일이 lifecycle 없이 존재해 쌤 이후
@@ -119,6 +143,40 @@ export function loadRule(ruleId: string): Rule | null {
   return safeReadJSON<Rule | null>(rulePath(ruleId), null);
 }
 
+/**
+ * 룰 디렉터리 스캔 — 읽기 실패와 진짜 0건을 구분한다.
+ * loadAllRules 는 깨진 파일을 조용히 건너뛴다. 진단·status 는 이 결과로 "깨진 N개"를 표시한다.
+ */
+export interface RuleScan {
+  rules: Rule[];
+  /** 파싱에 실패한 룰 파일 (파일명: 사유) */
+  broken: Array<{ file: string; error: string }>;
+  /** 디렉터리를 읽지 못한 사유 (없으면 정상 — 디렉터리 부재도 정상 0건으로 본다) */
+  dirError?: string;
+}
+
+export function scanRuleFiles(): RuleScan {
+  const scan: RuleScan = { rules: [], broken: [] };
+  let files: string[];
+  try {
+    if (!fs.existsSync(ME_RULES)) return scan;
+    files = fs.readdirSync(ME_RULES).filter((f) => f.endsWith('.json'));
+  } catch (e) {
+    scan.dirError = e instanceof Error ? e.message : String(e);
+    return scan;
+  }
+  for (const file of files) {
+    try {
+      const rule = JSON.parse(fs.readFileSync(path.join(ME_RULES, file), 'utf-8')) as Rule | null;
+      if (!rule || typeof rule !== 'object' || typeof rule.rule_id !== 'string') throw new Error('룰 객체가 아님');
+      if (isCompatibleSchema(rule, file)) scan.rules.push(rule);
+    } catch (e) {
+      scan.broken.push({ file, error: e instanceof Error ? e.message : String(e) });
+    }
+  }
+  return scan;
+}
+
 export function loadAllRules(): Rule[] {
   const rules: Rule[] = [];
 
@@ -187,7 +245,19 @@ function resolveProjectRulesDir(): string | null {
 }
 
 export function loadActiveRules(): Rule[] {
-  return loadAllRules().filter(r => r.status === 'active');
+  return loadAllRules().filter((r) => r.status === 'active');
+}
+
+/** 이 cwd 의 응답·도구 호출을 판정할 룰. 다른 프로젝트 룰은 제외한다. */
+export function loadEnforcedRules(cwd: string = process.env.FORGEN_CWD ?? process.cwd()): Rule[] {
+  const key = projectKeyFor(cwd);
+  return loadActiveRules().filter((r) => appliesForEnforcement(r, key));
+}
+
+/** 이 cwd 의 세션 컨텍스트에 넣을 룰. */
+export function loadContextRules(cwd: string = process.env.FORGEN_CWD ?? process.cwd()): Rule[] {
+  const key = projectKeyFor(cwd);
+  return loadActiveRules().filter((r) => appliesForContext(r, key));
 }
 
 /**
@@ -229,15 +299,20 @@ export function findRuleByRenderKey(renderKey: string, source?: RuleSource, scop
  */
 export function markRulesInjected(ruleIds: string[], nowIso: string = new Date().toISOString()): void {
   for (const id of ruleIds) {
-    const rule = loadRule(id);
-    if (!rule) continue;
-    // R6-F1: initLifecycle 이 정규화(카운터 ≥0, 배열 보장) 까지 포함.
-    const lifecycle = initLifecycle(rule);
-    const updated: Rule = {
-      ...rule,
-      lifecycle: bumpInject(lifecycle, nowIso),
-    };
-    atomicWriteJSON(rulePath(rule.rule_id), updated, { pretty: true });
+    try {
+      // lock 없이 읽고 쓰면 다른 프로세스의 상태 전이를 되돌릴 수 있다. 카운터라 실패해도 건너뛴다.
+      withFileLockSync(rulePath(id), () => {
+        const rule = loadRule(id);
+        if (!rule) return;
+        // R6-F1: initLifecycle 이 정규화(카운터 ≥0, 배열 보장) 까지 포함.
+        const lifecycle = initLifecycle(rule);
+        const updated: Rule = {
+          ...rule,
+          lifecycle: bumpInject(lifecycle, nowIso),
+        };
+        atomicWriteJSON(rulePath(rule.rule_id), updated, { pretty: true });
+      });
+    } catch { /* 주입 카운터는 best-effort */ }
   }
 }
 
@@ -260,12 +335,15 @@ export function syncRuleCounters(ruleId: string, counters: { violation_count: nu
   return true;
 }
 
-export function updateRuleStatus(ruleId: string, status: RuleStatus): boolean {
-  const rule = loadRule(ruleId);
-  if (!rule) return false;
-  rule.status = status;
-  saveRule(rule);
-  return true;
+export function updateRuleStatus(ruleId: string, status: RuleStatus, reason: string, by: string = 'system'): boolean {
+  const filePath = rulePath(ruleId);
+  if (!fs.existsSync(filePath)) return false;
+  return withFileLockSync(filePath, () => {
+    const rule = loadRule(ruleId);
+    if (!rule) return false;
+    saveRule(withStatusChange(rule, status, reason, by));
+    return true;
+  });
 }
 
 /**
@@ -284,7 +362,8 @@ export interface PruneResult {
 export const DEFAULT_PRUNE_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 
 /**
- * status:'removed' 파일을 retention 기간이 지난 것만 실제 unlink.
+ * status:'removed' 파일을 retention 기간이 지난 것만 rules-archive 로 옮긴다(영구 삭제 금지).
+ * 교정 유실 조사(2026-11-04): 누적 1,352개가 unlink 되어 대조·복구가 불가능했다.
  * RCA: retire(updateRuleStatus)는 status flip만 하고 파일을 지우지 않아 6,525개 죽은
  * 파일이 ~/.forgen/me/rules 에 쌓여 loadAllRules() linear scan 비용을 키우고
  * cross-process race 창을 넓혔다. status 전이 시각(updated_at) 기준으로 retention을
@@ -320,7 +399,8 @@ export function pruneRemovedRules(opts: { retentionMs?: number; apply?: boolean 
     candidates.push(rule.rule_id);
     if (apply) {
       try {
-        fs.unlinkSync(filePath);
+        fs.mkdirSync(ME_RULES_ARCHIVE, { recursive: true });
+        fs.renameSync(filePath, path.join(ME_RULES_ARCHIVE, file));
         deleted.push(rule.rule_id);
       } catch { /* best-effort — 다음 prune 에서 재시도 */ }
     }
@@ -329,19 +409,30 @@ export function pruneRemovedRules(opts: { retentionMs?: number; apply?: boolean 
   return { candidates, deleted };
 }
 
-export function cleanupStaleSessionRules(_currentSessionId: string): number {
+/**
+ * 임시 룰 유예. 끝난 세션인지 판별할 수단이 없어 시간으로 판단한다.
+ * session_id 로 소유 세션을 가리지 않는다: 모델 입력·하네스 UUID·Claude Code 값이 서로 달라
+ * 믿을 수 없고, 다른 세션에 잠시 적용되는 것보다 교정이 자기 세션에서 무시되는 쪽이 더 나쁘다.
+ */
+const SESSION_RULE_GRACE_MS = 12 * 60 * 60 * 1000;
+
+export function cleanupStaleSessionRules(currentSessionId: string, nowMs: number = Date.now()): number {
   if (!fs.existsSync(ME_RULES)) return 0;
   let cleaned = 0;
   for (const file of fs.readdirSync(ME_RULES)) {
     if (!file.endsWith('.json')) continue;
     const filePath = path.join(ME_RULES, file);
     const rule = safeReadJSON<Rule | null>(filePath, null);
-    if (rule && rule.scope === 'session' && rule.status === 'active') {
-      rule.status = 'suppressed';
-      rule.updated_at = new Date().toISOString();
-      atomicWriteJSON(filePath, rule, { pretty: true });
+    if (!rule || rule.scope !== 'session' || rule.status !== 'active') continue;
+    if (rule.session_id === currentSessionId) continue;
+    if (rule.session_id && nowMs - Date.parse(rule.updated_at) < SESSION_RULE_GRACE_MS) continue;
+    try {
+      withFileLockSync(filePath, () => {
+        const fresh = safeReadJSON<Rule | null>(filePath, null);
+        if (fresh?.status === 'active') saveRule(withStatusChange(fresh, 'suppressed', 'session-ended', 'session-cleanup'));
+      });
       cleaned++;
-    }
+    } catch { /* 다음 세션 시작에서 재시도 */ }
   }
   return cleaned;
 }

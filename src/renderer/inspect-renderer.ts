@@ -5,6 +5,7 @@
  * Authoritative spec: docs/plans/2026-04-03-forgen-rule-renderer-spec.md §6
  */
 
+import { enforceabilityLabel, ruleEnforced } from '../engine/rule-detectability.js';
 import type { Profile, Rule, Evidence, SessionEffectiveState } from '../store/types.js';
 import { axisDirection, AXIS_POLES, type AxisKey } from '../store/profile-score.js';
 import type { QualityPack, AutonomyPack, JudgmentPack, CommunicationPack } from '../store/types.js';
@@ -76,9 +77,10 @@ export function renderRules(rules: Rule[]): string {
     for (const r of active) {
       // ADR-017 (critic): T2/T3 가 올린 flag 는 이전에 어디에도 안 보였다 — 여기서 가시화.
       const flag = (r.lifecycle?.phase === 'flagged' ? ' ⚑ flagged (repeated violations/overrides — review)' : '')
-        + (r.enforce_mode === 'advise' ? ' ⚠ advise (precision 강등 — 차단 안 함; 복귀: forgen rule enforce <id>)' : '');
+        + (r.enforce_mode === 'advise' ? ' ⚠ advise (차단 안 함; 차단 켜기: forgen rule enforce <id>)' : '');
       lines.push(`  [${r.category}/${r.strength}] ${r.render_key} — ${r.policy}${flag}`);
-      lines.push(`    source: ${r.source} | evidence: ${r.evidence_refs.length}`);
+      // D12-C: 위반을 탐지할 수 없는 룰은 '자문'으로 표기한다 — 위반 0 이 준수를 뜻하지 않는다.
+      lines.push(`    source: ${r.source} | evidence: ${r.evidence_refs.length} | ${ruleEnforced(r) ? `차단${enforceabilityLabel(r) === '자문' ? '' : ' · 탐지 가능'}` : enforceabilityLabel(r) === '자문' ? '자문 (위반 탐지 불가 — 준수로 세지 않음, 기록만)' : '탐지 가능 (기록만)'}`);
     }
   }
 

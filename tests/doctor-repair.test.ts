@@ -33,40 +33,16 @@ describe('A E3: forgen doctor --repair 시그니처', () => {
     expect(cliSrc).toMatch(/repair:\s*args\.includes\(['"]--repair['"]\)/);
   });
 
-  it('attemptPluginRepair: build 는 dist 부재 시에만, postinstall 은 항상 (W1-4)', () => {
-    expect(doctorSrc).toMatch(/function attemptPluginRepair/);
-    // W1-4 실측 버그: 글로벌 설치엔 devDeps 가 없어 무조건 build 가
-    // MODULE_NOT_FOUND 로 실패 → postinstall 미도달. dist 존재 시 build 생략.
-    const buildIdx = doctorSrc.indexOf("execFileSync('npm', ['run', 'build']");
-    const guardIdx = doctorSrc.indexOf("if (!exists(path.join(pkgRoot, 'dist', 'cli.js')))");
-    expect(guardIdx).toBeGreaterThan(0);
-    expect(buildIdx).toBeGreaterThan(guardIdx); // build 호출이 dist-guard 안쪽
-    expect(doctorSrc).toMatch(/execFileSync\('node',\s*\['scripts\/postinstall\.js'\]/);
-  });
-
-  it('W1-4: repair 는 실행이 아니라 결과를 재검증해 보고한다', () => {
-    // "실행했다" 가 아니라 pluginCacheOk && pluginRegisteredOk 재검증 통과를
-    // 성공 조건으로 삼는다 (실측: postinstall 실행돼도 캐시 미생성 케이스 존재).
-    expect(doctorSrc).toMatch(/const ok = pluginCacheOk\(\) && pluginRegisteredOk\(\)/);
+  it('repair 는 설치와 같은 경로(planClaudeInstall)로 다시 쓰고 재검증한다', () => {
+    expect(doctorSrc).toMatch(/planClaudeInstall\(\{ pkgRoot: currentPkgRoot\(\)/);
+    expect(doctorSrc).toMatch(/opts\.repair && probes\.some/);
     expect(doctorSrc).toMatch(/복구 확인.*재검증 통과/);
-  });
-
-  it('W1-4: 재검증 통과 시 failedChecks 에서 plugin 항목을 걷어낸다 (Summary 정직성)', () => {
-    expect(doctorSrc).toMatch(/failedChecks = failedChecks\.filter\(f => !pluginLabels\.has\(f\.label\)\)/);
-  });
-
-  it('runDoctor 가 plugin cache 또는 registered 실패 + opts.repair=true 일 때만 repair 호출', () => {
-    expect(doctorSrc).toMatch(/opts\.repair\s*&&\s*\(!forgenPluginCacheOk\s*\|\|\s*!pluginRegistered\)/);
-  });
-
-  it('repair 안내문이 --repair 사용 시 "auto-repair" 로 전환', () => {
-    expect(doctorSrc).toMatch(/Attempting auto-repair \(--repair\)/);
   });
 });
 
-// ── W1-4: 재검증 헬퍼 실동작 (tmp HOME, 실제 fs) ──
+// ── shimTargetOk 실동작 (tmp HOME, 실제 fs) ──
 
-describe('W1-4: pluginCacheOk / pluginRegisteredOk (실제 fs)', () => {
+describe('shimTargetOk', () => {
   beforeEach(() => {
     fs.rmSync(TEST_HOME, { recursive: true, force: true });
     fs.mkdirSync(TEST_HOME, { recursive: true });
@@ -77,39 +53,18 @@ describe('W1-4: pluginCacheOk / pluginRegisteredOk (실제 fs)', () => {
     fs.rmSync(TEST_HOME, { recursive: true, force: true });
   });
 
-  async function loadHelpers() {
-    return import('../src/core/doctor.js');
-  }
+  it('shim 부재 → false, 가리키는 패키지가 있으면 true, 패키지가 사라지면 false', async () => {
+    const { shimTargetOk } = await import('../src/core/doctor.js');
+    const { writeForgenRunShim, forgenRunShimPath } = await import('../src/host/claude-shim.js');
+    expect(shimTargetOk(TEST_HOME)).toBe(false);
 
-  it('pluginCacheOk: 버전 디렉토리 존재 시 true, 빈/부재 시 false', async () => {
-    const { pluginCacheOk } = await loadHelpers();
-    expect(pluginCacheOk()).toBe(false); // 캐시 자체 부재
+    const pkg = path.join(TEST_HOME, 'pkg');
+    fs.mkdirSync(path.join(pkg, 'dist'), { recursive: true });
+    fs.writeFileSync(path.join(pkg, 'dist', 'cli.js'), '');
+    writeForgenRunShim(pkg, process.execPath, forgenRunShimPath(TEST_HOME));
+    expect(shimTargetOk(TEST_HOME)).toBe(true);
 
-    const base = path.join(TEST_HOME, '.claude', 'plugins', 'cache', 'forgen-local', 'forgen');
-    fs.mkdirSync(base, { recursive: true });
-    expect(pluginCacheOk()).toBe(false); // 디렉토리는 있으나 버전 엔트리 없음
-
-    fs.mkdirSync(path.join(base, '0.5.0'));
-    expect(pluginCacheOk()).toBe(true);
-  });
-
-  it('pluginRegisteredOk: entry + installPath 실존 시에만 true', async () => {
-    const { pluginRegisteredOk } = await loadHelpers();
-    expect(pluginRegisteredOk()).toBe(false); // registry 부재
-
-    const pluginsDir = path.join(TEST_HOME, '.claude', 'plugins');
-    const installPath = path.join(pluginsDir, 'cache', 'forgen-local', 'forgen', '0.5.0');
-    fs.mkdirSync(pluginsDir, { recursive: true });
-    const registryPath = path.join(pluginsDir, 'installed_plugins.json');
-
-    // 등록은 됐지만 installPath 가 디스크에 없음 → false (이번 세션 실측 케이스)
-    fs.writeFileSync(registryPath, JSON.stringify({
-      version: 2,
-      plugins: { 'forgen@forgen-local': [{ scope: 'user', installPath, version: '0.5.0' }] },
-    }));
-    expect(pluginRegisteredOk()).toBe(false);
-
-    fs.mkdirSync(installPath, { recursive: true });
-    expect(pluginRegisteredOk()).toBe(true);
+    fs.rmSync(pkg, { recursive: true, force: true });
+    expect(shimTargetOk(TEST_HOME)).toBe(false);
   });
 });

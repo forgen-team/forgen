@@ -37,9 +37,9 @@ describe('pre-tool-use - extended', () => {
       expect(result.action).toBe('pass');
     });
 
-    it('안전한 rm은 pass', () => {
+    it('프로젝트 상대 경로 재귀 삭제는 확인 요청(ask) — 오너 룰 "확인 없는 rm -rf 금지"', () => {
       const result = checkDangerousCommand('Bash', { command: 'rm -rf ./node_modules' });
-      expect(result.action).toBe('pass');
+      expect(result.action).toBe('ask');
     });
 
     it('command 필드가 없으면 pass', () => {

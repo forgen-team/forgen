@@ -10,7 +10,8 @@
 import { readStdinJSON } from './shared/read-stdin.js';
 import { createLogger } from '../core/logger.js';
 import { isHookEnabled, loadHookConfig } from './hook-config.js';
-import { approve, approveWithWarning, failOpenWithTracking } from './shared/hook-response.js';
+import { approve, approveWithPostToolContext, failOpenWithTracking } from './shared/hook-response.js';
+import { stringifyToolResponse } from './shared/tool-response.js';
 
 const log = createLogger('slop-detector');
 
@@ -19,8 +20,8 @@ interface PostToolInput {
   toolName?: string;
   tool_input?: Record<string, unknown>;
   toolInput?: Record<string, unknown>;
-  tool_response?: string;
-  toolOutput?: string;
+  tool_response?: unknown;
+  toolOutput?: unknown;
   session_id?: string;
 }
 
@@ -77,7 +78,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  const toolResponse = data.tool_response ?? data.toolOutput ?? '';
+  const toolResponse = stringifyToolResponse(data.tool_response ?? data.toolOutput ?? '');
   const toolInput = data.tool_input ?? data.toolInput ?? {};
 
   // 검사 대상: 도구 입력의 content/new_string + 도구 응답
@@ -100,7 +101,9 @@ async function main(): Promise<void> {
         const icon = d.severity === 'warn' ? '⚠' : 'ℹ';
         return `- ${icon} ${d.message}`;
       });
-      console.log(approveWithWarning(`<compound-slop-warning>\n[Forgen] AI slop detected:\n${lines.join('\n')}\nCleanup recommended.\n</compound-slop-warning>`));
+      // D12-B: 사용자 화면(systemMessage)에만 가던 경고를 모델에도 전달한다(additionalContext).
+      const body = `<compound-slop-warning>\n[Forgen] AI slop detected in what you just wrote:\n${lines.join('\n')}\nClean these up before reporting the task complete.\n</compound-slop-warning>`;
+      console.log(approveWithPostToolContext(body, `[Forgen] AI slop detected: ${detected.map(d => d.message).join(', ')}`));
     } else {
       console.log(approve());
     }

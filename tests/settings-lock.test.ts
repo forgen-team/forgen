@@ -5,7 +5,7 @@ import * as path from 'node:path';
 
 // vi.hoisted()로 mock 값을 먼저 생성 (vi.mock 호이스팅보다 앞서 평가)
 const mocks = vi.hoisted(() => {
-  const tmpDir = '/tmp/forgen-settings-lock-test-' + process.pid;
+  const tmpDir = `${process.env.TMPDIR ?? '/tmp'}/forgen-settings-lock-test-${process.pid}`;
   return {
     CLAUDE_DIR: tmpDir,
     SETTINGS_PATH: tmpDir + '/settings.json',

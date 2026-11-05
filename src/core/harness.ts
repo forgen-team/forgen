@@ -17,7 +17,7 @@ import { fileURLToPath } from 'node:url';
 import { buildEnv, generateClaudeRuleFiles, registerTmuxBindings } from './config-injector.js';
 import { createLogger } from './logger.js';
 import { HANDOFFS_DIR, ME_BEHAVIOR, ME_DIR, ME_RULES, ME_SKILLS, ME_SOLUTIONS, SESSIONS_DIR, STATE_DIR, FORGEN_HOME } from './paths.js';
-import { RULE_FILE_CAPS } from '../hooks/shared/injection-caps.js';
+import { composeRuleFiles  } from '../hooks/shared/injection-caps.js';
 import { recordRenderedFiles } from './rendered-rules-manifest.js';
 import type { RuntimeHost } from './types.js';
 import {
@@ -25,7 +25,8 @@ import {
 } from './settings-lock.js';
 import { bootstrapV1Session, ensureV1Directories, type V1BootstrapResult } from './v1-bootstrap.js';
 import { injectSettings } from './settings-injector.js';
-import { installAgents, installSlashCommands } from './installer.js';
+import { installSlashCommands } from './installer.js';
+import { installGlobalAgents } from '../host/install-claude.js';
 import type { HostId } from './trust-layer-intent.js';
 import { getHostCapabilities } from '../host/capabilities-registry.js';
 import { getProjection } from '../host/projection.js';
@@ -128,44 +129,8 @@ function ensureDirectories(): void {
 
 export { rollbackSettings };
 
-// ── Rule File Injection ──
-
-function injectClaudeRuleFiles(cwd: string, ruleFiles: Record<string, string>): void {
-  const PER_RULE_CAP = RULE_FILE_CAPS.perRuleFile;
-  const TOTAL_CAP = RULE_FILE_CAPS.totalRuleFiles;
-
-  const projectRulesDir = path.join(cwd, '.claude', 'rules');
-  fs.mkdirSync(projectRulesDir, { recursive: true });
-
-  let totalWritten = 0;
-  const writtenForManifest: Record<string, string> = {};
-  for (const [filename, content] of Object.entries(ruleFiles)) {
-    const capped = content.length > PER_RULE_CAP
-      ? `${content.slice(0, PER_RULE_CAP)}\n... (capped at rule file limit)\n`
-      : content;
-    if (totalWritten + capped.length > TOTAL_CAP) {
-      log.debug(`rules/ 총량 캡 도달, ${filename} 생략`);
-      break;
-    }
-    // ADR-010 W1-3 (F6 수정): 모든 규칙 파일은 프로젝트 스코프로만 주입한다.
-    // 이전에는 `forge-*` 파일명이 글로벌 ~/.claude/rules/ 로 라우팅되어
-    // 프로젝트 맥락의 behavioral 패턴이 전 프로젝트 세션에 주입됐다.
-    // 목표 상태: 글로벌 rules 디렉토리에 forgen 산출물 0개.
-    const target = path.join(projectRulesDir, filename);
-    fs.writeFileSync(target, capped);
-    writtenForManifest[target] = capped;
-    totalWritten += capped.length;
-  }
-
-  // ADR-010 W1-1: 쓴 그대로의 content-hash 를 manifest 에 기록 —
-  // reclaimer 가 "forgen 산출물 그대로"와 "사용자 편집본"을 구분하는 근거.
-  try {
-    const pkg = JSON.parse(fs.readFileSync(path.join(getPackageRoot(), 'package.json'), 'utf-8'));
-    recordRenderedFiles(writtenForManifest, String(pkg.version ?? '0.0.0'));
-  } catch (e) {
-    log.debug('rendered-rules manifest 기록 실패 (fail-open)', e);
-  }
-
+/** 옛 위치의 규칙 파일과 CLAUDE.md 마커 블록 정리. */
+function cleanupLegacyRuleArtifacts(cwd: string): void {
   // 마이그레이션 (W1-3): 구버전이 글로벌에 쓴 forge-behavioral.md 회수.
   // (tenetx 계열 글로벌 잔재는 W1-1 reclaimer 의 영역)
   const legacyGlobalBehavioral = path.join(os.homedir(), '.claude', 'rules', 'forge-behavioral.md');
@@ -195,6 +160,7 @@ function injectClaudeRuleFiles(cwd: string, ruleFiles: Record<string, string>): 
     }
   }
 }
+
 
 // ── Compound Memory ──
 
@@ -395,9 +361,9 @@ async function prepareClaudeSession(ctx: HarnessSessionContext): Promise<void> {
       throw e;
     }
   }
-  installAgents(cwd, pkgRoot);
-  const ruleFiles = generateClaudeRuleFiles(cwd, v1Result.renderedRules);
-  injectClaudeRuleFiles(cwd, ruleFiles);
+  // ch-* agents 는 프로젝트 cwd 가 아니라 전역(~/.claude/agents)에 둔다. 직접 실행에도 공급되고 프로젝트를 건드리지 않는다.
+  try { installGlobalAgents({ pkgRoot, agentsDir: path.join(os.homedir(), '.claude', 'agents') }); } catch (e) { log.debug('전역 agents 설치 실패', e); }
+  cleanupLegacyRuleArtifacts(cwd);
   installSlashCommands(cwd, pkgRoot);
 }
 
@@ -429,7 +395,7 @@ async function prepareOpencodeSession(_ctx: HarnessSessionContext): Promise<void
  * (예: OpenCode, P1) 엔트리 누락은 컴파일 타임에 걸린다.
  *
  * capabilities/projection 은 현재 prepareHarness 자체가 소비하지 않지만(각각
- * capabilities-registry.ts / parity-harness.ts 가 독립 소비), HostBinding 계약의
+ * capabilities-registry.ts 가 독립 소비), HostBinding 계약의
  * 일부로 함께 선언해 두어 향후 확장(§4.1 P1) 시 registry 엔트리 하나만 추가하면
  * 되는 형태를 만든다.
  */

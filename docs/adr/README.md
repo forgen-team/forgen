@@ -21,6 +21,8 @@ forgen 의 중요한 아키텍처 결정을 기록합니다. 각 ADR 은 컨텍�
 | [ADR-016](./ADR-016-codex-notify-hook-bundle-verify-skill.md) | Codex `notify` 폴백 · 훅 번들(SessionEnd·컨텍스트 스필 해제·죽은 이벤트 제거, 재승인 2건) · trust 해시 감사 · Claude `verify` 스킬 (v0.5.6) | Implemented | 2026-10-02 | Type 2 |
 | [ADR-017](./ADR-017-trust-receipts-statusline.md) | 신뢰 영수증 — 차단 영수증·오탐 되먹임 · 룰 병합 · 적용 룰 가시화 · statusline 재설계(컨텍스트/한도/소진 예측) | Implemented (v0.6.0) | 2026-10-06 | Type 2 |
 | [ADR-018](./ADR-018-stop-rule-retune.md) | Stop 룰 — 룰별 발동 조건(주장 단위) · 문장 단위 제외 · critic 실행 증거 판정 · 언어 룰 기계 판정 | Implemented (v0.6.7) | 2026-10-07 | Type 2 |
+| [ADR-019](./ADR-019-haiku-extraction-default-on.md) | Haiku 추출 기본 ON + 수집·추출 경로 재설계 (ADR-012 D 대체) | Accepted | 2026-11-04 | Type 2 |
+| [ADR-020](./ADR-020-way-compiler.md) | Way 컴파일러 — 내 방식을 다른 모델·스킬로 내보낸다 | Accepted | 2026-11-04 | Type 2 |
 
 ## 상태 정의
 - **Proposed**: 제안됨, 승인 대기

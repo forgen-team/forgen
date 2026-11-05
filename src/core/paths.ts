@@ -36,6 +36,8 @@ export const ME_BEHAVIOR = path.join(ME_DIR, 'behavior');
 
 /** ~/.forgen/me/rules/ — 개인 규칙 */
 export const ME_RULES = path.join(ME_DIR, 'rules');
+/** prune 된 removed 룰 보관소. 활성 스캔 대상이 아니고, 복구·이력 대조용으로 지우지 않는다. */
+export const ME_RULES_ARCHIVE = path.join(ME_DIR, 'rules-archive');
 
 /** ~/.forgen/me/skills/ — 개인 스킬 (promoted solutions) */
 export const ME_SKILLS = path.join(ME_DIR, 'skills');

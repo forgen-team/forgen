@@ -18,9 +18,9 @@
  */
 
 import * as fs from 'node:fs';
-import * as os from 'node:os';
 import * as path from 'node:path';
 import { queryHitRate, type HitRateRow } from '../core/observability-store.js';
+import { FORGEN_HOME, STATE_DIR } from '../core/paths.js';
 
 // ── 저장소 ──
 
@@ -50,11 +50,31 @@ export interface RoiThresholds {
 
 export const DEFAULT_ROI_THRESHOLDS: RoiThresholds = { surfacedMin: 3, rateMax: 0.1 };
 
-export function roiDemotionsPath(home: string = os.homedir()): string {
-  return path.join(home, '.forgen', 'state', 'roi-demotions.json');
+/**
+ * ROI 격리 상태 파일. home 을 주면 `<home>/.forgen/state` (테스트·이관용), 안 주면 FORGEN_HOME 을 따른다.
+ * 예전에는 os.homedir() 고정이라 FORGEN_HOME 격리 환경에서도 실제 홈의 파일을 읽고 썼다 (D6).
+ */
+export function roiDemotionsPath(home?: string): string {
+  return home === undefined ? path.join(STATE_DIR, 'roi-demotions.json') : path.join(home, '.forgen', 'state', 'roi-demotions.json');
 }
 
-export function loadRoiDemotions(home: string = os.homedir()): RoiDemotions {
+/**
+ * ROI 강등·격리 사용 여부. **기본 꺼짐** (D6): 판정 입력인 acted_on 이 신뢰할 수 없어(prompt-keyword 오탐 16건,
+ * 격리되면 주입이 안 돼 acted_on 이 영영 안 쌓이는 단방향 사멸) 격리가 사실상 영구 추방이었다.
+ * acted_on 이 신뢰할 만해지면 config.json 의 `roiDemotion.enabled: true` 로 켠다.
+ */
+export function isRoiDemotionEnabled(): boolean {
+  try {
+    const cfg = JSON.parse(fs.readFileSync(path.join(FORGEN_HOME, 'config.json'), 'utf-8')) as { roiDemotion?: { enabled?: unknown } };
+    return cfg.roiDemotion?.enabled === true;
+  } catch {
+    return false;
+  }
+}
+
+export function loadRoiDemotions(home?: string): RoiDemotions {
+  // 꺼져 있으면 기존 격리도 적용하지 않는다 (해제 경로 포함). 파일은 updateRoiDemotions 가 정리한다.
+  if (home === undefined && !isRoiDemotionEnabled()) return {};
   try {
     const parsed = JSON.parse(fs.readFileSync(roiDemotionsPath(home), 'utf-8'));
     return typeof parsed === 'object' && parsed !== null ? parsed as RoiDemotions : {};
@@ -63,7 +83,7 @@ export function loadRoiDemotions(home: string = os.homedir()): RoiDemotions {
   }
 }
 
-export function saveRoiDemotions(demotions: RoiDemotions, home: string = os.homedir()): void {
+export function saveRoiDemotions(demotions: RoiDemotions, home?: string): void {
   try {
     const p = roiDemotionsPath(home);
     fs.mkdirSync(path.dirname(p), { recursive: true });
@@ -116,10 +136,14 @@ export function evaluateRoiDemotions(
       const elapsed = existing
         ? new Date(nowIso).getTime() - new Date(existing.lastEvaluatedAt).getTime()
         : Number.POSITIVE_INFINITY;
-      const advanceWindow = elapsed >= 24 * 60 * 60 * 1000;
+      // 새 증거(노출이 늘었는가) 없이 시간만 흘렀을 때는 올리지 않는다 — 노출이 3에 멈춘 솔루션이
+      // 하루마다 +1 되어 windowCount 8~10 으로 부풀던 버그 (D6, 실측).
+      const advanceWindow = elapsed >= 24 * 60 * 60 * 1000 && (!existing || surfaced > existing.surfaced);
 
       next[row.solutionId] = existing && !advanceWindow
-        ? existing // 24h 미만 — 그대로 유지 (카운트/스냅샷 불변)
+        // 윈도는 올리지 않는다(새 증거 없음). 다만 acted 가 윈도 밖으로 빠져 줄었으면 스냅샷은 현재값으로 맞춘다 —
+        // 안 맞추면 저장된 actedOn 이 현재보다 커서 "acted 증가" 해제 조건이 영영 안 걸린다.
+        ? (acted < existing.actedOn ? { ...existing, actedOn: acted, surfaced } : existing)
         : {
             solutionId: row.solutionId,
             reason: 'low-roi',
@@ -188,8 +212,19 @@ export function applyRoiDemotions<T extends RoiAdjustable>(
  * observability 이벤트 → 판정 → 저장. fail-open.
  * @returns 강등/격리 수 (로그용) 또는 null (판정 불가)
  */
-export function updateRoiDemotions(home: string = os.homedir()): { demoted: number; quarantined: number } | null {
+export function updateRoiDemotions(home?: string): { demoted: number; quarantined: number; released?: number } | null {
   try {
+    if (home === undefined && !isRoiDemotionEnabled()) {
+      // 꺼진 상태: 새 판정을 하지 않고, 남아 있는 격리·강등은 백업을 남기고 해제한다.
+      const p = roiDemotionsPath();
+      let prevRaw: RoiDemotions = {};
+      try { prevRaw = JSON.parse(fs.readFileSync(p, 'utf-8')) as RoiDemotions; } catch { return { demoted: 0, quarantined: 0 }; }
+      const n = Object.keys(prevRaw).length;
+      if (n === 0) return { demoted: 0, quarantined: 0 };
+      fs.writeFileSync(p.replace(/\.json$/, '.released.json'), `${JSON.stringify(prevRaw, null, 2)}\n`);
+      saveRoiDemotions({});
+      return { demoted: 0, quarantined: 0, released: n };
+    }
     // observability-store 는 sqlite 미지원/DB 부재 시 내부 fail-open ([] 반환)
     const rows = queryHitRate();
     if (rows.length === 0) return { demoted: 0, quarantined: 0 };

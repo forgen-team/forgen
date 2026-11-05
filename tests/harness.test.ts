@@ -67,13 +67,15 @@ describe('prepareHarness() integration', () => {
     try { fs.rmSync(TEST_LOCK_PATH, { force: true }); } catch {}
   });
 
-  it('settings.json에 환경변수가 주입된다', async () => {
+  it('settings.json에 FORGEN_* 세션 env 를 쓰지 않는다', async () => {
     await prepareHarness(TEST_CWD);
 
     expect(fs.existsSync(TEST_SETTINGS_PATH)).toBe(true);
     const settings = JSON.parse(fs.readFileSync(TEST_SETTINGS_PATH, 'utf-8'));
-    expect(settings.env.COMPOUND_HARNESS).toBe('1');
-    expect(settings.env.FORGEN_V1).toBe('1');
+    // 세션 env 는 settings.json 이 아니라 자식 프로세스 env 로 넘긴다 (직접 실행에 남지 않게)
+    expect(settings.env?.COMPOUND_HARNESS).toBeUndefined();
+    expect(settings.env?.FORGEN_V1).toBeUndefined();
+    expect(settings.env?.FORGEN_CWD).toBeUndefined();
   });
 
   it('settings.json에 statusLine이 설정된다', async () => {
@@ -82,7 +84,7 @@ describe('prepareHarness() integration', () => {
     const settings = JSON.parse(fs.readFileSync(TEST_SETTINGS_PATH, 'utf-8'));
     expect(settings.statusLine).toEqual({
       type: 'command',
-      command: 'forgen statusline',
+      command: `"${path.join(TEST_HOME, '.forgen', 'bin', 'forgen-run')}" "cli.js" statusline`,
     });
   });
 
@@ -124,13 +126,10 @@ describe('prepareHarness() integration', () => {
     expect(typeof ctx.v1.needsOnboarding).toBe('boolean');
   });
 
-  it('project-context.md 규칙이 생성된다', async () => {
+  it('룰 파일을 cwd 에 쓰지 않는다 (룰은 SessionStart 컨텍스트로 주입)', async () => {
     await prepareHarness(TEST_CWD);
-
-    const rulesPath = path.join(TEST_CWD, '.claude', 'rules', 'project-context.md');
-    expect(fs.existsSync(rulesPath)).toBe(true);
-    const content = fs.readFileSync(rulesPath, 'utf-8');
-    expect(content).toContain('Forgen');
+    expect(fs.existsSync(path.join(TEST_CWD, '.claude', 'rules', 'project-context.md'))).toBe(false);
+    expect(fs.existsSync(path.join(TEST_CWD, '.claude', 'rules', 'v1-rules.md'))).toBe(false);
   });
 
   it('lockfile이 작업 후 정리된다', async () => {
@@ -143,7 +142,7 @@ describe('prepareHarness() integration', () => {
     await prepareHarness(TEST_CWD);
 
     const settings = JSON.parse(fs.readFileSync(TEST_SETTINGS_PATH, 'utf-8'));
-    expect(settings.env.COMPOUND_HARNESS).toBe('1');
+    expect(settings.env?.COMPOUND_HARNESS).toBeUndefined();
   });
 
   it('기존 env가 병합된다', async () => {
@@ -153,8 +152,7 @@ describe('prepareHarness() integration', () => {
     await prepareHarness(TEST_CWD);
 
     const settings = JSON.parse(fs.readFileSync(TEST_SETTINGS_PATH, 'utf-8'));
-    expect(settings.env.MY_VAR).toBe('keep');
-    expect(settings.env.COMPOUND_HARNESS).toBe('1');
+    expect(settings.env).toEqual({ MY_VAR: 'keep' });
   });
 
   it('코덱스 런타임일 때 .claude/* 작업은 skip (P1-7 host-aware)', async () => {
@@ -209,11 +207,11 @@ describe('rollback cycle via prepareHarness', () => {
 
     await prepareHarness(TEST_CWD);
     const injected = JSON.parse(fs.readFileSync(TEST_SETTINGS_PATH, 'utf-8'));
-    expect(injected.env.COMPOUND_HARNESS).toBe('1');
+    expect(injected.hooks).toBeDefined();
+    expect(injected.statusLine).toBeDefined();
 
     rollbackSettings();
     const restored = JSON.parse(fs.readFileSync(TEST_SETTINGS_PATH, 'utf-8'));
-    expect(restored.env.ORIGINAL).toBe('yes');
-    expect(restored.env.COMPOUND_HARNESS).toBeUndefined();
+    expect(restored).toEqual({ env: { ORIGINAL: 'yes' } });
   });
 });

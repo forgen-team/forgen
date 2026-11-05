@@ -41,7 +41,7 @@ function writeRule(
 ): void {
   const source = opts.source ?? 'behavior_inference';
   const category = opts.category ?? 'workflow';
-  const createdAt = opts.createdAt ?? '2026-10-01T00:00:00.000Z';
+  const createdAt = opts.createdAt ?? new Date(Date.now() - 3 * 86_400_000).toISOString(); // TTL 21일 안쪽 고정 날짜는 시한폭탄
   const rule: RuleJson = {
     rule_id: id,
     category,
@@ -94,7 +94,7 @@ describe('ADR-017 D3 — mined rule merge', () => {
   });
 
   it('(a) 채굴 3개 유사 → 1개 통합: strength default · created_at 최솟값 · auto: 유지 · advisory-only', async () => {
-    writeRule('m1', { policy: FABLE_A, createdAt: '2026-10-03T00:00:00.000Z' });
+    writeRule('m1', { policy: FABLE_A, createdAt: new Date(Date.now() - 86_400_000).toISOString() });
     writeRule('m2', { policy: FABLE_B, createdAt: '2026-09-20T00:00:00.000Z' }); // 가장 오래됨
     writeRule('m3', { policy: FABLE_C, createdAt: '2026-10-05T00:00:00.000Z' });
     writeRule('m4', { policy: UNRELATED }); // 무관 — 그대로 남아야 함

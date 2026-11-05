@@ -17,6 +17,7 @@ import { atomicWriteJSON } from './shared/atomic-write.js';
 import { approve, approveWithWarning, failOpenWithTracking } from './shared/hook-response.js';
 import { withFileLock } from './shared/file-lock.js';
 import { STATE_DIR } from '../core/paths.js';
+import { isMainModule } from './shared/is-main.js';
 
 /**
  * 동시 에이전트 경고 임계값.
@@ -166,7 +167,7 @@ async function main(): Promise<void> {
 
 // import.meta 가드: 직접 실행 시에만 main() — 테스트가 헬퍼를 import 할 때
 // stdin 을 읽는 main 이 돌지 않도록 한다 (모듈 위생).
-const isMain = import.meta.url === `file://${process.argv[1]}`;
+const isMain = isMainModule(import.meta.url);
 if (isMain) {
   main().catch((e) => {
     process.stderr.write(`[ch-hook] ${e instanceof Error ? e.message : String(e)}\n`);

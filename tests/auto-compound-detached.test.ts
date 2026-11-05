@@ -47,11 +47,18 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-function writeMarker(sessionId: string, completedAtMs: number): void {
+/** 세션별 러너 처리 기록(D9): 마지막 실행 시점의 transcript 크기. */
+function writeRunMark(sessionId: string, runSize: number): void {
   fs.writeFileSync(
-    path.join(stateDir, 'last-auto-compound.json'),
-    JSON.stringify({ sessionId, completedAt: new Date(completedAtMs).toISOString() }),
+    path.join(stateDir, 'extraction-cursors.json'),
+    JSON.stringify({ [sessionId]: { offset: runSize, at: new Date().toISOString(), runSize } }), // 커서도 끝까지 — 못 넘긴 구간 없음
   );
+}
+
+function makeTranscript(bytes: number): string {
+  const f = path.join(tmpHome, 't.jsonl');
+  fs.writeFileSync(f, 'x'.repeat(bytes));
+  return f;
 }
 
 describe('runAutoCompound — detached, non-blocking', () => {
@@ -75,31 +82,41 @@ describe('runAutoCompound — detached, non-blocking', () => {
     expect(mockUnref).toHaveBeenCalledTimes(1);
   });
 
-  it('같은 세션의 최근(<5분) 마커가 있으면 spawn 건너뜀 (dedup)', async () => {
-    writeMarker('s-dup', Date.now() - 60 * 1000); // 1분 전
+  it('같은 세션이고 마지막 러너 실행 이후 transcript 가 자라지 않았으면 spawn 건너뜀 (dedup)', async () => {
+    const t = makeTranscript(1000);
+    writeRunMark('s-dup', 1000);
     const { runAutoCompound } = await import('../src/core/spawn.js');
-    runAutoCompound('/tmp/cwd', '/tmp/transcript.jsonl', 's-dup');
+    expect(runAutoCompound('/tmp/cwd', t, 's-dup')).toBe('skipped-dedup');
     expect(mockSpawn).not.toHaveBeenCalled();
   });
 
-  it('같은 세션이라도 마커가 5분보다 오래되면 spawn', async () => {
-    writeMarker('s-old', Date.now() - 6 * 60 * 1000); // 6분 전
+  it('최근 실행이어도 transcript 가 자랐으면 spawn (마지막 교정이 5분 안에 들어와도 종료 시 승급 누락 없음)', async () => {
+    const t = makeTranscript(2000);
+    writeRunMark('s-grew', 1000);
     const { runAutoCompound } = await import('../src/core/spawn.js');
-    runAutoCompound('/tmp/cwd', '/tmp/transcript.jsonl', 's-old');
+    expect(runAutoCompound('/tmp/cwd', t, 's-grew')).toBe('spawned');
     expect(mockSpawn).toHaveBeenCalledTimes(1);
   });
 
-  it('다른 세션의 마커는 dedup 대상 아님 → spawn', async () => {
-    writeMarker('other-session', Date.now()); // 방금 전이지만 세션 다름
+  it('final=true 이면 러너 6번째 인자로 final 을 넘긴다', async () => {
+    const t = makeTranscript(10);
     const { runAutoCompound } = await import('../src/core/spawn.js');
-    runAutoCompound('/tmp/cwd', '/tmp/transcript.jsonl', 's-mine');
+    runAutoCompound('/tmp/cwd', t, 's-final', 0, true);
+    expect(mockSpawn.mock.calls[0][1].slice(-1)[0]).toBe('final');
+  });
+
+  it('다른 세션의 기록은 dedup 대상 아님 → spawn', async () => {
+    const t = makeTranscript(1000);
+    writeRunMark('other-session', 1000);
+    const { runAutoCompound } = await import('../src/core/spawn.js');
+    runAutoCompound('/tmp/cwd', t, 's-mine');
     expect(mockSpawn).toHaveBeenCalledTimes(1);
   });
 
-  it('손상된 마커여도 fail-open 으로 spawn', async () => {
-    fs.writeFileSync(path.join(stateDir, 'last-auto-compound.json'), '{ not json');
+  it('손상된 기록이어도 fail-open 으로 spawn', async () => {
+    fs.writeFileSync(path.join(stateDir, 'extraction-cursors.json'), '{ not json');
     const { runAutoCompound } = await import('../src/core/spawn.js');
-    runAutoCompound('/tmp/cwd', '/tmp/transcript.jsonl', 's-corrupt');
+    runAutoCompound('/tmp/cwd', makeTranscript(10), 's-corrupt');
     expect(mockSpawn).toHaveBeenCalledTimes(1);
   });
 });

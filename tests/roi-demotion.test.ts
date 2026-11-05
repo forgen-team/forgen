@@ -63,6 +63,18 @@ describe('evaluateRoiDemotions (순수 판정)', () => {
     expect(isRoiQuarantined(sameDay['sol-a'])).toBe(false);
   });
 
+  it('D6: 노출이 늘지 않으면 시간이 흘러도 windowCount 가 올라가지 않는다 (surfaced 3 고정 솔루션이 8~10 으로 부풀던 버그)', () => {
+    let state = evaluateRoiDemotions([row('sol-stuck', 3, 0)], {}, DEFAULT_ROI_THRESHOLDS, () => '2026-07-01T00:00:00.000Z');
+    for (let d = 2; d <= 12; d++) {
+      state = evaluateRoiDemotions([row('sol-stuck', 3, 0)], state, DEFAULT_ROI_THRESHOLDS, () => `2026-07-${String(d).padStart(2, '0')}T00:00:00.000Z`);
+    }
+    expect(state['sol-stuck'].windowCount).toBe(1);
+    expect(isRoiQuarantined(state['sol-stuck'])).toBe(false);
+    // 새 노출이 쌓인 뒤 하루가 지나면 그때는 올라간다
+    state = evaluateRoiDemotions([row('sol-stuck', 5, 0)], state, DEFAULT_ROI_THRESHOLDS, () => '2026-07-20T00:00:00.000Z');
+    expect(state['sol-stuck'].windowCount).toBe(2);
+  });
+
   it('진동 사이클: 강등 → acted 해제 → 재강등은 windowCount=1 부터 (격리 이력 리셋)', () => {
     const demoted = evaluateRoiDemotions([row('sol-a', 5, 0)], {}, DEFAULT_ROI_THRESHOLDS, NOW);
     // 사용자가 씀 → 해제

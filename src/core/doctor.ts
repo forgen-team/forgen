@@ -3,12 +3,14 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { FORGEN_HOME, LAB_DIR, ME_BEHAVIOR, ME_DIR, ME_SOLUTIONS, ME_RULES, PACKS_DIR, SESSIONS_DIR, STATE_DIR, V1_SESSIONS_DIR } from './paths.js';
+import { FORGEN_HOME, LAB_DIR, ME_BEHAVIOR, ME_DIR, ME_SOLUTIONS, ME_RULES, SESSIONS_DIR, STATE_DIR, V1_SESSIONS_DIR } from './paths.js';
 import { getTimingStats } from '../hooks/shared/hook-timing.js';
 import { countSessionScopedFiles, pruneState } from './state-gc.js';
 import { summarizeAllByHost } from '../store/host-mismatch.js';
 import { readForgeLoopState } from '../hooks/shared/forge-loop-state.js';
 import { effortAdvisory } from './effort-advisory.js';
+import { forgenRunShimPath } from '../host/claude-shim.js';
+import { collectProbes, detectHosts, type Probe } from './doctor-verify.js';
 
 /** ~/.claude/projects/ — Claude Code 세션 저장 경로 */
 const CLAUDE_PROJECTS_DIR = path.join(os.homedir(), '.claude', 'projects');
@@ -36,8 +38,16 @@ function check(label: string, condition: boolean, hint?: string): void {
   }
 }
 
-function readSettingsForDoctor(): Record<string, unknown> {
-  try { return JSON.parse(fs.readFileSync(path.join(os.homedir(), '.claude', 'settings.json'), 'utf-8')) as Record<string, unknown>; } catch { return {}; }
+/** 실패로 세지 않는 정보 줄 (△) */
+function info(label: string, hint?: string): void {
+  console.log(`  △ ${label}${hint ? ` — ${hint}` : ''}`);
+}
+
+function printProbes(probes: Probe[]): void {
+  for (const p of probes) {
+    if (p.info) info(p.label, p.hint);
+    else check(p.label, p.ok, p.hint);
+  }
 }
 
 function exists(p: string): boolean {
@@ -52,21 +62,6 @@ function commandExists(cmd: string): boolean {
   } catch {
     return false;
   }
-}
-
-/** parity-result.json 내용에서 경과 시간을 사람이 읽기 좋은 문자열로 변환 */
-function relativeTime(isoString: string): string {
-  const diffMs = Date.now() - new Date(isoString).getTime();
-  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-  if (diffDays === 0) {
-    const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
-    if (diffHours === 0) {
-      const diffMins = Math.floor(diffMs / (1000 * 60));
-      return `${diffMins}m ago`;
-    }
-    return `${diffHours}h ago`;
-  }
-  return `${diffDays}d ago`;
 }
 
 /** ADR-014 D4 — [Codex Hooks] 섹션: hooks.json forgen 엔트리의 Codex trust 기록 대조 */
@@ -100,49 +95,6 @@ async function renderCodexHookTrust(): Promise<void> {
   } catch { /* fail-open */ }
 }
 
-/** [Codex Parity] 섹션 렌더링 — ~/.forgen/state/parity-result.json 신선도 검사 */
-function renderCodexParity(): void {
-  console.log('  [Codex Parity]');
-  const parityPath = path.join(STATE_DIR, 'parity-result.json');
-
-  if (!fs.existsSync(parityPath)) {
-    console.log('  △ Codex parity 미실행 — tests/e2e/codex/run-parity.sh 또는 forgen dev parity codex');
-    return;
-  }
-
-  let data: { passed?: boolean | null; at?: string; version?: string; result?: string; note?: string };
-  try {
-    data = JSON.parse(fs.readFileSync(parityPath, 'utf-8'));
-  } catch {
-    console.log('  ✗ Codex parity — parity-result.json 파싱 실패');
-    return;
-  }
-
-  if (data.passed === null || data.passed === undefined) {
-    console.log('  △ Codex parity dry-run only — 실 실행 필요');
-    return;
-  }
-
-  if (!data.passed) {
-    const timeStr = data.at ? relativeTime(data.at) : 'unknown';
-    const detail = data.result ?? data.note ?? 'no detail';
-    console.log(`  ✗ Codex parity FAILED (at: ${timeStr}, detail: ${detail})`);
-    return;
-  }
-
-  // passed === true
-  const timeStr = data.at ? relativeTime(data.at) : 'unknown';
-  const version = data.version ? ` version ${data.version}` : '';
-  const diffMs = data.at ? Date.now() - new Date(data.at).getTime() : Infinity;
-  const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
-
-  if (diffMs > sevenDaysMs) {
-    console.log(`  △ Codex parity green but stale (last run: ${timeStr}) — 재실행 권장`);
-  } else {
-    console.log(`  ✓ Codex parity green (last run: ${timeStr},${version})`);
-  }
-}
-
 export interface DoctorOptions {
   /** When true, delete stale session-scoped state files instead of just
    *  reporting bloat. Triggered by `forgen doctor --prune-state`. */
@@ -161,7 +113,7 @@ export interface DoctorOptions {
    *  Initialization Status) for fast onboarding verification. ~10 lines output. */
   quick?: boolean;
   /** W1-1 (ADR-010): tenetx/legacy 규칙 스프롤 스캔 (dry-run — 삭제는
-   *  `forgen migrate tenetx` 가 수행). native /doctor 가 비용을 flag 하면
+   *  `forgen dev migrate tenetx` 가 수행). native /doctor 가 비용을 flag 하면
    *  forgen 이 provenance 로 안전하게 회수하는 보완 관계. */
   reclaim?: boolean;
   /** W2-1 (ADR-010): hook timing 표 등 상세 진단 표시. slow-hook 감지는
@@ -169,70 +121,34 @@ export interface DoctorOptions {
   verbose?: boolean;
 }
 
-/** plugin cache 디렉토리에 버전 엔트리가 하나 이상 있는가 (check + repair 재검증 공용) */
-export function pluginCacheOk(): boolean {
-  const pluginCacheBase = path.join(os.homedir(), '.claude', 'plugins', 'cache', 'forgen-local', 'forgen');
-  if (!exists(pluginCacheBase)) return false;
+/** 고정 shim 이 가리키는 패키지가 살아 있는가 (collectProbes 의 shim 항목과 같은 판정). */
+export function shimTargetOk(homeDir: string = os.homedir()): boolean {
   try {
-    return fs.readdirSync(pluginCacheBase).some(f => {
-      try {
-        const lstat = fs.lstatSync(path.join(pluginCacheBase, f));
-        return lstat.isDirectory() || lstat.isSymbolicLink();
-      } catch { return false; }
-    });
+    const content = fs.readFileSync(forgenRunShimPath(homeDir), 'utf-8');
+    const pkg = content.match(/^FORGEN_PKG='(.*)'$/m)?.[1];
+    return !!pkg && exists(path.join(pkg, 'dist', 'cli.js'));
   } catch { return false; }
 }
 
-/** installed_plugins.json 의 forgen entry 가 존재하며 installPath 가 살아있는가 */
-export function pluginRegisteredOk(): boolean {
-  const installedPluginsPath = path.join(os.homedir(), '.claude', 'plugins', 'installed_plugins.json');
-  if (!exists(installedPluginsPath)) return false;
-  try {
-    const installed = JSON.parse(fs.readFileSync(installedPluginsPath, 'utf-8'));
-    const entry = installed?.plugins?.['forgen@forgen-local'];
-    if (Array.isArray(entry) && entry.length > 0) {
-      const installPath = entry[0]?.installPath;
-      return !!installPath && exists(installPath);
-    }
-  } catch { /* ignore */ }
-  return false;
+/** 실행 중인 forgen 패키지 루트 (dist/core/doctor.js 기준 두 단계 위) */
+function currentPkgRoot(): string {
+  return path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 }
 
 /**
- * v0.4.8 (E3): plugin cache / installPath 진단이 실패했을 때 자동 복구.
- * 실패해도 doctor 자체는 계속 진행 (fail-open).
- *
- * W1-4 수정 (ADR-010, 실측 2026-07-16): 이전 구현은 무조건 `npm run build` 를
- * 먼저 실행했는데, 글로벌 설치엔 devDeps(tsc)가 없어 MODULE_NOT_FOUND 로 실패
- * → postinstall 에 도달하지 못해 캐시가 영원히 복구되지 않았다. published
- * 패키지는 dist 가 이미 있으므로 build 는 dist 부재(dev checkout)시에만 시도.
- * 또한 "실행했다"가 아니라 "복구됐다"를 재검증 후 보고한다.
+ * `--repair`: 설치와 같은 경로(planClaudeInstall)로 shim·settings hook·statusLine·MCP·명령·스킬을 다시 쓴다.
+ * 실행했다는 사실이 아니라 호출부가 재검증한 결과를 보고한다.
  */
-function attemptPluginRepair(): boolean {
+async function reinstallForRepair(): Promise<boolean> {
   try {
-    // forgen 패키지 루트 = 현재 파일에서 dist/core/doctor.js 위치 → pkgRoot.
-    // dev (src/) 와 prod (dist/) 양쪽 모두 path.resolve(...,'..','..') 로 도달.
-    const here = path.dirname(fileURLToPath(import.meta.url));
-    const pkgRoot = path.resolve(here, '..', '..');
-    console.log(`\n  [Repair] forgen 패키지 자가복구 시도 — ${pkgRoot}`);
-    if (!exists(path.join(pkgRoot, 'dist', 'cli.js'))) {
-      // dev checkout 등 dist 부재 시에만 build (devDeps 가 있는 환경)
-      execFileSync('npm', ['run', 'build'], { cwd: pkgRoot, stdio: 'inherit' });
-    }
-    execFileSync('node', ['scripts/postinstall.js'], { cwd: pkgRoot, stdio: 'inherit' });
-
-    // 결과 재검증 — 성공 주장은 검증된 상태에만 한다.
-    const ok = pluginCacheOk() && pluginRegisteredOk();
-    if (ok) {
-      console.log('  [Repair] ✓ 복구 확인 — plugin cache/registry 재검증 통과');
-    } else {
-      console.warn('  [Repair] ✗ postinstall 은 실행됐지만 재검증 실패 — 수동 확인 필요');
-      console.warn('  [Repair] 수동 복구: cd <forgen pkgRoot> && node scripts/postinstall.js');
-    }
-    return ok;
+    const { planClaudeInstall } = await import('../host/install-claude.js');
+    const r = planClaudeInstall({ pkgRoot: currentPkgRoot(), homeDir: os.homedir() });
+    console.log(`\n  [Repair] 재설치 경로 실행 — hooks ${r.hooksInjected}, MCP ${r.mcpRegistered ? '재등록' : '유지'}, statusLine ${r.statusLine}`);
+    for (const e of r.errors) console.warn(`  [Repair] 오류: ${e}`);
+    return r.errors.length === 0;
   } catch (e) {
     console.warn(`  [Repair] 실패: ${e instanceof Error ? e.message : String(e)}`);
-    console.warn('  [Repair] 수동 복구: cd <forgen pkgRoot> && node scripts/postinstall.js (dist 부재 시 npm run build 선행)');
+    console.warn('  [Repair] 수동 복구: npm i -g @wooojin/forgen  (또는 forgen install claude)');
     return false;
   }
 }
@@ -242,84 +158,75 @@ async function runReclaimScan(): Promise<void> {
   try {
     const { runReclaim, printReclaimResult } = await import('./migrate-tenetx.js');
     printReclaimResult(runReclaim({ cwd: process.cwd(), dryRun: true }));
-    console.log('    실제 회수: forgen migrate tenetx [--yes] [--apply-settings]');
+    console.log('    실제 회수: forgen dev migrate tenetx [--yes] [--apply-settings]');
   } catch (e) {
     console.warn(`  [reclaim] 스캔 실패: ${e instanceof Error ? e.message : String(e)}`);
   }
   console.log();
 }
 
-/** W1-4: repair 성공 시 Summary 에서 걷어내는 대상 — check() 라벨과 단일 소스 */
-const REPAIRABLE_PLUGIN_LABELS = Object.freeze({
-  cache: 'forgen plugin cache',
-  registered: 'forgen plugin registered & installPath exists',
-});
-
-export async function runDoctor(opts: DoctorOptions = {}): Promise<void> {
+export async function runDoctor(opts: DoctorOptions = {}): Promise<number> {
   failedChecks = [];
   console.log('\n  Forgen — Diagnostics');
   // ADR-010 W2-1 경계 선언: 일반 환경 건강(컨텍스트 비용, unused skill/MCP,
   // CLAUDE.md 정리, slow hook)은 native /doctor 의 영역. 이 명령은 forgen
-  // 자체 기계(플러그인 캐시·훅 오류·상태 위생)와 효과-측정 게이트만 본다.
+  // 자체 기계(hook·MCP·statusLine 실행 체인, 데이터 파일)와 효과-측정 게이트만 본다.
   console.log('  환경 전반 진단은 Claude Code native /doctor 를 사용하세요.');
-  console.log('  이 명령은 forgen 자체 기계와 효과-측정 게이트를 검사합니다.\n');
+  console.log('  이 명령은 forgen 자체 기계를 실제로 실행해 검사합니다.\n');
 
+  const hosts = detectHosts(os.homedir(), currentPkgRoot());
   section('Tools');
-  check('claude CLI', commandExists('claude'));
-  check('tmux', commandExists('tmux'));
+  // Claude 에 설치하지 않은 사용자(Codex 전용·갓 설치 전)에게 claude CLI 부재는 고장이 아니다.
+  if (hosts.claude) check('claude CLI', commandExists('claude'));
+  else if (!commandExists('claude')) info('claude CLI 없음', 'forgen 이 Claude Code 에 설치돼 있지 않아 필수 아님');
+  else info('claude CLI 있음', 'forgen 은 아직 Claude Code 에 설치되지 않음: forgen install claude');
   check('git', commandExists('git'));
-  check('gh (GitHub CLI)', commandExists('gh'), 'Required for team PR features: brew install gh');
-  console.log();
-
-  section('Plugins');
-  const ralphLoopInstalled = exists(
-    path.join(os.homedir(), '.claude', 'plugins', 'cache', 'claude-plugins-official', 'ralph-loop')
-  );
-  check('ralph-loop plugin', ralphLoopInstalled,
-    'Required for ralph mode auto-iteration. Install: claude plugins install ralph-loop');
-
-  // forgen 플러그인 캐시 / registry 정합성 — 훅 실행의 필수 전제
-  const forgenPluginCacheOk = pluginCacheOk();
-  check(REPAIRABLE_PLUGIN_LABELS.cache, forgenPluginCacheOk,
-    opts.repair
-      ? 'Hook execution requires plugin cache. Attempting auto-repair (--repair)…'
-      : 'Hook execution requires plugin cache. Fix: node scripts/postinstall.js in the forgen package (or rerun with --repair)');
-
-  const pluginRegistered = pluginRegisteredOk();
-  check(REPAIRABLE_PLUGIN_LABELS.registered, pluginRegistered,
-    opts.repair
-      ? 'Plugin registered but installPath missing on disk. Attempting auto-repair (--repair)…'
-      : 'Plugin registered but installPath missing on disk. Fix: node scripts/postinstall.js in the forgen package (or rerun with --repair)');
-
-  // v0.4.8 (E3) + W1-4: plugin cache 또는 installPath 가 깨졌고 --repair 가
-  // 켜져 있으면 자가복구. 재검증까지 통과하면 failedChecks 에서 해당 항목을
-  // 걷어내 Summary 가 복구된 상태를 정직하게 반영하게 한다.
-  if (opts.repair && (!forgenPluginCacheOk || !pluginRegistered)) {
-    const repaired = attemptPluginRepair();
-    if (repaired) {
-      const pluginLabels = new Set<string>(Object.values(REPAIRABLE_PLUGIN_LABELS));
-      failedChecks = failedChecks.filter(f => !pluginLabels.has(f.label));
-    }
+  if (!commandExists('tmux')) info('tmux 없음', '선택 사항 (tmux 안에서 쓰면 auto-compound 알림이 보임)');
+  if (!commandExists('gh')) info('gh (GitHub CLI) 없음', '선택 사항 (팀 PR 기능에만 필요): brew install gh');
+  if (!exists(path.join(os.homedir(), '.claude', 'plugins', 'cache', 'claude-plugins-official', 'ralph-loop'))) {
+    info('ralph-loop 플러그인 없음', '선택 사항 (ralph 모드 자동 반복에만 필요): claude plugins install ralph-loop');
   }
   console.log();
 
-  section('Statusline');
-  try {
-    const sl = (readSettingsForDoctor().statusLine as { command?: string } | undefined)?.command;
-    const owned = !sl || /^forgen(\s|$)/.test(sl.trim()) || /[\\/]dist[\\/]cli\.js"?\s+statusline(\s|$)/.test(sl);
-    check('statusLine → forgen', owned, `another command is set (${(sl ?? '').slice(0, 50)}…). Switch: forgen statusline install --force`);
-    if (owned) check('statusLine uses absolute path (nvm-safe)', !!sl && !/^forgen(\s|$)/.test(sl.trim()), 'PATH-dependent `forgen statusline` picks whatever nvm version is active. Fix: forgen statusline install');
-  } catch { /* fail-open */ }
+  // 설치 체인 검증 — settings hook·MCP·statusLine·shim 을 실제로 실행해 본다.
+  const verifyOpts = { homeDir: os.homedir(), forgenHome: FORGEN_HOME, pkgRoot: currentPkgRoot(), skipExec: !!opts.quick };
+  let probes = await collectProbes(verifyOpts);
+  if (opts.repair && probes.some((p) => !p.ok && !p.info)) {
+    const before = probes.filter((p) => !p.ok && !p.info).length;
+    await reinstallForRepair();
+    probes = await collectProbes(verifyOpts);
+    const after = probes.filter((p) => !p.ok && !p.info);
+    console.log(after.length === 0
+      ? `  [Repair] ✓ 복구 확인 — 재검증 통과 (실패 ${before} → 0)`
+      : `  [Repair] ✗ 재검증 후에도 ${after.length}건 남음 (이전 ${before}건) — 아래 항목은 재설치로 고쳐지지 않음\n`);
+  }
+  const bySection = new Map<string, Probe[]>();
+  for (const p of probes) bySection.set(p.section, [...(bySection.get(p.section) ?? []), p]);
+  for (const name of ['Install', 'Execution', 'Statusline']) {
+    const list = bySection.get(name);
+    if (!list) continue;
+    section(name);
+    printProbes(list);
+    console.log();
+  }
 
   section('Directories');
-  check('~/.forgen/', exists(FORGEN_HOME));
-  check('~/.forgen/me/', exists(ME_DIR));
-  check('~/.forgen/me/solutions/', exists(ME_SOLUTIONS));
-  check('~/.forgen/me/behavior/', exists(ME_BEHAVIOR));
-  check('~/.forgen/me/rules/', exists(ME_RULES));
-  check('~/.forgen/packs/', exists(PACKS_DIR));
-  check('~/.forgen/sessions/ (session logs)', exists(SESSIONS_DIR));
-  check('~/.forgen/state/sessions/ (v1 effective state)', exists(V1_SESSIONS_DIR));
+  // Claude 설치(shim·데이터가 여기에 있음)가 있는데 없으면 고장. 아직 어느 호스트에도 안 썼거나 Codex 전용이면 첫 실행 때 만들어진다.
+  if (hosts.claude) check('~/.forgen/', exists(FORGEN_HOME));
+  else if (exists(FORGEN_HOME)) check('~/.forgen/', true);
+  else info('~/.forgen/ 아직 없음', '첫 세션에서 만들어짐');
+  // 하위 폴더는 첫 사용·첫 세션에 런타임이 만든다. 없다고 고장이 아니다.
+  for (const [label, dir] of [
+    ['~/.forgen/me/', ME_DIR],
+    ['~/.forgen/me/solutions/', ME_SOLUTIONS],
+    ['~/.forgen/me/behavior/', ME_BEHAVIOR],
+    ['~/.forgen/me/rules/', ME_RULES],
+    ['~/.forgen/sessions/ (session logs)', SESSIONS_DIR],
+    ['~/.forgen/state/sessions/ (v1 effective state)', V1_SESSIONS_DIR],
+  ] as const) {
+    if (exists(dir)) check(label, true);
+    else info(`${label} 아직 없음`, '첫 세션에서 만들어짐');
+  }
 
   // R9-IA5: warn if a user dropped rule files at ~/.forgen/rules/ by mistake.
   // That path is NOT loaded — personal rules live at ~/.forgen/me/rules/.
@@ -340,18 +247,10 @@ export async function runDoctor(opts: DoctorOptions = {}): Promise<void> {
   }
   console.log();
 
-  section('Initialization Status');
-  const profilePath = path.join(ME_DIR, 'forge-profile.json');
-  const profileOk = exists(profilePath);
-  check('Profile exists (forge-profile.json)', profileOk,
-    'No profile — run `forgen` to complete onboarding');
-  const hooksWired = forgenPluginCacheOk || pluginRegistered;
-  if (hooksWired && !profileOk) {
-    check('Hooks wired + profile ready', false,
-      'Hooks are active but personalization is disabled — run `forgen` to onboard');
-  } else if (hooksWired && profileOk) {
-    check('Hooks wired + profile ready', true);
-  }
+  section('Data');
+  printProbes(bySection.get('Data') ?? []);
+  const hookHealth = bySection.get('Hook Health');
+  if (hookHealth) { section('Hook Health 24h'); printProbes(hookHealth); }
   console.log();
 
   if (opts.quick) {
@@ -363,7 +262,7 @@ export async function runDoctor(opts: DoctorOptions = {}): Promise<void> {
     } else {
       console.log(`  ${failedChecks.length} issue(s) found. Run \`forgen doctor\` for full diagnostics.\n`);
     }
-    return;
+    return failedChecks.length;
   }
 
   // 리뷰 SEV-3 (c): critic-review 룰의 트리거가 stale(skip-review 시그널 미포함)이면 발견 nudge.
@@ -386,17 +285,15 @@ export async function runDoctor(opts: DoctorOptions = {}): Promise<void> {
   console.log();
 
   section('Environment');
-  check('Inside tmux session', !!process.env.TMUX,
-    'FORGEN auto-compound relies on tmux. Launch: tmux new -s forgen');
-  check('FORGEN_HARNESS env var', (process.env.FORGEN_HARNESS ?? process.env.COMPOUND_HARNESS) === '1',
-    'Set by `forgen` / `fgx` launcher. Hooks assume harness mode is active.');
+  info(`tmux: ${process.env.TMUX ? '안에서 실행 중' : '밖에서 실행 중'}`, '정보 표시 (실패로 세지 않음)');
+  info(`FORGEN_HARNESS: ${(process.env.FORGEN_HARNESS ?? process.env.COMPOUND_HARNESS) === '1' ? '설정됨' : '미설정'}`, '`forgen` / `fgx` 런처가 설정하는 값. 이 진단 셸에서는 정상적으로 비어 있을 수 있음');
   // ADR-012: auto-compound Haiku 추출 동의 상태 고지 (transcript 요약 API 전송 여부).
   try {
     const { getHaikuConsentState } = await import('./compound-consent.js');
     const s = getHaikuConsentState();
     console.log(
       `  auto-compound Haiku 추출: ${s.enabled ? 'ON' : 'OFF'} (${s.source}) — ` +
-      `${s.enabled ? '세션 요약이 Haiku 로 전송됨' : '결정론 룰 승급만(egress 0)'}. 변경: forgen compound consent on|off`,
+      `${s.enabled ? '세션 요약이 내 계정의 Haiku 로 전송됨(비밀키 마스킹)' : '결정론 룰 승급만(전송 없음)'}. 변경: forgen compound consent on|off`,
     );
   } catch { /* noop */ }
   console.log();
@@ -629,9 +526,6 @@ export async function runDoctor(opts: DoctorOptions = {}): Promise<void> {
   // [Codex Hooks] — ADR-014 D4 trust 감사
   await renderCodexHookTrust();
 
-  // [Codex Parity] — parity-result.json 신선도 검사 (v0.4.2 패턴 확장)
-  renderCodexParity();
-  console.log();
 
   // [ψ-long] — within-conversation compound 효과 측정 (v0.4.10)
   // 측정 시간이 길어 ship-gate 는 advisory. 신선도(<= 14d) + psiLong > 0 만 확인.
@@ -699,4 +593,5 @@ export async function runDoctor(opts: DoctorOptions = {}): Promise<void> {
     console.log('\n  Run `forgen doctor` again after applying the fixes above.');
   }
   console.log();
+  return failedChecks.length;
 }

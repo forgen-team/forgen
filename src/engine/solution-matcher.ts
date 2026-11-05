@@ -13,13 +13,13 @@
  *   meta-learning/matcher-weight-loader.ts — loadTunedMatcherWeights
  */
 
-import * as path from 'node:path';
-import { ME_SOLUTIONS, PACKS_DIR } from '../core/paths.js';
+import { projectKeyFor } from '../store/rule-scope.js';
+import { solutionInScope, solutionProjectWeight } from './solution-scope.js';
 import type { ScopeInfo } from '../core/types.js';
 import type { SolutionStatus, SolutionType } from './solution-format.js';
-import { extractTags } from './solution-format.js';
+import { extractSolutionTags } from './solution-format.js';
 import type { SolutionDirConfig } from './solution-index.js';
-import { getOrBuildIndex } from './solution-index.js';
+import { getOrBuildIndex, defaultSolutionDirs } from './solution-index.js';
 import { defaultNormalizer } from './term-normalizer.js';
 import { rankCandidates } from './ranking-pipeline.js';
 import { loadTunedMatcherWeights } from './meta-learning/matcher-weight-loader.js';
@@ -86,6 +86,7 @@ interface LoadedSolution {
   identifiers: string[];
   filePath: string;
   scope: 'me' | 'team' | 'project' | 'universal';
+  projects?: string[];
 }
 
 // ── Candidate exploration bonus ──
@@ -107,19 +108,21 @@ export function matchSolutions(
   cwd: string,
   contextTokens: readonly string[] = [],
 ): SolutionMatch[] {
-  const dirs: SolutionDirConfig[] = [{ dir: ME_SOLUTIONS, scope: 'me' }];
-  if (scope.team) {
-    dirs.push({ dir: path.join(PACKS_DIR, scope.team.name, 'solutions'), scope: 'team' });
-  }
-  dirs.push({ dir: path.join(cwd, '.compound', 'solutions'), scope: 'project' });
+  // hook 과 MCP 가 같은 디렉터리 목록(me + 설치된 팩 + cwd project)을 쓴다.
+  const dirs: SolutionDirConfig[] = defaultSolutionDirs(cwd);
+  void scope;
+  const projectKey = projectKeyFor(cwd);
 
   const index = getOrBuildIndex(dirs);
   const allSolutions: LoadedSolution[] = applyCandidateExplorationBonus(
-    index.entries.map((e) => ({ ...e })),
+    index.entries.filter((e) => solutionInScope(e.projects, projectKey)).map((e) => ({ ...e })),
   );
 
-  const promptTags = extractTags(prompt);
-  const promptLower = prompt.toLowerCase();
+  // 맨 앞 슬래시 명령 이름(`/plugin install x`)은 호출이지 주제가 아니다 — 이름이 주제 태그로 매치되어
+  // 명령어 프롬프트에 무관한 솔루션이 붙던 것을 막는다(실측: /plugin 프롬프트가 plugin 솔루션 2건 오주입).
+  const topicText = prompt.replace(/^\s*\/[A-Za-z][\w:.-]*/, ' ');
+  const promptTags = extractSolutionTags(topicText);
+  const promptLower = topicText.toLowerCase();
 
   const tunedWeights = loadTunedMatcherWeights();
 
@@ -131,7 +134,7 @@ export function matchSolutions(
     name: c.solution.name,
     path: c.solution.filePath,
     scope: c.solution.scope,
-    relevance: c.relevance,
+    relevance: c.relevance * solutionProjectWeight(c.solution.projects, projectKey),
     summary: c.solution.name,
     status: c.solution.status,
     confidence: c.solution.confidence,

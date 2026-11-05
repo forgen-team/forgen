@@ -30,7 +30,7 @@ export function shimSupported(platform: NodeJS.Platform = process.platform): boo
   return platform !== 'win32';
 }
 
-const shq = (s: string): string => `'${s.replace(/'/g, `'\\''`)}'`;
+export const shq = (s: string): string => `'${s.replace(/'/g, `'\\''`)}'`;
 
 export function renderShim(pkgRoot: string, nodePath: string): string {
   return [
@@ -48,16 +48,15 @@ export function renderShim(pkgRoot: string, nodePath: string): string {
 }
 
 /**
- * shim 을 (재)작성. 내용이 같으면 쓰지 않는다. 사용자가 마커를 지운 파일은 덮어쓰지 않는다.
+ * 마커가 있는 shim 파일을 (재)작성. 내용이 같으면 쓰지 않는다. 사용자가 마커를 지운 파일은 덮어쓰지 않는다.
  * 반환: 'written' | 'unchanged' | 'foreign'(사용자 파일) | 'error'.
  */
-export function writeCodexHookShim(pkgRoot: string, nodePath: string, shimPath: string): 'written' | 'unchanged' | 'foreign' | 'error' {
+export function writeManagedShim(shimPath: string, content: string, marker: string): 'written' | 'unchanged' | 'foreign' | 'error' {
   try {
-    const content = renderShim(pkgRoot, nodePath);
     if (fs.existsSync(shimPath)) {
       const cur = fs.readFileSync(shimPath, 'utf-8');
       if (cur === content) return 'unchanged';
-      if (!cur.includes(SHIM_MARKER)) return 'foreign';
+      if (!cur.includes(marker)) return 'foreign';
     }
     fs.mkdirSync(path.dirname(shimPath), { recursive: true });
     const tmp = `${shimPath}.tmp-${process.pid}`;
@@ -67,6 +66,10 @@ export function writeCodexHookShim(pkgRoot: string, nodePath: string, shimPath: 
   } catch {
     return 'error';
   }
+}
+
+export function writeCodexHookShim(pkgRoot: string, nodePath: string, shimPath: string): 'written' | 'unchanged' | 'foreign' | 'error' {
+  return writeManagedShim(shimPath, renderShim(pkgRoot, nodePath), SHIM_MARKER);
 }
 
 /**

@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { setLocale } from '../../src/i18n/index.js';
-import { renderRules, DEFAULT_CONTEXT } from '../../src/renderer/rule-renderer.js';
+import { renderRules, renderRulesDetailed, DEFAULT_CONTEXT  } from '../../src/renderer/rule-renderer.js';
+import { composeRuleFiles } from '../../src/hooks/shared/injection-caps.js';
 import { createProfile } from '../../src/store/profile-store.js';
 import type { Rule, SessionEffectiveState, RuntimeCapabilityState } from '../../src/store/types.js';
 
@@ -175,10 +176,88 @@ describe('renderRules', () => {
       expect(middle).not.toContain('e2e 증거');
     });
 
-    it('include_pack_summary=false 면 facet 룰도 미적용 (DEFAULT_CONTEXT)', () => {
-      // facet 룰은 pack 분기와 같은 조건에서만 emit (동일 lifecycle)
-      const out = renderRules([], makeState(), profileWithFacets({ verification_depth: 0.9 }));
-      expect(out).not.toContain('e2e 증거');
+    it('R8: DEFAULT_CONTEXT(include_pack_summary=false)에서도 facet 룰이 렌더에 들어간다 — 프로필이 표시 전용이던 결함', () => {
+      const hi = renderRules([], makeState(), profileWithFacets({ verification_depth: 0.9 }));
+      expect(hi).toContain('[profile] 완료 선언 전 실행 로그');
+      const mid = renderRules([], makeState(), profileWithFacets({ verification_depth: 0.5 }));
+      expect(mid).not.toContain('[profile]');
+      expect(hi).not.toBe(mid);
     });
+    it('프로필이 null/undefined 여도 렌더가 깨지지 않는다 (null 안전)', () => {
+      expect(() => renderRules([], makeState(), null)).not.toThrow();
+      expect(renderRules([], makeState(), undefined)).not.toContain('[profile]');
+    });
+    it('facet 규칙은 예산 최하위 — 남는 자리가 없으면 빠지고 Omitted 에 표시, 룰이 먼저 자리를 차지한다', () => {
+      const tight = { surface: 'session_start' as const, max_rules: 60, max_chars: 10, include_pack_summary: false };
+      const out = renderRules([], makeState(), profileWithFacets({ verification_depth: 0.95 }), tight);
+      expect(out).not.toContain('[profile]');
+      expect(out).toMatch(/profile rules/);
+      // 룰 하나가 있고 예산이 룰 하나분만 남는 경우: 룰이 들어가고 facet 이 밀린다
+      const rule = { rule_id: 'r1', category: 'workflow', scope: 'me', trigger: 't', policy: '룰 하나', strength: 'strong', source: 'explicit_correction', status: 'active', evidence_refs: [], render_key: 'workflow.r1', created_at: '2026-11-01T00:00:00Z', updated_at: '2026-11-01T00:00:00Z' } as unknown as Rule;
+      const full = renderRules([rule], makeState(), profileWithFacets({ verification_depth: 0.95 }));
+      expect(full.indexOf('룰 하나')).toBeGreaterThan(-1);
+      expect(full.indexOf('[profile]')).toBeGreaterThan(full.indexOf('룰 하나') - 1);
+    });
+  });
+});
+
+describe('렌더 예산 (룰이 조용히 사라지지 않는다)', () => {
+  const profile = createProfile('u', '균형형', '균형형', '승인 완화', 'onboarding');
+  const rule = (id: string, strength: Rule['strength'], policy: string, source: Rule['source'] = 'explicit_correction'): Rule => ({
+    rule_id: id, category: 'workflow', scope: 'me', trigger: 't', policy, strength, source, status: 'active',
+    evidence_refs: [], render_key: `workflow.${id}`, created_at: '2026-11-01T00:00:00Z', updated_at: '2026-11-01T00:00:00Z',
+  });
+  const ctx = { surface: 'session_start', max_rules: 60, max_chars: 1200, include_pack_summary: false } as const;
+
+  it('넘치면 strong 을 먼저 지키고 빠진 룰을 표시한다', () => {
+    const defaults = Array.from({ length: 30 }, (_, i) => rule(`d${i}`, 'default', `기본 룰 ${i} ${'가'.repeat(40)}`));
+    const strong = rule('s1', 'strong', '답변은 항상 한국어로');
+    const r = renderRulesDetailed([...defaults, strong], makeState(), profile, ctx);
+    expect(r.text).toContain('답변은 항상 한국어로');
+    expect(r.included.map((x) => x.rule_id)[0]).toBe('s1');
+    expect(r.omitted.length).toBeGreaterThan(0);
+    expect(r.included.length + r.omitted.length).toBe(31);
+    expect(r.text).toContain(`${r.omitted.length} lower-priority rules omitted`);
+    for (const o of r.omitted) expect(r.text).not.toContain(o.policy);
+  });
+
+  it('사용자 교정이 같은 강도의 채굴 룰보다 먼저다', () => {
+    const r = renderRulesDetailed([
+      ...Array.from({ length: 30 }, (_, i) => rule(`m${i}`, 'default', `채굴 ${i} ${'나'.repeat(40)}`, 'behavior_inference')),
+      rule('e1', 'default', '오너 교정 룰'),
+    ], makeState(), profile, ctx);
+    expect(r.included.map((x) => x.rule_id)).toContain('e1');
+  });
+
+  it('교정 기록 지시는 룰이 많아도 항상 들어간다', () => {
+    const many = Array.from({ length: 80 }, (_, i) => rule(`x${i}`, 'strong', `룰 ${i} ${'다'.repeat(60)}`));
+    expect(renderRulesDetailed(many, makeState(), profile, ctx).text).toContain('correction-record');
+  });
+
+  it('상한 안이면 빠지는 룰이 없고 생략 표시도 없다', () => {
+    const r = renderRulesDetailed([rule('a', 'default', '짧은 룰')], makeState(), profile, ctx);
+    expect(r.omitted).toEqual([]);
+    expect(r.text).not.toContain('## Omitted');
+  });
+});
+
+describe('composeRuleFiles', () => {
+  it('사용자 룰을 먼저 배치하고 줄 경계에서 자른다', () => {
+    const long = Array.from({ length: 400 }, (_, i) => `- 줄 ${i}`).join('\n');
+    const { files } = composeRuleFiles({ 'project-context.md': long, 'v1-rules.md': '# rules\n- 한국어' });
+    expect(files[0].filename).toBe('v1-rules.md');
+    const ctxFile = files.find((f) => f.filename === 'project-context.md');
+    expect(ctxFile?.truncated).toBe(true);
+    const beforeNote = ctxFile?.content.split('\n... (capped')[0] ?? '';
+    expect(beforeNote.split('\n').at(-1)).toMatch(/^- 줄 \d+$/);
+  });
+
+  it('총량을 넘으면 뒤 파일만 빠지고 목록으로 알린다', () => {
+    const big = 'x'.repeat(2900);
+    const map: Record<string, string> = {};
+    for (let i = 0; i < 8; i++) map[`f${i}.md`] = big;
+    const { files, omitted } = composeRuleFiles(map);
+    expect(files.length).toBe(2);
+    expect(omitted.length).toBe(6);
   });
 });

@@ -30,6 +30,7 @@ vi.mock('node:child_process', async (importOriginal) => {
 vi.mock('../src/store/rule-store.js', () => ({
   loadActiveRules: () => Array.from({ length: 8 }, (_, i) => ({ rule_id: `r${i}`, status: 'active' })),
   loadAllRules: () => [],
+  scanRuleFiles: () => ({ rules: [], broken: [] }),
 }));
 
 const { renderStatusline, buildUserLine, cachePathFor, handleStatuslineWith } = await import('../src/core/statusline-cli.js');
@@ -123,10 +124,10 @@ describe('statusline 2줄 렌더', () => {
   it('이 세션 차단 수는 실세션·실차단만 (default 세션·correction 제외)', () => {
     const v = path.join(STATE_DIR, 'enforcement', 'violations.jsonl');
     fs.writeFileSync(v, [
-      { at: new Date(NOW).toISOString(), rule_id: 'r1', session_id: '00000000-0000-4000-8000-0000000000b1', kind: 'block' },
-      { at: new Date(NOW).toISOString(), rule_id: 'r1', session_id: '00000000-0000-4000-8000-0000000000b1', kind: 'correction' },
-      { at: new Date(NOW).toISOString(), rule_id: 'r1', session_id: '00000000-0000-4000-8000-0000000000b2', kind: 'block' },
-      { at: new Date(NOW).toISOString(), rule_id: 'r1', session_id: 'default', kind: 'deny' },
+      { at: new Date().toISOString(), rule_id: 'r1', session_id: '00000000-0000-4000-8000-0000000000b1', kind: 'block' },
+      { at: new Date().toISOString(), rule_id: 'r1', session_id: '00000000-0000-4000-8000-0000000000b1', kind: 'correction' },
+      { at: new Date().toISOString(), rule_id: 'r1', session_id: '00000000-0000-4000-8000-0000000000b2', kind: 'block' },
+      { at: new Date().toISOString(), rule_id: 'r1', session_id: 'default', kind: 'deny' },
     ].map((e) => JSON.stringify(e)).join('\n') + '\n');
     const line = strip(renderStatusline(fullPayload, NOW)[2]);
     expect(line).toContain('차단 1 (7d 2)'); // 이 세션 1, 7d 실차단은 sess-A+sess-B = 2

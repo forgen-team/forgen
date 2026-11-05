@@ -71,12 +71,9 @@ describe('hook pure functions - extended coverage', () => {
     it('git push --force를 감지한다', async () => {
       const { checkDangerousCommand, DANGEROUS_PATTERNS } = await import('../src/hooks/pre-tool-use.js');
       const result = checkDangerousCommand('Bash', { command: 'git push --force origin main' });
-      // git push --force는 패턴에 따라 block 또는 warn
-      if (DANGEROUS_PATTERNS.some(p => p.pattern.test('git push --force origin main'))) {
-        expect(['block', 'warn']).toContain(result.action);
-      } else {
-        expect(result.action).toBe('pass');
-      }
+      // D12-A: git 정책(force push)은 정규식 테이블이 아니라 command-analyzer 가 판정한다. 리뷰 반영: 원격 이력 덮어쓰기 → ask.
+      expect(DANGEROUS_PATTERNS.length).toBeGreaterThanOrEqual(1);
+      expect(result.action).toBe('ask');
     });
 
     it('fork bomb을 차단한다', async () => {
@@ -172,29 +169,23 @@ describe('hook pure functions - extended coverage', () => {
     });
   });
 
-  // ── context-guard: shouldWarn edge cases ──
+  // ── context-guard: 실제 사용량 기반 안내 경계 ──
 
   describe('context-guard extended', () => {
-    it('정확히 임계값이면 true', async () => {
-      const { shouldWarn } = await import('../src/hooks/context-guard.js');
-      expect(shouldWarn({ promptCount: 50, totalChars: 0, lastWarningAt: 0 })).toBe(true);
+    it('정확히 70% 면 안내, 69% 면 안내 없음, 모르면(null) 안내 없음', async () => {
+      const { shouldNoticeContext } = await import('../src/hooks/context-usage.js');
+      const u = (percent: number) => ({ percent, windowSize: 1_000_000, source: 'statusline' as const });
+      expect(shouldNoticeContext(u(70), 0)).toBe(true);
+      expect(shouldNoticeContext(u(69), 0)).toBe(false);
+      expect(shouldNoticeContext(null, 0)).toBe(false);
     });
 
-    it('임계값 - 1이면 false', async () => {
-      const { shouldWarn } = await import('../src/hooks/context-guard.js');
-      expect(shouldWarn({ promptCount: 49, totalChars: 199_999, lastWarningAt: 0 })).toBe(false);
-    });
-
-    it('buildContextWarningMessage에 cancelforgen가 포함', async () => {
-      const { buildContextWarningMessage } = await import('../src/hooks/context-guard.js');
-      const msg = buildContextWarningMessage(50, 200_000);
-      expect(msg).toContain('cancelforgen');
-    });
-
-    it('buildContextWarningMessage에 compound-context-warning 태그', async () => {
-      const { buildContextWarningMessage } = await import('../src/hooks/context-guard.js');
-      const msg = buildContextWarningMessage(10, 5000);
-      expect(msg).toContain('compound-context-warning');
+    it('안내는 사용자용 문장이고 모델에게 작업 중단·즉시 실행을 지시하지 않는다', async () => {
+      const { buildContextNotice } = await import('../src/hooks/context-usage.js');
+      const msg = buildContextNotice({ percent: 82, windowSize: 1_000_000, source: 'statusline' });
+      expect(msg).toContain('82%');
+      expect(msg).toContain('1M');
+      expect(msg).not.toMatch(/마무리하지 말|즉시|forgen-auto-compact/);
     });
   });
 

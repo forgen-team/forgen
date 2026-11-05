@@ -129,7 +129,8 @@ describe('두 훅 경로 (dist 실제 spawn, 격리 HOME)', () => {
   it.skipIf(!distExists)('Stop Mech-B block reason 에 출처 줄이 붙고, 출처 없는 룰은 메시지 불변', () => {
     appendEvidence(evidence('e1', { raw_payload: { kind: 'avoid-this', user_quote: '한국어로 답해 <b>' } }));
     // createRule 은 enforce_via 를 받지 않는다 — 생성 후 직접 부여.
-    const rule: Rule = { ...explicitRule(['e1']), enforce_via: [{ mech: 'B', hook: 'Stop', verifier: { kind: 'self_check_prompt', params: { question: '한국어로 답했는가?' } }, trigger_keywords_regex: '(done\\.)', system_tag: 'rule:test' }] as never };
+    // 답변 언어 룰은 communication — 모든 응답에 적용되므로 주제 게이트 대상이 아니다(D12-C)
+    const rule: Rule = { ...explicitRule(['e1'], { category: 'communication' }), enforce_mode: 'block', enforce_via: [{ mech: 'B', hook: 'Stop', verifier: { kind: 'self_check_prompt', params: { question: '한국어로 답했는가?' } }, trigger_keywords_regex: '(done\\.)', system_tag: 'rule:test' }] as never };
     saveRule(rule);
     const out = run('stop-guard.js', { session_id: 'sess-origin', hook_event_name: 'Stop', last_assistant_message: 'All done. The feature is ready.' });
     expect(out.decision).toBe('block');
@@ -149,7 +150,7 @@ describe('두 훅 경로 (dist 실제 spawn, 격리 HOME)', () => {
       enforce_via: [{ mech: 'A', hook: 'PreToolUse', verifier: { kind: 'tool_arg_regex', params: { pattern: 'rm\\s+-rf', requires_flag: 'user_confirmed', match_target: 'masked' } }, block_message: 'confirm first' }] as never,
     };
     saveRule(rule);
-    const out = run('pre-tool-use.js', { session_id: 'sess-origin3', tool_name: 'Bash', tool_input: { command: 'rm -rf /srv/data' } });
+    const out = run('pre-tool-use.js', { session_id: 'sess-origin3', tool_name: 'Bash', tool_input: { command: 'rm -rf /srv' } });
     const reason = String((out.hookSpecificOutput as { permissionDecisionReason?: string } | undefined)?.permissionDecisionReason ?? '');
     expect((out.hookSpecificOutput as { permissionDecision?: string } | undefined)?.permissionDecision).toBe('deny');
     expect(reason).toContain('confirm first');

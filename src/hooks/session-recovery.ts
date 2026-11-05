@@ -17,7 +17,7 @@ const log = createLogger('session-recovery');
 import { atomicWriteJSON } from './shared/atomic-write.js';
 import { sanitizeId } from './shared/sanitize-id.js';
 import { isHookEnabled } from './hook-config.js';
-import { approve, approveWithContext, failOpenWithTracking } from './shared/hook-response.js';
+import { approve, approveWithContext, approveWithWarning, failOpenWithTracking } from './shared/hook-response.js';
 import { HANDOFFS_DIR, STATE_DIR } from '../core/paths.js';
 import { recordHookTiming } from './shared/hook-timing.js';
 
@@ -172,20 +172,26 @@ async function main(): Promise<void> {
   // 이전엔 prepareHarness (fgx/forgen wrapper) 만 호출 → 직접 claude/codex 호출 시
   // ~/.forgen/state/sessions/<id>.json 미생성. SessionStart hook 에서도 호출하여
   // 양쪽 진입 경로 모두에서 session state 박제.
+  // doctor 프로브(FORGEN_DOCTOR_PROBE=1): 세션 상태 기록·백그라운드 스폰 등 부작용 경로를 건너뛴다.
+  const doctorProbe = process.env.FORGEN_DOCTOR_PROBE === '1';
   let v1RenderedRules: string | null = null;
   try {
+    if (doctorProbe) throw new Error('doctor probe — 세션 상태 기록 생략');
     const { bootstrapV1Session } = await import('../core/v1-bootstrap.js');
-    v1RenderedRules = bootstrapV1Session().renderedRules;
+    v1RenderedRules = bootstrapV1Session(sessionContext.cwd).renderedRules;
   } catch (e) { log.debug('v1-bootstrap SessionStart 호출 실패 (fail-open)', e); }
 
-  // ADR-014 D1 — Codex 에는 .claude/rules/ 로드 표면이 없으므로 같은 룰을 SessionStart
-  // additionalContext 로 주입한다 (Claude 세션은 파일 경로로 이미 로드되므로 skip).
-  const codexRulesBlock: string | null = await (async () => {
+  // 모든 호스트가 같은 경로로 룰을 받는다(ADR-014 D1 확장). 래퍼 없이 실행해도 매 세션 최신 룰이 들어간다.
+  const rulesBlock: string | null = await (async () => {
     try {
-      const { isCodexRuntime, buildCodexRulesContext } = await import('../host/codex-rules-context.js');
-      if (!isCodexRuntime()) return null;
-      return await buildCodexRulesContext(sessionContext.cwd, v1RenderedRules);
-    } catch (e) { log.debug('codex rules inject 실패 (fail-open)', e); return null; }
+      const { isCodexRuntime, buildRulesContext } = await import('../host/codex-rules-context.js');
+      const { reclaimRenderedRuleFiles } = await import('../core/rendered-rules-manifest.js');
+      reclaimRenderedRuleFiles(sessionContext.cwd);
+      return await buildRulesContext(sessionContext.cwd, v1RenderedRules, isCodexRuntime() ? 'codex' : 'claude');
+    } catch (e) {
+      log.debug('rules block 생성 실패 (fail-open)', e);
+      return null;
+    }
   })();
 
   if (!fs.existsSync(STATE_DIR)) {
@@ -208,6 +214,14 @@ async function main(): Promise<void> {
       }
       const state: ModeState = parsed;
       if (!state.active) continue;
+
+      // H6: 키워드로 켜진 모드 상태는 그 세션의 것이다. 다른 세션(새 세션)에 "이전 세션에서 복구됨"으로 주입하면
+      // 오너가 요청하지 않은 autopilot/ralph 지시가 새 세션을 지배한다. resume/compact 는 같은 session_id 를 쓰므로
+      // 같은 세션일 때만 복구하고, sessionId 가 없거나 다르면 건너뛴다.
+      if (!state.sessionId || state.sessionId !== sessionContext.sessionId) {
+        log.debug(`${mode} 상태는 다른 세션(${state.sessionId ?? 'unknown'}) 소유 — 복구 주입 생략`);
+        continue;
+      }
 
       // 24시간 이상 경과한 상태는 만료
       const startedAt = new Date(state.startedAt).getTime();
@@ -378,37 +392,40 @@ async function main(): Promise<void> {
         .map(f => ({ name: f, mtime: fs.statSync(path.join(projectDir, f)).mtimeMs }))
         .sort((a, b) => b.mtime - a.mtime);
 
-      if (transcripts.length > 0) {
-        const prevTranscript = path.join(projectDir, transcripts[0].name);
-        const lastCompoundPath = path.join(STATE_DIR, 'last-auto-compound.json');
-        let lastCompoundedSession = '';
-        try {
-          lastCompoundedSession = JSON.parse(fs.readFileSync(lastCompoundPath, 'utf-8')).sessionId ?? '';
-        } catch { /* first time */ }
-
-        const prevSessionId = transcripts[0].name.replace('.jsonl', '');
-        if (prevSessionId !== lastCompoundedSession) {
-          // 이전 세션이 compound 안 된 상태 — 메시지 수 확인
-          // W-D2: 대용량 transcript 보호 — 앞 200KB만 읽어 메시지 수 추정
-          const fd = fs.openSync(prevTranscript, 'r');
-          const buf = Buffer.alloc(200 * 1024);
-          const bytesRead = fs.readSync(fd, buf, 0, buf.length, 0);
-          fs.closeSync(fd);
-          const content = buf.toString('utf-8', 0, bytesRead);
-          const userMsgCount = content.split('\n')
-            .filter(l => { try { const t = JSON.parse(l).type; return t === 'user' || t === 'queue-operation'; } catch { return false; } })
-            .length;
-
-          if (userMsgCount >= 10) {
-            // background로 auto-compound 실행 (hook timeout과 무관)
-            const { spawn: spawnProcess } = await import('node:child_process');
-            const autoCompound = spawnProcess('node', [
-              path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'core', 'auto-compound-runner.js'),
-              cwd, prevTranscript, prevSessionId,
-            ], { detached: true, stdio: 'ignore' });
-            autoCompound.unref();
-            log.debug(`이전 세션 auto-compound 시작: ${prevSessionId} (${userMsgCount} messages)`);
-          }
+      // D9: 직전 1개만 보던 단일 슬롯 판정 대신, 최근 7일 안의 미처리/자란 transcript 를 최대 3개까지 전수 확인한다.
+      // 처리 여부는 세션별 러너 기록(sessionNeedsRun: 마지막 실행 이후 transcript 크기)으로 판정 — 길이 게이트 없음.
+      // 러너는 승급·인덱싱이 멱등이고 Haiku 는 새 구간만 읽으므로 중복 비용이 없다.
+      const { sessionNeedsRun, transcriptSignature } = await import('../core/extraction-queue.js');
+      const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+      let spawned = 0;
+      for (const t of transcripts) {
+        if (spawned >= 3 || doctorProbe) break;
+        if (Date.now() - t.mtime > WEEK_MS) break; // mtime 내림차순 — 이후는 더 오래됨
+        const prevTranscript = path.join(projectDir, t.name);
+        const prevSessionId = t.name.replace('.jsonl', '');
+        let size = 0;
+        try { size = fs.statSync(prevTranscript).size; } catch { continue; }
+        if (size === 0 || !sessionNeedsRun(prevSessionId, size, { sig: transcriptSignature(prevTranscript) })) continue;
+        const { spawn: spawnProcess } = await import('node:child_process');
+        const autoCompound = spawnProcess(process.execPath, [
+          path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'core', 'auto-compound-runner.js'),
+          cwd, prevTranscript, prevSessionId, '0', 'final',
+        ], { detached: true, stdio: 'ignore' });
+        autoCompound.unref();
+        spawned++;
+        log.debug(`이전 세션 auto-compound 시작: ${prevSessionId}`);
+      }
+      // D4: 새로 처리할 세션이 없어도 대기열(타임아웃·실패로 밀린 추출)에 기한이 된 항목이 있으면 재시도 러너를 띄운다.
+      if (spawned === 0 && !doctorProbe) {
+        const { readQueue } = await import('../core/extraction-queue.js');
+        const now = Date.now();
+        if (readQueue().some((e) => e.nextAt <= now && (e.claimedUntil ?? 0) <= now)) {
+          const { spawn: spawnProcess } = await import('node:child_process');
+          const q = spawnProcess(process.execPath, [
+            path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'core', 'auto-compound-runner.js'),
+            cwd, '-', 'queue-retry',
+          ], { detached: true, stdio: 'ignore' });
+          q.unref();
         }
       }
     }
@@ -427,7 +444,7 @@ async function main(): Promise<void> {
         shouldRun = Date.now() - last > 24 * 60 * 60 * 1000;
       }
     } catch { /* last-lifecycle.json parse failure — run lifecycle check anyway */ }
-    if (shouldRun) {
+    if (shouldRun && !doctorProbe) {
       // B-4: detached background spawn — hook timeout 초과 방지.
       //
       // Audit fix #5 (2026-04-21): prior invocation interpolated
@@ -444,7 +461,7 @@ async function main(): Promise<void> {
         'run-lifecycle-check.js',
       );
       const { spawn: spawnLifecycle } = await import('node:child_process');
-      const lifecycleRunner = spawnLifecycle('node', [runnerPath, sessionId], {
+      const lifecycleRunner = spawnLifecycle(process.execPath, [runnerPath, sessionId], {
         detached: true,
         stdio: 'ignore',
       });
@@ -454,10 +471,20 @@ async function main(): Promise<void> {
     }
   } catch (e) { log.debug('lifecycle check 실패', e); }
 
-  if (codexRulesBlock) recoveryMessages.unshift(codexRulesBlock);
+  // D2: 최초 1회 Haiku 전송 안내 / 호출 불가 사유 — 사용자 화면(systemMessage)에 보인다.
+  let haikuNotice: string | null = null;
+  if (!doctorProbe) {
+    try {
+      const { takeSessionStartNotice } = await import('../core/compound-consent.js');
+      haikuNotice = await takeSessionStartNotice();
+    } catch (e) { log.debug('Haiku 안내 생성 실패', e); }
+  }
 
-  if (recoveryMessages.length > 0) {
-    console.log(approveWithContext(recoveryMessages.join('\n\n'), 'SessionStart'));
+  if (rulesBlock || recoveryMessages.length > 0) {
+    const { fitSessionContext } = await import('./shared/injection-caps.js');
+    console.log(approveWithContext(fitSessionContext(rulesBlock, recoveryMessages), 'SessionStart', haikuNotice ?? undefined));
+  } else if (haikuNotice) {
+    console.log(approveWithWarning(haikuNotice));
   } else {
     console.log(approve());
   }

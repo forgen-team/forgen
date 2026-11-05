@@ -23,14 +23,17 @@ import type { SolutionStatus, SolutionType } from '../engine/solution-format.js'
 import {
   expandCompoundTags,
   expandQueryBigrams,
-  extractTags,
+  expandQueryKoreanStems,
+  extractSolutionTags,
   parseFrontmatterOnly,
   parseSolutionV3,
 } from '../engine/solution-format.js';
 import type { SolutionDirConfig } from '../engine/solution-index.js';
-import { getOrBuildIndex } from '../engine/solution-index.js';
+import { getOrBuildIndex, defaultSolutionDirs as sharedDefaultSolutionDirs } from '../engine/solution-index.js';
 import { calculateRelevance, shouldRejectByR4T3Rules } from '../engine/solution-matcher.js';
 import { mutateSolutionFile } from '../engine/solution-writer.js';
+import { solutionInScope, solutionProjectWeight } from '../engine/solution-scope.js';
+import { projectKeyFor } from '../store/rule-scope.js';
 import { defaultNormalizer } from '../engine/term-normalizer.js';
 import { filterSolutionContent } from '../hooks/prompt-injection-filter.js';
 
@@ -41,6 +44,8 @@ export interface SearchOptions {
   type?: SolutionType;
   status?: SolutionStatus;
   limit?: number;
+  /** 프로젝트 범위 판정용 작업 디렉터리 (없으면 프로젝트 밖으로 본다). */
+  cwd?: string;
 }
 
 export interface ListOptions {
@@ -88,37 +93,8 @@ export interface SolutionStats {
 
 // ── 디렉토리 해석 ──
 
-/**
- * 기본 솔루션 디렉토리 목록 생성.
- * MCP 서버에서 cwd를 전달받으면 project 스코프도 포함.
- */
-export function defaultSolutionDirs(cwd?: string): SolutionDirConfig[] {
-  const dirs: SolutionDirConfig[] = [{ dir: ME_SOLUTIONS, scope: 'me' }];
-
-  // 팩 디렉토리 스캔 — 하위에 solutions/ 디렉토리가 있는 팩만 포함
-  // PR2c-2 (M7 fix): readdirSync 결과를 정렬해 결정적 순서 보장.
-  // 정렬 안 하면 같은 팩 집합도 파일시스템 순서에 따라 다른 cache key/precedence
-  // 가 생겨 LRU와 인덱스 결정성이 깨진다.
-  try {
-    if (fs.existsSync(PACKS_DIR)) {
-      const packEntries = fs.readdirSync(PACKS_DIR).sort();
-      for (const entry of packEntries) {
-        const solDir = path.join(PACKS_DIR, entry, 'solutions');
-        if (fs.existsSync(solDir)) {
-          dirs.push({ dir: solDir, scope: 'team' });
-        }
-      }
-    }
-  } catch {
-    // 팩 디렉토리 접근 실패는 무시
-  }
-
-  if (cwd) {
-    dirs.push({ dir: path.join(cwd, '.compound', 'solutions'), scope: 'project' });
-  }
-
-  return dirs;
-}
+/** 기본 솔루션 디렉토리 목록 — hook 매칭과 같은 함수(solution-index)를 쓴다. */
+export const defaultSolutionDirs = sharedDefaultSolutionDirs;
 
 // ── 검색 ──
 
@@ -136,7 +112,7 @@ export function searchSolutions(query: string, options?: SearchOptions): SearchR
 
   const index = getOrBuildIndex(dirs);
 
-  const queryTagsRaw = extractTags(query);
+  const queryTagsRaw = extractSolutionTags(query);
   if (queryTagsRaw.length === 0) return [];
 
   // R4-T2: mask query tokens that belong to blocked English compounds
@@ -158,14 +134,18 @@ export function searchSolutions(query: string, options?: SearchOptions): SearchR
   // `api-key`/`apikey`/`api-keys` candidates that hit hyphenated solution
   // tags via direct intersection. This mirrors the same change in
   // solution-matcher.rankCandidates so hook and MCP paths stay consistent.
-  const queryTagsWithBigrams = expandQueryBigrams(queryTags);
+  // hook(rankCandidates)과 같은 확장 순서 — 한국어 활용형 어간 회복 포함.
+  const queryTagsWithBigrams = expandQueryKoreanStems(expandQueryBigrams(queryTags));
   const normalizedPromptTags = defaultNormalizer.normalizeTerms(queryTagsWithBigrams);
 
   const results: SearchResult[] = [];
 
+  const projectKey = options?.cwd ? projectKeyFor(options.cwd) : null;
+
   for (const entry of index.entries) {
     if (options?.type && entry.type !== options.type) continue;
     if (options?.status && entry.status !== options.status) continue;
+    if (!solutionInScope(entry.projects, projectKey)) continue;
 
     // R4-T1: solution-side compound expansion. See the matching block in
     // solution-matcher.rankCandidates for the rationale (separation of
@@ -215,7 +195,7 @@ export function searchSolutions(query: string, options?: SearchOptions): SearchR
       type: entry.type,
       scope: entry.scope,
       tags: entry.tags,
-      relevance: tagRelevance + nameBoost,
+      relevance: (tagRelevance + nameBoost) * solutionProjectWeight(entry.projects, projectKey),
       matchedTags: [
         ...tagMatches,
         ...queryTags.filter((t) => nameWords.includes(t) && !tagMatches.includes(t)),

@@ -153,9 +153,9 @@ describe('handleNotify', () => {
     expect(fs.existsSync(CODEX_HOOKS_SILENT_PATH)).toBe(false);
   });
 
-  it('훅이 돌지 않았고 세션이 짧으면 silent 만 기록 (연속 관측 횟수 누적)', async () => {
+  it('훅이 돌지 않았고 사용자 프롬프트가 없으면 silent 만 기록 (연속 관측 횟수 누적; D9: 임계값 1)', async () => {
     const spawnCompound = vi.fn(async () => true);
-    writeRollout(3);
+    writeRollout(0);
     const now = Date.now();
     expect(await handleNotify([payload()], { env, now, spawnCompound })).toBe('silent-recorded');
     expect(await handleNotify([payload()], { env, now: now + 1000, spawnCompound })).toBe('silent-recorded');
@@ -166,7 +166,7 @@ describe('handleNotify', () => {
     expect(silent?.cwd).toBe(tmpRoot);
   });
 
-  it('훅이 돌지 않았고 프롬프트 ≥10 이면 Stop 과 같은 디바운스 경로로 auto-compound 를 띄운다', async () => {
+  it('훅이 돌지 않았고 프롬프트가 있으면 Stop 과 같은 디바운스 경로로 auto-compound 를 띄운다', async () => {
     const spawnCompound = vi.fn(async () => true);
     const rollout = writeRollout(12);
     expect(await handleNotify([payload()], { env, spawnCompound, isHookEnabled: () => true })).toBe('silent-compound-spawned');
@@ -194,7 +194,7 @@ describe('handleNotify', () => {
 
   it('오래된(>24h) alive 마커는 alive 가 아니다; 오래된 silent 관측은 doctor 에 노출되지 않는다', async () => {
     markCodexHookAlive({ hook_event_name: 'Stop' }, 1000);
-    writeRollout(1);
+    writeRollout(0);
     const now = 1000 + 25 * 60 * 60 * 1000;
     expect(await handleNotify([payload()], { env, now })).toBe('silent-recorded');
     expect(readCodexHooksSilent(now)?.count).toBe(1);

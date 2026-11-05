@@ -122,8 +122,9 @@ export function appendEvidence(evidence: Evidence): { saved: true; t1_events: nu
     }
     appendLifecycleEvents(events);
     return { saved: true, t1_events: events.length };
-  } catch {
-    // best-effort: orchestrator 실패는 evidence 저장 자체를 막지 않는다.
+  } catch (e) {
+    // best-effort: orchestrator 실패는 evidence 저장 자체를 막지 않는다. 다만 룰 전이 실패는 보이게 남긴다.
+    process.stderr.write(`[forgen] rule transition failed: ${e instanceof Error ? e.message : String(e)}\n`);
     return { saved: true, t1_events: 0 };
   }
 }
@@ -213,14 +214,14 @@ function retireStaleAutoMinedRules(now: number): void {
   const keep: typeof byAge = [];
   for (const item of byAge) {
     if (item.age >= AUTO_MINED_TTL_MS) {
-      updateRuleStatus(item.r.rule_id, 'removed'); // TTL 초과 → 은퇴
+      updateRuleStatus(item.r.rule_id, 'removed', 'auto-mined-ttl', 'evidence-store'); // TTL 초과 → 은퇴
     } else {
       keep.push(item);
     }
   }
   // 총량 상한 초과분(가장 오래된 것부터) 은퇴.
   const excess = keep.length - AUTO_MINED_MAX_LIVE;
-  for (let i = 0; i < excess; i++) updateRuleStatus(keep[i].r.rule_id, 'removed');
+  for (let i = 0; i < excess; i++) updateRuleStatus(keep[i].r.rule_id, 'removed', 'auto-mined-cap', 'evidence-store');
 }
 
 /**
@@ -359,6 +360,7 @@ export function promoteSessionCandidates(sessionId: string): number {
         source,
         evidence_refs: [candidate.evidence_id],
         render_key: renderKey,
+        ...(Array.isArray(payload.projects) ? { projects: payload.projects as string[] } : {}),
       });
       if (autoMined) {
         // advisory-only (SEV-1 #2): classify() 를 돌리지 않고 enforce_via 를 비워, 채굴 룰이

@@ -5,7 +5,10 @@
  * 훅 상태, 감지된 플러그인, 컨텍스트 버짓을 ANSI 컬러로 출력합니다.
  */
 
+import * as os from 'node:os';
 import * as path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { readSettingsHooks } from './doctor-verify.js';
 import { HOOK_REGISTRY, type HookTier } from '../hooks/hook-registry.js';
 import { FORGEN_HOME } from './paths.js';
 import { detectInstalledPlugins } from './plugin-detector.js';
@@ -63,12 +66,25 @@ export async function displayHookStatus(cwd?: string): Promise<void> {
   }
 
   // ── 훅 상태 ──
-  // 전체 활성 수 계산
+  // 실제 ~/.claude/settings.json 에 등록된 상태를 읽는다 (패키지 매니페스트가 아니라).
+  const pkgRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+  const reg = readSettingsHooks(os.homedir(), pkgRoot);
+  // shim 설치(`"<shim>" "hooks/x.js"`)와 shim 없는 절대경로 설치(`node "/pkg/dist/hooks/x.js"`) 둘 다 인식한다.
+  const norm = (c: string) => c.replace(/"/g, '').replace(/\\/g, '/');
+  const isRegistered = (h: { event: string; script: string }) =>
+    reg.entries.some((e) => {
+      const c = norm(e.command);
+      return e.event === h.event && (c.endsWith(` ${h.script}`) || c.endsWith(`/${h.script}`));
+    });
+  const hasPlugins = plugins.length > 0;
+  // 켜짐 = settings 에 등록됨 + hook-config·플러그인 충돌로 꺼지지 않음.
+  const isOn = (h: { name: string; tier: HookTier; event: string; script: string }) =>
+    isRegistered(h) && isEffectivelyEnabled(h.name, h.tier, hookConflicts, hasPlugins);
   let activeCount = 0;
-  for (const h of HOOK_REGISTRY) {
-    if (isEffectivelyEnabled(h.name, h.tier, hookConflicts, plugins.length > 0)) activeCount++;
-  }
-  console.log(`  Hook Status (${activeCount}/${HOOK_REGISTRY.length} active):`);
+  for (const h of HOOK_REGISTRY) if (isOn(h)) activeCount++;
+  if (reg.error) console.log(`  ${red('✗')} ${reg.error} — 등록된 hook 을 확인할 수 없음 (forgen install claude)\n`);
+  if (reg.disableAll) console.log(`  ${red('✗')} settings.json 에 disableAllHooks:true — 모든 hook 이 꺼져 있음\n`);
+  console.log(`  Hook Status (settings.json 등록·켜짐 ${activeCount}/${HOOK_REGISTRY.length}):`);
 
   for (const tier of TIER_ORDER) {
     const tierHooks = HOOK_REGISTRY.filter(h => h.tier === tier);
@@ -87,12 +103,14 @@ export async function displayHookStatus(cwd?: string): Promise<void> {
     console.log(`    ${dim(tierLabel)}:`);
 
     for (const hook of tierHooks) {
-      const enabled = isEffectivelyEnabled(hook.name, hook.tier, hookConflicts, plugins.length > 0);
-      const mark    = enabled ? green('✓') : red('✗');
+      const registered = isRegistered(hook);
+      const enabled = registered && isEffectivelyEnabled(hook.name, hook.tier, hookConflicts, hasPlugins);
+      const mark    = enabled ? green('✓') : registered ? yellow('○') : red('✗');
       const nameCol = hook.name.padEnd(26);
       const eventCol = hook.event.padEnd(20);
       const timeoutStr = dim(`${hook.timeout}s`);
-      console.log(`      ${mark} ${nameCol} ${dim(eventCol)} ${timeoutStr}`);
+      const note = registered && !enabled ? ` ${yellow('(hook-config 로 꺼짐)')}` : '';
+      console.log(`      ${mark} ${nameCol} ${dim(eventCol)} ${timeoutStr}${note}`);
     }
 
     console.log();
@@ -109,9 +127,8 @@ export async function displayHookStatus(cwd?: string): Promise<void> {
   console.log();
 
   // ── 경로 ──
-  const hooksJson = path.join(process.cwd(), 'hooks', 'hooks.json');
   const configPath = path.join(FORGEN_HOME, 'hook-config.json');
-  console.log(`  hooks.json: ${dim(hooksJson)} ${dim('(auto-generated)')}`);
+  console.log(`  settings:   ${dim(path.join(os.homedir(), '.claude', 'settings.json'))} ${dim('(실제 상태의 기준)')}`);
   console.log(`  Config:     ${dim(configPath)}`);
   console.log();
 }

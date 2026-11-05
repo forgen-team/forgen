@@ -1,5 +1,5 @@
 /**
- * Forgen v0.5.0 — `forgen migrate tenetx` (ADR-010 W1-1, Rule Reclaimer)
+ * Forgen v0.5.0 — `forgen dev migrate tenetx` (ADR-010 W1-1, Rule Reclaimer)
  *
  * tenetx(forgen 의 레거시 정체성) 및 구버전 forgen 이 ~/.claude/rules/ 와
  * <cwd>/.claude/rules/ 에 남긴 규칙 파일 스프롤을 provenance 기반으로 회수한다.
@@ -293,7 +293,7 @@ export function printReclaimResult(r: ReclaimResult): void {
     console.log('  [settings] tenetx 흔적:');
     for (const f of r.settingsFindings) console.log(`    - ${f}`);
     if (r.settingsApplied) console.log('    ✓ --apply-settings 로 제거 완료 (백업 저장됨)');
-    else console.log('    → 자동 제거: forgen migrate tenetx --apply-settings');
+    else console.log('    → 자동 제거: forgen dev migrate tenetx --apply-settings');
   }
   if (r.backupDir) console.log(`  백업: ${r.backupDir}`);
 }

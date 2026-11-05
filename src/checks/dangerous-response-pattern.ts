@@ -34,7 +34,7 @@ interface DangerousResponsePattern {
 }
 
 /**
- * 응답 텍스트에서 검사할 파괴적 명령 패턴.
+ * 응답이 제안한 명령에서 검사할 파괴적 명령 패턴.
  * dist/hooks/dangerous-patterns.json (PreToolUse 용) 와 별도 — 응답 텍스트
  * 분석에 적합한 더 넓은 패턴 (find -exec rm 같은 우회 포함).
  */
@@ -62,9 +62,29 @@ export interface DangerousResultMatch {
   reason: string;
 }
 
-/** 응답 텍스트가 파괴적 명령 패턴을 포함하는지 검사. */
+/**
+ * 사용자가 그대로 실행할 수 있게 제안한 명령 부분: 코드 펜스 안과 `$ `·`# ` 프롬프트 줄.
+ * 그 밖의 줄은 실행을 권유하는 문장일 때만 포함한다. 설명·금지 속 언급은 제외한다. 실제 실행은 PreToolUse 가 막으므로, 언급을 막으면 안전 효과 없이
+ * "이런 명령은 위험하다"는 정상 답변까지 차단한다. 이 가드의 대상은 사용자가 복사해 실행할 제안이다.
+ */
+const RUN_CUE = /\b(run|execute|try|use|alternative)\b|대안|실행(하세요|해\s*주세요|하시면|해\s*보세요|하면\s*됩니다)|입력하세요|치세요|돌리세요/i;
+const NOT_A_SUGGESTION = /금지|안\s*됩|안\s*돼|않|하지\s*마|위험|차단(됩|합|했)|오탐|예시|never|don'?t|do not|avoid|unsafe|dangerous/i;
+
+export function extractSuggestedCommands(text: string): string {
+  const out: string[] = [];
+  let inFence = false;
+  for (const line of text.split('\n')) {
+    if (/^\s*(```|~~~)/.test(line)) { inFence = !inFence; continue; }
+    if (inFence) out.push(line);
+    else if (/^\s*[$#]\s+\S/.test(line) && !/^\s*#\s+[^a-z/.~]/i.test(line)) out.push(line.replace(/^\s*[$#]\s+/, ''));
+    else if (RUN_CUE.test(line) && !NOT_A_SUGGESTION.test(line)) out.push(line);
+  }
+  return out.join('\n');
+}
+
+/** 제안된 명령에 파괴적 명령 패턴이 있는지 검사. */
 export function checkDangerousResponsePattern(opts: { text: string }): DangerousResultMatch {
-  const text = opts.text ?? '';
+  const text = extractSuggestedCommands(opts.text ?? '');
   if (!text.trim()) return { block: false, reason: '' };
 
   for (const p of RESPONSE_PATTERNS) {

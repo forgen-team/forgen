@@ -17,8 +17,9 @@ import { fileURLToPath } from 'node:url';
 import { createLogger } from '../core/logger.js';
 import { readStdinJSON } from './shared/read-stdin.js';
 import { atomicWriteJSON } from './shared/atomic-write.js';
-import { loadHookConfig, isHookEnabled } from './hook-config.js';
-import { approve, approveWithContext, approveWithWarning, failOpenWithTracking } from './shared/hook-response.js';
+import { isHookEnabled } from './hook-config.js';
+import { buildContextNotice, readContextUsage, shouldNoticeContext } from './context-usage.js';
+import { approve, approveWithWarning, failOpenWithTracking } from './shared/hook-response.js';
 import { HANDOFFS_DIR, STATE_DIR } from '../core/paths.js';
 import { recordHookTiming } from './shared/hook-timing.js';
 import { sanitizeId } from './shared/sanitize-id.js';
@@ -161,59 +162,9 @@ function appendPromptHistory(sessionId: string, prompt: string): void {
 
 interface ContextState {
   promptCount: number;
-  totalChars: number;
+  /** 마지막 컨텍스트 안내 시각 */
   lastWarningAt: number;
-  lastAutoCompactAt: number;
   sessionId: string;
-}
-
-// 경고 임계값: 프롬프트 50회 또는 총 문자 수 200K 이상
-const PROMPT_WARNING_THRESHOLD = 50;
-const CHARS_WARNING_THRESHOLD = 200_000;
-const WARNING_COOLDOWN_MS = 10 * 60 * 1000; // 10분 쿨다운
-
-// Auto-compact 임계값: 추적된 문자 120K ≈ 실제 context ~20%
-const AUTO_COMPACT_CHARS_THRESHOLD = 120_000;
-const AUTO_COMPACT_COOLDOWN_MS = 5 * 60 * 1000; // 5분 쿨다운
-
-/** 경고 표시 여부 판정 (순수 함수) */
-export function shouldWarn(
-  contextPercent: { promptCount: number; totalChars: number; lastWarningAt: number },
-  thresholds: { promptThreshold?: number; charsThreshold?: number; cooldownMs?: number } = {},
-): boolean {
-  const promptThreshold = thresholds.promptThreshold ?? PROMPT_WARNING_THRESHOLD;
-  const charsThreshold = thresholds.charsThreshold ?? CHARS_WARNING_THRESHOLD;
-  const cooldownMs = thresholds.cooldownMs ?? WARNING_COOLDOWN_MS;
-  const now = Date.now();
-  return (
-    (contextPercent.promptCount >= promptThreshold || contextPercent.totalChars >= charsThreshold) &&
-    (now - contextPercent.lastWarningAt > cooldownMs)
-  );
-}
-
-/** auto-compact 트리거 여부 판정 (순수 함수) */
-export function shouldAutoCompact(
-  state: { totalChars: number; lastAutoCompactAt: number },
-  thresholds: { charsThreshold?: number; cooldownMs?: number } = {},
-): boolean {
-  const charsThreshold = thresholds.charsThreshold ?? AUTO_COMPACT_CHARS_THRESHOLD;
-  const cooldownMs = thresholds.cooldownMs ?? AUTO_COMPACT_COOLDOWN_MS;
-  const now = Date.now();
-  return state.totalChars >= charsThreshold && (now - state.lastAutoCompactAt > cooldownMs);
-}
-
-/** auto-compact 지시 메시지 생성 (순수 함수) */
-export function buildAutoCompactMessage(totalChars: number): string {
-  return `<forgen-auto-compact>
-[Forgen] Context 사용량이 ${Math.round(totalChars / 1000)}K 문자에 도달했습니다 (추정 ~20%+).
-지금 즉시 /compact를 실행하여 컨텍스트를 압축하세요. 이 지시는 자동으로 생성되었습니다.
-현재 작업을 마무리하지 말고, 다음 응답에서 바로 compact를 실행하세요.
-</forgen-auto-compact>`;
-}
-
-/** 경고 메시지 생성 (순수 함수) */
-export function buildContextWarningMessage(promptCount: number, totalChars: number): string {
-  return `<compound-context-warning>\n[Forgen] Context limit approaching: ${promptCount} prompts, ${Math.round(totalChars / 1000)}K characters.\nIf you have important progress, save it now:\n- Use cancelforgen to reset mode state and start a new session\n- Or continue current work (auto compaction may occur)\n</compound-context-warning>`;
 }
 
 function loadContextState(sessionId: string): ContextState {
@@ -223,7 +174,7 @@ function loadContextState(sessionId: string): ContextState {
       if (data.sessionId === sessionId) return data;
     }
   } catch (e) { log.debug('context state 파일 읽기/파싱 실패', e); }
-  return { promptCount: 0, totalChars: 0, lastWarningAt: 0, lastAutoCompactAt: 0, sessionId };
+  return { promptCount: 0, lastWarningAt: 0, sessionId };
 }
 
 function saveContextState(state: ContextState): void {
@@ -370,32 +321,19 @@ export async function main(): Promise<void> {
 
   // UserPromptSubmit 훅: 대화 길이 추적
   if (input.prompt) {
-    const config = loadHookConfig('context-guard');
-    // maxTokens가 설정되어 있으면 chars threshold로 사용 (토큰 ≈ 4자 기준 환산)
-    const charsThreshold =
-      typeof config?.maxTokens === 'number' ? config.maxTokens * 4 : undefined;
-
     const state = loadContextState(sessionId);
     state.promptCount++;
-    state.totalChars += input.prompt.length;
 
     // ADR-008 / docs/codex-integration.md — prompt-history writer 활성화
     appendPromptHistory(sessionId, input.prompt);
 
-    // auto-compact: 추적 문자 120K 이상이면 compact 지시 주입
-    const autoCompactThreshold =
-      typeof config?.autoCompactChars === 'number' ? config.autoCompactChars : undefined;
-    if (shouldAutoCompact(state, autoCompactThreshold !== undefined ? { charsThreshold: autoCompactThreshold } : {})) {
-      state.lastAutoCompactAt = Date.now();
-      saveContextState(state);
-      console.log(approveWithContext(buildAutoCompactMessage(state.totalChars), 'UserPromptSubmit'));
-      return;
-    }
-
-    if (shouldWarn(state, charsThreshold !== undefined ? { charsThreshold } : {})) {
+    // 컨텍스트 안내: 실제 사용량(statusline 페이로드 또는 transcript usage)이 창 대비 높을 때만, 사용자에게 보이는 안내로만.
+    // 사용량을 모르면 아무것도 하지 않는다. 모델에게는 아무 지시도 주입하지 않는다.
+    const usage = readContextUsage(sessionId, input.transcript_path);
+    if (usage && shouldNoticeContext(usage, state.lastWarningAt)) {
       state.lastWarningAt = Date.now();
       saveContextState(state);
-      console.log(approveWithContext(buildContextWarningMessage(state.promptCount, state.totalChars), 'UserPromptSubmit'));
+      console.log(approveWithWarning(buildContextNotice(usage)));
       return;
     }
 
@@ -453,7 +391,7 @@ const FORGE_LOOP_STATE_PATH = path.join(STATE_DIR, 'forge-loop.json');
  * Stop hook 에서 auto-compound-runner 를 debounced 로 spawn.
  *
  * 호출 조건:
- *   - promptCount ≥ 10 (의미있는 세션)
+ *   - promptCount ≥ 1 (D9: 짧은 세션도 교정 승급 대상)
  *   - transcript_path 유효
  *   - last-auto-compound.json 의 sessionId 가 다르거나 5분 전
  *
@@ -503,7 +441,9 @@ export async function maybeSpawnAutoCompound(
   /** ADR-016 D1: notify 폴백은 훅 env(FORGEN_CWD) 없이 돌므로 페이로드의 cwd 를 넘긴다. */
   cwdOverride?: string,
 ): Promise<boolean> {
-  if (!transcriptPath || promptCount < 10) return false;
+  // D9: 메시지 수 게이트 제거 — 짧은 세션의 교정도 승급돼야 한다. 비용은 러너가 새 내용의 양으로 제어한다.
+  if (!transcriptPath || promptCount < 1) return false;
+  if (process.env.FORGEN_DOCTOR_PROBE === '1') return false; // doctor 프로브는 백그라운드 스폰 금지
 
   const markerPath = path.join(STATE_DIR, 'last-auto-compound.json');
   try {
@@ -522,6 +462,12 @@ export async function maybeSpawnAutoCompound(
       if (Number.isFinite(last) && Date.now() - last < cooldown) return false;
     }
   } catch { /* first time or corrupt — proceed */ }
+
+  // 마지막 러너 실행 이후 transcript 가 안 자랐고 못 넘긴 구간도 없으면 러너를 띄우지 않는다 (spawn.runAutoCompound 와 같은 판정).
+  try {
+    const { sessionNeedsRun, transcriptSignature } = await import('../core/extraction-queue.js');
+    if (!sessionNeedsRun(sessionId, fs.statSync(transcriptPath).size, { sig: transcriptSignature(transcriptPath) })) return false;
+  } catch { /* stat 실패·이력 없음 — 진행 (fail-open) */ }
 
   const { spawn: spawnProcess } = await import('node:child_process');
   const cwd = cwdOverride ?? process.env.FORGEN_CWD ?? process.env.COMPOUND_CWD ?? process.cwd();
@@ -558,7 +504,7 @@ export async function maybeSpawnAutoCompound(
     return false;
   }
   try {
-    const child = spawnProcess('node', [runnerPath, cwd, transcriptPath, sessionId, String(promptCount)], {
+    const child = spawnProcess(process.execPath, [runnerPath, cwd, transcriptPath, sessionId, String(promptCount)], {
       detached: true,
       stdio: 'ignore',
     });

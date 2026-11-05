@@ -8,7 +8,9 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { loadProfile } from '../store/profile-store.js';
-import { loadAllRules, loadActiveRules } from '../store/rule-store.js';
+import { loadAllRules, loadActiveRules, scanRuleFiles } from '../store/rule-store.js';
+import { formatLastExtraction } from './flow-status.js';
+import { readJsonlWindow, isConfirmedBypass, ROTATED_KEEP_DAYS } from '../engine/lifecycle/signals.js';
 import { loadRecentEvidence, loadAllEvidence } from '../store/evidence-store.js';
 import { loadRecentSessions } from '../store/session-state-store.js';
 import * as inspect from '../renderer/inspect-renderer.js';
@@ -49,17 +51,8 @@ export async function handleInspect(args: string[]): Promise<void> {
       return fs.readdirSync(ME_SOLUTIONS).filter(f => f.endsWith('.md')).length;
     })();
 
-    const lastExtractionData = safeReadJSON<{ timestamp?: string; date?: string } | null>(
-      path.join(STATE_DIR, 'last-extraction.json'), null,
-    );
-    const lastExtractionTs = lastExtractionData?.timestamp ?? lastExtractionData?.date;
-    const lastExtractionLabel = (() => {
-      if (!lastExtractionTs) return 'never';
-      const d = new Date(lastExtractionTs);
-      const diffDays = Math.floor((Date.now() - d.getTime()) / (24 * 60 * 60 * 1000));
-      const dateStr = d.toISOString().slice(0, 10);
-      return diffDays === 0 ? `${dateStr} (today)` : `${dateStr} (${diffDays} day${diffDays > 1 ? 's' : ''} ago)`;
-    })();
+    // status 와 같은 단일 소스 (이전엔 서로 다른 파일을 읽어 today/never 모순)
+    const lastExtractionLabel = formatLastExtraction();
 
     console.log('── Learning Loop Status ──');
     console.log(`Rules:      ${activeRules.length} active (${rulesByScope.me} me, ${rulesByScope.session} session)`);
@@ -93,8 +86,20 @@ export async function handleInspect(args: string[]): Promise<void> {
   }
 
   if (sub === 'rules') {
+    // 읽기 실패·깨진 파일을 "No rules." 와 구분한다.
+    const scan = scanRuleFiles();
+    if (scan.dirError) {
+      console.error(`\n  룰 디렉터리를 읽을 수 없습니다 — ${scan.dirError}\n  (룰이 0개인 것이 아니라 읽기 실패입니다)\n`);
+      process.exitCode = 1;
+      return;
+    }
     const rules = loadAllRules();
     console.log(`\n${inspect.renderRules(rules)}\n`);
+    if (scan.broken.length > 0) {
+      console.log(`  ⚠ 읽지 못한 룰 파일 ${scan.broken.length}개 (위 목록에 없음): ${scan.broken.slice(0, 5).map((b) => b.file).join(', ')}${scan.broken.length > 5 ? ' …' : ''}`);
+      console.log('    forgen doctor 로 확인하고, 복구는 forgen rule restore 를 보세요.\n');
+      process.exitCode = 1;
+    }
     return;
   }
 
@@ -123,6 +128,20 @@ export async function handleInspect(args: string[]): Promise<void> {
       bypass: 'bypass.jsonl',
       drift: 'drift.jsonl',
     };
+    // status 의 Bypass 와 같은 기준: FORGEN_USER_CONFIRMED=1 로 확인된 우회(violations.jsonl kind=bypass_confirmed).
+    // bypass.jsonl 은 자연어 휴리스틱 기록(실측 전량 오탐)이라 --raw 로만 본다.
+    if (sub === 'bypass' && !args.includes('--raw')) {
+      const confirmed = readJsonlWindow<Record<string, unknown>>(path.join(STATE_DIR, 'enforcement', 'violations.jsonl'), ROTATED_KEEP_DAYS).filter(isConfirmedBypass);
+      const rawPath = path.join(STATE_DIR, 'enforcement', 'bypass.jsonl');
+      const rawCount = fs.existsSync(rawPath) ? fs.readFileSync(rawPath, 'utf-8').split('\n').filter(Boolean).length : 0;
+      console.log(`\n  Confirmed bypass: ${confirmed.length} (status 의 Bypass 와 같은 기준)`);
+      for (const e of confirmed.slice(-limit)) {
+        console.log(`    ${String(e.at ?? '').slice(0, 19)}  ${String(e.rule_id ?? '-').slice(0, 24).padEnd(24)}  ${String(e.reason_preview ?? e.message_preview ?? '').slice(0, 60)}`);
+      }
+      if (rawCount > 0) console.log(`\n  bypass.jsonl 휴리스틱 기록 ${rawCount}건은 집계에서 제외됨 (자연어 추정, 오탐 이력). 원본: forgen inspect bypass --raw`);
+      console.log('');
+      return;
+    }
     const p = path.join(STATE_DIR, 'enforcement', fileMap[sub]);
     if (!fs.existsSync(p)) {
       console.log(`\n  No ${sub} data (${p} not found).\n`);
@@ -177,8 +196,12 @@ export async function handleInspect(args: string[]): Promise<void> {
     forgen inspect corrections           — 최근 corrections / behavior 기록 (alias: evidence)
     forgen inspect session               — 현재/최근 세션 상태
     forgen inspect violations [--last N] — 최근 block 기록
-    forgen inspect bypass     [--last N] — 사용자 우회 기록
+    forgen inspect bypass     [--last N] [--raw] — 확인된 우회 (status Bypass 와 동일 기준; --raw=휴리스틱 로그)
     forgen inspect drift      [--last N] — stuck-loop force-approve 기록`);
+  if (sub !== undefined) {
+    console.error(`[forgen] Unknown inspect target: ${sub}`);
+    process.exitCode = 1;
+  }
 }
 
 /**

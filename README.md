@@ -225,7 +225,7 @@ Softer corrections you never explicitly flag ("음… 이렇게 최소로만 짜
 
 **Always on (deterministic, zero egress):** your explicit corrections promote to permanent rules; near-duplicate corrections cluster and strengthen; facets micro-adjust from accumulated evidence; a time-based `compound sweep` backstop (optionally on cron) makes sure long or interrupted sessions don't lose that learning.
 
-**Opt-in (`forgen compound consent on`):** a background Haiku pass reads a *redacted summary* of the session transcript to extract reusable solutions, behavioral observations, and the softer corrections above. This is **off by default** — forgen does not send your conversations anywhere unless you turn it on, and secrets / `<private>` ranges are stripped before anything is sent. `forgen doctor` always shows the current state.
+**On by default (`forgen compound consent off` to disable):** a background Haiku pass reads a *redacted summary* of the session transcript — your messages and the assistant's replies (replies can include fragments of files the assistant read) — to extract reusable solutions, behavioral observations, and the softer corrections above. Secrets are masked and `<private>` ranges are excluded before anything is sent; it goes only to the Claude Haiku on your own account. If `ANTHROPIC_API_KEY` is set, those calls are billed to that API account. A one-time notice appears in your first session; `forgen status` and `forgen doctor` always show the current state and today's call count.
 
 If your corrections consistently point away from your current pack, mismatch detection triggers after 3 sessions and recommends a pack change.
 
@@ -273,7 +273,7 @@ forgen doctor --quick
 
 > **Vendor dependency:** Forgen wraps Claude Code and Codex CLI symmetrically (Claude is the behavior reference; Codex extends with equivalence). Upstream API/CLI changes may affect behavior. Tested with Claude Code 1.0.x / 2.1.x and Codex 0.x.
 
-> **Upgrading from v0.4.x?** Run `forgen install claude` (or `codex` / `both`) after upgrading — v0.4.3+ requires explicit host registration. Then run `forgen migrate tenetx --dry-run` to preview and reclaim legacy global rule sprawl (v0.5.0 moved ALL rule injection to project scope — stale `~/.claude/rules/forge-*.md` from older versions should be reclaimed; see CHANGELOG). Finally `forgen doctor --quick` to verify.
+> **Upgrading from v0.4.x?** Run `forgen install claude` (or `codex` / `both`) after upgrading — v0.4.3+ requires explicit host registration. Then run `forgen dev migrate tenetx --dry-run` to preview and reclaim legacy global rule sprawl (v0.5.0 moved ALL rule injection to project scope — stale `~/.claude/rules/forge-*.md` from older versions should be reclaimed; see CHANGELOG). Finally `forgen doctor --quick` to verify.
 
 ### Try your first block
 
@@ -306,7 +306,7 @@ Forgen's home directory is `~/.forgen` by default, but can be overridden per-pro
 ```bash
 # Fresh isolated home — does NOT touch your real ~/.forgen
 FORGEN_HOME=/tmp/forgen-clean forgen init       # provisions 15-solution starter pack
-FORGEN_HOME=/tmp/forgen-clean forgen stats      # shows stats from the isolated home
+FORGEN_HOME=/tmp/forgen-clean forgen status      # shows stats from the isolated home
 FORGEN_HOME=/tmp/forgen-clean claude -p "..."   # hooks inherit the env → isolated logs
 ```
 
@@ -328,7 +328,7 @@ needed.
 
 ### Migrations
 
-`forgen migrate implicit-feedback` backfills the `category` field on pre-v0.4.1
+`forgen dev migrate implicit-feedback` backfills the `category` field on pre-v0.4.1
 entries in `~/.forgen/state/implicit-feedback.jsonl`. Idempotent — safe to re-run.
 
 ---
@@ -394,7 +394,7 @@ entries in `~/.forgen/state/implicit-feedback.jsonl`. Idempotent — safe to re-
            v                                                |
   +------------------+                                      |
   | Session Ends     |   corrections -> rules (always, egress 0) |
-  |                  |   transcript extract: opt-in (Haiku)     |
+  |                  |   transcript extract: default on (Haiku)     |
   +--------+---------+                                      |
            |                                                |
            v                                                |
@@ -689,7 +689,7 @@ forgen --resume                 # Resume previous session
 ### Personalization
 
 ```bash
-forgen onboarding               # Run 4-question onboarding
+forgen forge --onboarding               # Run 4-question onboarding
 forgen forge --profile          # View current profile
 forgen forge --reset soft       # Reset profile (soft / learning / full)
 forgen forge --export           # Export profile
@@ -698,16 +698,16 @@ forgen forge --export           # Export profile
 ### Inspection
 
 ```bash
-forgen stats                    # Trust-layer dashboard (rules, corrections, blocks 7d, assist today, philosophy)
-forgen recall [--limit N] [--show]
+forgen status                    # Trust-layer dashboard (rules, corrections, blocks 7d, assist today, philosophy)
+forgen status --compound [--limit N] [--show]
                                 # Recent compound recalls surfaced to Claude (with body preview)
-forgen last-block               # Most recent block event with rule detail
+forgen status --blocks               # Most recent block event with rule detail
 forgen inspect profile          # 4-axis profile with packs and facets
 forgen inspect rules            # Active and suppressed rules
 forgen inspect corrections      # Correction history (alias: evidence)
 forgen inspect session          # Current session state
 forgen inspect violations       # Recent block events (--last N)
-forgen me                       # Personal dashboard (shortcut for inspect profile)
+forgen status --profile                       # Personal dashboard (shortcut for inspect profile)
 ```
 
 ### Rule management
@@ -746,20 +746,25 @@ forgen compound --lifecycle     # Run promotion/demotion check
 forgen compound --verify <name> # Manually promote to verified
 forgen compound export          # Export knowledge as tar.gz
 forgen compound import <path>   # Import knowledge archive
-forgen skill promote <name>     # Promote a verified solution to a skill
+forgen skill promote <name>  # Promote a verified solution to a standard SKILL.md (--install → ~/.claude/skills)
 forgen skill list               # List promoted skills
+forgen way                       # Your way of working on one screen (rules you said vs inferred, enforced vs advisory)
+forgen way export --target agents-md   # Export to AGENTS.md | claude-rules | skill | system-prompt | gemini | cursor | workflow | json (preview; --out <dir> to write)
+forgen way import way.json --apply     # Round-trip your edits back into rules
+forgen way collect-memory              # Read Claude memory feedback_*.md as rule candidates
+forgen way draft skill "<topic>"        # Draft a SKILL.md (or `workflow`: host-neutral checklist) from related rules/solutions/corrections with an isolated Haiku call (preview; --out <dir> writes it + a sources file; falls back to a plain bundle when Haiku is unavailable)
 ```
 
 ### System
 
 ```bash
 forgen init                     # Initialize project (+ 15 starter-pack solutions)
-forgen migrate [implicit-feedback|evidence-host|tenetx|all]
+forgen dev migrate [implicit-feedback|evidence-host|tenetx|all]
                                 # One-shot migrations (idempotent). tenetx: reclaim
                                 # legacy global rules (--dry-run/--yes/--apply-settings)
-forgen doctor                   # Forgen-specific diagnostics (plugin cache, hooks, state, parity, gates — env health: native /doctor)
+forgen doctor                   # Forgen-specific diagnostics (shim → hook/MCP/statusLine real execution, data files, state, gates — env health: native /doctor)
 forgen doctor --prune-state     # Daily hygiene: state GC + T4 rule decay (90d idle → retire)
-forgen dashboard                # Knowledge overview (6 sections)
+forgen status --overview                # Knowledge overview (6 sections)
 forgen config hooks             # View hook status + context budget
 forgen config hooks --regenerate # Regenerate hooks
 forgen mcp list                 # List installed MCP servers

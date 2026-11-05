@@ -83,12 +83,12 @@ describe('rule-store', () => {
     const rule = createRule({ category: 'quality', scope: 'me', trigger: 't', policy: 'p', strength: 'default', source: 'onboarding', render_key: 'quality.p' });
     saveRule(rule);
 
-    expect(updateRuleStatus(rule.rule_id, 'suppressed')).toBe(true);
+    expect(updateRuleStatus(rule.rule_id, 'suppressed', 'test')).toBe(true);
     expect(loadRule(rule.rule_id)!.status).toBe('suppressed');
   });
 
   it('updateRuleStatus returns false for missing rule', () => {
-    expect(updateRuleStatus('nonexistent', 'removed')).toBe(false);
+    expect(updateRuleStatus('nonexistent', 'removed', 'test')).toBe(false);
   });
 
   it('loadAllRules returns empty for missing directory', () => {

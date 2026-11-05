@@ -72,10 +72,10 @@ describe('nested-run guard (ADR-015 C-G1)', () => {
     }
   });
 
-  it('withNestedRunClaudeArgs 는 --no-session-persistence 를 한 번만 붙인다', async () => {
+  it('withNestedRunClaudeArgs 는 --tools "" 와 --no-session-persistence 를 한 번만 붙인다 (D12-D)', async () => {
     const { withNestedRunClaudeArgs } = await import('../src/host/exec-host.js');
     const a = withNestedRunClaudeArgs(['-p', 'x']);
-    expect(a).toEqual(['-p', 'x', '--no-session-persistence']);
+    expect(a).toEqual(['-p', 'x', '--tools', '', '--no-session-persistence']);
     expect(withNestedRunClaudeArgs(a)).toEqual(a);
   });
 });

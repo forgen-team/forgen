@@ -1,10 +1,27 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+
+const { TEST_HOME } = vi.hoisted(() => ({ TEST_HOME: `${process.env.TMPDIR ?? '/tmp'}/forgen-export-home-${process.pid}` }));
+vi.mock('node:os', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:os')>();
+  return { ...actual, homedir: () => TEST_HOME };
+});
+
 import { exportKnowledgeSelective, importKnowledgeMerge } from '../src/engine/compound-export.js';
 
 describe('compound-export enhanced (v0.5.0)', () => {
+  // 실제 홈에 지식 폴더가 있어야 통과하던 의존을 픽스처로 고정한다.
+  beforeAll(() => {
+    for (const d of ['solutions', 'rules', 'behavior']) {
+      const dir = path.join(TEST_HOME, '.forgen', 'me', d);
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, `fixture-${d}.md`), `# ${d} fixture\n`);
+    }
+  });
+  afterAll(() => fs.rmSync(TEST_HOME, { recursive: true, force: true }));
+
   describe('exportKnowledgeSelective', () => {
     it('exports only specified categories', () => {
       const outPath = path.join(os.tmpdir(), `forgen-test-selective-${Date.now()}.tar.gz`);

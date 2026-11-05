@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`forgen way draft skill|workflow "<주제>"`.** 주제와 관련된 룰·솔루션·교정 원문을 모아 격리된 Haiku 중첩 호출로 SKILL.md(또는 호스트 중립 단계 체크리스트) 초안을 쓴다. 미리보기가 기본, `--out` 일 때만 파일. 근거 항목 id 는 옆 파일(SOURCES.md), 전송 전 비밀 마스킹·`<private>` 제외, Haiku 불가 시 관련 항목 묶음을 사유와 함께 출력.
+
+### Fixed
+- **컨텍스트 거짓 경고.** context-guard 가 프롬프트 글자 수 120K 를 "컨텍스트 20%"로 보고 모델에게 "지금 즉시 /compact, 작업을 마무리하지 말고"를 주입하던 것을 없앴다. 이제 statusline 페이로드·transcript usage 의 창 대비 비율이 70% 이상일 때만 사용자에게 보이는 안내를 내고, 모르면 아무것도 하지 않는다.
+- **동의어 사전 과적합.** 측정 픽스처에 맞춘 낱말(막혔는지·내려받·목객체·json.parse·presign 등)과 넓은 계열(access·permission·limit·rate·store·변경 등)을 뺐다. 보류(holdout) 세트 tests/fixtures/recall-holdout.json 추가.
+- **acted_on.** 2글자 한글 태그, camelCase/snake_case 표기, 팩·프로젝트 솔루션을 인식. 신호가 약한 기간(전체 acted_on 3건 미만)에는 lifecycle 이 주입된 솔루션을 전부 cold 로 분류하지 않는다.
+- **`retag --apply`** 는 `updated` 를 바꾸지 않고 본문에 없는 수동 태그를 보존하며 적용 전 스냅샷을 만든다. **`habits --apply`** 는 `extractedBy: auto` 표식이 있는 것만 옮기고 기존 behavior 를 덮어쓰지 않으며 스냅샷과 되돌리기 명령을 보여 준다.
+- **reopen.** 이름만 같고 내용이 다르면 복귀시키지 않고 새 추출을 보존한다. verified/mature 등급 유지, 사유 미상 은퇴는 negative 증거 초기화, 팩·프로젝트 솔루션 포함.
+- **게이트 분포.** matched 이벤트의 5분 중복 제거와 별도로 `gate_verdicts` 에 프롬프트마다 기록해 분포를 센다.
+
 ## [0.6.8] — 2026-10-07 — mock 룰 표 행 오탐 수정
 
 ### Fixed

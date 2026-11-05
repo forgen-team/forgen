@@ -1,8 +1,11 @@
 /**
  * Forgen — Skill Promoter
  *
- * verified/mature 솔루션을 .forgen/me/skills/ 스킬로 승격.
- * 솔루션(선언적 지식) → 스킬(절차적 지식) 변환.
+ * verified/mature 솔루션을 표준 SKILL.md(agentskills.io) 디렉터리로 승격한다. 변환은 Way 컴파일러(target: skill)가 한다.
+ *   기본  : ~/.forgen/me/skills/<name>/SKILL.md
+ *   --install : ~/.claude/skills/<name>/SKILL.md  (Claude Code 개인 스킬)
+ *   --out <dir> : <dir>/<name>/SKILL.md
+ * `compound --verify` 게이트는 그대로다. 내용이 빈 솔루션은 거부한다.
  */
 
 import * as fs from 'node:fs';
@@ -10,133 +13,74 @@ import * as path from 'node:path';
 import { parseSolutionV3 } from './solution-format.js';
 import { createLogger } from '../core/logger.js';
 import { ME_SOLUTIONS, ME_SKILLS, CLAUDE_DIR } from '../core/paths.js';
+import { compile } from '../way/compile.js';
+import { readSolutions } from '../way/extract.js';
+import { writeFiles } from '../way/io.js';
+import { WAY_SCHEMA } from '../way/types.js';
 
 const log = createLogger('skill-promoter');
 
-// Claude Code가 자동 인식하는 글로벌 스킬 경로 (~/.claude/skills)
-const CLAUDE_SKILLS = path.join(CLAUDE_DIR, 'skills');
-
-// 일반적인 태그 제외 (트리거로 부적합)
-const GENERIC_TAGS = new Set([
-  'typescript', 'javascript', 'react', 'node', 'error', 'fix', 'code',
-  'pattern', 'solution', 'decision', 'troubleshoot', 'project', 'file',
-]);
-
 export interface PromoteResult {
   success: boolean;
-  skillPath?: string;
+  paths?: string[];
   reason?: string;
 }
 
-/** 솔루션을 스킬로 승격 */
-export function promoteSolution(
-  solutionName: string,
-  triggers?: string[],
-): PromoteResult {
-  // 1. 솔루션 찾기
+export interface PromoteOptions { install?: boolean; out?: string; force?: boolean }
+
+export function promoteSolution(solutionName: string, opts: PromoteOptions = {}): PromoteResult {
+  if (!/^[\w.-]+$/.test(solutionName)) return { success: false, reason: `Invalid solution name: ${solutionName}` };
   const solPath = path.join(ME_SOLUTIONS, `${solutionName}.md`);
-  if (!fs.existsSync(solPath)) {
-    return { success: false, reason: `Solution not found: ${solutionName}` };
-  }
+  if (!fs.existsSync(solPath)) return { success: false, reason: `Solution not found: ${solutionName}` };
 
-  const content = fs.readFileSync(solPath, 'utf-8');
-  const parsed = parseSolutionV3(content);
-  if (!parsed) {
-    return { success: false, reason: `Failed to parse solution: ${solutionName}` };
-  }
+  const parsed = parseSolutionV3(fs.readFileSync(solPath, 'utf-8'));
+  if (!parsed) return { success: false, reason: `Failed to parse solution: ${solutionName}` };
 
-  // 2. 자격 검증: verified 이상만
   if (!['verified', 'mature'].includes(parsed.frontmatter.status)) {
     return {
       success: false,
       reason: `Only verified/mature solutions can be promoted. Current: ${parsed.frontmatter.status}. Use 'forgen compound --verify ${solutionName}' first.`,
     };
   }
+  if (!parsed.content.trim()) return { success: false, reason: `Solution has no content: ${solutionName}. A skill needs a procedure to carry.` };
 
-  // 3. 중복 체크
-  const skillPath = path.join(ME_SKILLS, `${solutionName}.md`);
-  if (fs.existsSync(skillPath)) {
-    return { success: false, reason: `Skill already exists: ${solutionName}` };
+  const id = `solution:${solutionName}`;
+  const item = readSolutions().items.find((i) => i.id === id);
+  if (!item) return { success: false, reason: `Solution is not exportable (habit log or invalid): ${solutionName}` };
+
+  const res = compile({ schema: WAY_SCHEMA, generator: 'forgen-way', generated_at: new Date().toISOString(), items: [item], stats: {} as never }, 'skill', { only: [id] });
+  if (!res.files.length) return { success: false, reason: `Nothing to write for ${solutionName}` };
+
+  // 컴파일러 경로(.claude/skills/<name>/SKILL.md)에서 <name>/SKILL.md 만 취해 대상 폴더에 놓는다.
+  const files = res.files.map((f) => ({ ...f, path: f.path.replace(/^\.claude\/skills\//, '') }));
+  const base = opts.out ? path.resolve(opts.out) : opts.install ? path.join(CLAUDE_DIR, 'skills') : ME_SKILLS;
+  const { plan, written } = writeFiles(files, base, opts.force ?? false);
+  const blocked = plan.find((p) => p.action.startsWith('blocked'));
+  if (blocked) {
+    return { success: false, reason: blocked.action === 'blocked-foreign'
+      ? `${blocked.abs} exists and was not written by forgen. Not overwritten.`
+      : `${blocked.abs} already exists with different content. Use --force to overwrite.` };
   }
-
-  // 4. 트리거 결정
-  const effectiveTriggers = triggers ?? deriveTriggersFromTags(parsed.frontmatter.tags);
-  if (effectiveTriggers.length === 0) {
-    return { success: false, reason: 'No triggers could be derived. Provide --trigger manually.' };
-  }
-
-  // 5. 스킬 파일 생성
-  const description = parsed.context
-    ? parsed.context.split('\n')[0].slice(0, 100)
-    : `${solutionName} 패턴 적용`;
-
-  const skillContent = [
-    '---',
-    `name: ${solutionName}`,
-    `description: ${description}`,
-    'triggers:',
-    ...effectiveTriggers.map(t => `  - "${t}"`),
-    `promoted_from: solution/${solutionName}`,
-    `promoted_at: "${new Date().toISOString().split('T')[0]}"`,
-    'status: candidate',
-    'usage_count: 0',
-    '---',
-    '',
-    '<Purpose>',
-    parsed.context || `${solutionName} 패턴을 적용합니다.`,
-    '</Purpose>',
-    '',
-    '<Steps>',
-    parsed.content,
-    '</Steps>',
-  ].join('\n');
-
-  fs.mkdirSync(ME_SKILLS, { recursive: true });
-  fs.writeFileSync(skillPath, skillContent);
-
-  // Claude Code 네이티브 스킬로도 등록 (~/.claude/skills/{name}/SKILL.md)
-  const claudeSkillDir = path.join(CLAUDE_SKILLS, solutionName);
-  fs.mkdirSync(claudeSkillDir, { recursive: true });
-  fs.writeFileSync(path.join(claudeSkillDir, 'SKILL.md'), skillContent);
-
-  log.debug(`스킬 승격 완료: ${solutionName} → ${skillPath} + ${claudeSkillDir}`);
-  return { success: true, skillPath };
+  log.debug(`스킬 승격 완료: ${solutionName} → ${plan.map((p) => p.abs).join(', ')} (written ${written})`);
+  return { success: true, paths: plan.map((p) => p.abs) };
 }
 
-/** 태그에서 트리거 키워드 자동 추출 */
-function deriveTriggersFromTags(tags: string[]): string[] {
-  return tags
-    .filter(t => t.length >= 3 && !GENERIC_TAGS.has(t.toLowerCase()))
-    .slice(0, 3);
-}
-
-/** 스킬 목록 조회 */
-export function listSkills(): Array<{
-  name: string;
-  status: string;
-  promotedFrom?: string;
-  triggers: string[];
-}> {
+/** 스킬 목록 조회 (SKILL.md 디렉터리 + 구 형식 .md) */
+export function listSkills(): Array<{ name: string; status: string; description: string }> {
   if (!fs.existsSync(ME_SKILLS)) return [];
-
-  return fs.readdirSync(ME_SKILLS)
-    .filter(f => f.endsWith('.md'))
-    .map(f => {
-      try {
-        const content = fs.readFileSync(path.join(ME_SKILLS, f), 'utf-8');
-        const fmMatch = content.match(/^---\n([\s\S]*?)\n---/);
-        if (!fmMatch) return null;
-
-        const fm = fmMatch[1];
-        const name = fm.match(/name:\s*(.+)/)?.[1]?.trim() ?? f.replace('.md', '');
-        const status = fm.match(/status:\s*(.+)/)?.[1]?.trim() ?? 'unknown';
-        const promotedFrom = fm.match(/promoted_from:\s*(.+)/)?.[1]?.trim();
-        const triggers = [...fm.matchAll(/- "(.+)"/g)].map(m => m[1]);
-
-        return { name, status, promotedFrom, triggers };
-      } catch {
-        return null;
-      }
-    })
-    .filter((s): s is NonNullable<typeof s> => s !== null);
+  const out: Array<{ name: string; status: string; description: string }> = [];
+  for (const entry of fs.readdirSync(ME_SKILLS, { withFileTypes: true })) {
+    const file = entry.isDirectory() ? path.join(ME_SKILLS, entry.name, 'SKILL.md') : entry.name.endsWith('.md') ? path.join(ME_SKILLS, entry.name) : '';
+    if (!file || !fs.existsSync(file)) continue;
+    try {
+      const fm = /^---\n([\s\S]*?)\n---/.exec(fs.readFileSync(file, 'utf-8'))?.[1];
+      if (!fm) continue;
+      const name = fm.match(/^name:\s*(.+)$/m)?.[1]?.trim() ?? entry.name.replace(/\.md$/, '');
+      const status = entry.isDirectory() ? 'standard' : (fm.match(/^status:\s*(.+)$/m)?.[1]?.trim() ?? 'legacy');
+      let description = fm.match(/^description:\s*(.+)$/m)?.[1]?.trim() ?? '';
+      if (description.startsWith('"')) { try { description = JSON.parse(description); } catch { /* 그대로 */ } }
+      out.push({ name, status, description: description.length > 80 ? `${description.slice(0, 79)}…` : description });
+    } catch { /* 건너뜀 */ }
+  }
+  return out;
 }

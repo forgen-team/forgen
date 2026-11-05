@@ -10,13 +10,15 @@ import * as path from 'node:path';
 import { STATE_DIR } from '../../core/paths.js';
 
 const TIMING_LOG = path.join(STATE_DIR, 'hook-timing.jsonl');
-const MAX_LINES = 500;
+// H13: 500줄 회전은 hook 호출이 잦으면 몇 시간치뿐이라 30일 p95 집계가 불가능했다.
+// 엔트리는 ~80바이트 — 30일 × 일 5,000회 ≈ 150,000줄 ≈ 12MB. 상한을 200,000줄로 두고 오래된 쪽부터 버린다.
+const MAX_LINES = 200_000;
 // P0-2 fix (2026-04-20): rotate를 size gate로 보호. 이전에는 매 hook 완료마다
 // full-file read + length split + write까지 실행해 steady-state(500줄 근처)에서
 // 매 tool call당 ~40KB의 불필요 I/O가 발생했다. statSync 한 번으로 크기만 보고
 // threshold 이하면 read/write 둘 다 skip한다. threshold는 ~80바이트/엔트리 기준
 // MAX_LINES × 1.5 여유를 둠.
-const ROTATE_SIZE_BYTES = MAX_LINES * 80 * 2; // ~80KB
+const ROTATE_SIZE_BYTES = MAX_LINES * 90; // ~18MB 를 넘을 때만 회전 검사(대부분 호출은 stat 한 번)
 
 export function recordHookTiming(hookName: string, durationMs: number, event: string): void {
   // ADR-015 C-G1 (critic #2): 중첩 추출 run 의 빠른 early-approve 타이밍이 p95 를 왜곡하지 않도록 기록 생략.
@@ -35,7 +37,11 @@ export function recordHookTiming(hookName: string, durationMs: number, event: st
       const content = fs.readFileSync(TIMING_LOG, 'utf-8');
       const lines = content.trim().split('\n');
       if (lines.length > MAX_LINES) {
-        fs.writeFileSync(TIMING_LOG, `${lines.slice(-MAX_LINES).join('\n')}\n`);
+        // 목표의 90% 로 줄여 매 호출마다 재회전하지 않게 한다. tmp + rename 으로 동시 append 와의 충돌 최소화.
+        const keep = lines.slice(-Math.floor(MAX_LINES * 0.9));
+        const tmp = `${TIMING_LOG}.${process.pid}.tmp`;
+        fs.writeFileSync(tmp, `${keep.join('\n')}\n`);
+        fs.renameSync(tmp, TIMING_LOG);
       }
     } catch { /* skip rotation on error */ }
   } catch { /* fail-open */ }

@@ -21,6 +21,7 @@ import { atomicWriteJSON, safeReadJSON } from '../hooks/shared/atomic-write.js';
 import { withFileLock } from '../hooks/shared/file-lock.js';
 import { createRule, loadAllRules, loadRule, saveRule } from '../store/rule-store.js';
 import type { Rule } from '../store/types.js';
+import { withStatusChange } from '../store/rule-lifecycle.js';
 import {
   type ClusterableRule,
   type CorrectionCluster,
@@ -108,15 +109,27 @@ export interface ClusterMergeResult {
  * 세션종료 클러스터링 실행. 통합 발생 시 각 통합 요약 배열 반환(빈 배열이면 no-op).
  * 자동 실행이므로 조용하지 않게 — 호출측이 결과를 stderr/알림으로 노출한다.
  */
-export async function runCorrectionClustering(): Promise<ClusterMergeResult[]> {
+export async function runCorrectionClustering(opts: { confirmed?: boolean; /** 지정하면 이 제안 ID(미리보기에 표시된 것)만 적용한다. */ only?: string[] } = {}): Promise<ClusterMergeResult[]> {
   // 리뷰 SEV-3 #4: auto-compound 는 세션별 detached 실행이라 두 세션 동시 종료 시
   // 병렬 진입 가능 → 같은 후보로 각자 통합룰 생성/last-write-wins 불일치. 파일락으로
   // 클러스터링 임계구역을 직렬화한다. fail-open(락 실패는 예외 → 호출측 catch).
   fs.mkdirSync(STATE_DIR, { recursive: true }); // 락 파일 생성 전 상태 디렉터리 보장
-  return withFileLock(CLUSTER_LOCK_PATH, () => runCorrectionClusteringLocked());
+  return withFileLock(CLUSTER_LOCK_PATH, () => runCorrectionClusteringLocked(opts.confirmed === true, opts.only ? new Set(opts.only) : undefined));
 }
 
-async function runCorrectionClusteringLocked(): Promise<ClusterMergeResult[]> {
+/** 확인 대기 중인 explicit 병합 제안 (`forgen rule merge-explicit` 가 보여주고 --apply 로 적용). */
+export const MERGE_PROPOSALS_PATH = path.join(STATE_DIR, 'merge-proposals.json');
+
+/**
+ * 병합 제안 ID — 멤버 룰의 현재 내용(id·policy·strength)과 대표 정책이 바뀌면 달라진다.
+ * `merge-explicit --apply <id>` 가 "미리보기에서 본 바로 그 제안"만 적용하도록 고정하는 용도.
+ */
+export function mergeProposalId(members: Rule[], representativePolicy: string, strength: string): string {
+  const body = members.map((r) => `${r.rule_id}\u0000${r.policy}\u0000${r.strength}\u0000${r.status}`).sort().join('\u0001');
+  return crypto.createHash('sha1').update(`${body}\u0002${representativePolicy}\u0002${strength}`).digest('hex').slice(0, 8);
+}
+
+async function runCorrectionClusteringLocked(confirmed: boolean, only?: Set<string>): Promise<ClusterMergeResult[]> {
   const all = loadAllRules();
   const candidates = all.filter(
     (r) =>
@@ -135,6 +148,7 @@ async function runCorrectionClusteringLocked(): Promise<ClusterMergeResult[]> {
   const { detect: detectT5 } = await import('./lifecycle/trigger-t5-conflict.js');
 
   const results: ClusterMergeResult[] = [];
+  const proposals: Array<{ id: string; members: string[]; representative_policy: string; strength: string }> = [];
 
   for (const cluster of clusters) {
     const memberRules = cluster.members
@@ -148,6 +162,15 @@ async function runCorrectionClusteringLocked(): Promise<ClusterMergeResult[]> {
       log.debug(`클러스터 통합 스킵(T5 모순): ${clusterKey(cluster.members)}`);
       continue;
     }
+
+    // R9: explicit(사용자가 직접 한 교정) 룰은 사용자 확인 없이 다른 룰에 흡수·대체하지 않는다.
+    // 자동 경로(세션 종료)는 제안만 기록하고, `forgen rule merge-explicit --apply` 가 확인 후 적용한다.
+    const proposalId = mergeProposalId(memberRules, cluster.representativePolicy, cluster.strength);
+    if (!confirmed) {
+      proposals.push({ id: proposalId, members: memberRules.map((r) => r.rule_id), representative_policy: cluster.representativePolicy, strength: cluster.strength });
+      continue;
+    }
+    if (only && !only.has(proposalId)) continue; // 미리보기에서 고른 제안만 적용
 
     const category = memberRules[0].category;
 
@@ -186,9 +209,7 @@ async function runCorrectionClusteringLocked(): Promise<ClusterMergeResult[]> {
 
     // 흡수된 원본은 삭제하지 않고 superseded + clustered_into 링크(unmerge 복원 가능).
     for (const orig of absorbed) {
-      orig.status = 'superseded';
-      orig.clustered_into = mergedId;
-      saveRule(orig);
+      saveRule({ ...withStatusChange(orig, 'superseded', `clustered-into ${mergedId}`, 'cluster'), clustered_into: mergedId });
     }
 
     results.push({
@@ -202,6 +223,12 @@ async function runCorrectionClusteringLocked(): Promise<ClusterMergeResult[]> {
     log.debug(`클러스터 통합: +${absorbed.length}룰 → ${mergedId} (${cluster.strength})`);
   }
 
+  if (!confirmed) {
+    try {
+      fs.mkdirSync(STATE_DIR, { recursive: true });
+      fs.writeFileSync(MERGE_PROPOSALS_PATH, `${JSON.stringify({ at: new Date().toISOString(), proposals }, null, 1)}\n`);
+    } catch { /* best-effort */ }
+  }
   return results;
 }
 
@@ -246,8 +273,7 @@ export function unmergeCluster(mergedRuleId: string): UnmergeResult {
     // 통합 산물이 explicit 클러스터 룰이고 채굴 링크도 달려 있던 혼합 케이스: 채굴 링크는
     // 위에서 이미 복원됐으므로 카운터만 정리하고 통합 룰은 기존대로 removed.
     if (linkedMined.length > 0) detachMinedLinks(merged, linkedMined);
-    merged.status = 'removed';
-    saveRule(merged);
+    saveRule(withStatusChange(merged, 'removed', 'unmerged', 'cluster'));
   }
 
   // 이 조합을 억제목록에 추가 → 재통합/재링크 방지. 링크는 (채굴, explicit) 쌍 단위로 억제해
@@ -531,9 +557,7 @@ async function applyMinedRuleMergePlan(plan: MinedMergePlan): Promise<MinedMerge
     }
 
     for (const orig of fresh) {
-      orig.status = 'superseded';
-      orig.clustered_into = mergedId;
-      saveRule(orig);
+      saveRule({ ...withStatusChange(orig, 'superseded', `clustered-into ${mergedId}`, 'cluster'), clustered_into: mergedId });
       result.supersededIds.push(orig.rule_id);
     }
     log.debug(`채굴 클러스터 통합: +${fresh.length}룰 → ${mergedId}`);
@@ -547,10 +571,11 @@ async function applyMinedRuleMergePlan(plan: MinedMergePlan): Promise<MinedMerge
  * promoteSessionCandidates 의 사전 중복 검사(explicit 매칭)와 병합 실행이 공유한다.
  */
 export function linkMinedToExplicit(mined: Rule, explicit: Rule): void {
-  mined.status = 'superseded';
-  mined.clustered_into = explicit.rule_id;
-  mined.related_to = [explicit.rule_id];
-  saveRule(mined);
+  saveRule({
+    ...withStatusChange(mined, 'superseded', `linked-to ${explicit.rule_id}`, 'cluster'),
+    clustered_into: explicit.rule_id,
+    related_to: [explicit.rule_id],
+  });
   recordMinedObservation(explicit, minedObservationCount(mined), mined.rule_id);
 }
 

@@ -8,12 +8,15 @@ import { buildEnv } from './config-injector.js';
 import type { V1HarnessContext } from './harness.js';
 import { loadGlobalConfig } from './global-config.js';
 import { createLogger } from './logger.js';
-import { STATE_DIR, ME_SOLUTIONS } from './paths.js';
+import { STATE_DIR } from './paths.js';
+import { defaultSolutionDirs } from '../engine/solution-index.js';
 import type { RuntimeHost } from './types.js';
 import { getHostRuntime } from '../host/host-runtime.js';
 import { sendNotification } from './notify.js';
 import { querySurfacedWithin, emitSolutionEvent } from './observability-store.js';
 import { parseSolutionV3 } from '../engine/solution-format.js';
+import { actedOnEvidence } from '../engine/acted-on-evidence.js';
+import { sessionNeedsRun, transcriptSignature, RUNNER_LOCK_TTL_MS } from './extraction-queue.js';
 
 const log = createLogger('spawn');
 
@@ -153,7 +156,7 @@ export async function countUserMessages(transcriptPath: string): Promise<number>
  * 세션 시작 이후 생성된 commit 들의 diff 를 scan 하여 surfaced 솔루션과 키워드 매칭.
  * 프라이버시: commit sha 는 SHA1 해시 12char prefix 만 저장, diff/path 내용 미저장.
  */
-async function scanCommitDiffForActedOn(sessionId: string, cwd: string, sessionStartTime: number): Promise<void> {
+export async function scanCommitDiffForActedOn(sessionId: string, cwd: string, sessionStartTime: number): Promise<void> {
   try {
     const surfaces = querySurfacedWithin(sessionId, 30); // 30분 window
     if (surfaces.length === 0) return;
@@ -178,15 +181,15 @@ async function scanCommitDiffForActedOn(sessionId: string, cwd: string, sessionS
           cwd, encoding: 'utf-8', timeout: 5000, stdio: ['pipe', 'pipe', 'pipe'],
         });
       } catch { continue; }
-      const diffLower = diff.toLowerCase();
+      const addedLines = diff.split('\n').filter((l) => l.startsWith('+') && !l.startsWith('+++')).join('\n');
       const shaHash = crypto.createHash('sha1').update(sha).digest('hex').slice(0, 12);
 
       for (const surf of surfaces) {
         const dedupKey = `${shaHash}:${surf.solutionId}`;
         if (seen.has(dedupKey)) continue;
 
-        const filePath = path.join(ME_SOLUTIONS, `${surf.solutionId}.md`);
-        if (!fs.existsSync(filePath)) continue;
+        const filePath = defaultSolutionDirs(cwd).map((d) => path.join(d.dir, `${surf.solutionId}.md`)).find((f) => fs.existsSync(f));
+        if (!filePath) continue;
         let raw: string;
         try { raw = fs.readFileSync(filePath, 'utf-8'); } catch { continue; }
         const sol = parseSolutionV3(raw);
@@ -194,9 +197,9 @@ async function scanCommitDiffForActedOn(sessionId: string, cwd: string, sessionS
         const tags = sol.frontmatter.tags ?? [];
         const identifiers = sol.frontmatter.identifiers ?? [];
         if (tags.length === 0 && identifiers.length === 0) continue;
-        const hit = tags.some(t => diffLower.includes(t.toLowerCase()))
-                 || identifiers.some(id => diffLower.includes(id.toLowerCase()));
-        if (!hit) continue;
+        // 추가된 줄(+)만 본다 — 삭제된 코드·커밋 메시지·맥락 줄에 우연히 있는 단어는 행동의 증거가 아니다. 기준은 acted-on-evidence.ts.
+        const ev = actedOnEvidence({ tags, identifiers }, addedLines);
+        if (!ev.ok) continue;
 
         seen.add(dedupKey);
         emitSolutionEvent({
@@ -205,7 +208,7 @@ async function scanCommitDiffForActedOn(sessionId: string, cwd: string, sessionS
           eventType: 'acted_on',
           signalSource: 'commit-diff',
           signalScore: 0.30,
-          meta: { commit_sha_hash: shaHash, surface_ts: surf.ts },
+          meta: { commit_sha_hash: shaHash, surface_ts: surf.ts, evidence: ev.hits.slice(0, 4) },
         });
       }
     }
@@ -218,12 +221,12 @@ async function scanCommitDiffForActedOn(sessionId: string, cwd: string, sessionS
  * 세션 종료 후 자동 compound 추출 + USER.md 업데이트.
  * auto-compound-runner.ts를 동기 실행하여 솔루션 추출 + 사용자 패턴 관찰.
  */
-// Stop 훅(maybeSpawnAutoCompound)/session-recovery 와 공유하는 dedup cooldown.
-const AUTO_COMPOUND_DEDUP_COOLDOWN_MS = 5 * 60 * 1000; // 5min
-// per-session in-flight start-gate TTL — 러너 최대 실행(~210s)+마진. ADR-011 리뷰 SEV-1:
+// per-session in-flight start-gate TTL — 러너 최악 소요보다 길어야 한다. 러너는 호출당 120s 타임아웃으로 새 구간 3단계 + 대기열
+// 재시도 3단계(최대 12분)에 후처리까지 돌 수 있어 예전 10분은 최악보다 짧았다(표식이 만료된 사이 두 번째 러너가 뜸).
+// 러너 락과 같은 30분으로 맞추고, 러너는 종료 시 표식을 직접 푼다. ADR-011 리뷰 SEV-1:
 // 완료-게이트 단일슬롯 마커는 sweep↔Stop 훅 / 다중세션 double-spawn 을 못 막는다.
 // 세션별 start-gate 로 spawn 전에 표식해 이중실행(중복 Haiku 과금)을 차단.
-const AUTO_COMPOUND_INFLIGHT_TTL_MS = 10 * 60 * 1000; // 10min
+const AUTO_COMPOUND_INFLIGHT_TTL_MS = RUNNER_LOCK_TTL_MS; // 30min
 
 /** runAutoCompound 결과 — sweep(무인 cron)이 실제 spawn 만 기록하도록 상태 반환. */
 export type AutoCompoundStatus = 'spawned' | 'skipped-inflight' | 'skipped-dedup' | 'failed';
@@ -315,24 +318,21 @@ export function runAutoCompound(
   transcriptPath: string,
   sessionId: string,
   promptCount = 0,
+  /** 세션 종료/이전 세션 복구 경로 — 새 내용이 적어도 Haiku 추출을 돌린다 (러너 6번째 인자). */
+  final = false,
 ): AutoCompoundStatus {
+  if (process.env.FORGEN_DOCTOR_PROBE === '1') return 'skipped-dedup'; // doctor 프로브는 스폰 금지
   const now = Date.now();
 
-  // 1. 완료 마커 cooldown (secondary, 단일슬롯 — 값싼 read 먼저).
+  // 1. 같은 세션을 이미 처리했고 transcript 가 그 뒤로 자라지 않았으면 건너뜀 (D9: 크기 기반 멱등).
+  //    예전엔 "5분 이내 완료"만 보아 마지막 교정이 5분 안에 들어오면 종료 시 승급이 누락됐다.
   try {
-    const parsed = JSON.parse(fs.readFileSync(path.join(STATE_DIR, 'last-auto-compound.json'), 'utf-8')) as {
-      sessionId?: string;
-      completedAt?: string;
-    };
-    if (parsed.sessionId === sessionId) {
-      const last = parsed.completedAt ? Date.parse(parsed.completedAt) : 0;
-      if (Number.isFinite(last) && now - last < AUTO_COMPOUND_DEDUP_COOLDOWN_MS) {
-        log.debug('auto-compound skip: 최근 동일 세션 run 존재 (dedup)');
-        return 'skipped-dedup';
-      }
+    if (!sessionNeedsRun(sessionId, fs.statSync(transcriptPath).size, { sig: transcriptSignature(transcriptPath) })) {
+      log.debug('auto-compound skip: 마지막 실행 이후 transcript 변화 없음 (dedup)');
+      return 'skipped-dedup';
     }
   } catch {
-    /* 마커 없음(최초)/손상 — 진행 (fail-open). */
+    /* 이력 없음/stat 실패 — 진행 (fail-open). */
   }
 
   // 2. per-session in-flight start-gate (공유 헬퍼).
@@ -359,14 +359,15 @@ export function runAutoCompound(
     // cron sparse PATH 의 /bin/node 로 해석돼 러너의 process.execPath 가 달라지고,
     // 러너가 forgen(nvm 형제 바이너리)을 절대경로로 못 찾아 solution write 가 ENOENT 로
     // 실패한다. execPath 를 물려주면 러너가 sweep 과 같은 node(=forgen 형제)를 상속한다.
-    const child = spawn(process.execPath, [runnerPath, cwd, transcriptPath, sessionId, String(promptCount)], {
+    const child = spawn(process.execPath, [runnerPath, cwd, transcriptPath, sessionId, String(promptCount), ...(final ? ['final'] : [])], {
       cwd,
       detached: true,
       stdio: logFd !== undefined ? ['ignore', logFd, logFd] : 'ignore',
     });
     child.unref();
     if (logFd !== undefined) fs.closeSync(logFd); // child가 dup — 부모 측 fd는 닫아도 안전
-    console.log('\n[forgen] 세션 분석을 백그라운드로 시작했습니다 (자동 compound) — 결과는 다음 세션 시작 시 반영됩니다.\n');
+    // stderr: pre-compact/session-end hook 의 stdout 은 JSON 1개여야 한다 (H10) — 안내는 stderr 로.
+    process.stderr.write('\n[forgen] 세션 분석을 백그라운드로 시작했습니다 (자동 compound) — 결과는 다음 세션 시작 시 반영됩니다.\n');
     return 'spawned';
   } catch (e) {
     if (logFd !== undefined) {
@@ -564,13 +565,9 @@ export async function spawnClaude(
           // 3. Observability P2: commit-diff acted_on scan
           await scanCommitDiffForActedOn(sessionId, context.cwd, sessionStartTime);
 
-          // 4. 자동 compound (10+ user 메시지인 경우만) — 양 runtime 호환
-          const userMsgCount = await countUserMessages(transcript);
-          if (userMsgCount >= 10) {
-            runAutoCompound(context.cwd, transcript, sessionId);
-          } else {
-            console.log(`[forgen] 세션이 짧아 auto-compound 생략 (${userMsgCount} messages)`);
-          }
+          // 4. 자동 compound — D9: 길이와 무관하게 러너를 돌린다(교정 승급·인덱싱은 짧은 세션에도 필요).
+          //    Haiku 추출 여부는 러너가 새 내용의 양으로 판단한다.
+          runAutoCompound(context.cwd, transcript, sessionId, 0, true);
         }
       } catch (e) {
         console.error('[forgen] 세션 종료 후 처리 실패:', e instanceof Error ? e.message : e);

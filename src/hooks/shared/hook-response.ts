@@ -42,6 +42,19 @@ export function approveWithContext(context: string, eventName: string, userNotic
 }
 
 /**
+ * PostToolUse 통과 + 모델에 컨텍스트 전달 (D12-B).
+ * 이전 secret-filter/slop-detector 는 systemMessage(사용자 화면 전용)만 써서 모델이 경고를 못 받았다.
+ * PostToolUse 의 hookSpecificOutput.additionalContext 는 모델에 도달한다.
+ */
+export function approveWithPostToolContext(context: string, userNotice?: string): string {
+  return JSON.stringify({
+    continue: true,
+    hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: context },
+    ...(userNotice ? { systemMessage: userNotice } : {}),
+  });
+}
+
+/**
  * 통과 + UI 경고 표시 (모델에는 전달되지 않음).
  * PostToolUse, PreToolUse 경고 등 모델 도달이 불필요한 경우 사용.
  */

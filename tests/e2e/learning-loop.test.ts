@@ -313,7 +313,7 @@ describe('Scenario 0C: fix-now session 규칙 → 새 세션 시작 시 정리',
     expect(sessionRulesAfterOld).toHaveLength(1);
 
     // 4. 새 세션 시작 — 이전 세션의 scope:'session' 규칙 정리
-    cleanupStaleSessionRules('session-0c-new');
+    cleanupStaleSessionRules('session-0c-new', Date.now() + 13 * 3600_000);
 
     // 5. 새 세션 관점에서 active rules를 조회 — scope:'session' 규칙이 없어야 한다
     const staleSessionRules = loadActiveRules().filter(r => r.scope === 'session');
