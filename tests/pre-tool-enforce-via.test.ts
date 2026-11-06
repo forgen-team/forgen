@@ -74,7 +74,7 @@ describe('pre-tool-use enforce_via dispatcher (ADR-001 Mech-A PreToolUse)', () =
       expect(proc.status).toBe(0);
       const lines = proc.stdout.trim().split('\n').filter(Boolean);
       const out = JSON.parse(lines[lines.length - 1]);
-      expect(out.continue).toBe(false);
+      expect(out.continue).toBe(true);
       expect(out.hookSpecificOutput?.permissionDecision).toBe('deny');
       expect(out.hookSpecificOutput?.permissionDecisionReason).toContain('L1-pre-test');
 

@@ -90,13 +90,13 @@ describe('hook-pipeline: pre-tool-use.js', () => {
     expect(result.continue).toBe(true);
   });
 
-  it('rm -rf / 명령어를 continue: false로 차단한다', async () => {
+  it('rm -rf / 명령어를 세션을 멈추지 않고 차단한다', async () => {
     const result = await runHook('pre-tool-use.js', {
       tool_name: 'Bash',
       tool_input: { command: 'rm -rf /' },
     });
 
-    expect(result.continue).toBe(false);
+    expect(result.continue).toBe(true);
     expect(result.hookSpecificOutput?.permissionDecision).toBe('deny');
   });
 
@@ -131,13 +131,13 @@ describe('hook-pipeline: pre-tool-use.js', () => {
 // ── db-guard.js ──
 
 describe('hook-pipeline: db-guard.js', () => {
-  it('DROP TABLE 명령어를 continue: false로 차단한다', async () => {
+  it('DROP TABLE 명령어를 세션을 멈추지 않고 차단한다', async () => {
     const result = await runHook('db-guard.js', {
       tool_name: 'Bash',
       tool_input: { command: 'DROP TABLE users' },
     });
 
-    expect(result.continue).toBe(false);
+    expect(result.continue).toBe(true);
     expect(result.hookSpecificOutput?.permissionDecision).toBe('deny');
   });
 
@@ -165,7 +165,7 @@ describe('hook-pipeline: db-guard.js', () => {
       tool_input: { command: 'DELETE FROM orders' },
     });
 
-    expect(result.continue).toBe(false);
+    expect(result.continue).toBe(true);
   });
 
   it('안전한 npm 명령어는 차단하지 않는다', async () => {

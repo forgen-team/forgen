@@ -85,7 +85,7 @@ describe('pre-tool-use main()', () => {
     });
     await import('../src/hooks/pre-tool-use.js');
     await vi.waitFor(() => {
-      expect(logOutput.some(l => l.includes('"continue":false'))).toBe(true);
+      expect(logOutput.some(l => l.includes('"permissionDecision":"deny"'))).toBe(true);
       expect(logOutput.some(l => l.includes('Dangerous command'))).toBe(true);
     });
   });
@@ -119,7 +119,7 @@ describe('pre-tool-use main()', () => {
     });
     await import('../src/hooks/pre-tool-use.js');
     await vi.waitFor(() => {
-      expect(logOutput.some(l => l.includes('"continue":false'))).toBe(true);
+      expect(logOutput.some(l => l.includes('"permissionDecision":"deny"'))).toBe(true);
     });
   });
 
