@@ -63,6 +63,33 @@ describe('commit-guard 예제값 허용·시간 예산', () => {
     stage('mixed.md', `${AWS_DOC}\n그리고 example.com 설명\n${AWS_REAL}\n`);
     expect(checkGitSecrets(commitOp, repo).length).toBe(1);
   });
+  describe('.env 이름 규칙은 새로 추가되는 파일에만', () => {
+    const addAllOp = [{ sub: 'add', args: ['-A'], cwd: '' }];
+    const trackEnvTemplate = () => {
+      fs.writeFileSync(path.join(repo, '.env.development'), 'OPENAI_API_KEY=sk-your-key-here\nPORT=3000\nOLD=1\n');
+      git('add', '-f', '.env.development'); git('commit', '-q', '-m', 'template');
+    };
+    it('이미 추적 중인 예시값 .env 템플릿의 수정은 add·commit 모두 통과', () => {
+      trackEnvTemplate();
+      fs.writeFileSync(path.join(repo, '.env.development'), 'OPENAI_API_KEY=sk-your-key-here\nPORT=3000\n');
+      expect(checkGitSecrets(addAllOp, repo)).toEqual([]);
+      git('add', '.env.development');
+      expect(checkGitSecrets(commitOp, repo)).toEqual([]);
+    });
+    it('추적 중인 .env 라도 진짜 키를 추가하면 내용 검사로 잡는다', () => {
+      trackEnvTemplate();
+      fs.appendFileSync(path.join(repo, '.env.development'), `AWS=${AWS_REAL}\n`);
+      expect(checkGitSecrets(addAllOp, repo).map((h) => h.file)).toEqual(['.env.development']);
+      git('add', '.env.development');
+      expect(checkGitSecrets(commitOp, repo).map((h) => h.file)).toEqual(['.env.development']);
+    });
+    it('새로 추가하는 .env 는 내용과 무관하게 이름 규칙으로 잡는다', () => {
+      fs.writeFileSync(path.join(repo, '.env'), 'PORT=3000\n');
+      expect(checkGitSecrets([{ sub: 'add', args: ['-f', '.env'], cwd: '' }], repo).map((h) => h.file)).toEqual(['.env']);
+      git('add', '-f', '.env');
+      expect(checkGitSecrets(commitOp, repo).map((h) => h.file)).toEqual(['.env']);
+    });
+  });
   it('시간 예산을 넘기면 timedOut 으로 알린다 (조용히 통과 아님)', () => {
     stage('a.txt', 'hello');
     const r = checkGitSecretsBudgeted(commitOp, repo, 0);
