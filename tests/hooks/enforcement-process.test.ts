@@ -161,15 +161,15 @@ describe.skipIf(!have)('git add/commit 비밀 차단 (실제 staged 확인)', ()
   });
   const reset = () => { try { g('reset', '-q'); } catch { /* */ } for (const f of fs.readdirSync(repo)) if (f !== '.git' && f !== 'README.md') fs.rmSync(path.join(repo, f), { recursive: true, force: true }); };
 
-  it('git add .env → deny', () => {
+  it('git add .env → ask (사유 표시)', () => {
     reset(); fs.writeFileSync(path.join(repo, '.env'), 'A=1\n');
     const o = pre('git add .env');
-    expect(decision(o)).toBe('deny'); expect(o.json.hookSpecificOutput.permissionDecisionReason).toContain('.env');
+    expect(decision(o)).toBe('ask'); expect(o.json.hookSpecificOutput.permissionDecisionReason).toContain('.env');
   });
-  it('git add -A 는 untracked .env 를 찾아 deny', () => {
+  it('git add -A 는 untracked .env 를 찾아 ask', () => {
     reset(); fs.writeFileSync(path.join(repo, '.env.local'), 'A=1\n'); fs.writeFileSync(path.join(repo, 'a.ts'), 'x\n');
-    expect(decision(pre('git add -A'))).toBe('deny');
-    expect(decision(pre('git add . && git commit -m wip'))).toBe('deny');
+    expect(decision(pre('git add -A'))).toBe('ask');
+    expect(decision(pre('git add . && git commit -m wip'))).toBe('ask');
   });
   it('.gitignore 로 제외된 .env 는 git add . 가 넣지 않으므로 통과', () => {
     reset(); fs.writeFileSync(path.join(repo, '.gitignore'), '.env\n'); fs.writeFileSync(path.join(repo, '.env'), 'A=1\n');
@@ -180,20 +180,20 @@ describe.skipIf(!have)('git add/commit 비밀 차단 (실제 staged 확인)', ()
     reset(); fs.writeFileSync(path.join(repo, '.env.example'), 'A=\n');
     expect(decision(pre('git add .env.example'))).toBe('pass');
   });
-  it('credentials.json staged → git commit deny', () => {
+  it('credentials.json staged → git commit ask', () => {
     reset(); fs.writeFileSync(path.join(repo, 'credentials.json'), '{}\n'); g('add', 'credentials.json');
-    expect(decision(pre('git commit -m x'))).toBe('deny');
+    expect(decision(pre('git commit -m x'))).toBe('ask');
   });
-  it('staged 파일 내용의 AWS 키 → git commit deny, 값은 메시지에 없다', () => {
+  it('staged 파일 내용의 AWS 키 → git commit ask, 값은 메시지에 없다', () => {
     reset(); fs.writeFileSync(path.join(repo, 'cfg.ts'), `export const k = "${AWS}";\n`); g('add', 'cfg.ts');
     const o = pre('git commit -m feat');
-    expect(decision(o)).toBe('deny');
+    expect(decision(o)).toBe('ask');
     expect(JSON.stringify(o.json)).not.toContain(AWS);
     expect(o.json.hookSpecificOutput.permissionDecisionReason).toContain('cfg.ts');
   });
   it('git commit -a 는 tracked 변경의 키도 본다', () => {
     reset(); fs.writeFileSync(path.join(repo, 'README.md'), `hi ${AWS}\n`);
-    expect(decision(pre('git commit -am x'))).toBe('deny');
+    expect(decision(pre('git commit -am x'))).toBe('ask');
     g('checkout', '--', 'README.md');
   });
   it('깨끗한 변경은 통과', () => {
