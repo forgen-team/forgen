@@ -29,7 +29,7 @@ export function detect(input: T3Input): LifecycleEvent[] {
     if (rule.lifecycle?.phase === 'flagged' || rule.lifecycle?.phase === 'suppressed') continue; // 이미 주의 환기됨
     const s = input.signals.get(rule.rule_id);
     if (!s) continue;
-    if (s.bypass_7d < threshold) continue;
+    if ((s.bypass_since_review ?? s.bypass_7d) < threshold) continue; // D7: 검토 이후 우회만
     // R6-P1: PM 지적 — "우회할수록 규칙이 약해진다" 는 Trust Restoration 미션과 역방향.
     // T3 는 이제 자동 suppress 대신 flag 만 (사용자 주의 환기). 실제 suppress 는 사용자가
     // 명시적으로 결정하도록 `forgen inspect rules --conflicts` + 수동 편집 경로 유지.

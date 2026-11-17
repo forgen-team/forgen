@@ -389,6 +389,15 @@ export function collectSignals(rule: Rule, inputs: SignalInputs = {}): RuleSigna
     ? recent30.length / injectCount
     : (recent30.length >= 1 ? 1 : 0); // no inject tracking → treat each violation as high rate
 
+  // D7: 검토(--keep) 이후 기록만 — T2·T3 가 검토 직후 같은 과거 기록으로 다시 flag 하지 않게.
+  const reviewedMs = rule.lifecycle?.reviewed_at ? Date.parse(rule.lifecycle.reviewed_at) : NaN;
+  const sinceReview = Number.isFinite(reviewedMs)
+    ? {
+      violations_since_review: recent30.filter((v) => Date.parse(v.at) > reviewedMs).length,
+      bypass_since_review: recentBypass.filter((b) => Date.parse(b.at) > reviewedMs).length,
+    }
+    : {};
+
   return {
     violations_30d: recent30.length,
     violation_rate_30d: violationRate30,
@@ -397,6 +406,7 @@ export function collectSignals(rule: Rule, inputs: SignalInputs = {}): RuleSigna
     injects_rolling_n: injectsRolling,
     violations_rolling_n: violationsRolling,
     last_updated_days_ago: lastUpdatedDays,
+    ...sinceReview,
   };
 }
 

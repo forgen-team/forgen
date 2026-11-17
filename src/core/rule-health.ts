@@ -26,6 +26,7 @@ import { ME_BEHAVIOR, ME_RULES, ME_RULES_ARCHIVE, STATE_DIR } from './paths.js';
 import type { Rule } from '../store/types.js';
 import { isConfirmedBypass, isRealBlock, isSyntheticEntry, readJsonlWindow } from '../engine/lifecycle/signals.js';
 import { planT5Unflag } from '../engine/lifecycle/t5-hygiene.js';
+import { planDedupe } from '../engine/rule-dedupe.js';
 
 const DAY = 86_400_000;
 const ENF = path.join(STATE_DIR, 'enforcement');
@@ -99,7 +100,6 @@ export function loadPersonalRules(): { current: Rule[]; all: Rule[] } {
   const ids = new Set(current.map((r) => r.rule_id));
   return { current, all: [...current, ...readRuleDir(ME_RULES_ARCHIVE).filter((r) => !ids.has(r.rule_id))] };
 }
-const normalize = (s: string): string => s.normalize('NFC').toLowerCase().replace(/[\s.,;:!?'"`()[\]{}~·…-]+/g, ' ').trim();
 
 function readEvidenceTimes(): { user: number[]; mined: number[] } {
   const out = { user: [] as number[], mined: [] as number[] };
@@ -149,13 +149,9 @@ export function computeRuleHealth(opts: { days?: number; now?: number } = {}): R
   // ── 룰 상태 ──
   const flagged = active.filter((r) => r.lifecycle?.phase === 'flagged');
   const conflictOnly = new Set(planT5Unflag(rules).map((r) => r.rule_id));
-  const dupMap = new Map<string, string[]>();
-  for (const r of active) {
-    const k = normalize(r.policy);
-    if (k.length < 10) continue;
-    dupMap.set(k, [...(dupMap.get(k) ?? []), r.rule_id]);
-  }
-  const duplicateGroups = [...dupMap.values()].filter((ids) => ids.length > 1).map((ids) => ({ policy: policyOf(ids[0]) ?? '', ruleIds: ids }));
+  // 같은 문장: `forgen rule dedupe` 와 같은 기준(planDedupe — 활성 scope:'me', 출처별). 세션 임시 룰 쌍은
+  // 12시간 유예 뒤 저절로 정리되므로 세지 않는다.
+  const duplicateGroups = planDedupe(rules).map((g) => ({ policy: policyOf(g.keeper.rule_id) ?? '', ruleIds: [g.keeper.rule_id, ...g.duplicates.map((d) => d.rule_id)] }));
 
   // ── 신호 ──
   const ev = readEvidenceTimes();
@@ -262,8 +258,8 @@ export function renderRuleHealth(h: RuleHealth): string[] {
   L.push('    ※ 자문 룰은 위반을 탐지할 수 없어 "위반 0"이 준수를 뜻하지 않습니다. 준수 근거는 통과·고쳐서 통과뿐입니다.');
   L.push('', '  대기열');
   const fl = h.rules.flagged;
-  L.push(`    검토 대기   ${fl.total}개${fl.total ? ` (충돌 감지 오탐 ${fl.conflictOnly} → forgen rule unflag · 교정·반복 위반 ${fl.other})` : ''}`);
-  L.push(`    같은 문장   ${h.rules.duplicateGroups.length}묶음${h.rules.duplicateGroups.length ? ` (${h.rules.duplicateGroups.reduce((n, g) => n + g.ruleIds.length, 0)}개 룰)` : ''}`);
+  L.push(`    검토 대기   ${fl.total}개${fl.total ? ` (오탐 판정 ${fl.conflictOnly} → forgen rule unflag · 교정·반복 차단·우회 ${fl.other} → forgen rule review)` : ''}`);
+  L.push(`    같은 문장   ${h.rules.duplicateGroups.length}묶음${h.rules.duplicateGroups.length ? ` (${h.rules.duplicateGroups.reduce((n, g) => n + g.ruleIds.length, 0)}개 룰) → forgen rule dedupe` : ''}`);
   L.push(`    주입 0회    ${h.rules.neverInjected}개   범위 없는 학습 룰 ${h.rules.unscopedLearned}개`);
   if (h.top.blocking.length) {
     L.push('', '  많이 막은 룰');

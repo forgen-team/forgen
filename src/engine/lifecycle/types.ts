@@ -54,6 +54,9 @@ export interface RuleSignals {
   injects_rolling_n: number;
   violations_rolling_n: number;
   last_updated_days_ago: number;
+  /** lifecycle.reviewed_at 이 있을 때만: 그 이후의 실제 차단 수 / 명시 우회 수 (D7) */
+  violations_since_review?: number;
+  bypass_since_review?: number;
 }
 
 export interface ViolationEntry {

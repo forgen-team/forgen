@@ -21,6 +21,7 @@ import { findMostSimilarRule, laplaceConfidence, strengthForConfidence } from '.
 import { recordMinedObservation } from '../engine/correction-cluster-runner.js';
 import { withFileLockSync } from '../hooks/shared/file-lock.js';
 import { withStatusChange } from './rule-lifecycle.js';
+import { normalizePolicy } from './rule-normalize.js';
 
 function evidencePath(evidenceId: string): string {
   return path.join(ME_BEHAVIOR, `${evidenceId}.json`);
@@ -277,6 +278,13 @@ function supersedeSessionTwins(evidenceId: string, meRuleId: string): number {
   return n;
 }
 
+/** D4: 활성 scope:'me' explicit 룰 중 정규화 문장이 같은 룰 (없으면 undefined). */
+function findSameExplicitPolicy(policy: string): Rule | undefined {
+  const key = normalizePolicy(policy);
+  if (!key) return undefined;
+  return loadActiveRules().find((r) => r.scope === 'me' && r.source === 'explicit_correction' && normalizePolicy(r.policy) === key);
+}
+
 export function promoteSessionCandidates(sessionId: string): number {
   // withFileLockSync 는 O_CREAT 로 lock 파일을 만들 뿐 부모 디렉터리는 만들지 않는다 —
   // 첫 rule 승급 이전(=아직 ME_RULES 없음)에도 락을 잡을 수 있어야 하므로 선행 mkdir.
@@ -353,7 +361,11 @@ export function promoteSessionCandidates(sessionId: string): number {
       // "재활성화"된다 — 새 rule_id/created_at 을 절대 새로 만들지 않는다.
       // scope:'me' 로 한정 — processCorrection() 이 fix-now/avoid-this 에 대해 만드는
       // scope:'session' 임시 rule 은 같은 render_key 공식을 쓰지만 별개 개체다(승격 대상 아님).
-      const existingRule = findRuleByRenderKey(renderKey, source, 'me');
+      // D4(2026-11): explicit 는 render_key 가 target 슬러그라, 모델이 같은 교정을 다른 target 으로 넘기면
+      // 새 룰이 생겼다. render_key 로 못 찾으면 활성 me explicit 룰 중 정규화 문장이 같은 것을 기존 룰로 쓴다.
+      // 채굴 룰과는 비교하지 않는다(ADR-013 — 채굴 쪽은 위의 사전 중복 검사가 따로 있다).
+      const existingRule = findRuleByRenderKey(renderKey, source, 'me')
+        ?? (!autoMined ? findSameExplicitPolicy(candidate.summary) : undefined);
 
       if (existingRule) {
         if (alreadyConsumed) continue; // 같은 evidence 의 sweep 재관측 — no-op.

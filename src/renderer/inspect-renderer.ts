@@ -5,6 +5,7 @@
  * Authoritative spec: docs/plans/2026-04-03-forgen-rule-renderer-spec.md §6
  */
 
+import { FLAG_CAUSE_LABEL, flagCauses, type FlagInfo } from '../engine/rule-review.js';
 import { enforceabilityLabel, ruleEnforced } from '../engine/rule-detectability.js';
 import type { Profile, Rule, Evidence, SessionEffectiveState } from '../store/types.js';
 import { axisDirection, AXIS_POLES, type AxisKey } from '../store/profile-score.js';
@@ -72,11 +73,14 @@ export function renderRules(rules: Rule[]): string {
 
   const lines: string[] = [];
 
+  // D7: flagged 원인별 표시 — 예전엔 원인과 무관하게 'repeated violations' 로 나왔다.
+  const flaggedIds = new Set(active.filter((r) => r.lifecycle?.phase === 'flagged').map((r) => r.rule_id));
+  const flagInfo: Map<string, FlagInfo> = flaggedIds.size > 0 ? flagCauses(flaggedIds) : new Map();
   if (active.length > 0) {
     lines.push(`── Active rules (${active.length}) ──`);
     for (const r of active) {
       // ADR-017 (critic): T2/T3 가 올린 flag 는 이전에 어디에도 안 보였다 — 여기서 가시화.
-      const flag = (r.lifecycle?.phase === 'flagged' ? ' ⚑ flagged (repeated violations/overrides — review)' : '')
+      const flag = (r.lifecycle?.phase === 'flagged' ? ` ⚑ ${FLAG_CAUSE_LABEL[flagInfo.get(r.rule_id)?.cause ?? 'unknown']} (forgen rule review)` : '')
         + (r.enforce_mode === 'advise' ? ' ⚠ advise (차단 안 함; 차단 켜기: forgen rule enforce <id>)' : '');
       lines.push(`  [${r.category}/${r.strength}] ${r.render_key} — ${r.policy}${flag}`);
       // D12-C: 위반을 탐지할 수 없는 룰은 '자문'으로 표기한다 — 위반 0 이 준수를 뜻하지 않는다.
