@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.13] — 2026-11-17 — `status --health` 지표 정의 고정
+
+외부 도구(Handoff)가 `forgen status --health --json --days 90` 의 일별 값을 서버로 보내기 시작해, 숫자 정의를 고정했다.
+
+### Fixed
+- 생성·은퇴 수에서 세션 임시 룰 제외 — avoid-this 교정 1건이 두 번 세지고, 승급 직후 세션 룰의 대체·정리가 은퇴로 세지던 문제.
+- 보관함(`rules-archive`)도 읽어, 정리된 룰 때문에 이미 보낸 과거 날짜의 생성·은퇴 값이 줄지 않게 했다.
+- 현재 폴더의 프로젝트 룰을 세지 않는다 — 실행 위치에 따라 숫자가 달라지던 문제.
+- 병합으로 대체된 원본은 은퇴로 세지 않는다. 은퇴는 사건 수(되살아났다 다시 은퇴하면 두 번)로 정의.
+
 ## [0.6.12] — 2026-11-17 — 룰 품질 재설계 1단계: 해로운 동작 중지
 
 실사용 데이터(업무 맥 룰 356개·76일 지표) 진단에 따른 1단계. 설계: `docs/plans/2026-11-17-rule-quality-redesign.md`.

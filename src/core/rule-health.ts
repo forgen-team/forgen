@@ -12,14 +12,17 @@
  *   준수 근거   checks.jsonl 의 pass(Stop 에서 실제로 평가해 통과) + acknowledgments(차단 뒤 고쳐서 통과).
  *               accept_count 는 기록 경로가 없어 쓰지 않는다.
  *   승급        lifecycle 의 meta_promote_to_a
- *   은퇴        룰 status_history 중 removed·suppressed·superseded 로 바뀐 기록
+ *   룰 범위     개인 룰만(~/.forgen/me/rules + rules-archive). 현재 폴더의 프로젝트 룰은 넣지 않는다 — 실행 위치에 따라
+ *               숫자가 달라지면 안 된다. 보관함(rules-archive)도 읽어야 정리(prune)된 룰 때문에 과거 날짜 값이 줄지 않는다.
+ *   생성·은퇴   scope:'me' 룰만. scope:'session' 임시 룰은 교정 1건의 사본이라(승급 시 me 룰이 따로 생김) 세면 이중 계산이다.
+ *   은퇴        위 룰의 status_history 중 removed·suppressed·superseded 로 바뀐 사건 수(같은 룰이 되살아났다 다시
+ *               은퇴하면 두 번). 병합으로 대체된 원본(clustered-into)은 은퇴가 아니라 통합이므로 세지 않는다.
  *   다시 교정됨 lifecycle 의 t1_explicit_correction (이미 있는 룰을 지목한 교정)
  *   날짜        UTC 날짜(lifecycle 로그 파일 이름과 같은 기준)
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { ME_BEHAVIOR, STATE_DIR } from './paths.js';
-import { loadAllRules } from '../store/rule-store.js';
+import { ME_BEHAVIOR, ME_RULES, ME_RULES_ARCHIVE, STATE_DIR } from './paths.js';
 import type { Rule } from '../store/types.js';
 import { isConfirmedBypass, isRealBlock, isSyntheticEntry, readJsonlWindow } from '../engine/lifecycle/signals.js';
 import { planT5Unflag } from '../engine/lifecycle/t5-hygiene.js';
@@ -76,6 +79,26 @@ export interface RuleHealth {
 }
 
 const utcDay = (t: number): string => new Date(t).toISOString().slice(0, 10);
+
+function readRuleDir(dir: string): Rule[] {
+  let files: string[] = [];
+  try { files = fs.readdirSync(dir).filter((f) => f.endsWith('.json')); } catch { return []; }
+  const out: Rule[] = [];
+  for (const f of files) {
+    try {
+      const r = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf-8')) as Rule;
+      if (r && typeof r.rule_id === 'string' && typeof r.policy === 'string' && typeof r.created_at === 'string') out.push(r);
+    } catch { /* 깨진 파일은 건너뜀 */ }
+  }
+  return out;
+}
+
+/** 개인 룰(현재 + 보관함). 같은 rule_id 가 둘 다 있으면 현재 쪽. */
+export function loadPersonalRules(): { current: Rule[]; all: Rule[] } {
+  const current = readRuleDir(ME_RULES);
+  const ids = new Set(current.map((r) => r.rule_id));
+  return { current, all: [...current, ...readRuleDir(ME_RULES_ARCHIVE).filter((r) => !ids.has(r.rule_id))] };
+}
 const normalize = (s: string): string => s.normalize('NFC').toLowerCase().replace(/[\s.,;:!?'"`()[\]{}~·…-]+/g, ' ').trim();
 
 function readEvidenceTimes(): { user: number[]; mined: number[] } {
@@ -114,13 +137,13 @@ function readLifecycleEvents(days: number, now: number): Array<{ kind?: string; 
   return out;
 }
 
-export function computeRuleHealth(opts: { days?: number; now?: number; rules?: Rule[] } = {}): RuleHealth {
+export function computeRuleHealth(opts: { days?: number; now?: number } = {}): RuleHealth {
   const days = opts.days ?? 14;
   const now = opts.now ?? Date.now();
   const since = now - days * DAY;
-  const rules = opts.rules ?? loadAllRules();
+  const { current: rules, all: history } = loadPersonalRules();
   const active = rules.filter((r) => r.status === 'active');
-  const byId = new Map(rules.map((r) => [r.rule_id, r]));
+  const byId = new Map(history.map((r) => [r.rule_id, r]));
   const policyOf = (id: string): string | null => byId.get(id)?.policy.replace(/\s+/g, ' ').slice(0, 100) ?? null;
 
   // ── 룰 상태 ──
@@ -149,12 +172,15 @@ export function computeRuleHealth(opts: { days?: number; now?: number; rules?: R
   const promotions = lifecycle.filter((e) => e.kind === 'meta_promote_to_a');
   const t1 = lifecycle.filter((e) => e.kind === 't1_explicit_correction');
 
-  const created = rules.filter((r) => Date.parse(r.created_at) >= since);
+  // 세션 임시 룰은 생성·은퇴에서 뺀다 — avoid-this 교정 1건이 session 룰 + 승급 me 룰로 두 번 세지고,
+  // 승급 직후 session 룰의 superseded(D3)·12시간 뒤 suppressed 가 '은퇴'로 세지던 문제(2026-11-17 Handoff 연동 때 발견).
+  const durable = history.filter((r) => r.scope !== 'session');
+  const created = durable.filter((r) => Date.parse(r.created_at) >= since);
   const retirements: number[] = [];
-  for (const r of rules) {
+  for (const r of durable) {
     for (const h of r.status_history ?? []) {
       const t = Date.parse(h.at);
-      if (t >= since && RETIRED_TO.has(h.to)) retirements.push(t);
+      if (t >= since && RETIRED_TO.has(h.to) && !String(h.reason ?? '').startsWith('clustered-into')) retirements.push(t);
     }
   }
 
