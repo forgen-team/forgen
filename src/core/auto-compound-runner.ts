@@ -432,6 +432,12 @@ ${summary}
   return { ok: true, retriable: false };
 }
 
+function minedScope(generality: 'project' | 'general'): { scope_hint?: 'general'; projects?: string[] } {
+  if (generality === 'general') return { scope_hint: 'general' };
+  const key = projectKeyFor(cwd);
+  return key ? { projects: [key] } : {};
+}
+
 async function phaseLearning(summary: string, attempt: number, sessId: string = sid): Promise<PhaseResult> {
   const V1_PROFILE = path.join(ME_DIR, 'forge-profile.json');
   const V1_EVIDENCE_DIR = path.join(ME_DIR, 'behavior');
@@ -450,7 +456,7 @@ ${profileContext}
 출력 형식 (JSON만, 설명 없이):
 {
   "corrections": [
-    { "policy": "이런 상황에서는 이렇게 하라(구체·행동가능)", "target": "무엇에 대한 교정인가(짧은 명사구)", "kind": "prefer-from-now" 또는 "avoid-this", "axis": "quality_safety" 또는 "autonomy" 또는 "judgment_philosophy" 또는 "communication_style" }
+    { "policy": "이런 상황에서는 이렇게 하라(구체·행동가능)", "target": "무엇에 대한 교정인가(짧은 명사구)", "kind": "prefer-from-now" 또는 "avoid-this", "axis": "quality_safety" 또는 "autonomy" 또는 "judgment_philosophy" 또는 "communication_style", "generality": "task" 또는 "project" 또는 "general" }
   ],
   "observations": ["사용자의 반복 행동 패턴 목록"],
   "pack_direction": null 또는 "opposite_quality" 또는 "opposite_autonomy",
@@ -466,12 +472,15 @@ ${profileContext}
 - corrections: 사용자가 어시스턴트의 행동/접근/출력을 **교정한 지점**을 찾아라. 명시 마커
   ("하지마", "그렇게 말고", "앞으로는")뿐 아니라, **직전 [Assistant] 행동 대비 [User]가
   방향을 튼 경우**도 포함:
-    · 긍정 지시형("~해줘", "~돌려봐" — 어시스턴트가 안 하던 걸 요구)
     · 반사실형("~했어야 했다", "~에서 했어야 하는 거 아니야?")
     · 완곡형("~안 해도 될 것 같아", "굳이 ~해야 할까?")
     · 부정/반박형("아니", "그게 아니라", "틀렸어")
-  단순 진행 지시("다음 거 하자", "옵션 A로")나 질문은 제외. 없으면 빈 배열.
-  각 교정은 policy(재사용 가능한 규칙문, 20자 이상)·target·kind·axis 로 구조화.
+    · 긍정 지시형("~해줘")은 **다음에 다른 작업에서도 지켜야 할 방식**을 요구할 때만.
+  **교정이 아닌 것**: 이번 작업에만 해당하는 지시(특정 파일·화면·데이터·버그·이번 요청의 내용 —
+  "이 함수 이름 바꿔", "이 표에 열 추가해"), 단순 진행 지시("다음 거 하자", "옵션 A로"), 질문. 없으면 빈 배열.
+  각 교정은 policy(재사용 가능한 규칙문, 20자 이상)·target·kind·axis·generality 로 구조화.
+  generality: "task" = 이번 작업에만 해당(이런 건 넣지 말 것), "project" = 이 저장소·프로젝트에서만 의미 있음
+  (그 프로젝트의 파일·도구·도메인 용어가 들어감), "general" = 어느 프로젝트에서나 통하는 작업 방식·말투.
 - observations: 3회 이상 반복된 행동만. 없으면 빈 배열.
 - pack_direction: 사용자가 현재 pack과 반대 방향으로 일관되게 행동했으면 opposite_quality 또는 opposite_autonomy. 아니면 null.
 - profile_delta: facet 조정 제안. -0.1~+0.1 범위. 변화 없으면 0.0.
@@ -528,6 +537,9 @@ ${summary}
     const target = typeof c.target === 'string' ? c.target.trim() : '';
     const kind = c.kind === 'avoid-this' ? 'avoid-this' : 'prefer-from-now';
     const axis = typeof c.axis === 'string' ? c.axis : null;
+    // 0.7.0 D5-1: 이번 작업에만 해당하는 지시는 룰이 아니다. 값이 없으면 project 로 본다(보수적).
+    const generality = c.generality === 'task' || c.generality === 'general' ? c.generality : 'project';
+    if (generality === 'task') continue;
     if (policy.length < 20 || !target) continue;
     if (containsPromptInjection(policy) || containsPromptInjection(target)) {
       process.stderr.write('[forgen-auto-compound] skipped mined correction (injection filter)\n');
@@ -540,7 +552,8 @@ ${summary}
       summary: policy,
       axis_refs: axis ? [axis] : [],
       confidence: 0.55, // ①(실시간)보다 낮게 — 채굴 불확실성 반영
-      raw_payload: { kind, target, axis_hint: axis, auto_mined: true },
+      // D5-5·D6-2: 범위는 Haiku 판단 — general 은 전역, project 는 이 세션 폴더의 프로젝트(홈 등 프로젝트 밖이면 전역).
+      raw_payload: { kind, target, axis_hint: axis, auto_mined: true, generality, ...minedScope(generality) },
     });
     saveEvidence(ev);
     minedCorrections++;

@@ -12,16 +12,19 @@ import { ME_BEHAVIOR, ME_RULES } from '../core/paths.js';
 import { atomicWriteJSON, safeReadJSON } from '../hooks/shared/atomic-write.js';
 import type { Evidence, EvidenceType, Rule, RuleCategory, RuleSource } from './types.js';
 import { HOST_IDS, type HostId } from '../core/trust-layer-intent.js';
-import { createRule, saveRule, loadActiveRules, updateRuleStatus, findRuleByRenderKey } from './rule-store.js';
+import { createRule, saveRule, loadActiveRules, loadAllRules, updateRuleStatus, findRuleByRenderKey } from './rule-store.js';
 import { classify, applyProposal } from '../engine/enforce-classifier.js';
 import { detect as detectT1 } from '../engine/lifecycle/trigger-t1-correction.js';
 import { foldEvents } from '../engine/lifecycle/orchestrator.js';
 import { appendLifecycleEvents } from '../engine/lifecycle/meta-reclassifier.js';
 import { findMostSimilarRule, laplaceConfidence, strengthForConfidence } from '../engine/correction-clustering.js';
-import { recordMinedObservation } from '../engine/correction-cluster-runner.js';
 import { withFileLockSync } from '../hooks/shared/file-lock.js';
 import { withStatusChange } from './rule-lifecycle.js';
 import { normalizePolicy } from './rule-normalize.js';
+import {
+  AUTO_MINED_PREFIX, MINED_MAX_ACTIVE, MINED_MAX_CANDIDATES, MINED_TTL_MS, isMinedRule, lastEvidenceAt,
+  mergeMinedProjects, minedProjectsForNew, minedStatusFor,
+} from './mined-candidates.js';
 
 function evidencePath(evidenceId: string): string {
   return path.join(ME_BEHAVIOR, `${evidenceId}.json`);
@@ -196,34 +199,35 @@ export function loadPromotionCandidates(): Evidence[] {
  * - 생성나이 은퇴: TTL 지난 미확인 채굴 룰 retire (me-scope 룰이 매 세션 주입돼 ROI/T4 로는
  *   은퇴 안 되던 문제의 실제 해소). + 라이브 채굴 룰 총량 상한.
  */
-const AUTO_MINED_PREFIX = 'auto:';
-const AUTO_MINED_TTL_MS = 21 * 24 * 60 * 60 * 1000; // 21일
-const AUTO_MINED_MAX_LIVE = 30;
-
 /**
- * 채굴(behavior_inference) 룰 은퇴: TTL 초과 + 총량 상한 초과분(오래된 순).
- * ADR-017 D3 캡 재정의: 총량 상한은 *개념(클러스터) 수* 기준 — loadActiveRules() 가 status
- * 'active' 만 반환하므로 병합/링크로 superseded 된 원본은 상한 계산에서 자연히 제외되고,
- * 통합 룰 1개가 개념 1개로 집계된다. (status 필터를 넓히면 이 보장이 깨진다.)
+ * 채굴(behavior_inference) 룰 은퇴 (0.7.0 D5-3: 기준 = 마지막 근거 시각, 생성 시각 아님).
+ *   활성: 마지막 근거 21일 경과 → removed('auto-mined-ttl'), 30개 초과분(오래된 근거 순) → removed('auto-mined-cap')
+ *   후보: 마지막 근거 21일 경과 → removed('candidate-expired'), 100개 초과분 → removed('candidate-cap')
+ * 생성 시각 기준이던 때는 재추출된 룰이 옛 생성 시각 그대로 다음 검사에서 또 제거돼 생성≈은퇴 순환이 생겼다.
+ * ADR-017 D3: 상한은 개념 수 — 병합·링크로 superseded 된 원본은 status 필터로 자연히 빠진다.
  */
 function retireStaleAutoMinedRules(now: number): void {
-  const auto = loadActiveRules().filter(
-    (r) => r.scope === 'me' && r.source === 'behavior_inference' && r.render_key?.startsWith(AUTO_MINED_PREFIX),
-  );
-  const byAge = auto
-    .map((r) => ({ r, age: now - Date.parse(r.created_at) }))
-    .sort((a, b) => b.age - a.age); // 오래된 순
-  const keep: typeof byAge = [];
-  for (const item of byAge) {
-    if (item.age >= AUTO_MINED_TTL_MS) {
-      updateRuleStatus(item.r.rule_id, 'removed', 'auto-mined-ttl', 'evidence-store'); // TTL 초과 → 은퇴
-    } else {
-      keep.push(item);
+  const mined = loadAllRules().filter((r) => r.scope === 'me' && isMinedRule(r) && (r.status === 'active' || r.status === 'candidate'));
+  for (const status of ['active', 'candidate'] as const) {
+    const byAge = mined
+      .filter((r) => r.status === status)
+      .map((r) => ({ r, age: now - lastEvidenceAt(r) }))
+      .sort((a, b) => b.age - a.age); // 오래된 순
+    const keep: typeof byAge = [];
+    for (const item of byAge) {
+      if (item.age >= MINED_TTL_MS) updateRuleStatus(item.r.rule_id, 'removed', status === 'active' ? 'auto-mined-ttl' : 'candidate-expired', 'evidence-store');
+      else keep.push(item);
+    }
+    const max = status === 'active' ? MINED_MAX_ACTIVE : MINED_MAX_CANDIDATES;
+    for (let i = 0; i < keep.length - max; i++) {
+      updateRuleStatus(keep[i].r.rule_id, 'removed', status === 'active' ? 'auto-mined-cap' : 'candidate-cap', 'evidence-store');
     }
   }
-  // 총량 상한 초과분(가장 오래된 것부터) 은퇴.
-  const excess = keep.length - AUTO_MINED_MAX_LIVE;
-  for (let i = 0; i < excess; i++) updateRuleStatus(keep[i].r.rule_id, 'removed', 'auto-mined-cap', 'evidence-store');
+}
+
+/** 채굴 룰 상태 갱신 — 바뀌면 status_history 에 사유를 남긴다(후보 확정은 --health 가 이 기록으로 센다). */
+function withMinedStatus(rule: Rule, next: Rule['status'], reason: string): Rule {
+  return rule.status === next ? rule : withStatusChange(rule, next, reason, 'evidence-store');
 }
 
 /**
@@ -334,19 +338,30 @@ export function promoteSessionCandidates(sessionId: string): number {
       //   - explicit 룰과 매칭 → 룰을 만들지 않고 explicit 의 mined_observations 만 +1
       //     (evidence_refs 합산 금지 — ADR-013 불변식).
       // 같은 evidence 의 재관측(alreadyConsumed)은 아래 기존 경로와 동일하게 no-op.
+      // 0.7.0 D5: 비교 대상에 채굴 후보도 넣는다(같은 개념이 다른 세션에서 다시 잡히면 그 후보에 근거가 쌓인다).
+      // explicit 룰과 같은 개념이면 증거만 소비 표시하고 mined_observations 는 올리지 않는다 — 극성(같은 말인지
+      // 반대 말인지)을 모르므로 지지로 세지 않는다(D5-4).
       if (autoMined && !alreadyConsumed) {
-        const activeMe = loadActiveRules().filter((r) => r.scope === 'me');
-        const match = findMostSimilarRule(candidate.summary, activeMe);
+        // 사용자가 끈(suppressed) 채굴 룰도 비교한다 — target 만 바뀌어 다시 뽑힌 같은 개념이 새 후보로 되살아나지 않게.
+        const pool = loadAllRules().filter((r) => r.scope === 'me'
+          && (r.status === 'active' || ((r.status === 'candidate' || r.status === 'suppressed') && isMinedRule(r))));
+        const match = findMostSimilarRule(candidate.summary, pool);
         if (match) {
           const hit = match.rule;
-          if (hit.source === 'behavior_inference') {
+          if (hit.source === 'behavior_inference' && hit.status !== 'suppressed') {
             const evidenceRefs = hit.evidence_refs.includes(candidate.evidence_id)
               ? hit.evidence_refs
               : [...hit.evidence_refs, candidate.evidence_id];
-            saveRule({ ...hit, evidence_refs: evidenceRefs, strength: 'default' });
+            const { projects: _p, ...hitWithoutProjects } = hit;
+            const projects = mergeMinedProjects(hit, payload);
+            const status = hit.status === 'active' ? 'active' : minedStatusFor(evidenceRefs);
+            saveRule({
+              ...withMinedStatus(hitWithoutProjects as Rule, status, 'candidate-confirmed'),
+              ...(projects ? { projects } : {}),
+              evidence_refs: evidenceRefs,
+              strength: 'default',
+            });
             promoted++;
-          } else {
-            recordMinedObservation(hit, 1);
           }
           saveEvidence({
             ...candidate,
@@ -369,6 +384,11 @@ export function promoteSessionCandidates(sessionId: string): number {
 
       if (existingRule) {
         if (alreadyConsumed) continue; // 같은 evidence 의 sweep 재관측 — no-op.
+        // 0.7.0: 사용자가 끈 채굴 룰은 다시 잡혀도 되살리지 않는다(증거만 소비 표시).
+        if (autoMined && existingRule.status === 'suppressed') {
+          saveEvidence({ ...candidate, candidate_rule_refs: [...(candidate.candidate_rule_refs ?? []), existingRule.rule_id] });
+          continue;
+        }
 
         const evidenceRefs = existingRule.evidence_refs.includes(candidate.evidence_id)
           ? existingRule.evidence_refs
@@ -394,14 +414,27 @@ export function promoteSessionCandidates(sessionId: string): number {
         // rule 은 다음 retireStaleAutoMinedRules() 호출 때 기존 나이 기준으로 다시
         // 은퇴 여부가 평가된다(의도된 동작, thrash 아님: 최소 1세션은 유효하게 주입됨).
         const { projects: _previousProjects, ...existingWithoutProjects } = existingRule;
-        const projects = mergedRuleProjects(existingRule, payload?.projects);
-        saveRule({
-          ...existingWithoutProjects,
-          ...(projects ? { projects } : {}),
-          status: 'active',
-          evidence_refs: evidenceRefs,
-          strength,
-        });
+        if (autoMined) {
+          // 0.7.0 D5: 활성은 그대로, 후보·은퇴·대체된 룰은 근거 세션 수로 활성/후보를 정한다.
+          const live = existingRule.status === 'active' || existingRule.status === 'candidate';
+          const projects = live ? mergeMinedProjects(existingRule, payload) : minedProjectsForNew(payload);
+          const status = existingRule.status === 'active' ? 'active' : minedStatusFor(evidenceRefs);
+          saveRule({
+            ...withMinedStatus(existingWithoutProjects as Rule, status, existingRule.status === 'candidate' ? 'candidate-confirmed' : 'mined-reobserved'),
+            ...(projects ? { projects } : {}),
+            evidence_refs: evidenceRefs,
+            strength,
+          });
+        } else {
+          const projects = mergedRuleProjects(existingRule, payload?.projects);
+          saveRule({
+            ...existingWithoutProjects,
+            ...(projects ? { projects } : {}),
+            status: 'active',
+            evidence_refs: evidenceRefs,
+            strength,
+          });
+        }
         saveEvidence({
           ...candidate,
           candidate_rule_refs: [...(candidate.candidate_rule_refs ?? []), existingRule.rule_id],
@@ -429,9 +462,15 @@ export function promoteSessionCandidates(sessionId: string): number {
         source,
         evidence_refs: [candidate.evidence_id],
         render_key: renderKey,
-        ...(Array.isArray(payload.projects) ? { projects: payload.projects as string[] } : {}),
+        ...(() => {
+          const projects = autoMined ? minedProjectsForNew(payload)
+            : Array.isArray(payload.projects) ? payload.projects as string[] : undefined;
+          return projects?.length ? { projects } : {};
+        })(),
       });
       if (autoMined) {
+        // 0.7.0 D5: 채굴 룰은 후보로 태어난다 — 다른 세션에서 같은 개념이 다시 잡혀야 주입된다.
+        rule.status = minedStatusFor(rule.evidence_refs);
         // advisory-only (SEV-1 #2): classify() 를 돌리지 않고 enforce_via 를 비워, 채굴 룰이
         // 절대 Mech-A 차단(PreToolUse/Stop block)을 얻지 못하게 한다. 컨텍스트 주입만 되고
         // 어떤 훅도 강제하지 않음 — 환각 교정이 영구 차단 룰이 되는 위험 근절.

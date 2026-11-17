@@ -419,6 +419,7 @@ async function handleRuleNamespace(args: string[]): Promise<void> {
     forgen rule restore [<name> --yes]     List snapshots or restore one
     forgen rule set-project <id> <key>|--global         Limit a rule to one project
     forgen rule classify-projects --project <key> --keywords a,b [--apply]
+    forgen rule classify-projects --from-sessions [--apply [id...]]  Suggest scopes from the sessions' folders
     forgen rule import-pack <pack> [--project <key>] [--apply]
     forgen rule merge-mined [--apply]      ADR-017 D3: merge mined (auto:) rules among themselves,
                                            link same-concept ones to explicit rules (dry-run by default)
@@ -427,6 +428,7 @@ async function handleRuleNamespace(args: string[]): Promise<void> {
     forgen rule unflag [--apply]           Clear review flags set only by the conflict detector (T5); preview by default
     forgen rule review [--keep|--suppress <id...>]  Review flagged rules by cause (correction / repeated blocks / bypass)
     forgen rule dedupe [--apply]           Merge active rules with the same sentence; preview by default
+    forgen rule candidates                 Mined rules waiting for a second session before injection
     forgen rule enforce <id-or-prefix>     Turn on blocking for a rule (semantic rules only record by default)
     forgen rule merge-explicit [--apply <id...>]  list proposed merges (with ids); apply only the listed ids
     forgen rule restore-demoted [--apply]  restore precision-auto-demoted (advise) rules to their previous mode (preview by default)
@@ -504,6 +506,11 @@ async function handleRuleNamespace(args: string[]): Promise<void> {
     case 'dedupe': {
       const { handleRuleDedupe } = await import('./engine/rule-dedupe.js');
       handleRuleDedupe(rest);
+      return;
+    }
+    case 'candidates': {
+      const { handleRuleCandidates } = await import('./engine/rule-candidates.js');
+      handleRuleCandidates(rest);
       return;
     }
     case 'review': {

@@ -287,3 +287,9 @@ Fable · ~/workspace/forgen(main*) · ctx 42%/1M · 5h 63% → 15:40 소진 (리
 | `rotateIfBig`(10MB 단순 rename) 이후 explain/stats가 로테이션 파일을 못 읽음 — 기존 결함, 기록 증가로 더 자주 노출 | 중 | 백로그 (D2 `checks.jsonl`은 자체 7일 TTL로 10MB에 안 닿게 설계) |
 | L1 룰 `lifecycle.violation_count:0`인데 실 위반 92건 — lifecycle 카운터 미갱신 (ADR-002 T2 측정 부채) | 중 | 백로그 — D1 집계 정직화와 같은 뿌리, 별도 ADR 또는 ADR-002 보정 |
 | `kind:'correction'`이 T2 위반으로 집계되는 기존 결함 | 중 | §8-1 선행 픽스 |
+
+## 개정 (2026-11-17, v0.7.0 — 룰 품질 재설계 D5)
+
+근거: docs/plans/2026-11-17-rule-quality-redesign.md §D5·D6-2/3 세부.
+- D3 자동 경로(promoteSessionCandidates 사전 중복 검사)에서 채굴 결과가 explicit 룰과 같은 개념이면 **관측 +1 을 올리지 않는다** — 같은 말인지 반대 말인지(극성)를 판정하지 못하므로 지지로 세지 않는다. 증거만 소비 표시한다. 사용자가 실행하는 `forgen rule merge-mined` 의 링크 경로는 그대로다.
+- 사전 중복 검사 대상에 채굴 후보(`candidate`)를 포함한다.

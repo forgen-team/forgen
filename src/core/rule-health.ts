@@ -24,6 +24,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { ME_BEHAVIOR, ME_RULES, ME_RULES_ARCHIVE, STATE_DIR } from './paths.js';
 import type { Rule } from '../store/types.js';
+import { CURRENT_RULE_SCHEMA_VERSION } from '../store/types.js';
 import { isConfirmedBypass, isRealBlock, isSyntheticEntry, readJsonlWindow } from '../engine/lifecycle/signals.js';
 import { planT5Unflag } from '../engine/lifecycle/t5-hygiene.js';
 import { planDedupe } from '../engine/rule-dedupe.js';
@@ -53,6 +54,8 @@ export interface RuleHealth {
   rules: {
     active: { total: number; explicit: number; mined: number; onboarding: number; other: number };
     flagged: { total: number; conflictOnly: number; other: number };
+    /** 0.7.0: 주입 전 추론 룰 후보 수 */
+    candidates: number;
     neverInjected: number;
     unscopedLearned: number;
     duplicateGroups: Array<{ policy: string; ruleIds: string[] }>;
@@ -62,6 +65,8 @@ export interface RuleHealth {
     correctionsMined: number;
     rulesCreatedExplicit: number;
     rulesCreatedMined: number;
+    /** 0.7.0: 기간 안 후보 → 활성 전환 수 */
+    candidatesConfirmed: number;
     injections: number;
     checksPass: number;
     checksViolation: number;
@@ -88,6 +93,8 @@ function readRuleDir(dir: string): Rule[] {
   for (const f of files) {
     try {
       const r = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf-8')) as Rule;
+      // rule-store 와 같은 기준 — 상위 버전 스키마 룰은 읽지 않는다(다운그레이드 시 잘못 셈 방지).
+      if (r?.schema_version != null && r.schema_version > CURRENT_RULE_SCHEMA_VERSION) continue;
       if (r && typeof r.rule_id === 'string' && typeof r.policy === 'string' && typeof r.created_at === 'string') out.push(r);
     } catch { /* 깨진 파일은 건너뜀 */ }
   }
@@ -137,6 +144,14 @@ function readLifecycleEvents(days: number, now: number): Array<{ kind?: string; 
   return out;
 }
 
+/** 룰이 활성이 된 시각. 후보로 태어나 아직 활성이 된 적 없으면 null. */
+function activeSince(r: Rule): number | null {
+  const born = r.status_history?.[0]?.from ?? r.status;
+  if (born !== 'candidate') return Date.parse(r.created_at);
+  const up = (r.status_history ?? []).find((h) => h.from === 'candidate' && h.to === 'active');
+  return up ? Date.parse(up.at) : null;
+}
+
 export function computeRuleHealth(opts: { days?: number; now?: number } = {}): RuleHealth {
   const days = opts.days ?? 14;
   const now = opts.now ?? Date.now();
@@ -171,12 +186,19 @@ export function computeRuleHealth(opts: { days?: number; now?: number } = {}): R
   // 세션 임시 룰은 생성·은퇴에서 뺀다 — avoid-this 교정 1건이 session 룰 + 승급 me 룰로 두 번 세지고,
   // 승급 직후 session 룰의 superseded(D3)·12시간 뒤 suppressed 가 '은퇴'로 세지던 문제(2026-11-17 Handoff 연동 때 발견).
   const durable = history.filter((r) => r.scope !== 'session');
-  const created = durable.filter((r) => Date.parse(r.created_at) >= since);
+  // 0.7.0 D5: 후보로 태어난 추론 룰은 만든 날이 아니라 활성이 된 날 '생성'으로 센다. 후보에서 바로 정리(만료)된 룰은
+  // 활성이었던 적이 없으므로 은퇴로 세지 않는다.
+  const created = durable
+    .map((r) => ({ r, at: activeSince(r) }))
+    .filter((x): x is { r: Rule; at: number } => x.at !== null && x.at >= since);
   const retirements: number[] = [];
+  const confirmations: number[] = [];
   for (const r of durable) {
     for (const h of r.status_history ?? []) {
       const t = Date.parse(h.at);
-      if (t >= since && RETIRED_TO.has(h.to) && !String(h.reason ?? '').startsWith('clustered-into')) retirements.push(t);
+      if (t < since) continue;
+      if (h.from === 'candidate' && h.to === 'active') confirmations.push(t);
+      if (h.from !== 'candidate' && RETIRED_TO.has(h.to) && !String(h.reason ?? '').startsWith('clustered-into')) retirements.push(t);
     }
   }
 
@@ -191,7 +213,7 @@ export function computeRuleHealth(opts: { days?: number; now?: number } = {}): R
   };
   for (const t of ev.user) if (t >= since) { bump(t, 'correctionsUser'); bump(t, 'corrections'); }
   for (const t of ev.mined) if (t >= since) { bump(t, 'correctionsMined'); bump(t, 'corrections'); }
-  for (const r of created) bump(Date.parse(r.created_at), 'rulesCreated');
+  for (const c of created) bump(c.at, 'rulesCreated');
   for (const e of promotions) bump(e.ts ?? 0, 'rulesPromoted');
   for (const t of retirements) bump(t, 'rulesRetired');
   for (const v of blocks) bump(Date.parse(String(v.at)), 'blocks');
@@ -218,6 +240,7 @@ export function computeRuleHealth(opts: { days?: number; now?: number } = {}): R
         other: active.filter((r) => !['explicit_correction', 'behavior_inference', 'onboarding'].includes(r.source)).length,
       },
       flagged: { total: flagged.length, conflictOnly: flagged.filter((r) => conflictOnly.has(r.rule_id)).length, other: flagged.filter((r) => !conflictOnly.has(r.rule_id)).length },
+      candidates: rules.filter((r) => r.status === 'candidate').length,
       neverInjected: active.filter((r) => (r.lifecycle?.inject_count ?? 0) === 0).length,
       unscopedLearned: active.filter((r) => (r.source === 'explicit_correction' || r.source === 'behavior_inference') && !r.projects?.length).length,
       duplicateGroups,
@@ -225,8 +248,9 @@ export function computeRuleHealth(opts: { days?: number; now?: number } = {}): R
     flow: {
       correctionsUser: ev.user.filter((t) => t >= since).length,
       correctionsMined: ev.mined.filter((t) => t >= since).length,
-      rulesCreatedExplicit: created.filter((r) => r.source === 'explicit_correction').length,
-      rulesCreatedMined: created.filter((r) => r.source === 'behavior_inference').length,
+      rulesCreatedExplicit: created.filter((c) => c.r.source === 'explicit_correction').length,
+      rulesCreatedMined: created.filter((c) => c.r.source === 'behavior_inference').length,
+      candidatesConfirmed: confirmations.length,
       injections: active.reduce((n, r) => n + (r.lifecycle?.inject_count ?? 0), 0),
       checksPass: checks.filter((c) => c.result === 'pass').length,
       checksViolation: checks.filter((c) => c.result === 'violation').length,
@@ -260,7 +284,8 @@ export function renderRuleHealth(h: RuleHealth): string[] {
   const fl = h.rules.flagged;
   L.push(`    검토 대기   ${fl.total}개${fl.total ? ` (오탐 판정 ${fl.conflictOnly} → forgen rule unflag · 교정·반복 차단·우회 ${fl.other} → forgen rule review)` : ''}`);
   L.push(`    같은 문장   ${h.rules.duplicateGroups.length}묶음${h.rules.duplicateGroups.length ? ` (${h.rules.duplicateGroups.reduce((n, g) => n + g.ruleIds.length, 0)}개 룰) → forgen rule dedupe` : ''}`);
-  L.push(`    주입 0회    ${h.rules.neverInjected}개   범위 없는 학습 룰 ${h.rules.unscopedLearned}개`);
+  L.push(`    추론 후보   ${h.rules.candidates}개 (주입 전 — 다른 세션에서 한 번 더 잡히면 활성, 기간 안 활성 전환 ${f.candidatesConfirmed}) → forgen rule candidates`);
+  L.push(`    주입 0회    ${h.rules.neverInjected}개   범위 없는 학습 룰 ${h.rules.unscopedLearned}개${h.rules.unscopedLearned ? ' → forgen rule classify-projects --from-sessions' : ''}`);
   if (h.top.blocking.length) {
     L.push('', '  많이 막은 룰');
     for (const t of h.top.blocking.slice(0, 5)) L.push(`    ${String(t.blocks).padStart(4)}회  ${t.policy ?? t.ruleId}`);

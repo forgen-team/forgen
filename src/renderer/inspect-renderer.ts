@@ -88,6 +88,12 @@ export function renderRules(rules: Rule[]): string {
     }
   }
 
+  const candidates = rules.filter((r) => r.status === 'candidate');
+  if (candidates.length > 0) {
+    lines.push('');
+    lines.push(`── Mined candidates (${candidates.length}) — 주입 전, 다른 세션에서 한 번 더 잡히면 활성 (forgen rule candidates) ──`);
+  }
+
   if (suppressed.length > 0) {
     lines.push('');
     lines.push(`── Suppressed rules (${suppressed.length}) ──`);

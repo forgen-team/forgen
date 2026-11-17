@@ -87,3 +87,11 @@ forgen 학습의 입력 = "사용자 교정 포착". 포착 채널 ①(실시간
 1. 채굴 confidence 초기값 / ROI 강등 임계 — 실측 후 튜닝.
 2. B(prompt-time nudge)를 값싼 보완으로 추가할지 — C 실측 후 결정(현재는 제외).
 3. drift_critical 버그 수정 후 그 신호가 다른 용도(세션 품질)로 유효한지 재평가.
+
+## 개정 (2026-11-17, v0.7.0 — 룰 품질 재설계 D5)
+
+근거: docs/plans/2026-11-17-rule-quality-redesign.md §D5·D6-2/3 세부.
+- 채굴 룰은 status `candidate` 로 태어나 주입되지 않는다. 근거 증거의 서로 다른 세션이 2곳 이상이 되면 `active`(사유 `candidate-confirmed`).
+- 수명·상한의 기준을 생성 시각에서 **마지막 근거 시각**으로 바꾼다. 활성: 21일·30개(`auto-mined-ttl`·`auto-mined-cap`). 후보: 21일·100개(`candidate-expired`·`candidate-cap`). 재추출 즉시 제거 순환을 없앤다.
+- 추출 프롬프트가 `generality`(task·project·general)를 받고 task 는 버린다. 범위: general → 전역, project → 러너 폴더의 프로젝트(밖이면 전역).
+- advisory-only·`auto:` 네임스페이스·strength default 불변식은 그대로.
