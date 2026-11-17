@@ -269,3 +269,23 @@ describe('intent-classifier', () => {
     });
   });
 });
+
+describe('buildIntentContext — 2026-11 D2: 검증 방법을 지시하지 않는다', () => {
+  it('기본 문구에는 테스트 실행·build/lint/type-check·단계마다 검증 지시가 없다', async () => {
+    const { buildIntentContext } = await import('../src/hooks/intent-classifier.js');
+    for (const intent of ['implement', 'debug', 'refactor', 'review', 'explain', 'explore', 'design'] as const) {
+      const text = buildIntentContext(intent) ?? '';
+      expect(text).not.toMatch(/type-check|Build \+ lint|Write tests|failing test|tests pass|Consider tests|verify between/i);
+    }
+  });
+  it('general 은 아무것도 넣지 않는다', async () => {
+    const { buildIntentContext } = await import('../src/hooks/intent-classifier.js');
+    expect(buildIntentContext('general')).toBeNull();
+  });
+  it('verbose 이면 예전 문구를 그대로 낸다', async () => {
+    const { buildIntentContext } = await import('../src/hooks/intent-classifier.js');
+    expect(buildIntentContext('implement', true)).toContain('Build + lint + type-check must pass before completion');
+    expect(buildIntentContext('refactor', true)).toContain('Ensure all tests pass before AND after refactoring');
+    expect(buildIntentContext('debug', true)).toContain('Write a failing test');
+  });
+});

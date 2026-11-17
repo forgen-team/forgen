@@ -32,6 +32,7 @@ export function renderRulesBlock(ruleFiles: Record<string, string>, host: 'claud
   return [
     `<${FORGEN_RULES_TAG} host="${host}">`,
     'These are this user\'s forgen rules. They apply to this session.',
+    'When a rule here conflicts with a built-in forgen hint (e.g. [quality-rules], [debug-rules]), follow the user\'s rule.',
     '',
     sections.join('\n\n---\n\n'),
     `</${FORGEN_RULES_TAG}>`,

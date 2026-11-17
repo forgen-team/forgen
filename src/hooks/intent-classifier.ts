@@ -10,7 +10,7 @@
  */
 
 import { readStdinJSON } from './shared/read-stdin.js';
-import { isHookEnabled } from './hook-config.js';
+import { isHookEnabled, loadHookConfig } from './hook-config.js';
 import { approve, approveWithContext, failOpenWithTracking } from './shared/hook-response.js';
 
 export type Intent = 'implement' | 'debug' | 'refactor' | 'explain' | 'review' | 'explore' | 'design' | 'general';
@@ -37,7 +37,7 @@ const INTENT_RULES: IntentRule[] = [
 ];
 
 const INTENT_HINTS: Record<Intent, string> = {
-  implement: 'Implementation task. Consider tests.',
+  implement: 'Implementation task.',
   debug: 'Debug mode. Approach: reproduce → isolate → fix.',
   refactor: 'Refactoring task. Improve structure while preserving existing behavior.',
   explain: 'Explanation request. Convey core concepts concisely.',
@@ -47,11 +47,16 @@ const INTENT_HINTS: Record<Intent, string> = {
   general: 'General request.',
 };
 
-/** Intent-specific context rules injected via additionalContext */
+/**
+ * Intent-specific context rules injected via additionalContext.
+ *
+ * 2026-11 재설계 D2: 검증 방법을 지시하는 줄(테스트 작성·실행, build/lint/type-check, 단계마다 검증)은 넣지 않는다.
+ * 이 블록은 사용자 룰을 보지 않고 매 프롬프트에 들어가서, "작업 중에는 테스트·lint 를 돌리지 마라" 같은
+ * 개인 룰과 정면으로 부딪혔다(실데이터: 같은 교정 1주 6회). 검증을 언제·어떻게 할지는 사용자 룰이 정한다.
+ * 예전 문구는 hooks.intent-classifier.verbose=true 로 되살릴 수 있다.
+ */
 const INTENT_CONTEXT: Partial<Record<Intent, string>> = {
   implement: `[quality-rules]
-- Write tests for new logic (branch coverage 83%+)
-- Build + lint + type-check must pass before completion
 - Prefer small incremental changes (<200 lines)
 - Interfaces and type contracts before implementation`,
   review: `[review-rules]
@@ -59,6 +64,25 @@ const INTENT_CONTEXT: Partial<Record<Intent, string>> = {
 - Check: logic errors, security (OWASP), performance, maintainability
 - Verify edge cases and error handling at system boundaries
 - No empty catch blocks, no eslint-disable without justification`,
+  debug: `[debug-rules]
+- Reproduce the bug first, then isolate the root cause
+- Check for regression: does the fix break anything else?
+- Read error messages carefully — they usually point to the cause`,
+  refactor: `[refactor-rules]
+- Make one structural change at a time
+- Preserve external behavior — refactoring changes structure, not function
+- Avoid mixing refactoring with feature changes in the same pass`,
+};
+
+/** 2026-11 이전 문구 (hooks.intent-classifier.verbose=true). */
+const LEGACY_HINTS: Partial<Record<Intent, string>> = { implement: 'Implementation task. Consider tests.' };
+const LEGACY_CONTEXT: Partial<Record<Intent, string>> = {
+  implement: `[quality-rules]
+- Write tests for new logic (branch coverage 83%+)
+- Build + lint + type-check must pass before completion
+- Prefer small incremental changes (<200 lines)
+- Interfaces and type contracts before implementation`,
+  review: INTENT_CONTEXT.review,
   debug: `[debug-rules]
 - Reproduce the bug first, then isolate the root cause
 - Write a failing test that captures the bug before fixing
@@ -70,6 +94,14 @@ const INTENT_CONTEXT: Partial<Record<Intent, string>> = {
 - Preserve external behavior — refactoring changes structure, not function
 - Avoid mixing refactoring with feature changes in the same pass`,
 };
+
+/** 의도별로 주입할 문구. general 이면 null. */
+export function buildIntentContext(intent: Intent, verbose = false): string | null {
+  if (intent === 'general') return null;
+  const hint = (verbose ? LEGACY_HINTS[intent] : undefined) ?? INTENT_HINTS[intent];
+  const extra = (verbose ? LEGACY_CONTEXT : INTENT_CONTEXT)[intent] ?? '';
+  return extra ? `[intent: ${intent}] ${hint}\n${extra}` : `[intent: ${intent}] ${hint}`;
+}
 
 export function classifyIntent(prompt: string): Intent {
   for (const rule of INTENT_RULES) {
@@ -91,17 +123,9 @@ async function main(): Promise<void> {
     return;
   }
 
-  const intent = classifyIntent(input.prompt);
-
-  if (intent === 'general') {
-    console.log(approve());
-    return;
-  }
-
-  const hint = INTENT_HINTS[intent];
-  const extra = INTENT_CONTEXT[intent] ?? '';
-  const context = extra ? `[intent: ${intent}] ${hint}\n${extra}` : `[intent: ${intent}] ${hint}`;
-  console.log(approveWithContext(context, 'UserPromptSubmit'));
+  const verbose = loadHookConfig('intent-classifier')?.verbose === true;
+  const context = buildIntentContext(classifyIntent(input.prompt), verbose);
+  console.log(context ? approveWithContext(context, 'UserPromptSubmit') : approve());
 }
 
 main().catch((e) => {
