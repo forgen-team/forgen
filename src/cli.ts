@@ -575,6 +575,14 @@ async function main() {
     console.log(PKG_VERSION);
     return;
   }
+  // npm 이 설치 스크립트를 건너뛴 설치·업그레이드 안내 (hook 이 아직 없으면 SessionStart 자동 보완도 못 돈다).
+  if (args[0] !== 'statusline' && args[0] !== 'doctor' && args[0] !== 'install' && process.stderr.isTTY) {
+    try {
+      const { setupState } = await import('./core/install-marker.js');
+      const st = setupState();
+      if (st.pending) console.error(`[forgen] ${st.pkgVersion} 설치 마무리가 실행되지 않았습니다 (npm 이 설치 스크립트를 건너뜀). 실행: forgen doctor --repair`);
+    } catch { /* 안내일 뿐 */ }
+  }
   if (args[0] !== 'statusline') {
     const { nodeEngineWarning } = await import('./core/node-engine.js');
     const w = nodeEngineWarning();

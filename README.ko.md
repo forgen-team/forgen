@@ -87,6 +87,8 @@ npm install -g @wooojin/forgen
 forgen
 ```
 
+> **npm 11 이 설치 스크립트를 막았다면.** `npm i -g` 출력에 `npm warn install-scripts` 가 보이면 forgen 설치 마무리가 실행되지 않은 것입니다. `forgen doctor --repair` 를 한 번 실행하세요(또는 `npm i -g --allow-scripts=@wooojin/forgen @wooojin/forgen`). 업그레이드라면 다음 Claude Code 세션 시작 때도 자동으로 마무리됩니다.
+
 > **Node 22 이상 필요.** Node 20에서 `npm i -g @wooojin/forgen`을 하면 npm이 `engines`에 맞는 최신 버전을 고르기 때문에 조용히 0.4.8이 설치됩니다. 먼저 `node -v`를 확인하고, 설치 후 `forgen --version`으로 확인하세요.
 
 첫 실행을 감지하면 4문항 온보딩이 시작됩니다. 각 질문은 구체적인 시나리오입니다:

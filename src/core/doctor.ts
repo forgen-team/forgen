@@ -194,6 +194,14 @@ export async function runDoctor(opts: DoctorOptions = {}): Promise<number> {
   if (opts.repair && probes.some((p) => !p.ok && !p.info)) {
     const before = probes.filter((p) => !p.ok && !p.info).length;
     await reinstallForRepair();
+    try {
+      const { setupState, runSetupNow } = await import('./install-marker.js');
+      if (setupState(verifyOpts.pkgRoot, verifyOpts.forgenHome).pending) {
+        const r = runSetupNow(verifyOpts.pkgRoot);
+        console.log(`  [Repair] 설치 마무리(postinstall) 실행 — exit ${r.status}`);
+        if (r.status !== 0) console.warn(r.output.split('\n').slice(-5).join('\n'));
+      }
+    } catch (e) { console.warn(`  [Repair] 설치 마무리 실패: ${e instanceof Error ? e.message : String(e)}`); }
     probes = await collectProbes(verifyOpts);
     const after = probes.filter((p) => !p.ok && !p.info);
     console.log(after.length === 0
