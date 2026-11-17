@@ -73,6 +73,28 @@
 - **깨질 수 있는 것**: 정규화가 다른 의미를 같게 만듦 → 완전 일치만 자동, 숫자·부정어는 정규화하지 않음.
 - **테스트**: target만 다른 같은 메시지 2회 → 룰 1개.
 
+### D4·D7 세부 (2026-11-17 구현 전 확정)
+
+> critic(구현 전) APPROVE + 조건 3건 반영: drift 강등도 reviewed_at 이후만, 정규화 함수 단일화, systemMessage 병합.
+
+**D4 같은 문장 방지·정리**
+- 정규화: NFC → 소문자 → 공백 연속을 하나로 → 앞뒤 공백·끝의 문장부호(. ! ? 。) 제거. 숫자·부정어·중간 문장부호는 그대로(의미가 달라지지 않게).
+- 생성 시: `promoteSessionCandidates` 의 explicit(채굴 아님) 새 룰 경로에서, render_key 로 기존 룰을 못 찾았을 때 활성 scope:'me' **explicit** 룰 중 정규화 문장이 같은 것이 있으면 그 룰을 기존 룰로 쓴다(증거 추가·강도 재계산, 새 룰 안 만듦). 채굴 룰과는 비교하지 않는다(ADR-013: explicit 와 채굴은 섞지 않음 — 채굴 쪽 사전 중복 검사가 따로 있다).
+- 정리 명령 `forgen rule dedupe [--apply]` (미리보기 기본, 적용 전 스냅샷): 활성 scope:'me' 룰을 출처별(explicit / 채굴)로 나눠 정규화 문장이 같은 묶음을 찾는다. 남길 룰: strength(hard>strong>default>soft) → 오래된 created_at. 나머지는 superseded(superseded_by=남길 룰, 사유 'duplicate-of'). 남길 룰의 evidence_refs 에 같은 출처 증거를 합치고 projects 는 `mergeRuleProjects`(하나라도 전역이면 전역). hard 룰은 대체하지 않는다(남길 쪽이 될 수는 있음).
+- 자동 마이그레이션은 하지 않는다. `--health` 의 "같은 문장" 줄에 명령을 안내한다.
+- 정규화는 `src/store/rule-normalize.ts` 의 `normalizePolicy()` 하나로 두고, 생성 시 판정·dedupe·`--health`(지금 `rule-health.ts` 의 `normalize` 교체)가 모두 이 함수를 쓴다.
+
+**D7 검토 대기 처리**
+- `forgen rule review`: 활성·flagged 룰을 원인별로 보여 준다. 원인은 lifecycle 로그에서 그 룰의 마지막 flag 이벤트로 판정.
+  - 교정으로 수정 요청(T1): 그 교정 증거의 문장·날짜
+  - 반복 차단(T2): 최근 30일 차단 수, 정밀도(정탐/오탐/미판정, verdicts), 차단/자문 여부. 차단 룰은 "자주 막았다 = 모델이 자꾸 시도함 또는 오탐" 이라 정밀도를 같이 보여 준다.
+  - 우회(T3), 원인 기록 없음
+- 처리: `--keep <id...>` → phase active + `lifecycle.reviewed_at` 기록. `--suppress <id...>` → status suppressed(사유 'review', hard 룰은 거부). 수정은 명령이 아니라 Claude 에게 "이 룰을 이렇게 바꿔"라고 말하면 `correction-record`(rule_id, prefer-from-now)로 대체된다는 안내만.
+- **다시 걸림 방지**: T2·T3 는 `reviewed_at` 이 있으면 그 이후 기록만 센다(`RuleSignals.violations_since_review` / `bypass_since_review`). 없으면 지금처럼 30일. drift 기반 강등(`scanDriftForDemotion`)도 `reviewed_at` 이후 drift 만 센다(critic: 별도 경로라 T2·T3 만 막으면 유지한 룰이 강등될 수 있음). T1(사용자가 룰을 지목한 교정)은 그대로 즉시 flag.
+- 화면 문구: `forgen status --rules`(inspect) 의 flagged 표시를 원인별로("교정으로 수정 요청됨" / "반복 차단 — 검토" / "우회됨" / "충돌 감지 기록(참고)").
+- 세션 시작 안내: 검토 대기(T5 제외)가 3개 이상이면 사용자 화면(systemMessage)에 한 줄 — 하루 1회만(`state/review-notice.json`). 모델 컨텍스트에는 넣지 않는다(모델이 매 세션 사용자에게 재촉하지 않게). systemMessage 는 단일 필드라 Haiku 안내와 동시에 있으면 줄바꿈으로 합쳐 하나로 낸다.
+- `lifecycle.reviewed_at` 은 새 선택 필드 — Handoff 는 모르는 필드를 읽지 않으므로 호환.
+
 ### D5. 채굴 룰: 후보 단계와 추출 기준 (P5·P6) — 0.7.0
 
 - **변경**
