@@ -490,6 +490,15 @@ async function main(): Promise<void> {
     } catch (e) { log.debug('Haiku 안내 생성 실패', e); }
   }
 
+  // D7: 검토 대기 안내(하루 1회). systemMessage 는 단일 필드라 Haiku 안내와 줄바꿈으로 합친다.
+  if (!doctorProbe) {
+    try {
+      const { takeReviewNotice } = await import('../core/review-notice.js');
+      const review = takeReviewNotice();
+      if (review) haikuNotice = haikuNotice ? `${haikuNotice}\n${review}` : review;
+    } catch (e) { log.debug('검토 대기 안내 생성 실패', e); }
+  }
+
   if (rulesBlock || recoveryMessages.length > 0) {
     const { fitSessionContext } = await import('./shared/injection-caps.js');
     console.log(approveWithContext(fitSessionContext(rulesBlock, recoveryMessages), 'SessionStart', haikuNotice ?? undefined));

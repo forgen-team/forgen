@@ -29,7 +29,9 @@ export function detect(input: T2Input): LifecycleEvent[] {
     if (rule.lifecycle?.phase === 'flagged') continue; // 이미 flagged — 중복 이벤트 방지
     const s = input.signals.get(rule.rule_id);
     if (!s) continue;
-    if (s.violations_30d < thresholdCount) continue;
+    // D7: 검토를 마친 룰은 검토 이후 차단만 센다.
+    const count = s.violations_since_review ?? s.violations_30d;
+    if (count < thresholdCount) continue;
     if (s.violation_rate_30d <= thresholdRate) continue;
     events.push({
       kind: 't2_repeated_violation',

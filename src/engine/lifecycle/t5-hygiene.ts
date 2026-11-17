@@ -9,7 +9,7 @@
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { STATE_DIR } from '../../core/paths.js';
+import { ME_BEHAVIOR, STATE_DIR } from '../../core/paths.js';
 import { createSnapshot } from '../rule-recovery-cli.js';
 import { loadAllRules, loadRule, rulePath, saveRule } from '../../store/rule-store.js';
 import { withFileLockSync } from '../../hooks/shared/file-lock.js';
@@ -82,20 +82,42 @@ export function filterNewT5Events(events: LifecycleEvent[], recent: Set<string>)
  * T5 때문에만 flagged 가 된 활성 룰: phase=flagged, conflict_refs 있음, lifecycle 로그 전체에 그 룰의
  * T1·T2·T3 이벤트가 없음. 로그 디렉터리를 읽을 수 없으면 판정할 수 없으므로 빈 목록(보수적으로 유지).
  */
+/**
+ * T1 기록이 실제로 이 룰을 지목했는가 — 교정 증거의 candidate_rule_refs 또는 raw_payload.target_rule_id.
+ * 0.6.9(2026-11-05) 이전의 T1 은 축·단어 겹침으로 추측 매칭했고(실측 9건 중 8건 오탐), 그때 걸린 flag 가 남아 있다.
+ * 증거 파일을 못 읽으면 지목한 것으로 본다(보수적 — 정리하지 않음).
+ */
+export function t1Targets(ruleId: string, evidenceRef: string | undefined): boolean {
+  if (!evidenceRef || evidenceRef !== path.basename(evidenceRef)) return true;
+  try {
+    const e = JSON.parse(fs.readFileSync(path.join(ME_BEHAVIOR, `${evidenceRef}.json`), 'utf-8')) as { candidate_rule_refs?: string[]; raw_payload?: { target_rule_id?: string } };
+    return (e.candidate_rule_refs ?? []).includes(ruleId) || e.raw_payload?.target_rule_id === ruleId;
+  } catch { return true; }
+}
+
+/**
+ * 오탐 flag 만 남은 활성 룰: phase=flagged 이고, lifecycle 로그의 flag 근거가 T5(충돌 감지) 기록이나
+ * 룰을 지목하지 않은 옛 T1 기록뿐인 룰. 지목한 T1·T2·T3 기록이 하나라도 있으면 제외. 근거 기록이 아예 없으면 제외.
+ * 로그 디렉터리를 읽을 수 없으면 판정할 수 없으므로 빈 목록(보수적으로 유지).
+ */
 export function planT5Unflag(rules: Rule[], dir: string = lifecycleDir()): Rule[] {
   const files = logFiles(dir);
   if (files === null) return [];
-  const flaggedByOther = new Set<string>();
+  const flagged = new Set(rules.filter((r) => r.status === 'active' && r.lifecycle?.phase === 'flagged').map((r) => r.rule_id));
+  const real = new Set<string>();
+  const falseOnly = new Set<string>();
   for (const f of files) {
     for (const e of readEvents(f)) {
-      if (e.kind && NON_T5_FLAG_KINDS.has(e.kind) && e.rule_id) flaggedByOther.add(e.rule_id);
+      if (!e.rule_id || !flagged.has(e.rule_id)) continue;
+      if (e.kind === 't5_conflict_detected') { falseOnly.add(e.rule_id); continue; }
+      if (e.kind === 't1_explicit_correction') {
+        if (t1Targets(e.rule_id, e.evidence?.refs?.[0])) real.add(e.rule_id); else falseOnly.add(e.rule_id);
+        continue;
+      }
+      if (e.kind && NON_T5_FLAG_KINDS.has(e.kind)) real.add(e.rule_id);
     }
   }
-  return rules.filter((r) =>
-    r.status === 'active'
-    && r.lifecycle?.phase === 'flagged'
-    && (r.lifecycle.conflict_refs?.length ?? 0) > 0
-    && !flaggedByOther.has(r.rule_id));
+  return rules.filter((r) => flagged.has(r.rule_id) && falseOnly.has(r.rule_id) && !real.has(r.rule_id));
 }
 
 export interface T5UnflagResult { count: number; snapshot: string | null; ruleIds: string[] }
@@ -123,7 +145,7 @@ export function handleRuleUnflag(args: string[]): void {
   const rules = loadAllRules();
   const targets = planT5Unflag(rules);
   if (!args.includes('--apply')) {
-    console.log(`T5(충돌 감지) 때문에만 검토 대기(flagged)가 된 활성 룰: ${targets.length}개`);
+    console.log(`오탐 판정(충돌 감지 T5 / 룰을 지목하지 않은 옛 교정 매칭) 때문에만 검토 대기가 된 활성 룰: ${targets.length}개`);
     for (const r of targets.slice(0, 30)) console.log(`  ${r.rule_id.slice(0, 8)}  ${r.policy.replace(/\s+/g, ' ').slice(0, 80)}`);
     if (targets.length > 30) console.log(`  … 외 ${targets.length - 30}개`);
     if (targets.length > 0) console.log('적용: forgen rule unflag --apply  (적용 전 스냅샷, 되돌리기: forgen rule restore <이름> --yes)');

@@ -123,6 +123,11 @@ export interface LifecycleState {
   superseded_by?: string;
   /** Meta: mech 변경 이력 */
   meta_promotions: MetaPromotion[];
+  /**
+   * 사용자가 `forgen rule review --keep` 으로 검토를 마친 시각(2026-11 재설계 D7).
+   * T2·T3·drift 강등은 이 시각 이후 기록만 센다 — 검토 직후 같은 과거 기록으로 다시 걸리지 않게.
+   */
+  reviewed_at?: string;
 }
 
 // ── Rule ────────────────────────────────────────────────────────────────────

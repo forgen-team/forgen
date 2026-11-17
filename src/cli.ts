@@ -425,6 +425,8 @@ async function handleRuleNamespace(args: string[]): Promise<void> {
     forgen rule unmerge <id>               Restore originals of a merged/linked rule (alias of unmerge-cluster)
     forgen rule recover [--apply <id...>]  Find your corrections that did not survive as active rules
     forgen rule unflag [--apply]           Clear review flags set only by the conflict detector (T5); preview by default
+    forgen rule review [--keep|--suppress <id...>]  Review flagged rules by cause (correction / repeated blocks / bypass)
+    forgen rule dedupe [--apply]           Merge active rules with the same sentence; preview by default
     forgen rule enforce <id-or-prefix>     Turn on blocking for a rule (semantic rules only record by default)
     forgen rule merge-explicit [--apply <id...>]  list proposed merges (with ids); apply only the listed ids
     forgen rule restore-demoted [--apply]  restore precision-auto-demoted (advise) rules to their previous mode (preview by default)
@@ -497,6 +499,16 @@ async function handleRuleNamespace(args: string[]): Promise<void> {
     case 'recover': {
       const { handleRuleRecover } = await import('./engine/rule-recovery-cli.js');
       handleRuleRecover(rest);
+      return;
+    }
+    case 'dedupe': {
+      const { handleRuleDedupe } = await import('./engine/rule-dedupe.js');
+      handleRuleDedupe(rest);
+      return;
+    }
+    case 'review': {
+      const { handleRuleReview } = await import('./engine/rule-review.js');
+      handleRuleReview(rest);
       return;
     }
     case 'unflag': {

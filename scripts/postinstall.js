@@ -366,14 +366,15 @@ async function main() {
   // 정상으로 되돌린다(스냅샷 후 적용, 되돌리기: forgen rule restore <이름> --yes). 마커로 1회만.
   try {
     const forgenHome = process.env.FORGEN_HOME || join(HOME, '.forgen');
-    const marker = join(forgenHome, 'state', 't5-unflag-v1.done');
+    // v2(0.6.14): 룰을 지목하지 않은 옛 T1 추측 매칭 flag 도 대상 — 마커 버전을 올려 다시 돈다.
+    const marker = join(forgenHome, 'state', 'unflag-v2.done');
     if (existsSync(join(forgenHome, 'me', 'rules')) && !existsSync(marker)) {
       process.env.FORGEN_HOME = forgenHome;
       const mod = await import(join(PKG_ROOT, 'dist', 'engine', 'lifecycle', 't5-hygiene.js'));
       const r = mod.applyT5Unflag();
       mkdirSync(join(forgenHome, 'state'), { recursive: true });
       writeFileSync(marker, `${new Date().toISOString()} unflagged=${r.count} snapshot=${r.snapshot ?? '-'}\n`);
-      if (r.count > 0) console.log(`[forgen] ${r.count} rule(s) were flagged only by the conflict detector (false positives) — cleared. Undo: forgen rule restore ${r.snapshot} --yes`);
+      if (r.count > 0) console.log(`[forgen] ${r.count} rule(s) were flagged only by false-positive detectors (conflict T5 / old guessed correction match) — cleared. Undo: forgen rule restore ${r.snapshot} --yes`);
     }
   } catch (err) { console.error(`[forgen] T5 unflag skipped: ${err?.message ?? err}`); }
 

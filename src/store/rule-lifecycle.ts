@@ -37,6 +37,7 @@ export function initLifecycle(rule: Rule): LifecycleState {
       merged_into: existing.merged_into,
       superseded_by: existing.superseded_by,
       meta_promotions: Array.isArray(existing.meta_promotions) ? [...existing.meta_promotions] : [],
+      ...(existing.reviewed_at ? { reviewed_at: existing.reviewed_at } : {}),
     };
   }
   return {

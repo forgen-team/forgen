@@ -46,7 +46,7 @@ describe('computeRuleHealth', () => {
     writeRule('e1', { lifecycle: { phase: 'flagged', conflict_refs: ['x'], inject_count: 5 } });
     writeRule('e2', { lifecycle: { phase: 'flagged', conflict_refs: [], inject_count: 0 }, projects: ['alpha'] });
     writeRule('m1', { source: 'behavior_inference', policy: '같은 문장 룰입니다 정말로', lifecycle: { phase: 'active', inject_count: 2 } });
-    writeRule('m2', { source: 'behavior_inference', policy: '같은 문장 룰입니다, 정말로!', lifecycle: { phase: 'active', inject_count: 0 } });
+    writeRule('m2', { source: 'behavior_inference', policy: '같은  문장 룰입니다 정말로!', lifecycle: { phase: 'active', inject_count: 0 } });
     writeRule('o1', { source: 'onboarding' });
     writeRule('gone', { status: 'removed' });
     jsonl('state/lifecycle/2026-11-10.jsonl', [{ kind: 't5_conflict_detected', rule_id: 'e1', evidence: { refs: ['e1', 'x'] } }, { kind: 't2_repeated_violation', rule_id: 'e2' }]);

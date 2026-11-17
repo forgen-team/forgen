@@ -96,4 +96,20 @@ describe('T5 탓 flagged 정리', () => {
     // 두 번째 적용은 대상이 없다
     expect(applyT5Unflag().count).toBe(0);
   });
+
+  it('룰을 지목하지 않은 옛 T1(추측 매칭) flag 도 정리 대상, 지목한 T1 은 남긴다', () => {
+    const legacy = rule('legacy rule about something', 'legacy', 'flagged');
+    const targeted = rule('targeted rule about something', 'targeted', 'flagged');
+    const missing = rule('rule whose evidence is gone', 'missing', 'flagged');
+    const bdir = path.join(TEST_HOME, '.forgen', 'me', 'behavior');
+    fs.mkdirSync(bdir, { recursive: true });
+    fs.writeFileSync(path.join(bdir, 'ev-legacy.json'), JSON.stringify({ evidence_id: 'ev-legacy', candidate_rule_refs: ['someone-else'], raw_payload: { kind: 'prefer-from-now' } }));
+    fs.writeFileSync(path.join(bdir, 'ev-target.json'), JSON.stringify({ evidence_id: 'ev-target', candidate_rule_refs: [], raw_payload: { target_rule_id: targeted.rule_id } }));
+    log('2026-10-17', [
+      { kind: 't1_explicit_correction', rule_id: legacy.rule_id, evidence: { refs: ['ev-legacy'] } },
+      { kind: 't1_explicit_correction', rule_id: targeted.rule_id, evidence: { refs: ['ev-target'] } },
+      { kind: 't1_explicit_correction', rule_id: missing.rule_id, evidence: { refs: ['ev-gone'] } },
+    ]);
+    expect(planT5Unflag(loadAllRules()).map((r) => r.rule_id)).toEqual([legacy.rule_id]);
+  });
 });

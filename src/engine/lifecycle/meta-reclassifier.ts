@@ -84,10 +84,17 @@ export function scanDriftForDemotion(options: {
   const drift = options.drift ?? readDriftEntries();
 
   const byRule = new Map<string, DriftEntry[]>();
+  // D7: 사용자가 검토를 마친(reviewed_at) 룰은 그 이후 drift 만 센다.
+  const reviewedAt = new Map<string, number>();
+  for (const r of options.rules) {
+    const t = r.lifecycle?.reviewed_at ? Date.parse(r.lifecycle.reviewed_at) : NaN;
+    if (Number.isFinite(t)) reviewedAt.set(r.rule_id, t);
+  }
   for (const e of drift) {
     if (e.kind !== 'stuck_loop_force_approve') continue;
     const t = Date.parse(e.at);
     if (!Number.isFinite(t) || t < cutoff) continue;
+    if (t <= (reviewedAt.get(e.rule_id) ?? -Infinity)) continue;
     const list = byRule.get(e.rule_id) ?? [];
     list.push(e);
     byRule.set(e.rule_id, list);

@@ -89,6 +89,7 @@
   - 교정으로 수정 요청(T1): 그 교정 증거의 문장·날짜
   - 반복 차단(T2): 최근 30일 차단 수, 정밀도(정탐/오탐/미판정, verdicts), 차단/자문 여부. 차단 룰은 "자주 막았다 = 모델이 자꾸 시도함 또는 오탐" 이라 정밀도를 같이 보여 준다.
   - 우회(T3), 원인 기록 없음
+- (구현 중 추가) 실데이터의 "교정으로 수정 요청됨" 5건이 전부 룰을 지목하지 않은 0.6.9 이전 T1 추측 매칭이었다. `planT5Unflag` 기준을 넓혀 T5 기록 또는 **룰을 지목하지 않은 T1**(교정 증거의 candidate_rule_refs·target_rule_id 에 그 룰이 없음)만 근거인 flag 를 정리 대상으로 한다. 증거 파일을 못 읽으면 지목한 것으로 본다(보수적). 마이그레이션 마커를 `unflag-v2` 로 올려 업그레이드 때 다시 돈다. review 화면에서는 이런 원인을 'legacy' 로 따로 보여 준다.
 - 처리: `--keep <id...>` → phase active + `lifecycle.reviewed_at` 기록. `--suppress <id...>` → status suppressed(사유 'review', hard 룰은 거부). 수정은 명령이 아니라 Claude 에게 "이 룰을 이렇게 바꿔"라고 말하면 `correction-record`(rule_id, prefer-from-now)로 대체된다는 안내만.
 - **다시 걸림 방지**: T2·T3 는 `reviewed_at` 이 있으면 그 이후 기록만 센다(`RuleSignals.violations_since_review` / `bypass_since_review`). 없으면 지금처럼 30일. drift 기반 강등(`scanDriftForDemotion`)도 `reviewed_at` 이후 drift 만 센다(critic: 별도 경로라 T2·T3 만 막으면 유지한 룰이 강등될 수 있음). T1(사용자가 룰을 지목한 교정)은 그대로 즉시 flag.
 - 화면 문구: `forgen status --rules`(inspect) 의 flagged 표시를 원인별로("교정으로 수정 요청됨" / "반복 차단 — 검토" / "우회됨" / "충돌 감지 기록(참고)").
@@ -147,7 +148,8 @@
 | 버전 | 항목 | 성격 | Handoff 영향 |
 |---|---|---|---|
 | 0.6.12 | D1, D2, D3, D6-1, D8(읽기 전용 화면 + inject_count 이중 증가 수정) | 해로운 동작 중지, 데이터 형식 불변 | flagged·T5 이벤트 수치 급감(릴리스 노트) |
-| 0.6.13 | D4, D7 | 정리 명령(미리보기 기본) | 없음 |
+| 0.6.13 | (추가) `--health` 지표 정의 고정 — Handoff 연동 | 집계 정의 | Handoff 가 이 JSON 사용 |
+| 0.6.14 | D4, D7 (+ 옛 T1 추측 매칭 오탐 flag 정리, 구현 중 실데이터에서 발견) | 정리 명령(미리보기 기본) | 없음 |
 | 0.7.0 | D5, D6-2/3, accept_count 정리, Handoff `--json` 연동 | 동작·형식 변경, ADR 개정 | status 집합 변경 — Handoff 동시 수정 |
 
 ## 4. 검증 계획 (항목 공통)
