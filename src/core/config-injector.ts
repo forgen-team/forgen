@@ -503,6 +503,9 @@ export function buildEnv(
   };
   if (v1SessionId) {
     env.FORGEN_SESSION_ID = v1SessionId;
+    // 래퍼(prepareHarness)가 이미 bootstrap 해서 주입 횟수를 셌다 — SessionStart 가 같은 세션을 다시 세지 않게.
+    // (두 bootstrap 은 각자 새 UUID 를 만들어 세션 ID 로는 거를 수 없다. 2026-11 재설계 D8.)
+    env.FORGEN_HARNESS_BOOTSTRAPPED = '1';
   }
   return env;
 }
