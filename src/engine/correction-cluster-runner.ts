@@ -561,7 +561,7 @@ async function applyMinedRuleMergePlan(plan: MinedMergePlan): Promise<MinedMerge
       merged.created_at = oldestCreatedAt; // TTL carry-forward — 통합으로 수명 연장 금지
       merged.enforce_via = []; // advisory-only 유지
       const freshProjects = mergeRuleProjects(fresh); // D6-1
-      if (freshProjects) merged.projects = freshProjects;
+      if (freshProjects) merged.projects = freshProjects; else delete merged.projects;
       saveRule(merged);
       mergedId = merged.rule_id;
       result.mergedRuleIds.push(mergedId);

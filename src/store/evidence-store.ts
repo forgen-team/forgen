@@ -259,12 +259,20 @@ function supersedeSessionTwins(evidenceId: string, meRuleId: string): number {
   let n = 0;
   for (const file of fs.readdirSync(ME_RULES)) {
     if (!file.endsWith('.json')) continue;
-    const rule = safeReadJSON<Rule | null>(path.join(ME_RULES, file), null);
-    if (!rule || rule.scope !== 'session' || rule.status !== 'active') continue;
-    if (!rule.evidence_refs?.includes(evidenceId)) continue;
-    const next = withStatusChange(rule, 'superseded', 'promoted-to-me', 'promotion');
-    saveRule({ ...next, ...(next.lifecycle ? { lifecycle: { ...next.lifecycle, superseded_by: meRuleId } } : {}) });
-    n++;
+    const filePath = path.join(ME_RULES, file);
+    const peek = safeReadJSON<Rule | null>(filePath, null);
+    if (!peek || peek.scope !== 'session' || peek.status !== 'active') continue;
+    if (!peek.evidence_refs?.includes(evidenceId)) continue;
+    try {
+      // 파일 잠금 — markRulesInjected·cleanupStaleSessionRules 가 같은 파일을 잠그고 쓴다.
+      withFileLockSync(filePath, () => {
+        const rule = safeReadJSON<Rule | null>(filePath, null);
+        if (!rule || rule.status !== 'active') return;
+        const next = withStatusChange(rule, 'superseded', 'promoted-to-me', 'promotion');
+        saveRule({ ...next, ...(next.lifecycle ? { lifecycle: { ...next.lifecycle, superseded_by: meRuleId } } : {}) });
+        n++;
+      });
+    } catch { /* 잠금 실패 → 12시간 유예 뒤 cleanupStaleSessionRules 가 정리 */ }
   }
   return n;
 }

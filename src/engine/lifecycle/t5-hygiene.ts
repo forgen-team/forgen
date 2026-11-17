@@ -11,7 +11,8 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { STATE_DIR } from '../../core/paths.js';
 import { createSnapshot } from '../rule-recovery-cli.js';
-import { loadAllRules, saveRule } from '../../store/rule-store.js';
+import { loadAllRules, loadRule, rulePath, saveRule } from '../../store/rule-store.js';
+import { withFileLockSync } from '../../hooks/shared/file-lock.js';
 import type { Rule } from '../../store/types.js';
 import type { LifecycleEvent } from './types.js';
 
@@ -105,8 +106,14 @@ export function applyT5Unflag(opts: { dir?: string; rules?: Rule[] } = {}): T5Un
   if (targets.length === 0) return { count: 0, snapshot: null, ruleIds: [] };
   const snapshot = createSnapshot('pre-t5-unflag');
   for (const r of targets) {
-    if (!r.lifecycle) continue;
-    saveRule({ ...r, lifecycle: { ...r.lifecycle, phase: 'active' } });
+    try {
+      // 파일 잠금 + 잠금 안에서 다시 읽기 — 라이브 세션(markRulesInjected 등)과 동시에 돌 수 있다.
+      withFileLockSync(rulePath(r.rule_id), () => {
+        const fresh = loadRule(r.rule_id);
+        if (fresh?.lifecycle?.phase !== 'flagged') return;
+        saveRule({ ...fresh, lifecycle: { ...fresh.lifecycle, phase: 'active' } });
+      });
+    } catch { /* 잠금 실패한 룰은 다음 forgen rule unflag --apply 에서 */ }
   }
   return { count: targets.length, snapshot, ruleIds: targets.map((r) => r.rule_id) };
 }

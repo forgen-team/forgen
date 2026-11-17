@@ -16,7 +16,7 @@ import { initLifecycle, bumpInject, withStatusChange } from './rule-lifecycle.js
 import { withFileLockSync } from '../hooks/shared/file-lock.js';
 import { appliesForContext, appliesForEnforcement, projectKeyFor } from './rule-scope.js';
 
-function rulePath(ruleId: string): string {
+export function rulePath(ruleId: string): string {
   return path.join(ME_RULES, `${ruleId}.json`);
 }
 

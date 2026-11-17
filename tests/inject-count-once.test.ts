@@ -81,10 +81,29 @@ describe.skipIf(!fs.existsSync(path.resolve('dist/hooks/session-recovery.js')))(
   });
   afterEach(() => fs.rmSync(home, { recursive: true, force: true }));
 
-  it('FORGEN_HARNESS_BOOTSTRAPPED=1 이면 카운트하지 않고, 없으면 1', () => {
-    runHook({ FORGEN_HARNESS_BOOTSTRAPPED: '1' });
+  it('래퍼가 띄운 첫 SessionStart 는 세지 않고, 같은 env 를 물려받은 중첩 세션은 센다', () => {
+    const env = { FORGEN_HARNESS_BOOTSTRAPPED: '1', FORGEN_SESSION_ID: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee' };
+    runHook(env);
     expect(injectCount()).toBe(0);
-    runHook({ FORGEN_HARNESS_BOOTSTRAPPED: '' });
+    runHook(env); // claude 안에서 띄운 claude -p 등 — env 는 상속되지만 표식은 이미 소비됨
     expect(injectCount()).toBe(1);
+  });
+  it('래퍼 없이 직접 실행하면 센다', () => {
+    runHook({ FORGEN_HARNESS_BOOTSTRAPPED: '', FORGEN_SESSION_ID: '' });
+    expect(injectCount()).toBe(1);
+  });
+});
+
+describe('consumeHarnessBootstrap', () => {
+  beforeEach(() => fs.rmSync(TEST_HOME, { recursive: true, force: true }));
+  afterEach(() => fs.rmSync(TEST_HOME, { recursive: true, force: true }));
+  it('세션 ID 별로 한 번만 true, 표식 없음·이상한 ID 는 false', async () => {
+    const { consumeHarnessBootstrap } = await import('../src/core/harness-inject-marker.js');
+    const env = { FORGEN_HARNESS_BOOTSTRAPPED: '1', FORGEN_SESSION_ID: 'sid-12345678' };
+    expect(consumeHarnessBootstrap(env)).toBe(true);
+    expect(consumeHarnessBootstrap(env)).toBe(false);
+    expect(consumeHarnessBootstrap({ ...env, FORGEN_SESSION_ID: 'sid-87654321' })).toBe(true);
+    expect(consumeHarnessBootstrap({ FORGEN_SESSION_ID: 'sid-99999999' })).toBe(false);
+    expect(consumeHarnessBootstrap({ FORGEN_HARNESS_BOOTSTRAPPED: '1', FORGEN_SESSION_ID: '../../etc' })).toBe(false);
   });
 });
