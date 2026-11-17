@@ -97,4 +97,15 @@ describe('computeRuleHealth', () => {
     expect(text).toContain('최근 7일');
     expect(text).toContain('검토 대기   0개');
   });
+
+  it('세션 임시 룰은 생성·은퇴에 세지 않는다 (교정 1건 이중 계산 방지)', () => {
+    writeRule('me1', { created_at: iso(1) });
+    writeRule('sess1', { scope: 'session', created_at: iso(1), status: 'superseded', status_history: [{ at: iso(1), from: 'active', to: 'superseded', reason: 'promoted-to-me', by: 'promotion' }] });
+    writeRule('sess2', { scope: 'session', created_at: iso(2), status: 'suppressed', status_history: [{ at: iso(1), from: 'active', to: 'suppressed', reason: 'session-ended', by: 'session-cleanup' }] });
+    const h = computeRuleHealth({ now: NOW });
+    expect(h.flow.rulesCreatedExplicit).toBe(1);
+    expect(h.flow.retired).toBe(0);
+    expect(h.days.reduce((n, d) => n + d.rulesCreated, 0)).toBe(1);
+    expect(h.days.reduce((n, d) => n + d.rulesRetired, 0)).toBe(0);
+  });
 });

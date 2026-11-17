@@ -12,7 +12,8 @@
  *   준수 근거   checks.jsonl 의 pass(Stop 에서 실제로 평가해 통과) + acknowledgments(차단 뒤 고쳐서 통과).
  *               accept_count 는 기록 경로가 없어 쓰지 않는다.
  *   승급        lifecycle 의 meta_promote_to_a
- *   은퇴        룰 status_history 중 removed·suppressed·superseded 로 바뀐 기록
+ *   생성·은퇴   scope:'me' 룰만. scope:'session' 임시 룰은 교정 1건의 사본이라(승급 시 me 룰이 따로 생김) 세면 이중 계산이다.
+ *   은퇴        위 룰의 status_history 중 removed·suppressed·superseded 로 바뀐 기록
  *   다시 교정됨 lifecycle 의 t1_explicit_correction (이미 있는 룰을 지목한 교정)
  *   날짜        UTC 날짜(lifecycle 로그 파일 이름과 같은 기준)
  */
@@ -149,9 +150,12 @@ export function computeRuleHealth(opts: { days?: number; now?: number; rules?: R
   const promotions = lifecycle.filter((e) => e.kind === 'meta_promote_to_a');
   const t1 = lifecycle.filter((e) => e.kind === 't1_explicit_correction');
 
-  const created = rules.filter((r) => Date.parse(r.created_at) >= since);
+  // 세션 임시 룰은 생성·은퇴에서 뺀다 — avoid-this 교정 1건이 session 룰 + 승급 me 룰로 두 번 세지고,
+  // 승급 직후 session 룰의 superseded(D3)·12시간 뒤 suppressed 가 '은퇴'로 세지던 문제(2026-11-17 Handoff 연동 때 발견).
+  const durable = rules.filter((r) => r.scope !== 'session');
+  const created = durable.filter((r) => Date.parse(r.created_at) >= since);
   const retirements: number[] = [];
-  for (const r of rules) {
+  for (const r of durable) {
     for (const h of r.status_history ?? []) {
       const t = Date.parse(h.at);
       if (t >= since && RETIRED_TO.has(h.to)) retirements.push(t);
