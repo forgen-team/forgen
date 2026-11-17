@@ -13,12 +13,13 @@
  *   forgen status --blocks [N] 최근 차단 N건 (rule·사유·해결)
  *   forgen status --live       실시간 훅 이벤트 스트림
  *   forgen status --turn       이번 턴 관련 룰 + 각 룰의 원 교정 (ADR-017 D2)
+ *   forgen status --health [--json] [--days N]  룰 건강 지표 (2026-11 재설계 D8)
  */
 
 import type { Rule } from '../store/types.js';
 import type { TurnRulesFile } from '../engine/rule-relevance.js';
 
-const VIEWS = ['--compound', '--profile', '--rules', '--blocks', '--live', '--overview', '--turn'] as const;
+const VIEWS = ['--compound', '--profile', '--rules', '--blocks', '--live', '--overview', '--turn', '--health'] as const;
 type View = (typeof VIEWS)[number];
 
 const ALIASES: Record<string, View> = {
@@ -41,6 +42,16 @@ export function resolveView(args: string[]): View | null {
 }
 
 export async function handleStatus(args: string[]): Promise<void> {
+  // --health 는 자체 --json 을 가진다 — 아래 구(observability) --json 분기보다 먼저 처리.
+  if (args.includes('--health')) {
+    const { computeRuleHealth, renderRuleHealth } = await import('./rule-health.js');
+    const di = args.indexOf('--days');
+    const days = di !== -1 ? Math.min(90, Math.max(1, Number(args[di + 1]) || 14)) : 14;
+    const h = computeRuleHealth({ days });
+    if (args.includes('--json')) console.log(JSON.stringify(h, null, 2));
+    else for (const l of renderRuleHealth(h)) console.log(l);
+    return;
+  }
   // 하위호환: 구 `forgen status --watch|--json|--interval N`(observability dashboard)
   // 은 통합 status 의 observability 모드로 계속 지원. 통합 전 별도 status 였음.
   if (args.includes('--watch') || args.includes('--json') || args.includes('--interval')) {
@@ -57,7 +68,7 @@ export async function handleStatus(args: string[]): Promise<void> {
   const view = resolveView(args);
   const unknownFlags = args.filter((a) => a.startsWith('-') && !resolveView([a]) && !['--watch', '--json', '--interval', '--limit', '--show'].includes(a.split('=')[0]));
   if (unknownFlags.length > 0) {
-    console.error(`[forgen] 알 수 없는 status 옵션: ${unknownFlags.join(' ')}\n  views: --compound | --profile | --rules | --blocks [N] | --overview | --live | --turn`);
+    console.error(`[forgen] 알 수 없는 status 옵션: ${unknownFlags.join(' ')}\n  views: --compound | --profile | --rules | --blocks [N] | --overview | --live | --turn | --health`);
     process.exitCode = 1;
     return;
   }

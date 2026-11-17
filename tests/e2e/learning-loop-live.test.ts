@@ -134,7 +134,7 @@ describe('Learning Loop Live: 교정 → 승격 → 규칙 반영 전체 사이�
     expect(parsed.ruleStrength).toBe('default');
   });
 
-  it('3. avoid-this 교정 → strong 규칙 + 세션 임시 규칙', () => {
+  it('3. avoid-this 교정 → strong 규칙, 승급 뒤 세션 임시 규칙은 superseded (2026-11 D3)', () => {
     const result = runInIsolation(`
       const { processCorrection } = require('./dist/forge/evidence-processor.js');
       const { promoteSessionCandidates } = require('./dist/store/evidence-store.js');
@@ -153,6 +153,8 @@ describe('Learning Loop Live: 교정 → 승격 → 규칙 반영 전체 사이�
       const meRules = rules.filter(r => r.scope === 'me');
       const sessionRules = rules.filter(r => r.scope === 'session');
       const strongRule = meRules.find(r => r.strength === 'strong');
+      const { loadAllRules } = require('./dist/store/rule-store.js');
+      const twin = loadAllRules().find(r => r.scope === 'session' && r.trigger === 'typescript-any');
 
       console.log(JSON.stringify({
         promoted,
@@ -160,13 +162,19 @@ describe('Learning Loop Live: 교정 → 승격 → 규칙 반영 전체 사이�
         sessionCount: sessionRules.length,
         hasStrong: !!strongRule,
         strongPolicy: strongRule?.policy ?? null,
+        twinStatus: twin?.status ?? null,
+        twinSupersededBy: twin?.lifecycle?.superseded_by ?? null,
+        strongId: strongRule?.rule_id ?? null,
       }));
     `);
 
     const parsed = JSON.parse(result);
     expect(parsed.promoted).toBe(1);
     expect(parsed.meCount).toBeGreaterThanOrEqual(2); // early-return + typescript-any
-    expect(parsed.sessionCount).toBeGreaterThanOrEqual(1); // avoid-this → 임시 규칙
+    // 교정 1건이 활성 룰 2개(session + me)로 남지 않는다 — 승급 직후 session 쌍둥이는 superseded.
+    expect(parsed.sessionCount).toBe(0);
+    expect(parsed.twinStatus).toBe('superseded');
+    expect(parsed.twinSupersededBy).toBe(parsed.strongId);
     expect(parsed.hasStrong).toBe(true);
     expect(parsed.strongPolicy).toContain('any type');
   });
@@ -174,6 +182,9 @@ describe('Learning Loop Live: 교정 → 승격 → 규칙 반영 전체 사이�
   it('4. 세션 규칙 정리 → 이전 세션의 session 규칙 제거', () => {
     const result = runInIsolation(`
       const { loadActiveRules, cleanupStaleSessionRules } = require('./dist/store/rule-store.js');
+      const { processCorrection } = require('./dist/forge/evidence-processor.js');
+      // 승급 대상이 아닌 fix-now 의 session 룰 — 유예가 지나면 정리돼야 한다.
+      processCorrection({ session_id: 'live-session-1', kind: 'fix-now', message: 'rename this helper now', target: 'rename-helper', axis_hint: 'workflow' });
 
       const before = loadActiveRules().filter(r => r.scope === 'session').length;
       const cleaned = cleanupStaleSessionRules('live-session-2', Date.now() + 25 * 3600_000); // 유예가 지난 새 세션

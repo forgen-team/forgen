@@ -131,7 +131,7 @@ const commands: Command[] = [
   },
   {
     name: 'status',
-    description: 'Unified status: forgen status [--compound|--profile|--rules|--blocks [N]|--overview|--live|--turn]',
+    description: 'Unified status: forgen status [--compound|--profile|--rules|--blocks [N]|--overview|--live|--turn|--health]',
     handler: async (args) => {
       const { handleStatus } = await import('./core/status-cli.js');
       await handleStatus(args);
@@ -729,6 +729,7 @@ function printHelp() {
                                       --overview  rich dashboard (hooks·history·curve)
                                       --live      real-time hook event stream
                                       --turn      this turn's relevant rules + their origin corrections
+                                      --health    rule health: corrections→rules→injections→checks, review queues, daily table (--json)
     forgen workflows install|list   Install forgen dynamic-workflow templates to .claude/workflows/
     forgen changelog                Auto-summarize commits since last release tag
     forgen compound                 Manage accumulated knowledge
