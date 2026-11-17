@@ -135,7 +135,8 @@ function collectHits(ops: GitOp[], hookCwd: string | undefined, hits: Map<string
       const withAll = op.args.some((a) => a === '-a' || a === '--all' || /^-[a-zA-Z]*a[a-zA-Z]*$/.test(a) && !a.startsWith('--'));
       const diffArgs = (cached: boolean) => ['diff', ...(cached ? ['--cached'] : []), '-U0', '--no-color', '--no-ext-diff'];
       // 이름 규칙은 새로 추가되는 파일(--diff-filter=A)에만. 추적 중 파일의 수정은 아래 내용 검사로 본다.
-      const files = git(dir, ['diff', '--cached', '--name-only', '--diff-filter=A', '-z']).split('\0').filter(Boolean);
+      // --no-renames: git mv config.txt .env.local 은 기본 rename 감지로 R 상태가 되어 A 필터를 빠져나간다.
+      const files = git(dir, ['diff', '--cached', '--no-renames', '--name-only', '--diff-filter=A', '-z']).split('\0').filter(Boolean);
       for (const f of files) { const r = secretFileReason(f); if (r) add(f, r); }
       const parts = [git(dir, diffArgs(true)), ...(withAll ? [git(dir, diffArgs(false))] : [])];
       // 파일별로 쪼개 어느 파일인지 알린다

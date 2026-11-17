@@ -145,6 +145,8 @@ const REMINDER_COUNTER_PATH = path.join(STATE_DIR, 'reminder-counter.json');
  * deny 로 투영되는 경우(Codex/OpenCode)에도 같은 안내가 사유에 실려 간다.
  */
 export const ASK_NONINTERACTIVE_HINT = '비대화형(claude -p/CI)이면 승인할 사람이 없습니다 — 의도한 작업이면 FORGEN_USER_CONFIRMED=1 을 설정해 다시 실행하세요 (우회는 violations.jsonl 에 기록됨).';
+/** 비밀 커밋 확인은 FORGEN_USER_CONFIRMED 로 우회되지 않는다 — 일반 힌트를 쓰면 안 되는 약속을 하게 된다. */
+export const SECRET_ASK_NONINTERACTIVE_HINT = '비대화형(claude -p/CI)이면 승인할 사람이 없습니다 — 이 비밀 검사는 FORGEN_USER_CONFIRMED 로 우회되지 않습니다. 사람이 파일을 확인한 뒤 직접 커밋하세요.';
 
 export function checkDangerousCommand(
   toolName: string,
@@ -576,7 +578,7 @@ async function main(): Promise<void> {
           try { const { recordViolation } = await import('../engine/lifecycle/signals.js'); recordViolation({ rule_id: 'builtin:commit-secret', session_id: sessionId, source: 'pre-tool-guard', kind: 'deny', message_preview: `git secret files: ${secretHits.map((h) => h.file).slice(0, 5).join(', ')}`, target_kind: 'command' }); } catch { /* fail-open */ }
           // 이름·패턴 기반 판단이라 오탐이 있을 수 있다 → 조용히 막지 않고 사유를 보여주며 사용자에게 묻는다
           // (사용자 교정 2026-11-06: "멈추면 안되는 거지. 차라리 물어봐야지 사용자한테").
-          console.log(ask(`[Forgen] 사용자 확인 필요 — 비밀 파일/키로 보이는 항목이 커밋 대상에 있습니다:\n${lines}\n예시값만 담긴 템플릿이면 승인하고, 진짜 비밀이면 거부한 뒤 .gitignore 추가 또는 git reset 으로 빼세요. 키가 이미 노출됐다면 폐기·재발급하세요.\n${ASK_NONINTERACTIVE_HINT}`));
+          console.log(ask(`[Forgen] 사용자 확인 필요 — 비밀 파일/키로 보이는 항목이 커밋 대상에 있습니다:\n${lines}\n예시값만 담긴 템플릿이면 승인하고, 진짜 비밀이면 거부한 뒤 .gitignore 추가 또는 git reset 으로 빼세요. 키가 이미 노출됐다면 폐기·재발급하세요.\n${SECRET_ASK_NONINTERACTIVE_HINT}`));
           return;
         }
       }
