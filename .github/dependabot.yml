@@ -9,6 +9,11 @@ updates:
       - "dependencies"
     commit-message:
       prefix: "chore(deps)"
+    ignore:
+      # claude-mem 은 forgen-eval 의 비교 대상(arm)으로만 쓴다. 우리가 직접 쓰지 않으므로
+      # 최신을 따라갈 이유가 없고, 메이저 변경은 mem-contract 계약 재측정이 필요하다.
+      - dependency-name: "claude-mem"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: "github-actions"
     directory: "/"
