@@ -54,6 +54,15 @@ describe('setupState', () => {
     fs.writeFileSync(installedVersionPath(home), '1.2.3\n');
     expect(setupState(pkg, home).pending).toBe(false);
   });
+  it('FORGEN_SKIP_POSTINSTALL=1 이면 대상이 아니다 (설치 스크립트를 일부러 끈 사용자)', () => {
+    process.env.FORGEN_SKIP_POSTINSTALL = '1';
+    try { expect(setupState(pkg, home)).toMatchObject({ pending: false, skip: 'FORGEN_SKIP_POSTINSTALL' }); }
+    finally { delete process.env.FORGEN_SKIP_POSTINSTALL; }
+  });
+  it('postinstall 스크립트가 없으면 대상이 아니다', () => {
+    fs.rmSync(path.join(pkg, 'scripts', 'postinstall.js'));
+    expect(setupState(pkg, home)).toMatchObject({ pending: false, skip: 'no postinstall script' });
+  });
   it('저장소 체크아웃은 대상이 아니다 (postinstall 이 사용자 설정을 건드리지 않음)', () => {
     fs.mkdirSync(path.join(pkg, '.git'));
     expect(setupState(pkg, home)).toMatchObject({ pending: false, skip: 'repo checkout' });
@@ -85,7 +94,30 @@ describe('maybeStartSelfSetup', () => {
   });
 });
 
+describe('maybeStartSelfSetup 동시 실행', () => {
+  it('다른 프로세스가 잠금을 쥐고 있으면 띄우지 않고, 오래된 잠금은 걷어낸다', () => {
+    fs.writeFileSync(path.join(pkg, 'scripts', 'postinstall.js'), 'process.exit(1);\n');
+    fs.mkdirSync(path.join(home, 'state'), { recursive: true });
+    const lock = path.join(home, 'state', 'self-setup.lock');
+    fs.writeFileSync(lock, '');
+    expect(maybeStartSelfSetup({ pkgRoot: pkg, home })).toBe(false);
+    const old = new Date(Date.now() - 120_000);
+    fs.utimesSync(lock, old, old);
+    expect(maybeStartSelfSetup({ pkgRoot: pkg, home })).toBe(false); // 이번 호출은 잠금만 걷어낸다
+    expect(fs.existsSync(lock)).toBe(false);
+    expect(maybeStartSelfSetup({ pkgRoot: pkg, home })).toBe(true);
+    expect(fs.existsSync(lock)).toBe(false);
+  });
+});
+
 describe('runSetupNow', () => {
+  it('postinstall 이 실패하면 exit code 를 그대로 돌려주고 표식은 남지 않는다', () => {
+    fs.writeFileSync(path.join(pkg, 'scripts', 'postinstall.js'), 'console.error("boom"); process.exit(3);\n');
+    const r = runSetupNow(pkg);
+    expect(r.status).toBe(3);
+    expect(r.output).toContain('boom');
+    expect(setupState(pkg, home).pending).toBe(true);
+  });
   it('postinstall 을 동기로 실행해 표식을 남긴다', () => {
     const r = runSetupNow(pkg);
     expect(r.status).toBe(0);

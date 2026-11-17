@@ -72,12 +72,25 @@ export function maybeStartSelfSetup(opts: { pkgRoot?: string; home?: string; now
   const now = opts.now ?? Date.now();
   const st = setupState(pkgRoot, home);
   if (!st.pending) return false;
-  try {
-    const prev = JSON.parse(fs.readFileSync(attemptPath(home), 'utf-8')) as { version?: string; at?: number };
-    if (prev.version === st.pkgVersion && typeof prev.at === 'number' && now - prev.at < SELF_SETUP_RETRY_MS) return false;
-  } catch { /* 시도 기록 없음 */ }
   fs.mkdirSync(path.join(home, 'state'), { recursive: true });
-  fs.writeFileSync(attemptPath(home), JSON.stringify({ version: st.pkgVersion, at: now }));
+  // 여러 세션이 동시에 시작해도 한 프로세스만 확인·기록하도록 O_EXCL 잠금. 오래된 잠금(비정상 종료)은 걷어낸다.
+  const lock = path.join(home, 'state', 'self-setup.lock');
+  let fd: number;
+  try {
+    fd = fs.openSync(lock, 'wx');
+  } catch {
+    try { if (Date.now() - fs.statSync(lock).mtimeMs > 60_000) fs.unlinkSync(lock); } catch { /* ignore */ }
+    return false;
+  }
+  try {
+    try {
+      const prev = JSON.parse(fs.readFileSync(attemptPath(home), 'utf-8')) as { version?: string; at?: number };
+      if (prev.version === st.pkgVersion && typeof prev.at === 'number' && now - prev.at < SELF_SETUP_RETRY_MS) return false;
+    } catch { /* 시도 기록 없음 */ }
+    fs.writeFileSync(attemptPath(home), JSON.stringify({ version: st.pkgVersion, at: now }));
+  } finally {
+    try { fs.closeSync(fd); fs.unlinkSync(lock); } catch { /* ignore */ }
+  }
   let log: number | 'ignore' = 'ignore';
   try { log = fs.openSync(path.join(home, 'state', 'self-setup.log'), 'w'); } catch { /* 로그 없이 진행 */ }
   const child = spawn(process.execPath, [path.join(pkgRoot, 'scripts', 'postinstall.js')], {
