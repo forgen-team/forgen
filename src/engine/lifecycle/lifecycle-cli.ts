@@ -5,6 +5,7 @@
  * default dry-run, --apply 시 rule 파일에 상태 전이 반영.
  */
 
+import { filterNewT5Events, recentT5PairKeys } from './t5-hygiene.js';
 import * as path from 'node:path';
 import { loadAllRules, saveRule, syncRuleCounters } from '../../store/rule-store.js';
 import { STATE_DIR } from '../../core/paths.js';
@@ -52,7 +53,8 @@ export async function handleLifecycleScan(args: string[]): Promise<void> {
     ...detectT2({ rules, signals, ts: now }),
     ...detectT3({ rules, signals, ts: now }),
     ...detectT4({ rules, signals, ts: now }),
-    ...detectT5({ rules, ts: now }),
+    // D1: 최근 7일 안에 기록된 T5 쌍은 다시 기록하지 않는다(스캔마다 같은 쌍이 쌓이던 문제).
+    ...filterNewT5Events(detectT5({ rules, ts: now }), recentT5PairKeys(now)),
   ];
 
   const demotionCandidates = scanDriftForDemotion({ rules, drift, now });

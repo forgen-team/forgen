@@ -15,6 +15,8 @@ export type LifecycleEventKind =
   | 'meta_demote_to_b';
 
 export type LifecycleSuggestedAction =
+  /** 기록만 — 룰 상태·phase·conflict_refs 를 바꾸지 않는다 (T5, 2026-11 재설계 D1). */
+  | 'observe'
   | 'flag'
   | 'suppress'
   | 'retire'

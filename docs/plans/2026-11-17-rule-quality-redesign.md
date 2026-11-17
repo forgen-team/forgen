@@ -16,7 +16,7 @@
 
 | # | 현상 (실데이터) | 원인 (코드) | 확정도 |
 |---|---|---|---|
-| P1 | 활성 룰의 60% 이상이 flagged (맥 47/77, 서버 76/113) | T5 충돌 감지가 v0.6.9에서 한글 부정어 정규식 수정 후 처음 동작. 무관한 쌍까지 충돌로 판정(표본 8쌍 중 실제 충돌 0), 이미 기록한 쌍을 매 스캔마다 재기록(서버 11/17 하루 4,220건 = 192쌍 × 최대 26회). flag는 status를 바꾸지 않아 계속 주입되고, 해제 코드가 없다 (`trigger-t5-conflict.ts:96-138`, `orchestrator.ts:68-80`). 화면 문구는 "repeated violations"로 원인과 다르다 (`inspect-renderer.ts:79`) | 확정 |
+| P1 | 활성 룰의 60% 이상이 flagged (맥 47/77, 서버 76/113) | T5 충돌 감지가 v0.6.9에서 한글 부정어 정규식 수정 후 처음 동작. 무관한 쌍까지 충돌로 판정(서버 11/17 상위 쌍 전부 무관한 룰끼리, 예: 지표 계산 0 나누기 룰 ↔ Dockerfile 환경변수 룰), 이미 기록한 쌍을 매 스캔마다 재기록(서버 11/17 하루 이벤트 4,734건 = 97쌍 × 쌍당 약 29회 스캔). flag는 status를 바꾸지 않아 계속 주입되고, 해제 코드가 없다 (`trigger-t5-conflict.ts:96-138`, `orchestrator.ts:68-80`). 화면 문구는 "repeated violations"로 원인과 다르다 (`inspect-renderer.ts:79`) | 확정 |
 | P2 | 오너가 "작업 중 테스트·lint·타입체크 금지"를 1주에 6번 교정 | intent-classifier가 구현·리팩터 요청마다 "Build + lint + type-check must pass", "tests pass before AND after"를 고정 주입. 사용자 룰을 읽지 않고, 개인 룰과의 우선순위 장치가 없다 (`intent-classifier.ts:51-72`) | 확정 (반복 교정과의 인과는 유력) |
 | P3 | 같은 날 같은 문장의 활성 explicit 룰 쌍, 12시간 뒤엔 active+suppressed 쌍 | avoid-this/fix-now 교정이 즉시 session 룰을 만들고(`evidence-processor.ts:64-85`), 승급 시 me 룰을 새로 만든다. session 룰은 12시간 유예 뒤에야 suppressed (`rule-store.ts:417-432`, v0.6.9) | 확정 |
 | P4 | 서로 다른 render_key의 같은 내용 explicit 룰 | render_key = 축 + target 앞 30자 슬러그. 모델이 target을 다르게 주면 새 룰. explicit에는 문장 유사도 검사가 없다 (`evidence-store.ts:282,327`). 이 경우 렌더러 중복 제거도 안 걸려 두 번 주입 | 유력 |
