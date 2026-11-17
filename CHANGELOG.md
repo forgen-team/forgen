@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **이름 바꾸기로 `.env` 커밋 가드 우회.** `git mv config.txt .env.local` 처럼 추적 중 파일을 비밀 파일 이름으로 바꾸면 rename(R) 상태라 새 파일 이름 규칙을 빠져나가던 것을 고쳤다.
+- 비밀 커밋 확인 문구가 `FORGEN_USER_CONFIRMED=1` 로 우회할 수 있다고 안내하던 것을 바로잡았다(이 검사는 우회되지 않는다).
+- 참고: Codex 는 런타임이 ask 를 지원하지 않아 비밀 커밋 확인이 계속 거부(deny)로 표시된다(0.6.10 부터 동일).
+
 ## [0.6.10] — 2026-11-17 — 가드가 세션을 멈추지 않음
 
 ### Fixed

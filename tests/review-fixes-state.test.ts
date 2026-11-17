@@ -83,6 +83,12 @@ describe('commit-guard 예제값 허용·시간 예산', () => {
       git('add', '.env.development');
       expect(checkGitSecrets(commitOp, repo).map((h) => h.file)).toEqual(['.env.development']);
     });
+    it('추적 중 파일을 .env 로 이름만 바꿔도(git mv, rename 감지) 이름 규칙으로 잡는다', () => {
+      fs.writeFileSync(path.join(repo, 'config.txt'), 'PORT=3000\n');
+      git('add', 'config.txt'); git('commit', '-q', '-m', 'cfg');
+      git('mv', 'config.txt', '.env.local');
+      expect(checkGitSecrets(commitOp, repo).map((h) => h.file)).toEqual(['.env.local']);
+    });
     it('새로 추가하는 .env 는 내용과 무관하게 이름 규칙으로 잡는다', () => {
       fs.writeFileSync(path.join(repo, '.env'), 'PORT=3000\n');
       expect(checkGitSecrets([{ sub: 'add', args: ['-f', '.env'], cwd: '' }], repo).map((h) => h.file)).toEqual(['.env']);
