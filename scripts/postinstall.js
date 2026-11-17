@@ -378,6 +378,20 @@ async function main() {
     }
   } catch (err) { console.error(`[forgen] T5 unflag skipped: ${err?.message ?? err}`); }
 
+  // ── 0.7.0 D5: 근거 세션 1곳뿐인 활성 추론(채굴) 룰 → 후보 (1회, 오너 결정 2026-11-17) ──
+  try {
+    const forgenHome = process.env.FORGEN_HOME || join(HOME, '.forgen');
+    const marker = join(forgenHome, 'state', 'mined-candidate-v1.done');
+    if (existsSync(join(forgenHome, 'me', 'rules')) && !existsSync(marker)) {
+      process.env.FORGEN_HOME = forgenHome;
+      const mod = await import(join(PKG_ROOT, 'dist', 'engine', 'rule-candidates.js'));
+      const r = mod.demoteWeakMinedRules();
+      mkdirSync(join(forgenHome, 'state'), { recursive: true });
+      writeFileSync(marker, `${new Date().toISOString()} candidates=${r.count} snapshot=${r.snapshot ?? '-'}\n`);
+      if (r.count > 0) console.log(`[forgen] ${r.count} mined rule(s) seen in only one session are now candidates (not injected until seen in another session). List: forgen rule candidates  Undo: forgen rule restore ${r.snapshot} --yes`);
+    }
+  } catch (err) { console.error(`[forgen] mined candidate migration skipped: ${err?.message ?? err}`); }
+
   // ── Starter Knowledge Pack (솔루션 < 5개일 때만) ──
   const starterInstalled = attempt('starter pack', installStarterPack) ?? 0;
 

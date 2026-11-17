@@ -109,6 +109,54 @@
 - **깨질 수 있는 것**: 학습이 느려짐(의도). 프롬프트 변경으로 진짜 일반 교정을 놓침 → 실데이터 증거 838건 재생으로 전/후 비교.
 - **검증**: 맥·서버 behavior 증거를 격리 환경에서 재추출해 생성 수, task 판정 비율, 후보→활성 전환 수 비교.
 
+### D5·D6-2/3 세부 (0.7.0, 2026-11-17 구현 전 확정)
+
+> 오너 결정(2026-11-17): 기존 활성 추론 룰 중 근거 세션이 1곳뿐인 룰은 **업그레이드 때 후보로** 돌린다(스냅샷 + 되돌리기). 범위는 **Haiku 가 판단**(general → 전역, project → 그 프로젝트, task → 버림).
+
+**상태 `candidate`**
+- `RuleStatus` 에 `'candidate'` 추가. 채굴(behavior_inference, `auto:`) 룰만 갖는다. `loadActiveRules`(status==='active')가 이미 거르므로 주입·강제·lifecycle 트리거·dedupe·병합에서 자동으로 빠진다. orchestrator `INACTIVE_STATUSES` 에도 넣는다.
+- 후보 → 활성: 증거(evidence_refs)의 **서로 다른 session_id 가 2개 이상**이 되는 순간 `withStatusChange(…, 'active', 'candidate-confirmed')`. 같은 세션에서 여러 번 잡혀도 1곳으로 센다.
+- 사용자가 직접 켤 수 있다: `forgen activate-rule <id>`(기존 명령, candidate 는 removed·superseded 가 아니라 허용됨).
+- `forgen rule candidates` — 후보 목록(근거 세션 수·마지막 근거 날짜·범위).
+
+**생성·누적 (promoteSessionCandidates 채굴 경로)**
+1. 사전 중복 검사 대상을 활성 me 룰 + **채굴 후보**로 넓힌다. explicit 룰과 같은 개념이면 증거만 소비 표시하고 **`mined_observations` +1 하지 않는다**(D5-4: 극성을 모르므로 지지로 세지 않음). 채굴 룰(활성·후보)과 같은 개념이면 증거 추가 + 범위 병합 + 세션 수 재판정.
+2. render_key 로 찾은 기존 채굴 룰: 활성이면 그대로 활성, 후보·removed·superseded 면 세션 수로 활성/후보 판정. **사용자가 끈(suppressed) 채굴 룰은 되살리지 않는다**(증거만 소비 표시) — 지금은 무엇이든 active 로 되살린다.
+3. 새 채굴 룰은 `status: 'candidate'` 로 만든다.
+4. `merge-mined`(병합 명령)의 explicit 링크 경로는 사용자가 실행하는 정리라 그대로 둔다(카운터 포함). 자동 경로만 바꾼다.
+
+**수명·상한 (D5-3)**
+- 기준 시각 = 증거들 중 **가장 늦은 timestamp**(증거를 못 읽으면 created_at). 재추출되면 수명이 이어진다 — 재추출 즉시 제거 순환 제거.
+- 활성 채굴: 마지막 근거 21일 경과 → removed('auto-mined-ttl'), 활성 30개 초과분은 마지막 근거가 오래된 순 → removed('auto-mined-cap').
+- 후보: 마지막 근거 21일 경과 → removed('candidate-expired'), 후보 100개 초과분 오래된 순 → removed('candidate-cap').
+- 같은 세션 반복 채굴로 수명이 늘 수는 있지만 세션 수가 늘지 않으면 후보에 머물러 주입되지 않는다.
+
+**추출 프롬프트 (D5-1)**
+- "긍정 지시형"을 교정에 넣으라는 줄을 고친다: 이번 작업에만 해당하는 지시(특정 파일·화면·데이터·버그·이번 요청)는 교정이 아니다. 다음에 다른 작업에서도 적용될 선호만.
+- 각 교정에 `"generality": "task" | "project" | "general"` 을 받는다. `task` 는 버린다. 값이 없으면 `project` 로 본다(보수적).
+- 범위(D5-5·D6-2): `general` → 전역(payload `scope_hint:'general'`), `project` → 러너 cwd 의 `projectKeyFor`(null 이면 전역 — 홈 디렉터리 세션). 증거 payload 에 `projects` / `scope_hint` 로 담는다.
+- 범위 병합(같은 개념 재관측): 들어온 것이 general → 전역, 프로젝트 → 기존이 전역이면 전역 유지, 아니면 합집합, 정보 없음 → 기존 유지.
+
+**업그레이드 마이그레이션 (오너 결정)**
+- postinstall 1회(`mined-candidate-v1.done`): 활성 scope:'me' 채굴 룰 중 근거 세션이 2곳 미만인 룰 → candidate(사유 'migrate-0.7.0-candidate'). 적용 전 스냅샷 `pre-candidate`, 안내 문구에 되돌리기 명령. hard 룰·explicit 룰은 대상 아님.
+
+**지표 (`--health`, 스키마 v1 에 필드 추가만)**
+- `rules.candidates`(후보 수), `flow.candidatesConfirmed`(기간 안 후보→활성 전환 수).
+- 생성(rulesCreated): 후보로 태어난 룰은 만든 날이 아니라 **활성이 된 날** 센다. 은퇴(rulesRetired): 후보에서 바로 removed 된 것(만료)은 세지 않는다 — 활성이었던 적 없는 룰.
+- `readRuleDir` 에 schema_version 상한 검사(rule-store 와 같은 기준).
+
+**D6-3 기존 무범위 룰 범위 제안**
+- `forgen rule classify-projects --from-sessions [--apply [id...]]`: 활성·비 hard·무범위 explicit/채굴 룰마다 증거의 session_id → `~/.claude/projects/*/<sid>.jsonl` 첫 cwd → `projectKeyFor`. 근거 세션이 **모두** 같은 프로젝트(들)로 풀릴 때만 그 합집합을 제안. 하나라도 프로젝트 밖(홈)·못 찾음이면 제안 안 함(전역 유지). 미리보기 기본, 적용 전 스냅샷, id 를 주면 그 룰만.
+
+**accept_count**: 필드는 남긴다(Handoff 가 읽음, 늘 0). forgen 화면에는 이미 안 쓴다. Handoff 에 "accepted 열 제거" 요청만 전달.
+
+**ADR 개정**: ADR-013(상한·TTL 기준 = 마지막 근거, 후보 단계), ADR-017 D3(자동 경로의 관측 +1 폐지), ADR-019(승급은 여전히 모든 게이트 앞 — 채굴 룰은 승급되어도 후보로 시작).
+
+**깨질 수 있는 것과 대비**
+- Handoff 가 모르는 status: 이미 unknown → other 매핑, witems 는 candidate 수신 가능(0.6.14 시점 배포 완료). Handoff 허용 목록에 한 줄 추가 요청.
+- 학습 체감이 느려짐: 의도. `forgen rule candidates` 와 `--health` 후보 수로 보이게 한다.
+- 세션 수 계산이 증거 파일을 읽음: 채굴 룰 수가 상한으로 묶여(활성 30 + 후보 100) 비용이 작다.
+
 ### D6. 프로젝트 범위 보완 (P7)
 
 - **변경**

@@ -109,6 +109,11 @@ const rows: Row[] = [
   ['git status', 'git status', 'pass'],
   ['chmod 777', 'chmod -R 777 .', 'warn'],
   ['eval string', `eval "ls"`, 'warn'],
+  // --- 괄호: 서브셸 닫는 괄호가 리다이렉트 대상에 붙지 않게(0.7.0 백로그 오탐) ---
+  ['subshell devnull', '(command -v go || ls /usr/local/go/bin 2>/dev/null) | head -2', 'pass'],
+  ['subshell real write', '(echo x >/etc/hosts)', 'deny'],
+  ['case pattern body', `case $x in a) ${RM} ${RF} / ;; esac`, 'deny'],
+  ['function header', 'f() { echo hi; }', 'pass'],
 ];
 
 describe('analyzeCommand 판정표 (양성·음성)', () => {

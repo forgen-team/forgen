@@ -324,17 +324,18 @@ export async function runDoctor(opts: DoctorOptions = {}): Promise<number> {
     // 이전에는 디렉터리 파일 수만 세어 이미 제거된 rule 도 count 되어 판매 관점
     // "살아있는 규칙" 수치가 부풀려짐. 실제 구매자 가치는 active + suppressed.
     const ruleFiles = fs.readdirSync(ME_RULES).filter(isKnowledgeFile);
-    let active = 0, suppressed = 0, removed = 0;
+    let active = 0, suppressed = 0, removed = 0, candidate = 0;
     for (const f of ruleFiles) {
       try {
         const d = JSON.parse(fs.readFileSync(path.join(ME_RULES, f), 'utf-8')) as { status?: string };
         if (d.status === 'active') active++;
         else if (d.status === 'suppressed') suppressed++;
+        else if (d.status === 'candidate') candidate++;
         else if (d.status === 'removed' || d.status === 'superseded') removed++;
       } catch { /* skip */ }
     }
     const live = active + suppressed;
-    const removedTag = removed > 0 ? ` (${removed} removed/superseded)` : '';
+    const removedTag = (removed > 0 ? ` (${removed} removed/superseded)` : '') + (candidate > 0 ? ` (+${candidate} mined candidates, not injected)` : '');
     console.log(`  Personal rules: ${live}  [active:${active} suppressed:${suppressed}]${removedTag}`);
   }
   console.log();

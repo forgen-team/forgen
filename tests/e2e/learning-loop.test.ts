@@ -31,7 +31,7 @@ vi.mock('node:os', async (importOriginal) => {
 // ── Source imports (paths.ts는 이 시점에 TEST_HOME을 HOME으로 인식) ──
 import { processCorrection } from '../../src/forge/evidence-processor.js';
 import { loadEvidenceBySession, promoteSessionCandidates, createEvidence, saveEvidence } from '../../src/store/evidence-store.js';
-import { loadActiveRules, cleanupStaleSessionRules } from '../../src/store/rule-store.js';
+import { loadActiveRules, loadAllRules, cleanupStaleSessionRules } from '../../src/store/rule-store.js';
 import { computeSessionSignals, detectMismatch } from '../../src/forge/mismatch-detector.js';
 import { createProfile, saveProfile } from '../../src/store/profile-store.js';
 
@@ -74,7 +74,9 @@ describe('ADR-013: auto_mined 교정 승급은 실시간 교정과 차등', () =
     const sessionId = 'session-mined-avoid';
     saveMined(sessionId, 'avoid-this', '프로덕션 환경 확인 없이 미연동으로 단정하지 말 것', 'prod-env-verify');
     expect(promoteSessionCandidates(sessionId)).toBe(1);
-    const rule = loadActiveRules().find(r => r.scope === 'me');
+    // 0.7.0 D5: 채굴 룰은 후보로 태어나 주입되지 않는다(다른 세션에서 한 번 더 잡혀야 활성).
+    expect(loadActiveRules().find(r => r.scope === 'me')).toBeUndefined();
+    const rule = loadAllRules().find(r => r.scope === 'me' && r.status === 'candidate');
     expect(rule).toBeDefined();
     // 실시간 avoid-this 였다면 strong 이지만, 채굴이므로 default.
     expect(rule!.strength).toBe('default');

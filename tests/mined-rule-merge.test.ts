@@ -5,7 +5,7 @@
  *  (b) 채굴 1 + explicit 1 유사 → 채굴 superseded+clustered_into=explicit, explicit 의
  *      evidence_refs/strength 불변, mined_observations=1
  *  (c) 사전 중복 검사: 같은 개념 evidence 는 새 채굴 룰을 만들지 않는다(채굴 → evidence 추가,
- *      explicit → mined_observations+1)
+ *      explicit → 증거만 소비 표시. 0.7.0 D5-4: 극성을 모르므로 mined_observations 를 올리지 않는다)
  *  (d) unmerge 왕복: 채굴 통합 룰 / explicit 링크 타깃 양쪽
  *  (e) 캡(30) 계산에서 superseded 원본 제외
  */
@@ -194,18 +194,18 @@ describe('ADR-017 D3 — mined rule merge', () => {
     expect(m1.evidence_refs).toEqual(['ev-m1', ev1.evidence_id]);
     expect(m1.strength).toBe('default');
 
-    // (c-2) explicit 룰과 같은 개념 → 새 룰 없음, explicit evidence_refs 불변, mined_observations+1
+    // (c-2) explicit 룰과 같은 개념 → 새 룰 없음, explicit evidence_refs 불변, 관측 카운트도 안 올림(0.7.0 D5-4)
     mine('s2', 'parallel-agents-allowed', PARALLEL_MINED);
     expect(promoteSessionCandidates('s2')).toBe(0); // 승격 아님(링크 카운트만)
     expect(allRules().length).toBe(2);
     const e1 = readRule('e1');
     expect(e1.evidence_refs).toEqual(['ev-e1']);
     expect(e1.strength).toBe('default');
-    expect(e1.mined_observations).toBe(1);
+    expect(e1.mined_observations).toBeUndefined();
 
     // 같은 evidence 재-sweep 은 no-op (소비 마킹)
     expect(promoteSessionCandidates('s2')).toBe(0);
-    expect(readRule('e1').mined_observations).toBe(1);
+    expect(allRules().length).toBe(2);
 
     // (c-3) 어느 쪽과도 다른 개념 → 기존대로 새 채굴 룰 생성
     mine('s3', 'krx-bulk-download', UNRELATED);

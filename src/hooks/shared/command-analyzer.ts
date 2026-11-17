@@ -210,7 +210,11 @@ export function tokenize(src: string): Stmt[] {
       if (buf.endsWith('>')) { buf += c; inWord = true; i++; continue; }
       endStmt('|'); i += src[i + 1] === '&' ? 2 : 1; continue;
     }
-    if ((c === '(' || c === ')') && !inWord) { if (c === ')') endStmt(';'); i++; continue; }
+    // 따옴표 밖 `)` 는 셸에서 단어를 끝낸다 — 서브셸 `(ls 2>/dev/null)`, case 패턴 `a) rm -rf / ;;`.
+    // 단어에 붙여 두면 `/dev/null)` 같은 대상이 생겨 시스템 경로 쓰기로 오탐하고, case 안 명령은 못 본다.
+    // 함수 정의 `f()` 만 단어에 둔다(FUNC_HEADER_RE).
+    if (c === '(' && !inWord) { i++; continue; }
+    if (c === ')' && !(inWord && buf.endsWith('('))) { endStmt(';'); i++; continue; }
     buf += c; inWord = true; i++;
   }
   endStmt('');

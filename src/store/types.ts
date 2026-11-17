@@ -33,7 +33,8 @@ export type RuleCategory = 'quality' | 'autonomy' | 'communication' | 'workflow'
 export type RuleScope = 'me' | 'session';
 export type RuleStrength = 'soft' | 'default' | 'strong' | 'hard';
 export type RuleSource = 'onboarding' | 'explicit_correction' | 'behavior_inference' | 'pack_overlay' | 'imported';
-export type RuleStatus = 'active' | 'suppressed' | 'removed' | 'superseded';
+/** candidate: 채굴(추론) 룰 후보 — 서로 다른 세션 2곳에서 근거가 쌓이기 전엔 주입하지 않는다 (0.7.0 D5). */
+export type RuleStatus = 'active' | 'candidate' | 'suppressed' | 'removed' | 'superseded';
 
 // ── Enforcement axis (ADR-001) ──────────────────────────────────────────────
 // Rule 이 어떻게 강제되는가. 직교 축: strength(중요도) × mech(검증 방식).

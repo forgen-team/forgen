@@ -50,7 +50,7 @@ function sweepBlockCountsForRule(ruleId: string): void {
   } catch { /* fail-open */ }
 }
 
-const INACTIVE_STATUSES = new Set<RuleStatus>(['removed', 'suppressed', 'superseded']);
+const INACTIVE_STATUSES = new Set<RuleStatus>(['candidate', 'removed', 'suppressed', 'superseded']);
 
 export function ensureLifecycle(rule: Rule): LifecycleState {
   return rule.lifecycle ?? {
