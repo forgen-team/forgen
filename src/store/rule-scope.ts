@@ -40,3 +40,18 @@ export function appliesForEnforcement(rule: Rule, projectKey: string | null): bo
   if (!rule.projects?.length) return true;
   return projectKey !== null && rule.projects.includes(projectKey);
 }
+
+/**
+ * 여러 룰을 하나로 합칠 때의 프로젝트 범위 (2026-11 재설계 D6-1).
+ * 구성원 projects 의 합집합. 구성원 중 하나라도 전역(projects 없음)이면 결과도 전역(undefined).
+ * 예전 병합 경로는 projects 를 아예 넘기지 않아 프로젝트 룰이 병합되면 전역 룰이 됐다.
+ */
+export function mergeRuleProjects(rules: Array<Pick<Rule, 'projects'>>): string[] | undefined {
+  if (rules.length === 0) return undefined;
+  const out = new Set<string>();
+  for (const r of rules) {
+    if (!r.projects?.length) return undefined;
+    for (const p of r.projects) out.add(p);
+  }
+  return [...out].sort();
+}

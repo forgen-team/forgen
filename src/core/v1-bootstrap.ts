@@ -85,7 +85,7 @@ function renderWithoutProfile(cwd?: string): string | null {
   }
 }
 
-export function bootstrapV1Session(cwd?: string): V1BootstrapResult {
+export function bootstrapV1Session(cwd?: string, opts: { trackInjection?: boolean } = {}): V1BootstrapResult {
   // 0. 디렉토리 준비
   ensureV1Directories();
 
@@ -173,7 +173,7 @@ export function bootstrapV1Session(cwd?: string): V1BootstrapResult {
   // Fail-open: tracking failure must not block bootstrap.
   try {
     const injected = rendered.included.map((r) => r.rule_id);
-    if (injected.length > 0) markRulesInjected(injected);
+    if (injected.length > 0 && opts.trackInjection !== false) markRulesInjected(injected);
     recordRenderReport(rendered);
   } catch { /* ignore */ }
 

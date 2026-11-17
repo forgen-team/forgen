@@ -10,7 +10,7 @@ import * as path from 'node:path';
 import * as crypto from 'node:crypto';
 import { ME_BEHAVIOR, ME_RULES } from '../core/paths.js';
 import { atomicWriteJSON, safeReadJSON } from '../hooks/shared/atomic-write.js';
-import type { Evidence, EvidenceType, RuleCategory, RuleSource } from './types.js';
+import type { Evidence, EvidenceType, Rule, RuleCategory, RuleSource } from './types.js';
 import { HOST_IDS, type HostId } from '../core/trust-layer-intent.js';
 import { createRule, saveRule, loadActiveRules, updateRuleStatus, findRuleByRenderKey } from './rule-store.js';
 import { classify, applyProposal } from '../engine/enforce-classifier.js';
@@ -20,6 +20,7 @@ import { appendLifecycleEvents } from '../engine/lifecycle/meta-reclassifier.js'
 import { findMostSimilarRule, laplaceConfidence, strengthForConfidence } from '../engine/correction-clustering.js';
 import { recordMinedObservation } from '../engine/correction-cluster-runner.js';
 import { withFileLockSync } from '../hooks/shared/file-lock.js';
+import { withStatusChange } from './rule-lifecycle.js';
 
 function evidencePath(evidenceId: string): string {
   return path.join(ME_BEHAVIOR, `${evidenceId}.json`);
@@ -248,6 +249,34 @@ function mergedRuleProjects(
   return next ? [...new Set([...existing.projects, ...next])] : existing.projects;
 }
 
+/**
+ * D3 (2026-11 재설계): 교정 1건이 scope:'session' 임시 룰과 승급된 scope:'me' 룰, 활성 룰 2개로 남지 않게
+ * 같은 evidence 로 만든 활성 session 룰을 승급 직후 superseded 로 바꾼다. 승급 저장이 성공한 뒤에만 호출한다.
+ * (12시간 유예는 아직 승급 안 된 session 룰을 지키는 장치라 여기와 충돌하지 않는다.) 바꾼 수를 돌려준다.
+ */
+function supersedeSessionTwins(evidenceId: string, meRuleId: string): number {
+  if (!fs.existsSync(ME_RULES)) return 0;
+  let n = 0;
+  for (const file of fs.readdirSync(ME_RULES)) {
+    if (!file.endsWith('.json')) continue;
+    const filePath = path.join(ME_RULES, file);
+    const peek = safeReadJSON<Rule | null>(filePath, null);
+    if (!peek || peek.scope !== 'session' || peek.status !== 'active') continue;
+    if (!peek.evidence_refs?.includes(evidenceId)) continue;
+    try {
+      // 파일 잠금 — markRulesInjected·cleanupStaleSessionRules 가 같은 파일을 잠그고 쓴다.
+      withFileLockSync(filePath, () => {
+        const rule = safeReadJSON<Rule | null>(filePath, null);
+        if (!rule || rule.status !== 'active') return;
+        const next = withStatusChange(rule, 'superseded', 'promoted-to-me', 'promotion');
+        saveRule({ ...next, ...(next.lifecycle ? { lifecycle: { ...next.lifecycle, superseded_by: meRuleId } } : {}) });
+        n++;
+      });
+    } catch { /* 잠금 실패 → 12시간 유예 뒤 cleanupStaleSessionRules 가 정리 */ }
+  }
+  return n;
+}
+
 export function promoteSessionCandidates(sessionId: string): number {
   // withFileLockSync 는 O_CREAT 로 lock 파일을 만들 뿐 부모 디렉터리는 만들지 않는다 —
   // 첫 rule 승급 이전(=아직 ME_RULES 없음)에도 락을 잡을 수 있어야 하므로 선행 mkdir.
@@ -365,6 +394,7 @@ export function promoteSessionCandidates(sessionId: string): number {
           ...candidate,
           candidate_rule_refs: [...(candidate.candidate_rule_refs ?? []), existingRule.rule_id],
         });
+        if (!autoMined) supersedeSessionTwins(candidate.evidence_id, existingRule.rule_id);
         promoted++;
         continue;
       }
@@ -406,6 +436,7 @@ export function promoteSessionCandidates(sessionId: string): number {
         ...candidate,
         candidate_rule_refs: [...(candidate.candidate_rule_refs ?? []), rule.rule_id],
       });
+      if (!autoMined) supersedeSessionTwins(candidate.evidence_id, rule.rule_id);
       promoted++;
     }
 

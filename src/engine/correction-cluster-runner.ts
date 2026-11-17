@@ -22,6 +22,7 @@ import { withFileLock } from '../hooks/shared/file-lock.js';
 import { createRule, loadAllRules, loadRule, saveRule } from '../store/rule-store.js';
 import type { Rule } from '../store/types.js';
 import { withStatusChange } from '../store/rule-lifecycle.js';
+import { mergeRuleProjects } from '../store/rule-scope.js';
 import {
   type ClusterableRule,
   type CorrectionCluster,
@@ -188,10 +189,14 @@ async function runCorrectionClusteringLocked(confirmed: boolean, only?: Set<stri
       absorber.policy = cluster.representativePolicy;
       absorber.strength = cluster.strength;
       absorber.evidence_refs = cluster.evidenceRefs;
+      // D6-1: 구성원 projects 합집합(하나라도 전역이면 전역).
+      const absorberProjects = mergeRuleProjects(memberRules);
+      if (absorberProjects) absorber.projects = absorberProjects; else delete absorber.projects;
       saveRule(absorber);
       mergedId = absorber.rule_id;
       absorbed = memberRules.filter((r) => r.rule_id !== absorber.rule_id);
     } else {
+      const mergedProjects = mergeRuleProjects(memberRules); // D6-1
       const merged = createRule({
         category,
         scope: 'me',
@@ -201,6 +206,7 @@ async function runCorrectionClusteringLocked(confirmed: boolean, only?: Set<stri
         source: 'explicit_correction',
         evidence_refs: cluster.evidenceRefs,
         render_key: mergedRenderKey(cluster),
+        ...(mergedProjects ? { projects: mergedProjects } : {}),
       });
       saveRule(merged);
       mergedId = merged.rule_id;
@@ -530,6 +536,9 @@ async function applyMinedRuleMergePlan(plan: MinedMergePlan): Promise<MinedMerge
       absorber.evidence_refs = evidenceRefs;
       absorber.created_at = oldestCreatedAt;
       absorber.enforce_via = [];
+      // D6-1: 흡수자 + 구성원 projects 합집합(하나라도 전역이면 전역).
+      const minedProjects = mergeRuleProjects([absorber, ...fresh]);
+      if (minedProjects) absorber.projects = minedProjects; else delete absorber.projects;
       saveRule(absorber);
       mergedId = absorber.rule_id;
     } else {
@@ -551,6 +560,8 @@ async function applyMinedRuleMergePlan(plan: MinedMergePlan): Promise<MinedMerge
       });
       merged.created_at = oldestCreatedAt; // TTL carry-forward — 통합으로 수명 연장 금지
       merged.enforce_via = []; // advisory-only 유지
+      const freshProjects = mergeRuleProjects(fresh); // D6-1
+      if (freshProjects) merged.projects = freshProjects; else delete merged.projects;
       saveRule(merged);
       mergedId = merged.rule_id;
       result.mergedRuleIds.push(mergedId);

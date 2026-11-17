@@ -1,0 +1,256 @@
+/**
+ * forgen status --health — 룰 건강 지표 (docs/plans/2026-11-17-rule-quality-redesign.md D8).
+ *
+ * 한 집계 함수(computeRuleHealth)를 CLI 화면과 `--json` 이 같이 쓴다. 외부 도구(Handoff 등)가 이 JSON 을 읽으면
+ * forgen 화면과 숫자가 항상 같다. 읽기 전용 — 아무 파일도 바꾸지 않는다.
+ *
+ * 정의 (숫자마다 출처를 고정한다):
+ *   교정        me/behavior 의 explicit_correction. source_component 'auto-compound-miner' 는 채굴(추론)로 분리.
+ *   차단        violations.jsonl 의 block/deny (signals.isRealBlock)
+ *   자문        violations.jsonl 의 kind 'correction' (위반을 막지 않고 기록만 한 경우)
+ *   우회        violations.jsonl 의 kind 'bypass_confirmed' (FORGEN_USER_CONFIRMED 명시)
+ *   준수 근거   checks.jsonl 의 pass(Stop 에서 실제로 평가해 통과) + acknowledgments(차단 뒤 고쳐서 통과).
+ *               accept_count 는 기록 경로가 없어 쓰지 않는다.
+ *   승급        lifecycle 의 meta_promote_to_a
+ *   은퇴        룰 status_history 중 removed·suppressed·superseded 로 바뀐 기록
+ *   다시 교정됨 lifecycle 의 t1_explicit_correction (이미 있는 룰을 지목한 교정)
+ *   날짜        UTC 날짜(lifecycle 로그 파일 이름과 같은 기준)
+ */
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { ME_BEHAVIOR, STATE_DIR } from './paths.js';
+import { loadAllRules } from '../store/rule-store.js';
+import type { Rule } from '../store/types.js';
+import { isConfirmedBypass, isRealBlock, isSyntheticEntry, readJsonlWindow } from '../engine/lifecycle/signals.js';
+import { planT5Unflag } from '../engine/lifecycle/t5-hygiene.js';
+
+const DAY = 86_400_000;
+const ENF = path.join(STATE_DIR, 'enforcement');
+const LIFECYCLE = path.join(STATE_DIR, 'lifecycle');
+const RETIRED_TO = new Set(['removed', 'suppressed', 'superseded']);
+
+export interface RuleHealthDay {
+  day: string;
+  corrections: number;
+  correctionsUser: number;
+  correctionsMined: number;
+  rulesCreated: number;
+  rulesPromoted: number;
+  rulesRetired: number;
+  blocks: number;
+  advisories: number;
+  bypasses: number;
+}
+
+export interface RuleHealth {
+  schema: 'forgen-rule-health/v1';
+  generatedAt: string;
+  windowDays: number;
+  rules: {
+    active: { total: number; explicit: number; mined: number; onboarding: number; other: number };
+    flagged: { total: number; conflictOnly: number; other: number };
+    neverInjected: number;
+    unscopedLearned: number;
+    duplicateGroups: Array<{ policy: string; ruleIds: string[] }>;
+  };
+  flow: {
+    correctionsUser: number;
+    correctionsMined: number;
+    rulesCreatedExplicit: number;
+    rulesCreatedMined: number;
+    injections: number;
+    checksPass: number;
+    checksViolation: number;
+    acknowledgments: number;
+    blocks: number;
+    advisories: number;
+    bypasses: number;
+    promotions: number;
+    retired: number;
+  };
+  top: {
+    blocking: Array<{ ruleId: string; policy: string | null; blocks: number }>;
+    recorrected: Array<{ ruleId: string; policy: string | null; count: number }>;
+  };
+  days: RuleHealthDay[];
+}
+
+const utcDay = (t: number): string => new Date(t).toISOString().slice(0, 10);
+const normalize = (s: string): string => s.normalize('NFC').toLowerCase().replace(/[\s.,;:!?'"`()[\]{}~·…-]+/g, ' ').trim();
+
+function readEvidenceTimes(): { user: number[]; mined: number[] } {
+  const out = { user: [] as number[], mined: [] as number[] };
+  let files: string[] = [];
+  try { files = fs.readdirSync(ME_BEHAVIOR).filter((f) => f.endsWith('.json')); } catch { return out; }
+  for (const f of files) {
+    try {
+      const e = JSON.parse(fs.readFileSync(path.join(ME_BEHAVIOR, f), 'utf-8')) as { type?: string; source_component?: string; timestamp?: string };
+      if (e.type !== 'explicit_correction') continue;
+      const t = Date.parse(e.timestamp ?? '');
+      if (!Number.isFinite(t)) continue;
+      (e.source_component === 'auto-compound-miner' ? out.mined : out.user).push(t);
+    } catch { /* 깨진 evidence 는 건너뜀 */ }
+  }
+  return out;
+}
+
+function readLifecycleEvents(days: number, now: number): Array<{ kind?: string; rule_id?: string; ts?: number }> {
+  let files: string[] = [];
+  try { files = fs.readdirSync(LIFECYCLE).filter((f) => /^\d{4}-\d{2}-\d{2}\.jsonl(\.\d+)?$/.test(f)); } catch { return []; }
+  const cutoff = utcDay(now - (days - 1) * DAY);
+  const out: Array<{ kind?: string; rule_id?: string; ts?: number }> = [];
+  for (const f of files) {
+    if (f.slice(0, 10) < cutoff) continue;
+    let text = '';
+    try { text = fs.readFileSync(path.join(LIFECYCLE, f), 'utf-8'); } catch { continue; }
+    for (const line of text.split('\n')) {
+      if (!line || !(line.includes('meta_promote_to_a') || line.includes('t1_explicit_correction'))) continue; // T5 대량 기록은 건너뛴다
+      try {
+        const e = JSON.parse(line) as { kind?: string; rule_id?: string; ts?: number };
+        out.push({ ...e, ts: typeof e.ts === 'number' ? e.ts : Date.parse(`${f.slice(0, 10)}T00:00:00Z`) });
+      } catch { /* skip */ }
+    }
+  }
+  return out;
+}
+
+export function computeRuleHealth(opts: { days?: number; now?: number; rules?: Rule[] } = {}): RuleHealth {
+  const days = opts.days ?? 14;
+  const now = opts.now ?? Date.now();
+  const since = now - days * DAY;
+  const rules = opts.rules ?? loadAllRules();
+  const active = rules.filter((r) => r.status === 'active');
+  const byId = new Map(rules.map((r) => [r.rule_id, r]));
+  const policyOf = (id: string): string | null => byId.get(id)?.policy.replace(/\s+/g, ' ').slice(0, 100) ?? null;
+
+  // ── 룰 상태 ──
+  const flagged = active.filter((r) => r.lifecycle?.phase === 'flagged');
+  const conflictOnly = new Set(planT5Unflag(rules).map((r) => r.rule_id));
+  const dupMap = new Map<string, string[]>();
+  for (const r of active) {
+    const k = normalize(r.policy);
+    if (k.length < 10) continue;
+    dupMap.set(k, [...(dupMap.get(k) ?? []), r.rule_id]);
+  }
+  const duplicateGroups = [...dupMap.values()].filter((ids) => ids.length > 1).map((ids) => ({ policy: policyOf(ids[0]) ?? '', ruleIds: ids }));
+
+  // ── 신호 ──
+  const ev = readEvidenceTimes();
+  const violations = readJsonlWindow<Record<string, unknown>>(path.join(ENF, 'violations.jsonl'), days, now)
+    .filter((v) => Date.parse(String(v.at ?? '')) >= since);
+  const blocks = violations.filter(isRealBlock);
+  const advisories = violations.filter((v) => v.kind === 'correction' && !isSyntheticEntry(v));
+  const bypasses = violations.filter(isConfirmedBypass);
+  const checks = readJsonlWindow<Record<string, unknown>>(path.join(ENF, 'checks.jsonl'), days, now)
+    .filter((c) => Date.parse(String(c.at ?? '')) >= since && !isSyntheticEntry(c));
+  const acks = readJsonlWindow<Record<string, unknown>>(path.join(ENF, 'acknowledgments.jsonl'), days, now)
+    .filter((a) => Date.parse(String(a.at ?? a.last_block_at ?? '')) >= since);
+  const lifecycle = readLifecycleEvents(days, now).filter((e) => (e.ts ?? 0) >= since);
+  const promotions = lifecycle.filter((e) => e.kind === 'meta_promote_to_a');
+  const t1 = lifecycle.filter((e) => e.kind === 't1_explicit_correction');
+
+  const created = rules.filter((r) => Date.parse(r.created_at) >= since);
+  const retirements: number[] = [];
+  for (const r of rules) {
+    for (const h of r.status_history ?? []) {
+      const t = Date.parse(h.at);
+      if (t >= since && RETIRED_TO.has(h.to)) retirements.push(t);
+    }
+  }
+
+  // ── 일별 ──
+  const dayKeys: string[] = [];
+  for (let i = days - 1; i >= 0; i--) dayKeys.push(utcDay(now - i * DAY));
+  const dayIdx = new Map(dayKeys.map((d, i) => [d, i]));
+  const table: RuleHealthDay[] = dayKeys.map((day) => ({ day, corrections: 0, correctionsUser: 0, correctionsMined: 0, rulesCreated: 0, rulesPromoted: 0, rulesRetired: 0, blocks: 0, advisories: 0, bypasses: 0 }));
+  const bump = (t: number, key: keyof Omit<RuleHealthDay, 'day'>) => {
+    const i = dayIdx.get(utcDay(t));
+    if (i !== undefined) table[i][key] += 1;
+  };
+  for (const t of ev.user) if (t >= since) { bump(t, 'correctionsUser'); bump(t, 'corrections'); }
+  for (const t of ev.mined) if (t >= since) { bump(t, 'correctionsMined'); bump(t, 'corrections'); }
+  for (const r of created) bump(Date.parse(r.created_at), 'rulesCreated');
+  for (const e of promotions) bump(e.ts ?? 0, 'rulesPromoted');
+  for (const t of retirements) bump(t, 'rulesRetired');
+  for (const v of blocks) bump(Date.parse(String(v.at)), 'blocks');
+  for (const v of advisories) bump(Date.parse(String(v.at)), 'advisories');
+  for (const v of bypasses) bump(Date.parse(String(v.at)), 'bypasses');
+
+  // ── 상위 ──
+  const countBy = (items: Array<{ rule_id?: unknown }>) => {
+    const m = new Map<string, number>();
+    for (const it of items) { const id = String(it.rule_id ?? ''); if (id) m.set(id, (m.get(id) ?? 0) + 1); }
+    return [...m.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8);
+  };
+
+  return {
+    schema: 'forgen-rule-health/v1',
+    generatedAt: new Date(now).toISOString(),
+    windowDays: days,
+    rules: {
+      active: {
+        total: active.length,
+        explicit: active.filter((r) => r.source === 'explicit_correction').length,
+        mined: active.filter((r) => r.source === 'behavior_inference').length,
+        onboarding: active.filter((r) => r.source === 'onboarding').length,
+        other: active.filter((r) => !['explicit_correction', 'behavior_inference', 'onboarding'].includes(r.source)).length,
+      },
+      flagged: { total: flagged.length, conflictOnly: flagged.filter((r) => conflictOnly.has(r.rule_id)).length, other: flagged.filter((r) => !conflictOnly.has(r.rule_id)).length },
+      neverInjected: active.filter((r) => (r.lifecycle?.inject_count ?? 0) === 0).length,
+      unscopedLearned: active.filter((r) => (r.source === 'explicit_correction' || r.source === 'behavior_inference') && !r.projects?.length).length,
+      duplicateGroups,
+    },
+    flow: {
+      correctionsUser: ev.user.filter((t) => t >= since).length,
+      correctionsMined: ev.mined.filter((t) => t >= since).length,
+      rulesCreatedExplicit: created.filter((r) => r.source === 'explicit_correction').length,
+      rulesCreatedMined: created.filter((r) => r.source === 'behavior_inference').length,
+      injections: active.reduce((n, r) => n + (r.lifecycle?.inject_count ?? 0), 0),
+      checksPass: checks.filter((c) => c.result === 'pass').length,
+      checksViolation: checks.filter((c) => c.result === 'violation').length,
+      acknowledgments: acks.length,
+      blocks: blocks.length,
+      advisories: advisories.length,
+      bypasses: bypasses.length,
+      promotions: promotions.length,
+      retired: retirements.length,
+    },
+    top: {
+      blocking: countBy(blocks).map(([ruleId, n]) => ({ ruleId, policy: policyOf(ruleId), blocks: n })),
+      recorrected: countBy(t1).map(([ruleId, n]) => ({ ruleId, policy: policyOf(ruleId), count: n })),
+    },
+    days: table,
+  };
+}
+
+export function renderRuleHealth(h: RuleHealth): string[] {
+  const f = h.flow;
+  const a = h.rules.active;
+  const L: string[] = [];
+  L.push('', `  forgen 룰 건강 — 최근 ${h.windowDays}일`, '');
+  L.push('  흐름');
+  L.push(`    교정        직접 ${f.correctionsUser} · 추론 ${f.correctionsMined}`);
+  L.push(`    룰 생성     직접 ${f.rulesCreatedExplicit} · 추론 ${f.rulesCreatedMined}   은퇴 ${f.retired}   승급 ${f.promotions}`);
+  L.push(`    활성 룰     ${a.total}개 (직접 ${a.explicit} · 추론 ${a.mined} · 기본 ${a.onboarding}${a.other ? ` · 기타 ${a.other}` : ''})   주입 누적 ${f.injections}회`);
+  L.push(`    평가        통과 ${f.checksPass} · 위반 ${f.checksViolation}   차단 ${f.blocks} · 고쳐서 통과 ${f.acknowledgments} · 자문 ${f.advisories} · 우회 ${f.bypasses}`);
+  L.push('    ※ 자문 룰은 위반을 탐지할 수 없어 "위반 0"이 준수를 뜻하지 않습니다. 준수 근거는 통과·고쳐서 통과뿐입니다.');
+  L.push('', '  대기열');
+  const fl = h.rules.flagged;
+  L.push(`    검토 대기   ${fl.total}개${fl.total ? ` (충돌 감지 오탐 ${fl.conflictOnly} → forgen rule unflag · 교정·반복 위반 ${fl.other})` : ''}`);
+  L.push(`    같은 문장   ${h.rules.duplicateGroups.length}묶음${h.rules.duplicateGroups.length ? ` (${h.rules.duplicateGroups.reduce((n, g) => n + g.ruleIds.length, 0)}개 룰)` : ''}`);
+  L.push(`    주입 0회    ${h.rules.neverInjected}개   범위 없는 학습 룰 ${h.rules.unscopedLearned}개`);
+  if (h.top.blocking.length) {
+    L.push('', '  많이 막은 룰');
+    for (const t of h.top.blocking.slice(0, 5)) L.push(`    ${String(t.blocks).padStart(4)}회  ${t.policy ?? t.ruleId}`);
+  }
+  if (h.top.recorrected.length) {
+    L.push('', '  다시 교정된 룰 (이미 있는 룰을 지목한 교정)');
+    for (const t of h.top.recorrected.slice(0, 5)) L.push(`    ${String(t.count).padStart(4)}회  ${t.policy ?? t.ruleId}`);
+  }
+  L.push('', '  일별 (UTC)   교정(직접/추론)  생성  은퇴  승급  차단  자문  우회');
+  for (const d of h.days) {
+    L.push(`    ${d.day}   ${String(d.correctionsUser).padStart(3)}/${String(d.correctionsMined).padEnd(4)}       ${String(d.rulesCreated).padStart(3)}   ${String(d.rulesRetired).padStart(3)}   ${String(d.rulesPromoted).padStart(3)}   ${String(d.blocks).padStart(3)}   ${String(d.advisories).padStart(3)}   ${String(d.bypasses).padStart(3)}`);
+  }
+  L.push('', '  JSON: forgen status --health --json', '');
+  return L;
+}

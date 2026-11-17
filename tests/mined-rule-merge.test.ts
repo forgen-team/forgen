@@ -406,3 +406,70 @@ describe('ADR-017 D3 — mined rule merge', () => {
     expect(plan.explicitLinks.length).toBe(0);
   });
 });
+
+describe('D6-1 병합 시 프로젝트 범위 보존 (2026-11 재설계)', () => {
+  beforeEach(() => {
+    fs.rmSync(TEST_HOME, { recursive: true, force: true });
+    fs.mkdirSync(RULES_DIR, { recursive: true });
+    vi.resetModules();
+    process.env.FORGEN_DISABLE_PROJECT_RULES = '1';
+  });
+  afterEach(() => {
+    fs.rmSync(TEST_HOME, { recursive: true, force: true });
+    delete process.env.FORGEN_DISABLE_PROJECT_RULES;
+  });
+
+  it('프로젝트 룰끼리 병합하면 projects 합집합을 갖는다', async () => {
+    writeRule('m1', { policy: FABLE_A, extra: { projects: ['alpha'] } });
+    writeRule('m2', { policy: FABLE_B, extra: { projects: ['beta'] } });
+    writeRule('m3', { policy: FABLE_C, extra: { projects: ['alpha'] } });
+    const { runMinedRuleMerge } = await import('../src/engine/correction-cluster-runner.js');
+    const { applied } = await runMinedRuleMerge({ apply: true });
+    const merged = readRule(applied?.mergedRuleIds[0] as string);
+    expect(merged.projects).toEqual(['alpha', 'beta']);
+  });
+
+  it('구성원 중 하나라도 전역이면 병합 결과도 전역', async () => {
+    writeRule('m1', { policy: FABLE_A, extra: { projects: ['alpha'] } });
+    writeRule('m2', { policy: FABLE_B });
+    writeRule('m3', { policy: FABLE_C, extra: { projects: ['alpha'] } });
+    const { runMinedRuleMerge } = await import('../src/engine/correction-cluster-runner.js');
+    const { applied } = await runMinedRuleMerge({ apply: true });
+    const merged = readRule(applied?.mergedRuleIds[0] as string);
+    expect(merged.projects).toBeUndefined();
+  });
+});
+
+describe('mergeRuleProjects', () => {
+  it('합집합·정렬, 전역이 하나라도 있으면 undefined, 빈 입력은 undefined', async () => {
+    const { mergeRuleProjects } = await import('../src/store/rule-scope.js');
+    expect(mergeRuleProjects([{ projects: ['b'] }, { projects: ['a', 'b'] }])).toEqual(['a', 'b']);
+    expect(mergeRuleProjects([{ projects: ['a'] }, {}])).toBeUndefined();
+    expect(mergeRuleProjects([{ projects: [] }])).toBeUndefined();
+    expect(mergeRuleProjects([])).toBeUndefined();
+  });
+});
+
+describe('D6-1 explicit 클러스터 병합(확인 후 적용)도 projects 보존', () => {
+  beforeEach(() => {
+    fs.rmSync(TEST_HOME, { recursive: true, force: true });
+    fs.mkdirSync(RULES_DIR, { recursive: true });
+    vi.resetModules();
+    process.env.FORGEN_DISABLE_PROJECT_RULES = '1';
+  });
+  afterEach(() => {
+    fs.rmSync(TEST_HOME, { recursive: true, force: true });
+    delete process.env.FORGEN_DISABLE_PROJECT_RULES;
+  });
+
+  it('explicit 프로젝트 룰 병합 → 합집합', async () => {
+    writeRule('e1', { policy: FABLE_A, source: 'explicit_correction', extra: { projects: ['alpha'] } });
+    writeRule('e2', { policy: FABLE_B, source: 'explicit_correction', extra: { projects: ['beta'] } });
+    writeRule('e3', { policy: FABLE_C, source: 'explicit_correction', extra: { projects: ['beta'] } });
+    const { runCorrectionClustering } = await import('../src/engine/correction-cluster-runner.js');
+    const res = await runCorrectionClustering({ confirmed: true });
+    expect(res.length).toBeGreaterThan(0);
+    const merged = allRules().find((r) => r.status === 'active');
+    expect(merged?.projects).toEqual(['alpha', 'beta']);
+  });
+});

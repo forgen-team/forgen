@@ -104,7 +104,7 @@ export function applyEvent(rule: Rule, event: LifecycleEvent, now: number = Date
     updatedLifecycle.superseded_by = event.superseded_by;
     delete updatedLifecycle.merged_into;
   }
-  if (event.kind === 't5_conflict_detected' && event.evidence?.refs) {
+  if (event.kind === 't5_conflict_detected' && event.suggested_action !== 'observe' && event.evidence?.refs) {
     const refs = event.evidence.refs.filter((r) => r !== rule.rule_id);
     updatedLifecycle.conflict_refs = [
       ...new Set([...lifecycle.conflict_refs, ...refs]),

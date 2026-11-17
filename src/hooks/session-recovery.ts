@@ -178,7 +178,9 @@ async function main(): Promise<void> {
   try {
     if (doctorProbe) throw new Error('doctor probe — 세션 상태 기록 생략');
     const { bootstrapV1Session } = await import('../core/v1-bootstrap.js');
-    v1RenderedRules = bootstrapV1Session(sessionContext.cwd).renderedRules;
+    // 래퍼가 띄운 세션이면 주입 횟수는 래퍼 bootstrap 이 이미 셌다(D8: 세션당 1회).
+    const { consumeHarnessBootstrap } = await import('../core/harness-inject-marker.js');
+    v1RenderedRules = bootstrapV1Session(sessionContext.cwd, { trackInjection: !consumeHarnessBootstrap() }).renderedRules;
   } catch (e) { log.debug('v1-bootstrap SessionStart 호출 실패 (fail-open)', e); }
 
   // 모든 호스트가 같은 경로로 룰을 받는다(ADR-014 D1 확장). 래퍼 없이 실행해도 매 세션 최신 룰이 들어간다.

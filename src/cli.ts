@@ -131,7 +131,7 @@ const commands: Command[] = [
   },
   {
     name: 'status',
-    description: 'Unified status: forgen status [--compound|--profile|--rules|--blocks [N]|--overview|--live|--turn]',
+    description: 'Unified status: forgen status [--compound|--profile|--rules|--blocks [N]|--overview|--live|--turn|--health]',
     handler: async (args) => {
       const { handleStatus } = await import('./core/status-cli.js');
       await handleStatus(args);
@@ -424,6 +424,7 @@ async function handleRuleNamespace(args: string[]): Promise<void> {
                                            link same-concept ones to explicit rules (dry-run by default)
     forgen rule unmerge <id>               Restore originals of a merged/linked rule (alias of unmerge-cluster)
     forgen rule recover [--apply <id...>]  Find your corrections that did not survive as active rules
+    forgen rule unflag [--apply]           Clear review flags set only by the conflict detector (T5); preview by default
     forgen rule enforce <id-or-prefix>     Turn on blocking for a rule (semantic rules only record by default)
     forgen rule merge-explicit [--apply <id...>]  list proposed merges (with ids); apply only the listed ids
     forgen rule restore-demoted [--apply]  restore precision-auto-demoted (advise) rules to their previous mode (preview by default)
@@ -496,6 +497,11 @@ async function handleRuleNamespace(args: string[]): Promise<void> {
     case 'recover': {
       const { handleRuleRecover } = await import('./engine/rule-recovery-cli.js');
       handleRuleRecover(rest);
+      return;
+    }
+    case 'unflag': {
+      const { handleRuleUnflag } = await import('./engine/lifecycle/t5-hygiene.js');
+      handleRuleUnflag(rest);
       return;
     }
     case 'snapshot': {
@@ -723,6 +729,7 @@ function printHelp() {
                                       --overview  rich dashboard (hooks·history·curve)
                                       --live      real-time hook event stream
                                       --turn      this turn's relevant rules + their origin corrections
+                                      --health    rule health: corrections→rules→injections→checks, review queues, daily table (--json)
     forgen workflows install|list   Install forgen dynamic-workflow templates to .claude/workflows/
     forgen changelog                Auto-summarize commits since last release tag
     forgen compound                 Manage accumulated knowledge

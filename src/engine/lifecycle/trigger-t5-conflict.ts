@@ -4,7 +4,8 @@
  * 트리거 조건:
  *   같은 category 인 rule pair 중, policy 자연어가 상반 (negation + 공통 키워드 ≥ 2).
  *
- * auto-merge 안 함. conflict_refs 플래그만 설정 → 사용자 수동 해소.
+ * auto-merge 안 함. 기록만 한다(suggested_action 'observe') — 판정이 오탐 위주라(무관한 쌍, 실측 2026-11)
+ * 재설계 전까지 phase·conflict_refs 를 바꾸지 않는다. 클러스터 병합의 충돌 가드는 이벤트 유무만 본다.
  */
 
 import type { Rule } from '../../store/types.js';
@@ -124,7 +125,7 @@ export function detect(input: T5Input): LifecycleEvent[] {
           source: 'rule-pairing',
           refs: [a.rule_id, b.rule_id],
         },
-        suggested_action: 'flag',
+        suggested_action: 'observe',
         ts,
       });
       events.push({
@@ -134,7 +135,7 @@ export function detect(input: T5Input): LifecycleEvent[] {
           source: 'rule-pairing',
           refs: [a.rule_id, b.rule_id],
         },
-        suggested_action: 'flag',
+        suggested_action: 'observe',
         ts,
       });
     }

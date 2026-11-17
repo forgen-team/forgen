@@ -361,6 +361,22 @@ async function main() {
     }
   } catch (err) { console.error(`[forgen] Stop rule retune skipped: ${err?.message ?? err}`); }
 
+  // ── T5 오탐 flagged 정리 1회 마이그레이션 (2026-11-17 재설계 D1, v0.6.12~) ──
+  // T5 가 무관한 룰 쌍을 충돌로 판정해 활성 룰 다수를 검토 대기(flagged)로 만들었다. T5 때문에만 flagged 인 룰을
+  // 정상으로 되돌린다(스냅샷 후 적용, 되돌리기: forgen rule restore <이름> --yes). 마커로 1회만.
+  try {
+    const forgenHome = process.env.FORGEN_HOME || join(HOME, '.forgen');
+    const marker = join(forgenHome, 'state', 't5-unflag-v1.done');
+    if (existsSync(join(forgenHome, 'me', 'rules')) && !existsSync(marker)) {
+      process.env.FORGEN_HOME = forgenHome;
+      const mod = await import(join(PKG_ROOT, 'dist', 'engine', 'lifecycle', 't5-hygiene.js'));
+      const r = mod.applyT5Unflag();
+      mkdirSync(join(forgenHome, 'state'), { recursive: true });
+      writeFileSync(marker, `${new Date().toISOString()} unflagged=${r.count} snapshot=${r.snapshot ?? '-'}\n`);
+      if (r.count > 0) console.log(`[forgen] ${r.count} rule(s) were flagged only by the conflict detector (false positives) — cleared. Undo: forgen rule restore ${r.snapshot} --yes`);
+    }
+  } catch (err) { console.error(`[forgen] T5 unflag skipped: ${err?.message ?? err}`); }
+
   // ── Starter Knowledge Pack (솔루션 < 5개일 때만) ──
   const starterInstalled = attempt('starter pack', installStarterPack) ?? 0;
 

@@ -16,7 +16,7 @@ import { initLifecycle, bumpInject, withStatusChange } from './rule-lifecycle.js
 import { withFileLockSync } from '../hooks/shared/file-lock.js';
 import { appliesForContext, appliesForEnforcement, projectKeyFor } from './rule-scope.js';
 
-function rulePath(ruleId: string): string {
+export function rulePath(ruleId: string): string {
   return path.join(ME_RULES, `${ruleId}.json`);
 }
 
@@ -83,10 +83,10 @@ export function saveRule(rule: Rule): void {
 }
 
 /**
- * ADR-002 T5 — rule 저장 + 기존 active rules 와 자연어 충돌 감지 + 양쪽 conflict_refs 기록.
+ * ADR-002 T5 — rule 저장 + 기존 active rules 와 자연어 충돌 감지(기록만).
  *
  * saveRule 과의 차이:
- *   - 저장 직후 T5 detect 실행 → 충돌 발견 시 신규 rule + 반대편 rule 모두 conflict_refs 업데이트.
+ *   - 저장 직후 T5 detect 실행 → 충돌 후보는 lifecycle 로그에만 기록(2026-11 D1: conflict_refs 는 쓰지 않음).
  *   - auto-merge 안 함 (ADR-002 §Risks — 사용자 수동 해소).
  *   - T5 감지 실패는 저장 자체를 막지 않음 (fail-open).
  *
@@ -103,28 +103,10 @@ export async function appendRule(rule: Rule): Promise<{ saved: true; conflicts_w
     const events = detectT5({ rules: all });
     const relevant = events.filter((e) => e.evidence?.refs?.includes(rule.rule_id));
     if (relevant.length === 0) return { saved: true, conflicts_with: [] };
-
-    // conflict_refs 양방향 업데이트
-    const affected = new Set<string>();
-    for (const ev of relevant) affected.add(ev.rule_id);
-
-    for (const id of affected) {
-      const target = all.find((r) => r.rule_id === id);
-      if (!target) continue;
-      const refs = relevant
-        .filter((ev) => ev.rule_id === id)
-        .flatMap((ev) => (ev.evidence?.refs ?? []).filter((r) => r !== id));
-      const currentConflicts = target.lifecycle?.conflict_refs ?? [];
-      const merged = [...new Set([...currentConflicts, ...refs])];
-      const lifecycle = target.lifecycle ?? {
-        phase: 'active' as const,
-        first_active_at: target.created_at,
-        inject_count: 0, accept_count: 0, violation_count: 0, bypass_count: 0,
-        conflict_refs: [], meta_promotions: [],
-      };
-      saveRule({ ...target, lifecycle: { ...lifecycle, conflict_refs: merged } });
-    }
-    appendLifecycleEvents(relevant);
+    // D1(2026-11): T5 는 기록만 한다 — 판정이 오탐 위주라 conflict_refs 를 룰 파일에 쓰지 않는다.
+    // 최근 7일 안에 기록된 쌍은 다시 기록하지 않는다.
+    const { filterNewT5Events, recentT5PairKeys } = await import('../engine/lifecycle/t5-hygiene.js');
+    appendLifecycleEvents(filterNewT5Events(relevant, recentT5PairKeys()));
 
     const conflicts_with = [
       ...new Set(
