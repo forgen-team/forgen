@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.10] — 2026-11-17 — 가드가 세션을 멈추지 않음
+
+### Fixed
+- **가드 적중 시 세션 정지.** PreToolUse 가드가 `continue:false` 를 보내 Claude Code 턴 전체가 이유 없이 멈추던 것을 고쳤다. 이제 해당 도구 호출만 거부하고 사유를 보이며 세션은 계속된다. 치명 명령(`rm -rf /`, `mkfs`, `DROP TABLE`)은 계속 거부하며 `FORGEN_USER_CONFIRMED` 로도 우회할 수 없다.
+- **비밀 커밋 가드는 확인 요청(ask).** 이름·패턴 판단이라 오탐이 있을 수 있어, 차단 대신 사유를 보이고 사용자 확인을 받는다.
+- **추적 중 `.env` 템플릿 오탐.** `.env` 이름 규칙은 새로 추가되는 파일에만 적용한다. 이미 추적 중인 `.env.development` 같은 예시값 템플릿의 수정은 내용 검사로 판단한다(진짜 키는 계속 잡힌다).
+
+### Changed
+- dev: `@biomejs/biome` 2.6.6. dependabot 이 claude-mem 메이저 업데이트를 올리지 않는다(forgen-eval 비교 대상으로만 사용).
+
 ## [0.6.9] — 2026-11-05 — 실사용 신뢰성 재정비
 
 ### Added
