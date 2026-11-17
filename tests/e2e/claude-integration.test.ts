@@ -90,7 +90,7 @@ describe('Level 1: Hook Protocol — hookEventName + additionalContext', () => {
 
     const output = parseJSON(result.stdout);
     expect(output).not.toBeNull();
-    expect(output!.continue).toBe(false);
+    expect(output!.continue).toBe(true);
 
     const hookOutput = output!.hookSpecificOutput as Record<string, unknown>;
     expect(hookOutput).toBeDefined();
@@ -107,7 +107,7 @@ describe('Level 1: Hook Protocol — hookEventName + additionalContext', () => {
 
     const output = parseJSON(result.stdout);
     expect(output).not.toBeNull();
-    expect(output!.continue).toBe(false);
+    expect(output!.continue).toBe(true);
 
     const hookOutput = output!.hookSpecificOutput as Record<string, unknown>;
     expect(hookOutput).toBeDefined();

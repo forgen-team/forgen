@@ -574,7 +574,9 @@ async function main(): Promise<void> {
         if (secretHits.length > 0) {
           const lines = secretHits.slice(0, 10).map((h) => `  - ${h.file} (${h.reasons.join(', ')})`).join('\n');
           try { const { recordViolation } = await import('../engine/lifecycle/signals.js'); recordViolation({ rule_id: 'builtin:commit-secret', session_id: sessionId, source: 'pre-tool-guard', kind: 'deny', message_preview: `git secret files: ${secretHits.map((h) => h.file).slice(0, 5).join(', ')}`, target_kind: 'command' }); } catch { /* fail-open */ }
-          console.log(denyOrObserve('pre-tool-use', `[Forgen] 비밀 파일/키가 커밋 대상에 포함되어 차단했습니다:\n${lines}\n.gitignore 에 추가하거나 git reset 으로 빼고, 키가 이미 노출됐다면 폐기·재발급하세요.`));
+          // 이름·패턴 기반 판단이라 오탐이 있을 수 있다 → 조용히 막지 않고 사유를 보여주며 사용자에게 묻는다
+          // (사용자 교정 2026-11-06: "멈추면 안되는 거지. 차라리 물어봐야지 사용자한테").
+          console.log(ask(`[Forgen] 사용자 확인 필요 — 비밀 파일/키로 보이는 항목이 커밋 대상에 있습니다:\n${lines}\n예시값만 담긴 템플릿이면 승인하고, 진짜 비밀이면 거부한 뒤 .gitignore 추가 또는 git reset 으로 빼세요. 키가 이미 노출됐다면 폐기·재발급하세요.\n${ASK_NONINTERACTIVE_HINT}`));
           return;
         }
       }

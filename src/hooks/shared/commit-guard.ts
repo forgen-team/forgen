@@ -110,6 +110,7 @@ function collectHits(ops: GitOp[], hookCwd: string | undefined, hits: Map<string
       const candidates = new Set<string>();
       const lsOthers = git(dir, ['ls-files', '-z', '--others', '--exclude-standard', ...pathArgs]).split('\0');
       const lsMod = git(dir, ['ls-files', '-z', '--modified', ...pathArgs]).split('\0');
+      const tracked = new Set(lsMod.filter(Boolean));
       for (const f of [...lsOthers, ...lsMod]) if (f) candidates.add(f);
       if (force && specs.length) {
         for (const f of git(dir, ['ls-files', '-z', '--others', '--ignored', '--exclude-standard', ...pathArgs]).split('\0')) if (f) candidates.add(f);
@@ -118,7 +119,9 @@ function collectHits(ops: GitOp[], hookCwd: string | undefined, hits: Map<string
       for (const f of candidates) {
         if (n++ >= 200) break;
         checkBudget();
-        const reason = secretFileReason(f);
+        // 이름 규칙(.env 등)은 저장소에 **새로 들어가는** 파일에만 적용한다. 이미 추적 중인 파일
+        // (예: 예시값만 담긴 .env.development 템플릿)의 수정은 내용 검사로 판단한다.
+        const reason = tracked.has(f) ? null : secretFileReason(f);
         if (reason) add(f, reason);
         try {
           const abs = path.join(dir, f);
@@ -131,10 +134,8 @@ function collectHits(ops: GitOp[], hookCwd: string | undefined, hits: Map<string
     } else {
       const withAll = op.args.some((a) => a === '-a' || a === '--all' || /^-[a-zA-Z]*a[a-zA-Z]*$/.test(a) && !a.startsWith('--'));
       const diffArgs = (cached: boolean) => ['diff', ...(cached ? ['--cached'] : []), '-U0', '--no-color', '--no-ext-diff'];
-      const files = [
-        ...git(dir, ['diff', '--cached', '--name-only', '-z']).split('\0'),
-        ...(withAll ? git(dir, ['diff', '--name-only', '-z']).split('\0') : []),
-      ].filter(Boolean);
+      // 이름 규칙은 새로 추가되는 파일(--diff-filter=A)에만. 추적 중 파일의 수정은 아래 내용 검사로 본다.
+      const files = git(dir, ['diff', '--cached', '--name-only', '--diff-filter=A', '-z']).split('\0').filter(Boolean);
       for (const f of files) { const r = secretFileReason(f); if (r) add(f, r); }
       const parts = [git(dir, diffArgs(true)), ...(withAll ? [git(dir, diffArgs(false))] : [])];
       // 파일별로 쪼개 어느 파일인지 알린다

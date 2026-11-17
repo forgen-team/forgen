@@ -62,10 +62,14 @@ export function approveWithWarning(warning: string): string {
   return JSON.stringify({ continue: true, suppressOutput: false, systemMessage: warning });
 }
 
-/** 차단 응답 (PreToolUse 전용) */
+/**
+ * 차단 응답 (PreToolUse 전용) — 해당 도구 호출만 거부하고 세션은 계속한다.
+ * `continue: false` 는 Claude Code 턴 전체를 멈춰("hook stopped continuation") 사용자가
+ * 왜 멈췄는지 알 수 없게 만든다. 거부는 permissionDecision='deny' 로 충분하다.
+ */
 export function deny(reason: string): string {
   return JSON.stringify({
-    continue: false,
+    continue: true,
     hookSpecificOutput: {
       hookEventName: 'PreToolUse',
       permissionDecision: 'deny',
@@ -89,7 +93,7 @@ export function ask(reason: string): string {
 /**
  * P3' enforcement helper (2026-04-27)
  *
- * ALLOW-LIST 에 있는 hook 만 진짜 deny — 아닌 경우 approve + 관찰 신호로 강등.
+ * ALLOW-LIST 에 있는 hook 만 진짜 deny(도구 호출 거부, 세션은 계속) — 아닌 경우 approve + 관찰 신호로 강등.
  *
  * 사용:
  * ```ts

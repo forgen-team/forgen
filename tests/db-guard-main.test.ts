@@ -60,7 +60,7 @@ describe('db-guard main()', () => {
     });
     await import('../src/hooks/db-guard.js');
     await vi.waitFor(() => {
-      expect(logOutput.some(l => l.includes('"continue":false'))).toBe(true);
+      expect(logOutput.some(l => l.includes('"permissionDecision":"deny"'))).toBe(true);
       expect(logOutput.some(l => l.includes('Dangerous SQL'))).toBe(true);
     });
   });

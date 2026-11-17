@@ -12,13 +12,13 @@ describe('Invariant: denyOrObserve (P3\')', () => {
   it('ALLOW-LIST 멤버 (stop-guard) → 진짜 deny', () => {
     const result = denyOrObserve('stop-guard', 'incomplete evidence');
     const parsed = JSON.parse(result);
-    expect(parsed.continue).toBe(false);
+    expect(parsed.continue).toBe(true); // 도구 호출만 거부, 세션은 계속
     expect(parsed.hookSpecificOutput.permissionDecision).toBe('deny');
   });
 
   it('ALLOW-LIST 멤버 (db-guard) → 진짜 deny', () => {
     const parsed = JSON.parse(denyOrObserve('db-guard', 'DROP TABLE detected'));
-    expect(parsed.continue).toBe(false);
+    expect(parsed.continue).toBe(true); // 도구 호출만 거부, 세션은 계속
     expect(parsed.hookSpecificOutput.permissionDecision).toBe('deny');
   });
 

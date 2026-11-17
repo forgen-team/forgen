@@ -89,9 +89,9 @@ describe('hook-response functions', () => {
     expect(result.continue).toBe(true);
   });
 
-  it('deny returns continue: false with deny decision', () => {
+  it('deny returns continue: true (session keeps going) with deny decision', () => {
     const result = JSON.parse(deny('test reason'));
-    expect(result.continue).toBe(false);
+    expect(result.continue).toBe(true);
     expect(result.hookSpecificOutput.permissionDecision).toBe('deny');
     expect(result.hookSpecificOutput.permissionDecisionReason).toBe('test reason');
   });
