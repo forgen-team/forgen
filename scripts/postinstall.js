@@ -16,7 +16,7 @@
  *   - Claude 설치는 dist/host/install-claude.js 의 planClaudeInstall 을 호출 (`forgen install claude` 와 동일 경로)
  */
 
-import { readdirSync, writeFileSync, mkdirSync, existsSync, symlinkSync, cpSync, lstatSync, statSync, copyFileSync, renameSync, readlinkSync, unlinkSync, rmdirSync } from 'node:fs';
+import { readdirSync, readFileSync, writeFileSync, mkdirSync, existsSync, symlinkSync, cpSync, lstatSync, statSync, copyFileSync, renameSync, readlinkSync, unlinkSync, rmdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { homedir, platform } from 'node:os';
 import { execFileSync } from 'node:child_process';
@@ -400,6 +400,16 @@ async function main() {
       console.log('[forgen]   To switch to forgen (backup kept in statusLine_backup): forgen statusline install --force');
       console.log('[forgen]   To keep it AND show forgen\'s line after it (chain, original kept in statusLine_backup): forgen statusline install --chain');
     }
+  }
+  // 설치 마무리 표식 — 런타임(SessionStart·doctor)이 npm 이 이 스크립트를 건너뛴 업그레이드를 알아채는 기준.
+  if (claude && problems.length === 0) {
+    try {
+      const forgenHome = process.env.FORGEN_HOME || join(HOME, '.forgen');
+      const version = JSON.parse(readFileSync(join(PKG_ROOT, 'package.json'), 'utf-8')).version;
+      mkdirSync(join(forgenHome, 'state'), { recursive: true });
+      writeFileSync(join(forgenHome, 'state', 'installed-version'), `${version}\n`);
+      fixOwnership(join(forgenHome, 'state'));
+    } catch (err) { console.error(`[forgen] install marker skipped: ${err?.message ?? err}`); }
   }
   if (problems.length > 0) {
     console.error('');

@@ -393,6 +393,14 @@ export async function collectProbes(opts: VerifyOptions): Promise<Probe[]> {
   } finally {
     try { fs.rmSync(probeHome, { recursive: true, force: true }); } catch { /* ignore */ }
   }
+  // npm 11 은 전역 설치에서도 postinstall 을 건너뛸 수 있다 → 업그레이드 뒤 설치 마무리가 빠졌는지 표식으로 본다.
+  try {
+    const { setupState } = await import('./install-marker.js');
+    const st = setupState(opts.pkgRoot, opts.forgenHome);
+    if (st.pending) {
+      add({ section: 'Install', label: `설치 마무리(postinstall) 미실행 — 패키지 ${st.pkgVersion}, 마지막 마무리 ${st.installed ?? '기록 없음'}`, ok: false, hint: 'npm 이 설치 스크립트를 건너뛰었을 수 있음. Fix: forgen doctor --repair  (다음 세션 시작 때도 자동으로 실행됨)' });
+    }
+  } catch { /* 판정 불가는 표시하지 않음 */ }
   // 예전 버전에서 활성 룰로 남지 못한 교정. npm 은 postinstall 출력을 숨기므로 여기서 알린다. 실패로 세지 않는다.
   try {
     const { findLostCorrections } = await import('../engine/rule-recovery-cli.js');

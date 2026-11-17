@@ -433,6 +433,14 @@ async function main(): Promise<void> {
 
   // v1: regex 기반 패턴 학습(prompt-learner) 제거. Evidence 기반으로 전환됨.
 
+  // npm 이 설치 스크립트를 건너뛴 업그레이드면 설치 마무리(postinstall)를 백그라운드로 실행한다.
+  if (!doctorProbe) {
+    try {
+      const { maybeStartSelfSetup } = await import('../core/install-marker.js');
+      maybeStartSelfSetup();
+    } catch { /* fail-open */ }
+  }
+
   // Compound v3: Run lifecycle check once per day
   try {
     const lastLifecyclePath = path.join(STATE_DIR, 'last-lifecycle.json');

@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - **이름 바꾸기로 `.env` 커밋 가드 우회.** `git mv config.txt .env.local` 처럼 추적 중 파일을 비밀 파일 이름으로 바꾸면 rename(R) 상태라 새 파일 이름 규칙을 빠져나가던 것을 고쳤다.
 - 비밀 커밋 확인 문구가 `FORGEN_USER_CONFIRMED=1` 로 우회할 수 있다고 안내하던 것을 바로잡았다(이 검사는 우회되지 않는다).
+- **설치 스크립트가 건너뛰어진 설치·업그레이드 자동 마무리.** `--ignore-scripts`, pnpm 10 기본 차단, 앞으로 npm 이 허용 목록 밖 스크립트를 막는 경우 postinstall(hook·스킬 갱신, 1회 마이그레이션)이 조용히 빠졌다. postinstall 이 `~/.forgen/state/installed-version` 표식을 남기고, 표식이 패키지 버전과 다르면 다음 세션 시작 때 백그라운드로 마무리한다(같은 버전은 6시간에 한 번만 시도). `forgen doctor` 는 실패로 표시하고 `--repair` 가 직접 실행하며, CLI 도 한 줄 안내한다. npm 11.21 의 `npm warn install-scripts` 는 아직 경고일 뿐 스크립트는 실행된다.
 - 참고: Codex 는 런타임이 ask 를 지원하지 않아 비밀 커밋 확인이 계속 거부(deny)로 표시된다(0.6.10 부터 동일).
 
 ## [0.6.10] — 2026-11-17 — 가드가 세션을 멈추지 않음
