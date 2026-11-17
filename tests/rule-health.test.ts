@@ -108,4 +108,36 @@ describe('computeRuleHealth', () => {
     expect(h.days.reduce((n, d) => n + d.rulesCreated, 0)).toBe(1);
     expect(h.days.reduce((n, d) => n + d.rulesRetired, 0)).toBe(0);
   });
+
+  it('보관함(rules-archive)으로 옮겨진 룰도 과거 생성·은퇴에 그대로 남는다 (값이 소급해 줄지 않음)', () => {
+    writeRule('m1', { source: 'behavior_inference', created_at: iso(10), status: 'removed', status_history: [{ at: iso(5), from: 'active', to: 'removed', reason: 'auto-mined-cap', by: 'x' }] });
+    const before = computeRuleHealth({ now: NOW });
+    const arch = path.join(F, 'me', 'rules-archive');
+    fs.mkdirSync(arch, { recursive: true });
+    fs.renameSync(path.join(F, 'me', 'rules', 'm1.json'), path.join(arch, 'm1.json'));
+    const after = computeRuleHealth({ now: NOW });
+    expect(after.days).toEqual(before.days);
+    expect(after.flow.rulesCreatedMined).toBe(1);
+    expect(after.flow.retired).toBe(1);
+    expect(after.rules.active.total).toBe(0);
+  });
+
+  it('병합으로 대체된 원본(clustered-into)은 은퇴로 세지 않는다', () => {
+    writeRule('o1', { status: 'superseded', status_history: [{ at: iso(1), from: 'active', to: 'superseded', reason: 'clustered-into abc', by: 'cluster' }] });
+    expect(computeRuleHealth({ now: NOW }).flow.retired).toBe(0);
+  });
+
+  it('현재 폴더의 프로젝트 룰은 세지 않는다 (실행 위치에 따라 숫자가 바뀌지 않게)', () => {
+    writeRule('me1', { created_at: iso(1) });
+    const proj = path.join(TEST_HOME, 'proj');
+    fs.mkdirSync(path.join(proj, '.forgen', 'rules'), { recursive: true });
+    fs.writeFileSync(path.join(proj, '.forgen', 'rules', 'p1.json'), JSON.stringify({ rule_id: 'p1', category: 'workflow', scope: 'me', trigger: 'p', policy: 'project rule text here', strength: 'default', source: 'explicit_correction', status: 'active', evidence_refs: [], render_key: 'w.p1', created_at: iso(1), updated_at: iso(1) }));
+    const cwd = process.cwd();
+    process.chdir(proj);
+    try {
+      const h = computeRuleHealth({ now: NOW });
+      expect(h.rules.active.total).toBe(1);
+      expect(h.flow.rulesCreatedExplicit).toBe(1);
+    } finally { process.chdir(cwd); }
+  });
 });
