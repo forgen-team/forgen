@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.12] — 2026-11-17 — 룰 품질 재설계 1단계: 해로운 동작 중지
+
+실사용 데이터(업무 맥 룰 356개·76일 지표) 진단에 따른 1단계. 설계: `docs/plans/2026-11-17-rule-quality-redesign.md`.
+룰 파일의 status·phase 값과 파일 위치는 바뀌지 않는다(외부 도구 호환).
+
+### Fixed
+- **충돌 감지(T5) 오탐으로 활성 룰 대부분이 검토 대기(flagged)가 되던 문제.** T5 는 이제 기록만 하고 phase·conflict_refs 를 바꾸지 않는다. 같은 쌍을 스캔마다 다시 기록하던 것(실측 하루 97쌍 × 약 29회)도 7일 안에는 다시 쓰지 않는다. 업그레이드 때 T5 때문에만 flagged 인 룰을 자동으로 되돌린다(T1·T2·T3 기록이 있으면 제외, 적용 전 스냅샷). 직접 실행: `forgen rule unflag [--apply]`, 되돌리기: `forgen rule restore <스냅샷> --yes`.
+- **내장 의도 힌트가 개인 룰과 부딪히던 문제.** 구현·디버그·리팩터 요청마다 넣던 "build·lint·type-check 통과", "앞뒤로 테스트", "실패하는 테스트 먼저" 같은 검증 지시를 뺐다. 룰 블록 머리말에 "내장 힌트와 충돌하면 사용자 룰을 따른다"를 넣었다. 예전 문구: `hooks.intent-classifier.verbose=true`.
+- **교정 1건이 활성 룰 2개로 남던 문제.** avoid-this 교정의 세션 임시 룰을, 승급이 끝나면 바로 superseded 로 바꾼다.
+- **룰 병합이 프로젝트 범위를 버리던 문제.** 병합 결과는 구성원 projects 의 합집합(하나라도 전역이면 전역).
+- **래퍼(fgx)로 띄운 세션에서 주입 횟수가 두 번 오르던 문제.** 래퍼가 띄운 첫 SessionStart 만 건너뛰고, 그 안의 중첩 세션은 정상으로 센다.
+
+### Added
+- **`forgen status --health [--json] [--days N]`.** 교정(직접/추론) → 룰 생성·은퇴·승급 → 주입 → 평가(통과·위반·차단·고쳐서 통과·자문·우회), 검토 대기(충돌 감지 오탐 / 교정·반복 위반), 같은 문장 묶음, 주입 0, 범위 없는 학습 룰, 많이 막은 룰, 다시 교정된 룰, 일별 표. 화면과 JSON 이 같은 집계를 쓴다. accept_count 는 기록 경로가 없어 쓰지 않는다.
+
 ## [0.6.11] — 2026-11-17 — rename 우회 차단 · 설치 마무리 자동 보완
 
 ### Fixed
