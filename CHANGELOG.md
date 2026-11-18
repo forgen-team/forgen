@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.1] — 2026-11-18 — forgen 지표 자체 관리: HTML 화면 · 룰 목록 JSON · 이력 보관
+
+설계: `docs/plans/2026-11-18-forgen-own-metrics.md`. witems 는 forgen 숫자를 더 받지 않고(수신·화면 삭제 완료), Handoff 는 forgen 이 내준 JSON 만 읽는다. 룰 파일 형식은 그대로.
+
+### Added
+- **`forgen status --html [--out <경로>] [--days N]`.** 룰 표(분류·강도·출처·상태·막는 방식·누적 적용/어김/우회·마지막 적용·범위, 정렬·필터·검색, 행을 누르면 정책 문구·근거 교정·상태 이력), 건강(흐름·대기열·많이 막은 룰·일별), 추론 후보, 이력(최대 365일)을 HTML 파일 하나로 만들어 브라우저로 연다. 외부 스크립트·폰트·이미지 없음(CSP 로 차단), 밖으로 아무것도 보내지 않는다. 기본 위치 `~/.forgen/state/report/forgen-status.html`(권한 600), `--out` 이면 저장만.
+- **`forgen rule list --json [--archive]`** — `forgen-rule-list/v1`. 룰마다 id·status·phase·분류·강도·출처·범위·정책·트리거·생성/수정 시각·누적 적용/어김/우회·마지막 적용/어김·막는 방식·상태 이력·근거 교정(시각·요약, 최신 20개). 외부 도구는 룰 파일을 직접 읽지 않고 이걸 읽으면 된다.
+- **일별 지표 보관** — `~/.forgen/state/metrics/daily/YYYY-MM-DD.json`(`forgen-daily/v1`). 닫힌 날(UTC)의 교정(직접·추론)·생성·은퇴·승급·차단·자문·우회와 룰별 누적 카운터 스냅숏. 세션 시작 때 하루 1회(최대 7일 채움), `status --health/--history/--html` 때는 최대 365일 채움(첫 개인 룰 생성일 이전은 채우지 않음). 보관 400일.
+- **`forgen status --history --json [--days N] [--rule <id>]`** — 룰별 하루 스냅숏(`forgen-rule-history/v1`).
+
+### Changed
+- `forgen status --health --days` 상한 90 → 365. 일별 표의 닫힌 날은 보관값을 쓰고 각 날에 `source`(live·closed·backfill)를 붙인다. 새 필드 `history { retentionDays, oldestDay, definition }`. 기존 필드는 그대로(스키마 v1). `flow`·`top` 은 지금처럼 원천 기준이라 원천이 사라진 오래된 창에서는 일별 합계보다 작을 수 있다.
+
 ## [0.7.0] — 2026-11-17 — 추론 룰 후보 단계
 
 설계: `docs/plans/2026-11-17-rule-quality-redesign.md` D5·D6-2/3. ADR-013·017·019 개정. **룰 status 에 새 값 `candidate` 가 생긴다** — 룰 파일을 직접 읽는 도구는 이 값을 알아야 한다(witems 는 수신 준비 완료, Handoff 는 모르는 값을 other 로 표시).

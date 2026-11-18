@@ -45,6 +45,8 @@ export interface RuleHealthDay {
   blocks: number;
   advisories: number;
   bypasses: number;
+  /** 0.7.1: live = 원천 계산(오늘 포함), closed = 그날 닫힌 뒤 보관, backfill = 처음 기록할 때 과거 원천으로 계산해 보관 */
+  source?: 'live' | 'closed' | 'backfill';
 }
 
 export interface RuleHealth {
@@ -207,7 +209,7 @@ export function computeRuleHealth(opts: { days?: number; now?: number } = {}): R
   for (let i = days - 1; i >= 0; i--) dayKeys.push(utcDay(now - i * DAY));
   const dayIdx = new Map(dayKeys.map((d, i) => [d, i]));
   const table: RuleHealthDay[] = dayKeys.map((day) => ({ day, corrections: 0, correctionsUser: 0, correctionsMined: 0, rulesCreated: 0, rulesPromoted: 0, rulesRetired: 0, blocks: 0, advisories: 0, bypasses: 0 }));
-  const bump = (t: number, key: keyof Omit<RuleHealthDay, 'day'>) => {
+  const bump = (t: number, key: keyof Omit<RuleHealthDay, 'day' | 'source'>) => {
     const i = dayIdx.get(utcDay(t));
     if (i !== undefined) table[i][key] += 1;
   };

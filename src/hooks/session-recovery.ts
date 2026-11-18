@@ -499,6 +499,14 @@ async function main(): Promise<void> {
     } catch (e) { log.debug('검토 대기 안내 생성 실패', e); }
   }
 
+  // 0.7.1: 닫힌 날(UTC) 지표 보관 — 하루 1회 실제 계산, 그 외엔 어제 파일 확인만. 세션 시작에선 최대 7일만 채운다.
+  if (!doctorProbe) {
+    try {
+      const { recordClosedDays } = await import('../core/metrics-history.js');
+      recordClosedDays({ limit: 7 });
+    } catch (e) { log.debug('일별 지표 보관 실패', e); }
+  }
+
   if (rulesBlock || recoveryMessages.length > 0) {
     const { fitSessionContext } = await import('./shared/injection-caps.js');
     console.log(approveWithContext(fitSessionContext(rulesBlock, recoveryMessages), 'SessionStart', haikuNotice ?? undefined));

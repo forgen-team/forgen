@@ -439,6 +439,11 @@ async function handleRuleNamespace(args: string[]): Promise<void> {
 
   switch (sub) {
     case 'list': {
+      if (rest.includes('--json')) {
+        const { buildRuleList } = await import('./core/rule-list-json.js');
+        console.log(JSON.stringify(buildRuleList({ archive: rest.includes('--archive') }), null, 2));
+        return;
+      }
       const { handleInspect } = await import('./core/inspect-cli.js');
       await handleInspect(['rules', ...rest]);
       return;
