@@ -87,3 +87,30 @@
 - daily: 빠진 날 채우기·오늘 제외·idempotent·보관 정리·definition 불일치 재계산·잠금 경합 시 건너뜀·스냅샷은 마지막 날에만.
 - health: 저장값 우선·`source` 필드·`--days 365`.
 - html: 데이터 이스케이프(`</script>` 가 든 정책 문구), 외부 URL 0개(정규식 검사), `--out` 저장.
+
+## 7. 0.7.2 추가 (Handoff 2차 요청, 2026-11-18)
+
+Handoff 가 아직 파일을 직접 읽는 두 곳을 JSON 으로 대신한다.
+
+**7-1. `forgen status --events --json [--since <ISO>] [--until <ISO>]` — `forgen-events/v1`**
+```jsonc
+{ "schema": "forgen-events/v1", "generatedAt": "ISO", "since": "ISO", "until": "ISO",
+  "sources": { "enforcement": true, "evidence": true, "sessionsDb": true },   // sessionsDb=false: node:sqlite 없음(Node < 22.5)·파일 없음
+  "events": [{ "at": "ISO", "sessionId": "…|null", "kind": "…", "ruleId": "…|null" }],
+  "sessions": [{ "id": "…", "cwd": "…", "startedAt": "ISO" }] }
+```
+- kind 와 원천(숫자 정의는 `--health` 와 같게):
+  - `block`: violations.jsonl 중 `isRealBlock`(block·deny, 합성 세션 제외)
+  - `bypass`: violations.jsonl 중 `isConfirmedBypass`(`FORGEN_USER_CONFIRMED` 명시). **bypass.jsonl 은 쓰지 않는다** — 0.6.0 에서 끈 자연어 우회 추정(오탐 1,114건)의 옛 기록이다.
+  - `false_positive`: verdicts.jsonl 중 verdict `false_positive`. at = 판정 시각, sessionId = 그 판정이 가리키는 violation 의 세션(못 찾으면 null).
+  - `correction_user` / `correction_mined`: me/behavior 의 explicit_correction(source_component `auto-compound-miner` 면 mined). ruleId = 그 교정이 이어진 룰(`raw_payload.target_rule_id` → `candidate_rule_refs[0]`).
+  - `solution_matched` / `solution_surfaced` / `solution_acted_on`: sessions.db `solution_events`. ruleId 는 null(솔루션 이름은 문구에 가까워 넣지 않는다).
+- 문구(미리보기·메시지 본문·요약·사유·솔루션 이름)는 넣지 않는다.
+- sessions: sessions.db `sessions` 중 startedAt 이 창 안이거나 사건이 가리키는 세션. 읽기 전용으로 연다(`readOnly`).
+- 기본 창: 최근 30일. 창 최대 400일. at 오름차순.
+- 원천 보존 한계: violations 는 10MB 회전 + 회전본 3개·60일 → 오래된 창의 block 은 빠질 수 있다. 증거·solution_events 는 남는다.
+
+**7-2. 룰별 기간 차단 수 — `--health --json` 의 `top.blockingAll`**
+- `top.blocking`(상위 8개, 정책 문구 포함)은 그대로. 새 필드 `top.blockingAll: [{ ruleId, blocks }]` — 창 안 차단이 있는 모든 룰, 많은 순.
+- 오래 남게: 일별 보관 파일에 `blocksByRule: { ruleId: n }` 를 추가(정의 번호는 그대로 — totals 는 안 바뀜). 닫힌 날은 보관값(있으면), 없으면 원천, 오늘은 원천으로 합친다. 그래서 violations 회전 뒤에도 90일 차단 수가 유지된다.
+- 룰 이력(`forgen-rule-history/v1`)에 누적 block 열을 넣는 안은 쓰지 않는다 — 룰 파일에 누적 차단 카운터가 없어 회전된 로그로 다시 세야 하고, 열을 바꾸면 v1 해석이 흔들린다.

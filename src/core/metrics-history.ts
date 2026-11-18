@@ -14,7 +14,7 @@ import * as path from 'node:path';
 import { STATE_DIR, ME_RULES, ME_RULES_ARCHIVE } from './paths.js';
 import { withFileLockSync } from '../hooks/shared/file-lock.js';
 import { atomicWriteJSON, safeReadJSON } from '../hooks/shared/atomic-write.js';
-import { computeRuleHealth, type RuleHealth, type RuleHealthDay } from './rule-health.js';
+import { blocksByDay, computeRuleHealth, readRealBlocks, sortedCounts, type RuleHealth, type RuleHealthDay } from './rule-health.js';
 import { readRuleFiles } from './rule-list-json.js';
 
 export const DAILY_SCHEMA = 'forgen-daily/v1';
@@ -36,6 +36,8 @@ export interface DailyFile {
   forgenVersion: string | null;
   source: 'closed' | 'backfill';
   totals: DayTotals;
+  /** 0.7.2: 그날 룰별 차단 수(차단 0 인 룰은 없음). 0.7.1 파일엔 없다 — 그 날은 원천으로 센다. */
+  blocksByRule?: Record<string, number>;
   rules: { asOf: string; columns: string[]; rows: Array<Array<string | number | null>> } | null;
 }
 
@@ -104,6 +106,7 @@ export function recordClosedDays(opts: { limit?: number; now?: number } = {}): R
         const span = Math.round((endOfDay(yesterday) - endOfDay(missing[0])) / DAY) + 1;
         const h = computeRuleHealth({ days: span, now: endOfDay(yesterday) });
         const byDay = new Map(h.days.map((d) => [d.day, d]));
+        const blockDays = blocksByDay(readRealBlocks(span, endOfDay(yesterday)), endOfDay(yesterday) - span * DAY);
         const writtenAt = new Date(now).toISOString();
         const version = forgenVersion();
         for (const d of missing) {
@@ -114,6 +117,7 @@ export function recordClosedDays(opts: { limit?: number; now?: number } = {}): R
             schema: DAILY_SCHEMA, day: d, definition: DEFINITION, writtenAt, forgenVersion: version,
             source: now - endOfDay(d) <= CLOSED_WITHIN_DAYS * DAY ? 'closed' : 'backfill',
             totals: totalsOf(day),
+            blocksByRule: Object.fromEntries(blockDays.get(d) ?? new Map()),
             // 룰 스냅샷은 가장 최근 날에만(쓰는 순간 값). 다시 쓰는 경우 예전 스냅샷은 보존.
             rules: d === yesterday ? { asOf: writtenAt, columns: SNAPSHOT_COLUMNS, rows: ruleSnapshotRows() } : prev?.rules ?? null,
           };
@@ -150,7 +154,8 @@ export function healthWithHistory(opts: { days?: number; now?: number; record?: 
   const now = opts.now ?? Date.now();
   const days = Math.max(1, Math.min(MAX_QUERY_DAYS, opts.days ?? 14));
   if (opts.record !== false) recordClosedDays({ limit: MAX_QUERY_DAYS, now });
-  const h = computeRuleHealth({ days, now });
+  let rawBlocks: Array<Record<string, unknown>> = [];
+  const h = computeRuleHealth({ days, now, onBlocks: (b) => { rawBlocks = b; } });
   const today = utcDay(now);
   h.days = h.days.map((d) => {
     if (d.day === today) return { ...d, source: 'live' as const };
@@ -158,6 +163,15 @@ export function healthWithHistory(opts: { days?: number; now?: number; record?: 
     if (f && f.definition === DEFINITION) return { day: d.day, ...f.totals, source: f.source };
     return { ...d, source: 'live' as const };
   });
+  // 룰별 차단 수: 닫힌 날은 보관값(0.7.2 이후 파일), 없으면 원천, 오늘은 원천.
+  const raw = blocksByDay(rawBlocks, now - days * DAY);
+  const merged = new Map<string, Map<string, number>>();
+  for (const d of h.days) {
+    const f = d.day === today ? null : readDaily(d.day);
+    if (f?.blocksByRule && f.definition === DEFINITION) merged.set(d.day, new Map(Object.entries(f.blocksByRule)));
+    else if (raw.has(d.day)) merged.set(d.day, raw.get(d.day) as Map<string, number>);
+  }
+  h.top = { ...h.top, blockingAll: sortedCounts(merged) };
   const all = listDailyDays();
   return { ...h, history: { retentionDays: RETENTION_DAYS, oldestDay: all[0] ?? null, definition: DEFINITION } };
 }

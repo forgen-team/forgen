@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.2] — 2026-11-18 — 세션별 사건 JSON · 룰별 기간 차단 수
+
+설계: `docs/plans/2026-11-18-forgen-own-metrics.md` §7 (Handoff 2차 요청 — 파일 직접 읽기 남은 두 곳 대체).
+
+### Added
+- **`forgen status --events --json [--since <ISO>] [--until <ISO>]`** — `forgen-events/v1`. 사건마다 at·sessionId·kind(block·bypass·false_positive·correction_user·correction_mined·solution_matched·solution_surfaced·solution_acted_on)·ruleId, 그리고 세션 목록(id·cwd·startedAt). 미리보기·본문·요약·사유·솔루션 이름은 넣지 않는다. 차단·우회 정의는 `--health` 와 같다(옛 자연어 우회 추정 bypass.jsonl 은 쓰지 않음). 기본 30일, 최대 400일. sessions.db 는 읽기 전용으로 열고, node:sqlite 가 없으면(Node < 22.5) `sources.sessionsDb: false`.
+- **`--health --json` 의 `top.blockingAll`** — 창 안 차단이 있는 모든 룰의 차단 수(많은 순). 일별 보관 파일에 룰별 차단 수(`blocksByRule`)를 같이 남겨, 차단 로그가 회전돼도 기간 차단 수가 유지된다. `top.blocking`(상위 8개·정책 문구)은 그대로.
+
 ## [0.7.1] — 2026-11-18 — forgen 지표 자체 관리: HTML 화면 · 룰 목록 JSON · 이력 보관
 
 설계: `docs/plans/2026-11-18-forgen-own-metrics.md`. witems 는 forgen 숫자를 더 받지 않고(수신·화면 삭제 완료), Handoff 는 forgen 이 내준 JSON 만 읽는다. 룰 파일 형식은 그대로.

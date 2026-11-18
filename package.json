@@ -1,6 +1,6 @@
 {
   "name": "@wooojin/forgen",
-  "version": "0.7.1",
+  "version": "0.7.2",
   "preferGlobal": true,
   "main": "dist/lib.js",
   "types": "./dist/lib.d.ts",

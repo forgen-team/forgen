@@ -136,3 +136,60 @@ describe('status --html', () => {
     expect(html).not.toMatch(/\bfetch\(|XMLHttpRequest|navigator\.sendBeacon|new WebSocket/);
   });
 });
+
+describe('0.7.2 status --events', () => {
+  it('차단·우회·오탐·교정·솔루션 사건과 세션 목록, 문구 없음, 합성 세션·창 밖 제외', async () => {
+    const { buildEvents, EVENTS_SCHEMA } = await import('../src/core/events-json.js');
+    const enf = path.join(TMP_HOME, 'state', 'enforcement');
+    fs.mkdirSync(enf, { recursive: true });
+    const v = (o: Record<string, unknown>) => JSON.stringify({ violation_id: 'v-' + Math.random(), rule_id: 'r1', session_id: SID, source: 'stop-guard', message_preview: 'SECRET TEXT', ...o });
+    fs.writeFileSync(path.join(enf, 'violations.jsonl'), [
+      v({ at: '2026-11-17T01:00:00Z', kind: 'block', violation_id: 'vb' }),
+      v({ at: '2026-11-17T02:00:00Z', kind: 'bypass_confirmed' }),
+      v({ at: '2026-11-17T03:00:00Z', kind: 'correction' }), // 자문 — 사건 아님
+      v({ at: '2026-11-17T04:00:00Z', kind: 'deny', session_id: 'default' }), // 합성 세션
+      v({ at: '2026-10-01T00:00:00Z', kind: 'block' }), // 창 밖
+    ].join('\n') + '\n');
+    fs.writeFileSync(path.join(enf, 'verdicts.jsonl'), JSON.stringify({ at: '2026-11-17T05:00:00Z', violation_id: 'vb', rule_id: 'r1', verdict: 'false_positive', reason: 'SECRET REASON' }) + '\n');
+    correction('2026-11-17T06:00:00Z', 'SECRET QUOTE');
+    const e = createEvidence({ type: 'explicit_correction', session_id: SID, source_component: 'auto-compound-miner', summary: 'SECRET MINED', confidence: 0.5, candidate_rule_refs: ['r9'] });
+    saveEvidence({ ...e, timestamp: '2026-11-17T07:00:00Z' });
+    const { DatabaseSync } = await import('node:sqlite');
+    const db = new DatabaseSync(path.join(TMP_HOME, 'sessions.db'));
+    db.exec(`CREATE TABLE sessions (id TEXT PRIMARY KEY, cwd TEXT NOT NULL, started_at TEXT NOT NULL, message_count INTEGER DEFAULT 0);
+      CREATE TABLE solution_events (id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL, session_id TEXT, solution_id TEXT NOT NULL, event_type TEXT NOT NULL);`);
+    db.prepare('INSERT INTO sessions (id,cwd,started_at) VALUES (?,?,?)').run(SID, '/w/proj', '2026-11-17T00:30:00.000Z');
+    db.prepare('INSERT INTO sessions (id,cwd,started_at) VALUES (?,?,?)').run('old', '/w/old', '2026-01-01T00:00:00.000Z');
+    db.prepare('INSERT INTO solution_events (ts,session_id,solution_id,event_type) VALUES (?,?,?,?)').run(Date.parse('2026-11-17T08:00:00Z'), SID, 'secret-solution-name', 'acted_on');
+    db.close();
+
+    const r = buildEvents({ since: Date.parse('2026-11-16T00:00:00Z'), now: NOW });
+    expect(r.schema).toBe(EVENTS_SCHEMA);
+    expect(r.sources).toEqual({ enforcement: true, evidence: true, sessionsDb: true });
+    expect(r.events.map((x) => [x.kind, x.sessionId, x.ruleId])).toEqual([
+      ['block', SID, 'r1'], ['bypass', SID, 'r1'], ['false_positive', SID, 'r1'],
+      ['correction_user', SID, null], ['correction_mined', SID, 'r9'], ['solution_acted_on', SID, null],
+    ]);
+    expect(r.sessions).toEqual([{ id: SID, cwd: '/w/proj', startedAt: '2026-11-17T00:30:00.000Z' }]);
+    expect(JSON.stringify(r)).not.toMatch(/SECRET|secret-solution/);
+  });
+});
+
+describe('0.7.2 top.blockingAll', () => {
+  it('모든 룰의 창 안 차단 수, 닫힌 날은 보관값(원천이 지워져도 유지)', () => {
+    rule('base');
+    const enf = path.join(TMP_HOME, 'state', 'enforcement');
+    fs.mkdirSync(enf, { recursive: true });
+    const lines = [];
+    for (let i = 0; i < 10; i++) lines.push(JSON.stringify({ at: '2026-11-17T01:00:00Z', kind: 'block', rule_id: `r${i}`, session_id: SID }));
+    lines.push(JSON.stringify({ at: '2026-11-17T02:00:00Z', kind: 'block', rule_id: 'r0', session_id: SID }));
+    fs.writeFileSync(path.join(enf, 'violations.jsonl'), lines.join('\n') + '\n');
+    recordClosedDays({ limit: 2, now: NOW });
+    expect(readDaily('2026-11-17')!.blocksByRule).toMatchObject({ r0: 2, r9: 1 });
+    fs.writeFileSync(path.join(enf, 'violations.jsonl'), ''); // 원천 회전·삭제
+    const h = healthWithHistory({ days: 3, now: NOW, record: false });
+    expect(h.top.blockingAll).toHaveLength(10);
+    expect(h.top.blockingAll[0]).toEqual({ ruleId: 'r0', blocks: 2 });
+    expect(h.top.blocking).toHaveLength(0); // 상위 8개 목록은 원천 기준 그대로
+  });
+});

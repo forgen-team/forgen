@@ -14,6 +14,7 @@
  *   forgen status --live       실시간 훅 이벤트 스트림
  *   forgen status --turn       이번 턴 관련 룰 + 각 룰의 원 교정 (ADR-017 D2)
  *   forgen status --health [--json] [--days N]  룰 건강 지표 (2026-11 재설계 D8, N ≤ 365 — 닫힌 날은 보관값)
+ *   forgen status --events --json [--since <ISO>] [--until <ISO>]  세션별 사건 (forgen-events/v1)
  *   forgen status --history --json [--days N] [--rule <id>]  룰별 하루 스냅숏 (forgen-rule-history/v1)
  *   forgen status --html [--out <경로>] [--days N]  룰·건강·후보·이력 HTML 한 파일 (외부 리소스 없음)
  */
@@ -57,6 +58,17 @@ export async function handleStatus(args: string[]): Promise<void> {
     const h = healthWithHistory({ days: daysArg(14) });
     if (args.includes('--json')) console.log(JSON.stringify(h, null, 2));
     else for (const l of renderRuleHealth(h)) console.log(l);
+    return;
+  }
+  // 0.7.2: 세션별 사건 (forgen-events/v1) — 문구 없이 at·session·kind·rule 만
+  if (args.includes('--events')) {
+    const { buildEvents } = await import('./events-json.js');
+    const at = (flag: string): number | undefined => {
+      const i = args.indexOf(flag);
+      const t = i !== -1 ? Date.parse(args[i + 1] ?? '') : Number.NaN;
+      return Number.isFinite(t) ? t : undefined;
+    };
+    console.log(JSON.stringify(buildEvents({ since: at('--since'), until: at('--until') }), null, 2));
     return;
   }
   // 0.7.1: 룰별 하루 스냅숏 (forgen-rule-history/v1)
@@ -106,7 +118,7 @@ export async function handleStatus(args: string[]): Promise<void> {
   const view = resolveView(args);
   const unknownFlags = args.filter((a) => a.startsWith('-') && !resolveView([a]) && !['--watch', '--json', '--interval', '--limit', '--show'].includes(a.split('=')[0]));
   if (unknownFlags.length > 0) {
-    console.error(`[forgen] 알 수 없는 status 옵션: ${unknownFlags.join(' ')}\n  views: --compound | --profile | --rules | --blocks [N] | --overview | --live | --turn | --health | --history | --html`);
+    console.error(`[forgen] 알 수 없는 status 옵션: ${unknownFlags.join(' ')}\n  views: --compound | --profile | --rules | --blocks [N] | --overview | --live | --turn | --health | --history | --events | --html`);
     process.exitCode = 1;
     return;
   }
