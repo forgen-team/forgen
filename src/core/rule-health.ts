@@ -81,6 +81,8 @@ export interface RuleHealth {
   };
   top: {
     blocking: Array<{ ruleId: string; policy: string | null; blocks: number }>;
+    /** 0.7.2: 창 안 차단이 있는 모든 룰(많은 순). blocking 은 상위 8개 + 정책 문구. */
+    blockingAll: Array<{ ruleId: string; blocks: number }>;
     recorrected: Array<{ ruleId: string; policy: string | null; count: number }>;
   };
   days: RuleHealthDay[];
@@ -154,7 +156,37 @@ function activeSince(r: Rule): number | null {
   return up ? Date.parse(up.at) : null;
 }
 
-export function computeRuleHealth(opts: { days?: number; now?: number } = {}): RuleHealth {
+/** 차단 기록 → 날짜(UTC)별 룰별 수. */
+export function blocksByDay(blocks: Array<Record<string, unknown>>, since: number): Map<string, Map<string, number>> {
+  const out = new Map<string, Map<string, number>>();
+  for (const v of blocks) {
+    const t = Date.parse(String(v.at ?? ''));
+    const id = String(v.rule_id ?? '');
+    if (!Number.isFinite(t) || t < since || !id) continue;
+    const d = utcDay(t);
+    const m = out.get(d) ?? new Map<string, number>();
+    m.set(id, (m.get(id) ?? 0) + 1);
+    out.set(d, m);
+  }
+  return out;
+}
+
+/** 날짜별 룰별 수를 합쳐 많은 순 목록으로. */
+export function sortedCounts(byDay: Map<string, Map<string, number>>): Array<{ ruleId: string; blocks: number }> {
+  const total = new Map<string, number>();
+  for (const m of byDay.values()) for (const [id, n] of m) total.set(id, (total.get(id) ?? 0) + n);
+  return [...total.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([ruleId, blocks]) => ({ ruleId, blocks }));
+}
+
+/** 창 안 실제 차단 기록(원천). metrics-history 가 날짜별 룰별 차단 수를 보관할 때 쓴다. */
+export function readRealBlocks(days: number, now: number): Array<Record<string, unknown>> {
+  const since = now - days * DAY;
+  return readJsonlWindow<Record<string, unknown>>(path.join(ENF, 'violations.jsonl'), days, now)
+    .filter((v) => Date.parse(String(v.at ?? '')) >= since)
+    .filter(isRealBlock);
+}
+
+export function computeRuleHealth(opts: { days?: number; now?: number; onBlocks?: (blocks: Array<Record<string, unknown>>) => void } = {}): RuleHealth {
   const days = opts.days ?? 14;
   const now = opts.now ?? Date.now();
   const since = now - days * DAY;
@@ -175,6 +207,7 @@ export function computeRuleHealth(opts: { days?: number; now?: number } = {}): R
   const violations = readJsonlWindow<Record<string, unknown>>(path.join(ENF, 'violations.jsonl'), days, now)
     .filter((v) => Date.parse(String(v.at ?? '')) >= since);
   const blocks = violations.filter(isRealBlock);
+  opts.onBlocks?.(blocks); // metrics-history 가 같은 원천으로 날짜별 룰별 차단 수를 만든다(두 번 읽지 않게)
   const advisories = violations.filter((v) => v.kind === 'correction' && !isSyntheticEntry(v));
   const bypasses = violations.filter(isConfirmedBypass);
   const checks = readJsonlWindow<Record<string, unknown>>(path.join(ENF, 'checks.jsonl'), days, now)
@@ -265,6 +298,7 @@ export function computeRuleHealth(opts: { days?: number; now?: number } = {}): R
     },
     top: {
       blocking: countBy(blocks).map(([ruleId, n]) => ({ ruleId, policy: policyOf(ruleId), blocks: n })),
+      blockingAll: sortedCounts(blocksByDay(blocks, since)),
       recorrected: countBy(t1).map(([ruleId, n]) => ({ ruleId, policy: policyOf(ruleId), count: n })),
     },
     days: table,
