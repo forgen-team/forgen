@@ -154,6 +154,14 @@ const commands: Command[] = [
     },
   },
   {
+    name: 'audit',
+    description: 'Audit host memory read-only: CLAUDE.md layers, .claude/rules, auto memory, AGENTS.md, forgen rules (forgen audit [tokens] [--folder p] [--json] [--timing])',
+    handler: async (args) => {
+      const { handleAudit } = await import('./audit/cli.js');
+      await handleAudit(args);
+    },
+  },
+  {
     name: 'learn',
     description: 'Solution maintenance: fix-up | quarantine | fitness',
     handler: async (args) => {
@@ -775,6 +783,10 @@ function printHelp() {
                                       --live      real-time hook event stream
                                       --turn      this turn's relevant rules + their origin corrections
                                       --health    rule health: corrections→rules→injections→checks, review queues, daily table (--json)
+    forgen audit [--folder p] [--json] [--timing] [--no-model]
+                                    Read-only memory audit (truncation·tokens·same sentence·stale·cross-project candidates·unscoped rules)
+                                    → ~/.forgen/audit/<run>/audit.html + manifest.json
+    forgen audit tokens [--folder p]  Always-loaded memory tokens per folder and layer (writes nothing)
     forgen workflows install|list   Install forgen dynamic-workflow templates to .claude/workflows/
     forgen changelog                Auto-summarize commits since last release tag
     forgen compound                 Manage accumulated knowledge
