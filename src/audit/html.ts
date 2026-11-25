@@ -22,7 +22,7 @@ export function topLines(r: AuditResult): string[] {
     ? `가장 빠듯한 곳(${shortPath(tr.tightest.folder ?? tr.tightest.dir)}) 여유 ${tr.tightest.spareLines}줄·${kb(tr.tightest.spareBytes)} — 약 ${tr.tightest.spareItems}항목 (${tr.tightest.firstLimit === 'bytes' ? '25KB' : '200줄'} 상한이 먼저)`
     : '메모 색인(MEMORY.md) 없음';
   return [
-    `다시 말한 교정: 재생은 곧 (다음 버전 — 대화 기록에서 "적혀 있는데도 또 말한 교정"을 센다)`,
+    r.summary.recurrence.line,
     `세션마다 실리는 기억 약 ${range(t.min, t.max, '')} 토큰 (폴더 ${t.folders}곳, 중앙값 ${t.median}) · 결정적으로 줄일 수 있는 몫 ${range(t.reduciblePctMin, t.reduciblePctMax, '%')} (같은 문장 사본·낡은 줄)`,
     `같은 문장 ${f.sameSentence}묶음 · 다른 프로젝트 섞임 후보 ${f.mixCandidates}개 · 낡은 참조 ${f.stale}개 · paths: 없는 룰 ${f.unscopedRules}개 (부딪힘·같은 뜻 중복·섞임 확정은 모델 판정, 다음 버전)`,
     `MEMORY.md 잘림 ${tr.truncated}곳 / 메모 폴더 ${tr.memoryDirs}곳 · ${tight}`,
@@ -36,7 +36,7 @@ export function renderAuditHtml(r: AuditResult, runId: string): string {
 const CSS = `
 #top{list-style:none;margin:0 0 14px;padding:0;display:grid;gap:6px}
 #top li{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:10px 12px;font-size:14px}
-#top li:first-child{color:var(--muted)}
+
 .loc{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;white-space:nowrap}
 `;
 
@@ -52,7 +52,7 @@ function clip(s,n){ s=String(s||''); return s.length>n ? s.slice(0,n-1)+'…' : 
 var LAYER={managed:'관리형 정책',user:'사용자 CLAUDE.md','user-rules':'사용자 .claude/rules',project:'프로젝트 CLAUDE.md','project-local':'CLAUDE.local.md','project-rules':'프로젝트 .claude/rules',agents:'AGENTS.md','import':'@import','memory-index':'MEMORY.md','memory-topic':'메모 주제 파일','forgen-render':'forgen 주입','forgen-rule':'forgen 룰'};
 function lay(l){ return LAYER[l]||l; }
 
-document.getElementById('meta').textContent = 'forgen ' + (D.forgenVersion||'') + ' · ' + (D.generatedAt||'').replace('T',' ').slice(0,16) + ' UTC · 회차 ' + (D.runId||'') + ' · 결정적 검사만(모델 판정 없음) · 이 파일은 내 컴퓨터에서만 열리며 밖으로 아무것도 보내지 않습니다';
+document.getElementById('meta').textContent = 'forgen ' + (D.forgenVersion||'') + ' · ' + (D.generatedAt||'').replace('T',' ').slice(0,16) + ' UTC · 회차 ' + (D.runId||'') + ' · ' + (D.summary && D.summary.recurrence && D.summary.recurrence.status !== 'none' ? '첫 줄은 모델 판정(저장된 audit recurrence 결과), 나머지는 결정적 검사' : '결정적 검사만(모델 판정 없음)') + ' · 이 파일은 내 컴퓨터에서만 열리며 밖으로 아무것도 보내지 않습니다';
 var top = el('ul',{id:'top'}); (D.top||[]).forEach(function(t){ top.appendChild(el('li',{text:t})); });
 var header = document.querySelector('header'); header.insertBefore(top, document.getElementById('tabs'));
 

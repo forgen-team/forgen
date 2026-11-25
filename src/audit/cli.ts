@@ -3,11 +3,16 @@
  *   forgen audit [--folder <경로>]... [--claude-dir <경로>] [--json] [--timing] [--no-model] [--no-open]
  *   forgen audit tokens [--folder <경로>]... [--claude-dir <경로>] [--json]
  *
- * 원천은 읽기만 한다. 쓰는 곳은 <FORGEN_HOME>/audit/<회차>/(manifest.json·audit.html) 뿐이고 `audit tokens` 는 아무것도 쓰지 않는다.
- * 모델 판정은 아직 없다(다음 버전). --no-model 은 지금도 받지만 결과가 같다.
+ *   forgen audit recurrence [--since] [--until] [--lookback 30d] [--limit N] [--no-model] [--json]   (recurrence-cli.ts)
+ *   forgen audit baseline [--freeze [--force]] [--until] [--json]
+ *
+ * 원천은 읽기만 한다. 쓰는 곳은 <FORGEN_HOME>/audit/ 아래뿐이고 `audit tokens` 는 아무것도 쓰지 않는다.
+ * `forgen audit` 의 첫 줄(다시 말한 교정)은 가장 최근 `audit recurrence` 결과를 읽어 채운다(모델을 새로 부르지 않음).
  */
 import { performance } from 'node:perf_hooks';
 import { renderAuditHtml, shortPath, topLines } from './html.js';
+import { writeFingerprintIfFirst } from './fingerprint.js';
+import { handleBaseline, handleRecurrence } from './recurrence-cli.js';
 import { runAudit, writeRun, type AuditResult } from './run.js';
 
 const HELP = `  forgen audit [--folder <경로>]... [--claude-dir <경로>] [--json] [--timing] [--no-model] [--no-open]
@@ -15,7 +20,12 @@ const HELP = `  forgen audit [--folder <경로>]... [--claude-dir <경로>] [--j
       (잘림·크기·토큰·같은 문장·낡음·다른 프로젝트 섞임 후보·paths: 없는 룰) → ~/.forgen/audit/<회차>/audit.html
   forgen audit tokens [--folder <경로>]... [--claude-dir <경로>] [--json]
       폴더별 세션 시작 상시 로드 토큰(층별). 아무것도 쓰지 않는다
-  모델 판정(같은 뜻 중복·부딪힘·섞임 확정)과 같은 말 다시 하기 재생은 다음 버전.`;
+  forgen audit recurrence [--since <날짜>] [--until <날짜>] [--lookback 30d] [--limit N] [--no-model] [--json] [--claude-dir <경로>]
+      대화 기록을 재생해 "같은 말 다시 하기"(N4)를 센다 — 교정 판정·같은 뜻 쌍 판정은 로컬 claude CLI(Haiku, 캐시)
+      갈래: 실렸는데 무시 · 적혀는 있는데 안 실림 · 적히지 않은 채 반복 · 지운 뒤 다시 말함 (프롬프트 1,000개당)
+  forgen audit baseline [--freeze [--force]] [--until <날짜>] [--json] [--claude-dir <경로>]
+      기준값: 직전 6주(앞 30일 조회 전용) + 12주 전체. --freeze 면 ~/.forgen/audit/baseline.json 에 고정
+  모델 판정 검사(같은 뜻 중복·부딪힘·섞임 확정)는 다음 버전.`;
 
 function values(args: string[], name: string): string[] {
   const out: string[] = [];
@@ -23,11 +33,17 @@ function values(args: string[], name: string): string[] {
   return out;
 }
 
-const KNOWN = new Set(['--folder', '--claude-dir', '--json', '--timing', '--no-model', '--no-open', '--help', '-h']);
-const WITH_VALUE = new Set(['--folder', '--claude-dir']);
+const KNOWN_BY_SUB: Record<string, Set<string>> = {
+  '': new Set(['--folder', '--claude-dir', '--json', '--timing', '--no-model', '--no-open', '--help', '-h']),
+  tokens: new Set(['--folder', '--claude-dir', '--json', '--help', '-h']),
+  recurrence: new Set(['--claude-dir', '--since', '--until', '--lookback', '--limit', '--no-model', '--json', '--help', '-h']),
+  baseline: new Set(['--claude-dir', '--until', '--freeze', '--force', '--json', '--help', '-h']),
+};
+const WITH_VALUE = new Set(['--folder', '--claude-dir', '--since', '--until', '--lookback', '--limit']);
 
-function unknownFlags(args: string[]): string[] {
-  return args.filter((a, i) => a.startsWith('-') && !KNOWN.has(a) && !(i > 0 && WITH_VALUE.has(args[i - 1])));
+function unknownFlags(args: string[], sub: string): string[] {
+  const known = KNOWN_BY_SUB[sub] ?? KNOWN_BY_SUB[''];
+  return args.filter((a, i) => a.startsWith('-') && !known.has(a) && !(i > 0 && WITH_VALUE.has(args[i - 1])));
 }
 
 const LAYER_LABEL: Record<string, string> = {
@@ -48,13 +64,13 @@ function tokenTable(r: AuditResult): string[] {
 export async function handleAudit(args: string[]): Promise<void> {
   if (args.includes('--help') || args.includes('-h') || args[0] === 'help') { console.log(HELP); return; }
   const sub = args[0] && !args[0].startsWith('-') ? args[0] : null;
-  if (sub && sub !== 'tokens') {
+  if (sub && !(sub in KNOWN_BY_SUB)) {
     console.error(`[forgen] 알 수 없는 audit 하위 명령: ${sub}\n${HELP}`);
     process.exitCode = 1;
     return;
   }
   const rest = sub ? args.slice(1) : args;
-  const bad = unknownFlags(rest);
+  const bad = unknownFlags(rest, sub ?? '');
   if (bad.length) {
     console.error(`[forgen] 알 수 없는 audit 옵션: ${bad.join(' ')}\n${HELP}`);
     process.exitCode = 1;
@@ -62,6 +78,16 @@ export async function handleAudit(args: string[]): Promise<void> {
   }
   const started = performance.now();
   const claudeDir = values(rest, '--claude-dir')[0];
+  if (sub === 'recurrence' || sub === 'baseline') {
+    try {
+      if (sub === 'recurrence') await handleRecurrence(rest, claudeDir);
+      else await handleBaseline(rest, claudeDir);
+    } catch (e) {
+      console.error(`[forgen] ${e instanceof Error ? e.message : String(e)}`);
+      process.exitCode = 1;
+    }
+    return;
+  }
   const run = runAudit({ folders: values(rest, '--folder'), claudeDir });
   const json = rest.includes('--json');
 
@@ -73,6 +99,7 @@ export async function handleAudit(args: string[]): Promise<void> {
 
   const t = performance.now();
   const out = writeRun(run, renderAuditHtml);
+  const fp = writeFingerprintIfFirst(run.manifest.sources.map((x) => x.path), new Date(), run.result.forgenVersion);
   run.timing.page = Math.round(performance.now() - t);
   run.timing.total = Math.round(performance.now() - started);
   if (json) {
@@ -80,7 +107,7 @@ export async function handleAudit(args: string[]): Promise<void> {
     return;
   }
   const r = run.result;
-  console.log('forgen 감사 — 결정적 검사만 (모델 판정은 다음 버전, 아무것도 기기 밖으로 보내지 않음)\n');
+  console.log('forgen 감사 — 결정적 검사 (이 명령은 모델을 부르지 않음, 아무것도 기기 밖으로 보내지 않음)\n');
   for (const l of topLines(r)) console.log(`  • ${l}`);
   console.log('');
   for (const l of tokenTable(r)) console.log(l);
@@ -88,6 +115,7 @@ export async function handleAudit(args: string[]): Promise<void> {
   console.log(`\n검사별: 잘림 ${r.summary.truncation.truncated}/${c.truncation.length} · 200줄 넘는 지침 ${c.claudeMdOver200.length} · 같은 문장 ${c.sameSentence.length} · 낡음 ${c.stale.length} · 섞임 후보 ${c.mix.length} · paths: 없는 룰 ${c.unscopedRules.length}`);
   if (r.sources.unreadable.length || r.sources.brokenRules.length) console.log(`읽지 못한 파일 ${r.sources.unreadable.length} · 깨진 forgen 룰 ${r.sources.brokenRules.length} (건너뛰고 계속함)`);
   console.log(`읽은 원천 ${r.sources.files}개 · 회차 ${out.runId}`);
+  if (fp) console.log(`첫 감사 — 기억 지문을 남김: ${fp}`);
   console.log(`✓ [forgen] ${out.htmlPath}`);
   if (rest.includes('--timing')) console.log(`시간(ms): 원천 ${run.timing.sources} · forgen 렌더 ${run.timing.forgenRender} · 검사 ${run.timing.checks} · 페이지 ${run.timing.page} · 합계 ${run.timing.total}`);
   if (!rest.includes('--no-open')) {

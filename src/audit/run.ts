@@ -26,6 +26,7 @@ import {
   type AuditEnv, type FolderLoad, type Layer, type MemoryDir,
 } from './sources.js';
 import { estimateTokens } from './tokens.js';
+import { latestRecurrence, recurrenceLine } from './recurrence.js';
 
 export const AUDIT_SCHEMA = 'forgen-audit/1' as const;
 export const MANIFEST_SCHEMA = 'forgen-audit-manifest/1' as const;
@@ -61,7 +62,8 @@ export interface AuditResult {
   forgenHome: string;
   model: { used: false; note: string };
   summary: {
-    recurrence: { status: 'pending'; note: string };
+    /** 첫 화면 첫 줄 — 가장 최근 `audit recurrence` 결과(§4.4 작을 때 규칙 적용). 없으면 status 'none'. */
+    recurrence: { status: 'none' | 'ok' | 'insufficient' | 'incomplete' | 'no-data'; line: string; generatedAt?: string; window?: { since: string; until: string }; per1000?: { total: number; written: number }; per30d?: { total: number; written: number; corrections: number }; sampled?: boolean };
     tokens: { folders: number; min: number; max: number; median: number; reduciblePctMin: number; reduciblePctMax: number; reduciblePctMedian: number };
     findings: { sameSentence: number; mixCandidates: number; stale: number; unscopedRules: number; claudeMdOver200: number; conflicts: 'pending' };
     truncation: { memoryDirs: number; truncated: number; tightest: { dir: string; folder: string | null; spareLines: number; spareBytes: number; spareItems: number; firstLimit: 'lines' | 'bytes' } | null };
@@ -277,9 +279,16 @@ export function runAudit(opts: AuditOptions = {}): AuditRun {
     generatedAt: (opts.now ?? new Date()).toISOString(),
     claudeDir: env.claudeDir,
     forgenHome: FORGEN_HOME,
-    model: { used: false, note: '모델 판정(같은 뜻 중복·부딪힘·섞임 확정·같은 말 다시 하기)은 다음 버전에서. 지금은 결정적 검사만이고 아무것도 기기 밖으로 보내지 않는다.' },
+    model: { used: false, note: '이 명령은 결정적 검사만 하고 아무것도 기기 밖으로 보내지 않는다. 같은 말 다시 하기(첫 줄)는 `forgen audit recurrence` 의 저장된 결과를 읽는다. 같은 뜻 중복·부딪힘·섞임 확정은 다음 버전.' },
     summary: {
-      recurrence: { status: 'pending', note: '대화 기록 재생(같은 말 다시 하기)은 곧 — 다음 버전' },
+      recurrence: (() => {
+        const rec = latestRecurrence();
+        if (!rec || rec.status === 'model-off') return { status: 'none' as const, line: recurrenceLine(null) };
+        return {
+          status: rec.status, line: recurrenceLine(rec), generatedAt: rec.generatedAt, window: { since: rec.window.since, until: rec.window.until },
+          per1000: { total: rec.per1000.total, written: rec.per1000.written }, per30d: { total: rec.per30d.total, written: rec.per30d.written, corrections: rec.corrections.per30d }, sampled: rec.prompts.limit !== null,
+        };
+      })(),
       tokens: { folders: tokens.length, min: tokens.length ? Math.min(...tokens) : 0, max: tokens.length ? Math.max(...tokens) : 0, median: median(tokens), reduciblePctMin: pcts.length ? Math.min(...pcts) : 0, reduciblePctMax: pcts.length ? Math.max(...pcts) : 0, reduciblePctMedian: pcts.length ? [...pcts].sort((a, b) => a - b)[pcts.length >> 1] : 0 },
       findings: { sameSentence: sameSentence.length, mixCandidates: mix.length, stale: stale.length, unscopedRules: unscopedRules.length, claudeMdOver200: claudeMdOver200.length, conflicts: 'pending' },
       truncation: { memoryDirs: truncation.length, truncated: truncation.filter((t) => t.overLines || t.overBytes).length, tightest: tight ? { dir: tight.dir, folder: tight.folder, spareLines: tight.spareLines, spareBytes: tight.spareBytes, spareItems: tight.spareItems, firstLimit: tight.firstLimit } : null },

@@ -271,7 +271,7 @@ describe('forgen audit CLI', () => {
     try {
       await handleAudit(['--folder', A, '--claude-dir', CLAUDE, '--no-open', '--timing', '--no-model']);
       const text = log.mock.calls.map((c) => String(c[0])).join('\n');
-      expect(text).toContain('재생은 곧');
+      expect(text).toContain('아직 재지 않음');
       expect(text).toContain('MEMORY.md 잘림');
       expect(text).toMatch(/시간\(ms\): 원천 \d+/);
       await handleAudit(['nope']);
