@@ -66,8 +66,8 @@ describe('모델 판정 검사 — 합성 A·B·C', () => {
     expect(confirmed.every((m) => m.judgedProject === 'projc')).toBe(true);
     // 첫 화면 셋째 줄 = 확정 지적 수
     const f = run.result.summary.findings;
-    expect(f).toMatchObject({ conflicts: mc.counts.conflicts, dupGroups: mc.counts.dupGroups, mixConfirmed: 3 });
-    expect(topLines(run.result)[2]).toMatch(/^부딪힘 \d+쌍 · 같은 뜻 중복 \d+묶음 · 다른 프로젝트 섞임 3개 \(모델 판정\)/);
+    expect(f).toMatchObject({ conflicts: mc.counts.conflicts, dupGroups: mc.counts.dupGroups, mixConfirmed: 4 });
+    expect(topLines(run.result)[2]).toMatch(/^부딪힘 \d+쌍 · 같은 뜻 중복 \d+묶음 · 다른 프로젝트 섞임 4개 \(모델 판정\)/);
     expect(run.result.model.used).toBe(true);
     expect(run.manifest.model).toMatchObject({ used: true });
     // 페이지 탭에 판정 결과·근거

@@ -20,8 +20,8 @@ import { withStatusChange } from '../store/rule-lifecycle.js';
 import { mergeRuleProjects } from '../store/rule-scope.js';
 import { loadRule, rulePath, saveRule } from '../store/rule-store.js';
 import type { Rule } from '../store/types.js';
-import { normalizeSentence, type Unit } from './checks.js';
-import type { Judge } from './judge.js';
+import { isImportantRule, normalizeSentence, type Unit } from './checks.js';
+import { PAIR_MODEL, type Judge } from './judge.js';
 import { latestRecurrenceRun } from './recurrence.js';
 import { unitKey, type AuditRun } from './run.js';
 import type { ModelChecks } from './model-checks.js';
@@ -75,6 +75,10 @@ export interface Fix {
   model: boolean;
   /** 쓸 수 없는 대상(관리형·git 밖 등) — 지적만 */
   blocked?: string;
+  /** 묶음 적용에서 빼는 처방(중요 지침의 범위 옮기기 등) — forgen fix <id> --apply 로만 */
+  manual?: string;
+  /** 기억 추가: 이 폴더의 상시 로드에 더하는 토큰(N3 다이어트 비교에서 따로 센다) */
+  addsTo?: { folder: string; tokens: number };
   /** 이 처방으로 줄어드는 상시 로드 토큰(어림, 폴더마다 다를 수 있어 최대값) */
   tokens: number;
 }
@@ -83,11 +87,13 @@ export interface FixPlan { fixes: Fix[]; run: AuditRun; model: ModelChecks | nul
 
 const sha = (s: string) => createHash('sha256').update(s).digest('hex');
 const fp = (s: string) => sha(normalizeSentence(s)).slice(0, 12);
+/** 처방 신원은 줄 번호가 아니라 (파일·정규화 문장) — 앞 처방이 줄을 지워 번호가 밀려도 같은 처방이다. */
+const ident = (u: { ruleId?: string; path: string; norm: string }) => u.ruleId ?? `${u.path}|${u.norm}`;
 const fixId = (kind: FixKind, identity: string) => `${kind}-${sha(`${kind}|${identity}`).slice(0, 8)}`;
 const readText = (p: string): string | null => { try { return fs.readFileSync(p, 'utf-8'); } catch { return null; } };
 const isMdLayer = (l: string) => ['user', 'user-rules', 'project', 'project-local', 'project-rules', 'agents', 'import'].includes(l);
 const STRENGTH_RANK: Record<string, number> = { hard: 0, strong: 1, default: 2, soft: 3 };
-export const isImportantRule = (r: Pick<Rule, 'strength' | 'source'>) => r.strength === 'hard' || r.strength === 'strong' || r.source === 'explicit_correction';
+export { isImportantRule };
 
 /** Q3: 처방이 직접 써도 되는 파일인가. 안 되면 그 까닭. */
 export function writeBlock(p: string, env: AuditEnv): string | null {
@@ -142,6 +148,8 @@ export function applyTextOps(content: string | null, ops: Op[]): string | null {
 }
 
 const opPath = (o: Op): string => (o.op === 'rule' ? rulePath(o.ruleId) : o.path);
+/** 처방이 건드리는 파일들. */
+export const fixPaths = (f: Fix): string[] => [...new Set(f.ops.map(opPath))];
 
 /** 룰 연산을 룰 객체에 푼다(미리보기·적용 공통. 적용은 saveRule 이 updated_at·lifecycle 을 채운다). */
 function ruleAfter(r: Rule, o: Extract<Op, { op: 'rule' }>, fixIdStr: string, nowIso: string, others: Map<string, Rule>): Rule {
@@ -201,7 +209,8 @@ export async function planFixes(opts: PlanOptions = {}): Promise<FixPlan> {
   const hostKeyOf = (u: Unit) => { const l = u.layer === 'memory-index' ? linkOf(u.text) : null; return l ? `topic:${path.resolve(path.dirname(u.path), l)}` : `norm:${u.norm}`; };
   const delMark = (u: Unit): DeletedMark => ({ text: u.text, kind: u.layer, ...(u.ruleId ? { ruleId: u.ruleId } : { path: u.path, line: u.line }), ...(u.ruleId && ctx.rules.get(u.ruleId)?.created_at ? { since: ctx.rules.get(u.ruleId)?.created_at } : {}) });
   const fixTexts = async (items: Array<{ id: string; task: 'merge' | 'rewrite' | 'index' | 'memo'; texts: string[] }>) => (judge?.modelEnabled && items.length ? judge.fixTexts(items) : new Map());
-  const sameMeaning = async (pairs: Array<{ id: string; a: string; b: string }>) => (judge?.modelEnabled && pairs.length ? judge.checkPairs('dup', pairs) : new Map());
+  // 처방 문안(Haiku)을 채점하는 쪽은 다른 판정자(Sonnet) — §1.2 판정자 분리, §2.4
+  const sameMeaning = async (pairs: Array<{ id: string; a: string; b: string }>) => (judge?.modelEnabled && pairs.length ? judge.checkPairs('dup', pairs, PAIR_MODEL) : new Map());
 
   // 1. 같은 문장(결정적) + 같은 뜻 묶음(모델) → 합치기 · 겹치는 교정(Q4)
   type Group = { members: Member[]; source: 'same' | 'dup' };
@@ -229,7 +238,7 @@ export async function planFixes(opts: PlanOptions = {}): Promise<FixPlan> {
       const keeper = [...loadedHosts].sort((a, b) => b.loaded.length - a.loaded.length || (a.key < b.key ? -1 : 1)).find((m) => covers(m.loaded, all));
       const drop = keeper ? deletable.filter((m) => m !== keeper) : [];
       if (keeper && drop.length) {
-        const tid = `merge|${[keeper, ...drop].map((m) => m.key).sort().join('|')}`;
+        const tid = `merge|${[keeper, ...drop].map((m) => ident(m.u)).sort().join('|')}`;
         if (g.source === 'dup' && isMdLayer(keeper.u.layer)) mergeTexts.push({ id: tid, task: 'merge', texts: [keeper, ...drop].map((m) => m.u.text.replace(/^\s*[-*]\s+/, '')) });
         hostMerges.push({ g, keeper, drop, tid });
       }
@@ -247,24 +256,26 @@ export async function planFixes(opts: PlanOptions = {}): Promise<FixPlan> {
           evidence: [`룰: ${shortText(r.u.text)}`, `호스트: ${unitWhere(host.u)} ${shortText(host.u.text)}`, g.source === 'same' ? '같은 문장' : '같은 뜻(모델 판정)'],
           ops: [{ op: 'rule', ruleId: r.u.ruleId as string, change: 'host-copy', host: { path: host.u.path, line: host.u.line } }],
           equivalents: [{ from: `rule:${r.u.ruleId}`, to: hostKeyOf(host.u) }], tokens: r.u.tokens,
-        }, `${r.key}|${host.key}`);
+        }, `${ident(r.u)}|${ident(host.u)}`);
       } else if (topics.length && !loadedHosts.length) {
         add({
           kind: 'overlap', title: `forgen 룰 ${r.u.ruleId?.slice(0, 8)} ↔ 메모 주제 파일 — 지적만`,
           why: '같은 교정이 메모 주제 파일에만 있다. 주제 파일은 세션 시작에 실리지 않아 forgen 주입을 빼면 그 교정이 어디에도 실리지 않는다(누락).',
           evidence: [`룰: ${shortText(r.u.text)}`, `주제 파일: ${topics[0].u.path}`], ops: [], blocked: '호스트 사본이 세션 시작에 안 실림 — 빼면 누락',
-        }, `${r.key}|${topics[0].key}`);
+        }, `${ident(r.u)}|${ident(topics[0].u)}`);
       }
     }
     // forgen 룰끼리: 덮이지 않은 활성 룰이 둘 이상이면 하나로(근거는 둘 다)
     const rest = rules.filter((r) => !coveredRules.has(r.key) && r.loaded.length);
     if (rest.length >= 2) {
-      const sorted = [...rest].sort((a, b) => (STRENGTH_RANK[a.rule?.strength ?? ''] ?? 9) - (STRENGTH_RANK[b.rule?.strength ?? ''] ?? 9) || Date.parse(a.rule?.created_at ?? '') - Date.parse(b.rule?.created_at ?? '') || (a.key < b.key ? -1 : 1));
+      // 남길 룰: 중요 지침 먼저 → 강도 → 오래된 순
+      const sorted = [...rest].sort((a, b) => Number(!isImportantRule(a.rule as Rule)) - Number(!isImportantRule(b.rule as Rule)) || (STRENGTH_RANK[a.rule?.strength ?? ''] ?? 9) - (STRENGTH_RANK[b.rule?.strength ?? ''] ?? 9) || Date.parse(a.rule?.created_at ?? '') - Date.parse(b.rule?.created_at ?? '') || (a.key < b.key ? -1 : 1));
       const all = [...new Set(rest.flatMap((m) => m.loaded))];
       const keeper = sorted.find((m) => covers(m.loaded, all)) ?? null;
-      const drop = keeper ? rest.filter((m) => m !== keeper && m.rule?.strength !== 'hard') : [];
+      // 중요 지침(hard·strong·직접 교정)은 지워지는 쪽이 되지 않는다
+      const drop = keeper ? rest.filter((m) => m !== keeper && m.rule && !isImportantRule(m.rule)) : [];
       if (keeper && drop.length) {
-        const tid = `rmerge|${[keeper, ...drop].map((m) => m.key).sort().join('|')}`;
+        const tid = `rmerge|${[keeper, ...drop].map((m) => ident(m.u)).sort().join('|')}`;
         if (g.source === 'dup') mergeTexts.push({ id: tid, task: 'merge', texts: [keeper, ...drop].map((m) => m.u.text) });
         ruleMerges.push({ g, keeper, drop, tid });
       }
@@ -313,12 +324,12 @@ export async function planFixes(opts: PlanOptions = {}): Promise<FixPlan> {
     e.refs.push(s.ref); e.kinds.push(s.kind);
     staleByUnit.set(unitKey(s), e);
   }
-  for (const [key, { u, refs, kinds }] of staleByUnit) {
+  for (const { u, refs, kinds } of staleByUnit.values()) {
     const m = member(u);
     const base = { kind: 'remove' as const, evidence: [`${unitWhere(u)} ${shortText(u.text)}`, `지금 없는 것: ${refs.join(', ')}`], tokens: m.loaded.length ? u.tokens : 0 };
     if (m.rule) {
-      if (isImportantRule(m.rule)) { add({ ...base, title: `forgen 룰 ${u.ruleId?.slice(0, 8)} — 가리키는 것이 없음(중요 지침이라 끄지 않음)`, why: '중요 지침(hard·strong·직접 교정)은 끄면 누락이다. 가리키는 경로만 고치세요.', ops: [], blocked: '중요 지침 — 지적만' }, key); continue; }
-      add({ ...base, title: `forgen 룰 ${u.ruleId?.slice(0, 8)} 끄기 — 가리키는 것이 지금 없음`, why: '룰이 가리키는 파일·명령이 지금 없다. 끄고(suppressed) 지움 표시를 남긴다 — 같은 교정이 다시 나오면 "지운 뒤 다시 말함"으로 센다.', ops: [{ op: 'rule', ruleId: u.ruleId as string, change: 'suppress', reason: `stale: ${refs.join(', ')} (forgen fix)` }], marks: [delMark(u)] }, key);
+      if (isImportantRule(m.rule)) { add({ ...base, title: `forgen 룰 ${u.ruleId?.slice(0, 8)} — 가리키는 것이 없음(중요 지침이라 끄지 않음)`, why: '중요 지침(hard·strong·직접 교정)은 끄면 누락이다. 가리키는 경로만 고치세요.', ops: [], blocked: '중요 지침 — 지적만' }, ident(u)); continue; }
+      add({ ...base, title: `forgen 룰 ${u.ruleId?.slice(0, 8)} 끄기 — 가리키는 것이 지금 없음`, why: '룰이 가리키는 파일·명령이 지금 없다. 끄고(suppressed) 지움 표시를 남긴다 — 같은 교정이 다시 나오면 "지운 뒤 다시 말함"으로 센다.', ops: [{ op: 'rule', ruleId: u.ruleId as string, change: 'suppress', reason: `stale: ${refs.join(', ')} (forgen fix)` }], marks: [delMark(u)] }, ident(u));
       continue;
     }
     if (u.layer === 'memory-index') {
@@ -326,12 +337,12 @@ export async function planFixes(opts: PlanOptions = {}): Promise<FixPlan> {
       const topic = link ? path.resolve(path.dirname(u.path), link) : null;
       const topicType = topic ? frontmatterField(readText(topic) ?? '', 'type') : undefined;
       if (kinds.includes('link') && topic && !fs.existsSync(topic) && link && refs.includes(link)) {
-        add({ ...base, title: `MEMORY.md 색인 줄 지우기 — 가리키는 주제 파일이 없음`, why: '색인 줄이 없는 주제 파일을 가리킨다. 지우고 지움 표시를 남긴다.', ops: [{ op: 'delete-line', path: u.path, text: u.text }], marks: [delMark(u)] }, key);
-      } else add({ ...base, title: 'MEMORY.md 색인 줄 — 본문의 경로가 없음(지적만)', why: `색인 줄은 주제 파일${topicType === 'feedback' ? '(feedback)' : ''}을 가리키므로 지우지 않는다. 경로만 고치세요.`, ops: [], blocked: '주제 파일을 가리키는 색인 줄 — 지적만' }, key);
+        add({ ...base, title: `MEMORY.md 색인 줄 지우기 — 가리키는 주제 파일이 없음`, why: '색인 줄이 없는 주제 파일을 가리킨다. 지우고 지움 표시를 남긴다.', ops: [{ op: 'delete-line', path: u.path, text: u.text }], marks: [delMark(u)] }, ident(u));
+      } else add({ ...base, title: 'MEMORY.md 색인 줄 — 본문의 경로가 없음(지적만)', why: `색인 줄은 주제 파일${topicType === 'feedback' ? '(feedback)' : ''}을 가리키므로 지우지 않는다. 경로만 고치세요.`, ops: [], blocked: '주제 파일을 가리키는 색인 줄 — 지적만' }, ident(u));
       continue;
     }
     if (!isMdLayer(u.layer)) continue;
-    add({ ...base, title: `지시 줄 지우기 — 가리키는 것이 지금 없음 (${path.basename(u.path)}:${u.line})`, why: '지금 없는 파일·링크·npm 스크립트를 가리키는 줄이다. 지우고 지움 표시를 남긴다.', ops: [{ op: 'delete-line', path: u.path, text: u.text }], marks: [delMark(u)] }, key);
+    add({ ...base, title: `지시 줄 지우기 — 가리키는 것이 지금 없음 (${path.basename(u.path)}:${u.line})`, why: '지금 없는 파일·링크·npm 스크립트를 가리키는 줄이다. 지우고 지움 표시를 남긴다.', ops: [{ op: 'delete-line', path: u.path, text: u.text }], marks: [delMark(u)] }, ident(u));
   }
 
   // 3. 섞임 확정 → forgen 룰 범위 옮기기 · 폴더 전용 룰로 옮기기
@@ -345,16 +356,18 @@ export async function planFixes(opts: PlanOptions = {}): Promise<FixPlan> {
     if (x.ruleId) {
       const r = ctx.rules.get(x.ruleId);
       if (!r || r.strength === 'hard') continue;
+      const important = isImportantRule(r);
       add({
         kind: 'scope', title: `forgen 룰 ${x.ruleId.slice(0, 8)} → ${key} 전용`, why: '다른 프로젝트 전용인데 전역인 룰이다(모델 판정). 그 프로젝트 범위로 옮긴다(rule classify-projects --apply 와 같은 경로).',
         evidence: ev, ops: [{ op: 'rule', ruleId: x.ruleId, change: 'scope', projects: [key] }], scopedTo: { key: `rule:${x.ruleId}`, project: key }, model: false,
+        ...(important ? { manual: '중요 지침(hard·strong·직접 교정) — 묶음 적용에서 빼고, 보고 나서 forgen fix <id> --apply 로 하나씩만. 다른 폴더에서는 누락으로 센다' } : {}),
         tokens: Math.max(0, ...run.result.folders.filter((f) => f.projectKey !== key && (ctx.loadedIn.get(unitKey(u)) ?? []).includes(f.folder)).map(() => u.tokens)),
-      }, unitKey(u));
+      }, ident(u));
       continue;
     }
     if (!isMdLayer(u.layer)) continue;
     const targets = [...new Set(run.result.folders.filter((f) => f.projectKey === key).map((f) => gitRootOf(f.folder, env.home) ?? f.folder))].sort();
-    if (!targets.length) { add({ kind: 'move', title: `전역 지시 → ${key} 전용(대상 폴더를 감사하지 않음, 지적만)`, why: '그 프로젝트 폴더를 --folder 로 넣으면 옮길 수 있다.', evidence: ev, ops: [], blocked: '대상 프로젝트 폴더 없음' }, unitKey(u)); continue; }
+    if (!targets.length) { add({ kind: 'move', title: `전역 지시 → ${key} 전용(대상 폴더를 감사하지 않음, 지적만)`, why: '그 프로젝트 폴더를 --folder 로 넣으면 옮길 수 있다.', evidence: ev, ops: [], blocked: '대상 프로젝트 폴더 없음' }, ident(u)); continue; }
     const ops: Op[] = [{ op: 'delete-line', path: u.path, text: u.text }];
     for (const root of targets) {
       const folders = run.result.folders.filter((f) => f.projectKey === key && (gitRootOf(f.folder, env.home) ?? f.folder) === root).map((f) => path.relative(root, f.folder)).filter((r) => r && !r.startsWith('..'));
@@ -364,7 +377,7 @@ export async function planFixes(opts: PlanOptions = {}): Promise<FixPlan> {
     add({
       kind: 'move', title: `전역 지시 → ${key} 폴더 전용 룰(.claude/rules)`, why: '모든 프로젝트에 실리는 층에 있지만 한 프로젝트 전용이다(모델 판정). 그 저장소의 .claude/rules/ 로 옮긴다 — 그 폴더 세션에서는 그대로 실린다.',
       evidence: ev, ops, tokens: u.tokens,
-    }, unitKey(u));
+    }, ident(u));
   }
 
   // 4. 긴 룰·지시 → 짧게 다시 쓰기(모델, 다시 쓴 문장을 같은 뜻 판정으로 확인)
@@ -383,7 +396,7 @@ export async function planFixes(opts: PlanOptions = {}): Promise<FixPlan> {
       evidence: [`원문: ${shortText(orig, 120)}`, `새 문장: ${shortText(newText, 120)}`],
       ops: [u.ruleId ? { op: 'rule', ruleId: u.ruleId, change: 'policy', policy: newText } : { op: 'replace-line', path: u.path, text: u.text, with: newText }],
       equivalents: u.ruleId ? [] : [{ from: `norm:${u.norm}`, to: `norm:${normalizeSentence(newText)}` }], model: true, tokens: Math.max(0, u.tokens - estimateTokens(newText)),
-    }, unitKey(u));
+    }, ident(u));
   }
 
   // 5. MEMORY.md 색인 줄 내리기(긴 줄은 한 구절로, 원문은 주제 파일에) + 잘린 줄은 보관 주제 파일로
@@ -473,6 +486,7 @@ export async function planFixes(opts: PlanOptions = {}): Promise<FixPlan> {
         evidence: its.map((i) => `${i.ts.slice(0, 10)} ${shortText(i.gist, 80)}`),
         ops: [{ op: 'create', path: file, content }, { op: 'append', path: path.join(memDir, 'MEMORY.md'), text: `- [${name}](${slug}.md) — ${shortText(desc, INDEX_HOOK_MAX)}` }],
         model: true, tokens: -estimateTokens(`- [${name}](${slug}.md) — ${shortText(desc, INDEX_HOOK_MAX)}`),
+        addsTo: { folder, tokens: estimateTokens(`- [${name}](${slug}.md) — ${shortText(desc, INDEX_HOOK_MAX)}\n`) },
       }, gid);
     }
   }
@@ -561,7 +575,20 @@ export const fixDir = () => path.join(FORGEN_HOME, 'audit', 'fix');
 export const ledgerPath = () => path.join(fixDir(), 'ledger.jsonl');
 export const deletedPath = () => path.join(FORGEN_HOME, 'audit', 'deleted.jsonl');
 
-export interface LedgerEvent { at: string; event: 'proposed' | 'apply' | 'undo' | 'undo-conflict' | 'skip'; id: string; kind: FixKind; backup?: string; equivalents?: Fix['equivalents']; scopedTo?: Fix['scopedTo']; note?: string }
+export interface LedgerEvent { at: string; event: 'proposed' | 'apply' | 'undo' | 'undo-conflict' | 'skip'; id: string; kind: FixKind; backup?: string; equivalents?: Fix['equivalents']; scopedTo?: Fix['scopedTo']; addsTo?: Fix['addsTo']; note?: string }
+
+/** 원자적 쓰기: 같은 폴더 임시 파일 → rename(심링크면 가리키는 대상에). 도중에 죽어도 반쪽 파일이 남지 않는다. */
+export function atomicWrite(p: string, data: string | Buffer, mode = 0o644): void {
+  let target = p;
+  try { target = fs.realpathSync(p); } catch { /* 새 파일 */ }
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  const tmp = path.join(path.dirname(target), `.${path.basename(target)}.forgen-fix-${process.pid}-${createHash('sha256').update(`${Date.now()}${Math.random()}`).digest('hex').slice(0, 8)}.tmp`);
+  try {
+    fs.writeFileSync(tmp, data, { mode });
+    fs.chmodSync(tmp, mode);
+    fs.renameSync(tmp, target);
+  } catch (e) { try { fs.rmSync(tmp, { force: true }); } catch { /* 없음 */ } throw e; }
+}
 
 function write600(p: string, body: string): void {
   fs.mkdirSync(path.dirname(p), { recursive: true, mode: 0o700 });
@@ -585,14 +612,14 @@ export function recordProposed(fixes: Fix[], now = new Date()): void {
 /** 파일·폴더 상태 지문: 파일은 내용 해시, 폴더는 (상대 경로·내용) 해시, 없으면 'absent'. */
 export function stateHash(p: string): string {
   let st: fs.Stats;
-  try { st = fs.lstatSync(p); } catch { return 'absent'; }
+  try { st = fs.statSync(p); } catch { return 'absent'; } // 심링크는 가리키는 대상 기준
   if (st.isFile()) return sha(fs.readFileSync(p).toString('base64'));
   if (!st.isDirectory()) return `other:${st.mode}`;
   const h = createHash('sha256');
   const walk = (d: string, rel: string) => {
     for (const n of fs.readdirSync(d).sort()) {
       const q = path.join(d, n);
-      const s = fs.lstatSync(q);
+      const s = fs.statSync(q);
       h.update(`${rel}/${n}|${s.isDirectory() ? 'd' : 'f'}|`);
       if (s.isDirectory()) walk(q, `${rel}/${n}`); else if (s.isFile()) h.update(fs.readFileSync(q));
     }
@@ -674,8 +701,7 @@ export function applyFix(f: Fix, backupRoot: string, now = new Date()): { backup
     else {
       let mode = 0o644;
       try { mode = fs.statSync(pv.path).mode & 0o777; } catch { /* 새 파일 */ }
-      fs.mkdirSync(path.dirname(pv.path), { recursive: true });
-      fs.writeFileSync(pv.path, after, { mode });
+      atomicWrite(pv.path, after, mode);
     }
   }
   } catch (err) {
@@ -684,7 +710,7 @@ export function applyFix(f: Fix, backupRoot: string, now = new Date()): { backup
         const moved = path.join(dir, 'moved-away');
         if (e.isDir) { if (fs.existsSync(moved) && !fs.existsSync(e.path)) fs.renameSync(moved, e.path); continue; }
         if (!e.existed) fs.rmSync(e.path, { force: true });
-        else fs.writeFileSync(e.path, fs.readFileSync(path.join(dir, 'before', e.slot)));
+        else atomicWrite(e.path, fs.readFileSync(path.join(dir, 'before', e.slot)), fs.statSync(path.join(dir, 'before', e.slot)).mode & 0o777);
       } catch { /* 되돌리기 실패는 스냅샷이 남아 있다 */ }
     }
     throw err;
@@ -700,8 +726,23 @@ export function applyFix(f: Fix, backupRoot: string, now = new Date()): { backup
   }
   const rec: BackupRecord = { schema: 'forgen-fix-backup/1', id: f.id, kind: f.kind, at: nowIso, title: f.title, entries, marks: f.marks.length };
   write600(path.join(dir, 'backup.json'), `${JSON.stringify(rec, null, 2)}\n`);
-  appendLedger({ at: nowIso, event: 'apply', id: f.id, kind: f.kind, backup: dir, equivalents: f.equivalents, ...(f.scopedTo ? { scopedTo: f.scopedTo } : {}) });
+  appendLedger({ at: nowIso, event: 'apply', id: f.id, kind: f.kind, backup: dir, equivalents: f.equivalents, ...(f.scopedTo ? { scopedTo: f.scopedTo } : {}), ...(f.addsTo ? { addsTo: f.addsTo } : {}) });
   return { backup: dir };
+}
+
+/**
+ * 전역 잠금: 적용·되돌리기는 한 번에 하나만(<FORGEN_HOME>/audit/fix/run.lock). 잠금을 쥔 프로세스가 죽었고 30초 넘었으면 회수,
+ * 살아 있으면 기다리지 않고 실패한다(묶음 적용은 몇 분 걸릴 수 있다).
+ */
+export async function withFixLock<T>(fn: () => Promise<T>): Promise<T> {
+  fs.mkdirSync(fixDir(), { recursive: true, mode: 0o700 });
+  const { withFileLock } = await import('../hooks/shared/file-lock.js');
+  try {
+    return await withFileLock(path.join(fixDir(), 'run'), fn, { timeoutMs: 1500 });
+  } catch (e) {
+    if (e instanceof Error && /File lock timeout/.test(e.message)) throw new Error('다른 forgen fix 가 적용·되돌리기 중이다(~/.forgen/audit/fix/run.lock) — 끝난 뒤 다시 실행');
+    throw e;
+  }
 }
 
 export function newBackupRoot(now = new Date()): string {
@@ -747,7 +788,7 @@ export function undoFix(id: string, now = new Date()): { restored: number } | { 
     if (!e.existed) { fs.rmSync(e.path, { force: true }); continue; }
     const src = path.join(a.backup, 'before', e.slot);
     const mode = fs.statSync(src).mode & 0o777;
-    fs.writeFileSync(e.path, fs.readFileSync(src), { mode });
+    atomicWrite(e.path, fs.readFileSync(src), mode);
     const st = fs.statSync(src);
     fs.utimesSync(e.path, st.atime, st.mtime);
   }
@@ -756,7 +797,7 @@ export function undoFix(id: string, now = new Date()): { restored: number } | { 
   const t = readText(dp);
   if (t) {
     const kept = t.split('\n').filter((l) => { if (!l) return false; try { return (JSON.parse(l) as { fix?: string }).fix !== rec.id; } catch { return true; } });
-    if (kept.length) fs.writeFileSync(dp, `${kept.join('\n')}\n`, { mode: 0o600 }); else fs.rmSync(dp, { force: true });
+    if (kept.length) atomicWrite(dp, `${kept.join('\n')}\n`, 0o600); else fs.rmSync(dp, { force: true });
   }
   appendLedger({ at: now.toISOString(), event: 'undo', id: rec.id, kind: rec.kind, backup: a.backup });
   return { restored: rec.entries.length };
@@ -808,10 +849,8 @@ export function lossCheck(before: Measure, after: Measure, events: LedgerEvent[]
   const live = new Map<string, LedgerEvent>();
   for (const e of events) { if (e.event === 'apply') live.set(e.id, e); if (e.event === 'undo') live.delete(e.id); }
   const eq = new Map<string, string[]>();
-  const scoped = new Map<string, string>();
   for (const e of live.values()) {
     for (const x of e.equivalents ?? []) eq.set(x.from, [...(eq.get(x.from) ?? []), x.to]);
-    if (e.scopedTo) scoped.set(e.scopedTo.key, e.scopedTo.project);
   }
   const out: LossReport[] = [];
   for (const b of before.folders) {
@@ -823,11 +862,8 @@ export function lossCheck(before: Measure, after: Measure, events: LedgerEvent[]
       seen.add(k);
       return (eq.get(k) ?? []).some((t) => ok(t, seen));
     };
-    const missing = b.important.filter((k) => {
-      if (ok(k)) return false;
-      const proj = scoped.get(k);
-      return !(proj && b.projectKey !== proj);
-    });
+    // 범위를 옮긴 룰이라도 중요 지침이면 다른 폴더에서 빠진 것을 누락으로 센다(important 는 중요 지침만 담는다)
+    const missing = b.important.filter((k) => !ok(k));
     if (missing.length) out.push({ folder: b.folder, missing });
   }
   return out;

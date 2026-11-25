@@ -11,7 +11,7 @@
 import { Judge, takeModelDisclosure } from './judge.js';
 import {
   appliedFixes, applyFix, ensureBaseline, FIX_KINDS, KIND_LABEL, lossCheck, measure, newBackupRoot, planFixes, previewFix,
-  rates, readLedger, recordProposed, undoFix, unifiedDiff, appendLedger, type Fix, type FixKind, type FixPlan,
+  rates, readLedger, recordProposed, undoFix, unifiedDiff, appendLedger, fixPaths, withFixLock, type Fix, type FixKind, type FixPlan,
 } from './fix.js';
 import { shortPath } from './html.js';
 
@@ -55,13 +55,14 @@ async function plan(c: Ctx): Promise<FixPlan> {
 }
 
 function line(f: Fix): string {
-  return `  ${f.id}  ${f.title}${f.tokens > 0 ? `  (−${f.tokens}토큰)` : f.tokens < 0 ? `  (+${-f.tokens}토큰)` : ''}${f.model ? '  [모델 문안]' : ''}${f.blocked ? `\n      지적만: ${f.blocked}` : ''}`;
+  return `  ${f.id}  ${f.title}${f.tokens > 0 ? `  (−${f.tokens}토큰)` : f.tokens < 0 ? `  (+${-f.tokens}토큰)` : ''}${f.model ? '  [모델 문안]' : ''}${f.blocked ? `\n      지적만: ${f.blocked}` : ''}${f.manual ? `\n      하나씩만: ${f.manual}` : ''}`;
 }
 
 function show(f: Fix): void {
   console.log(`${f.id} · ${KIND_LABEL[f.kind]}${f.model ? ' · 모델 문안(Haiku)' : ''}\n${f.title}\n이유: ${f.why}`);
   if (f.evidence.length) { console.log('근거:'); for (const e of f.evidence) console.log(`  · ${e}`); }
   if (f.blocked) { console.log(`\n지적만 — ${f.blocked}`); return; }
+  if (f.manual) console.log(`\n하나씩만 — ${f.manual}`);
   for (const pv of previewFix(f)) {
     console.log('');
     if (pv.dir) { console.log(`폴더를 백업으로 옮김(끄기): ${shortPath(pv.path)}`); continue; }
@@ -75,25 +76,32 @@ async function applyKinds(c: Ctx, kinds: FixKind[]): Promise<void> {
   let applied = 0;
   let skipped = 0;
   let baselineSet = false;
+  const done = new Set<string>();
+  let manual = 0;
   for (const k of kinds) {
-    // 같은 종류 처방끼리 같은 줄을 건드려 건너뛴 것이 있으면 다시 계획해서 한 번 더(최대 3번)
-    for (let pass = 0; pass < 3; pass++) {
+    // 한 번 계획에서는 서로 다른 파일을 건드리는 처방만 적용하고, 같은 파일을 고치는 나머지는 다시 계획해서(앞 처방 뒤의 내용으로) 줄을 찾는다
+    for (let pass = 0; pass < 50; pass++) {
       const p = await plan(c);
       if (!baselineSet) { ensureBaseline(p.run); baselineSet = true; }
-      let failed = 0;
-      for (const f of p.fixes.filter((x) => x.kind === k && !x.blocked)) {
-        try { applyFix(f, root); applied++; if (!c.json) console.log(`✓ ${f.id}  ${f.title}`); } catch (e) {
-          failed++;
+      const todo = p.fixes.filter((x) => x.kind === k && !x.blocked && !done.has(x.id));
+      if (pass === 0) manual += todo.filter((x) => x.manual).length;
+      const touched = new Set<string>();
+      let deferred = 0;
+      for (const f of todo.filter((x) => !x.manual)) {
+        const paths = fixPaths(f);
+        if (paths.some((x) => touched.has(x))) { deferred++; continue; }
+        done.add(f.id);
+        try { applyFix(f, root); applied++; for (const x of paths) touched.add(x); if (!c.json) console.log(`✓ ${f.id}  ${f.title}`); } catch (e) {
+          skipped++;
           appendLedger({ at: new Date().toISOString(), event: 'skip', id: f.id, kind: f.kind, note: e instanceof Error ? e.message : String(e) });
           if (!c.json) console.log(`· 건너뜀 ${f.id}: ${e instanceof Error ? e.message : String(e)}`);
         }
       }
-      if (!failed) break;
-      if (pass === 2) skipped += failed;
+      if (!deferred) break;
     }
   }
-  if (c.json) console.log(JSON.stringify({ schema: 'forgen-fix-apply/1', applied, skipped, backup: root, model: modelUse }, null, 2));
-  else console.log(`\n✓ [forgen] 처방 ${applied}개 적용${skipped ? ` · ${skipped}개 건너뜀(대상이 바뀜 — 다시 --list)` : ''} · 스냅샷 ${root}\n  되돌리기: forgen fix --undo <id> | --undo all · 측정: forgen fix --report${c.model ? `\n  모델 호출 ${modelUse.calls}회(실패 ${modelUse.failed}, 캐시 적중 ${modelUse.cacheHits})` : ''}`);
+  if (c.json) console.log(JSON.stringify({ schema: 'forgen-fix-apply/1', applied, skipped, manual, backup: root, model: modelUse }, null, 2));
+  else console.log(`\n✓ [forgen] 처방 ${applied}개 적용${skipped ? ` · ${skipped}개 건너뜀(대상이 바뀜 — 다시 --list)` : ''}${manual ? ` · 하나씩만 적용하는 처방 ${manual}개는 뺌(중요 지침 — forgen fix --list 에서 보고 <id> --apply)` : ''} · 스냅샷 ${root}\n  되돌리기: forgen fix --undo <id> | --undo all · 측정: forgen fix --report${c.model ? `\n  모델 호출 ${modelUse.calls}회(실패 ${modelUse.failed}, 캐시 적중 ${modelUse.cacheHits})` : ''}`);
 }
 
 function printConflicts(id: string, conflicts: Array<{ path: string; base: string | null; fixed: string | null; current: string | null }>): void {
@@ -120,9 +128,17 @@ async function report(c: Ctx): Promise<void> {
     const { runModelChecks } = await import('./model-checks.js');
     mix = (await runModelChecks(run.result, run.ctx, new Judge({ model: true }))).counts.mixConfirmed;
   }
+  // 기억 추가는 N3 다이어트와 따로 센다(새 기억이 실리는 몫 — N4 처방): 폴더 비교는 그 몫을 뺀 값으로
+  const live = new Map<string, (typeof events)[number]>();
+  for (const e of events) { if (e.event === 'apply') live.set(e.id, e); if (e.event === 'undo') live.delete(e.id); }
+  const added = new Map<string, number>();
+  for (const e of live.values()) if (e.addsTo) added.set(e.addsTo.folder, (added.get(e.addsTo.folder) ?? 0) + e.addsTo.tokens);
+  const p1 = (a: number, b: number) => (b ? Math.round(((a - b) / b) * 1000) / 10 : 0);
   const rows = before.folders.map((b) => {
-    const a = after.folders.find((x) => x.folder === b.folder);
-    return { folder: b.folder, before: b.tokens, after: a?.tokens ?? 0, delta: (a?.tokens ?? 0) - b.tokens, pct: b.tokens ? Math.round((((a?.tokens ?? 0) - b.tokens) / b.tokens) * 1000) / 10 : 0 };
+    const total = after.folders.find((x) => x.folder === b.folder)?.tokens ?? 0;
+    const mem = added.get(b.folder) ?? 0;
+    const diet = total - mem;
+    return { folder: b.folder, before: b.tokens, after: diet, addedMemory: mem, withMemory: total, delta: diet - b.tokens, pct: p1(diet, b.tokens), pctWithMemory: p1(total, b.tokens) };
   });
   const r = rates(events);
   const out = {
@@ -133,7 +149,9 @@ async function report(c: Ctx): Promise<void> {
   console.log(`처방: 제안 ${r.proposed} · 적용 ${r.applied} (적용률 ${pct(r.applied, r.proposed)}) · 되돌림 ${r.undone} (되돌림률 ${pct(r.undone, r.applied)}, 목표 ≤ 10%)`);
   for (const [k, v] of Object.entries(r.byKind)) console.log(`  ${KIND_LABEL[k as FixKind] ?? k}: 제안 ${v.proposed} · 적용 ${v.applied} · 되돌림 ${v.undone}`);
   console.log(`\n폴더별 상시 로드 토큰(N3, 스킬 설명 제외) — 처방 전(${before.at.slice(0, 16)}) → 지금`);
-  for (const x of rows) console.log(`  ${String(x.before).padStart(6)} → ${String(x.after).padStart(6)}  ${x.pct > 0 ? '+' : ''}${x.pct}%  ${shortPath(x.folder)}`);
+  const sg = (n: number) => `${n > 0 ? '+' : ''}${n}%`;
+  for (const x of rows) console.log(`  ${String(x.before).padStart(6)} → ${String(x.after).padStart(6)}  ${sg(x.pct)}  ${shortPath(x.folder)}${x.addedMemory ? `   (+ 기억 추가 ${x.addedMemory}토큰 → 합 ${sg(x.pctWithMemory)})` : ''}`);
+  if (added.size) console.log('  기억 추가(적히지 않은 채 반복된 교정의 새 메모)는 N3 다이어트 비교에서 빼고 따로 적는다');
   console.log(`  중앙값 ${out.medianPct > 0 ? '+' : ''}${out.medianPct}% (목표 −15% 이상) · 늘어난 폴더 ${out.increased.length}`);
   console.log(`중요 지침 누락 ${loss.reduce((n, l) => n + l.missing.length, 0)}${loss.length ? `: ${loss.map((l) => `${shortPath(l.folder)} ${l.missing.join(', ')}`).join(' / ')}` : ''}`);
   console.log(`다른 프로젝트 섞임(모델 판정) ${mix === null ? '— (--no-model)' : mix}`);
@@ -153,25 +171,26 @@ export async function handleFix(args: string[]): Promise<void> {
     if (args.includes('--undo')) {
       const target = values(args, '--undo')[0];
       if (!target) throw new Error('--undo 뒤에 처방 id 또는 all');
-      const list = target === 'all' ? appliedFixes() : [{ id: target }];
-      if (!list.length) { console.log('되돌릴 처방이 없다.'); return; }
-      for (const { id } of list) {
-        const r = undoFix(id);
-        if ('conflicts' in r) { printConflicts(id, r.conflicts); process.exitCode = 1; return; }
-        if (!c.json) console.log(`✓ [forgen] ${id} 되돌림(파일 ${r.restored}개)`);
-      }
+      await withFixLock(async () => {
+        const list = target === 'all' ? appliedFixes() : [{ id: target }];
+        if (!list.length) { console.log('되돌릴 처방이 없다.'); return; }
+        for (const { id } of list) {
+          const r = undoFix(id);
+          if ('conflicts' in r) { printConflicts(id, r.conflicts); process.exitCode = 1; return; }
+          if (!c.json) console.log(`✓ [forgen] ${id} 되돌림(파일 ${r.restored}개)`);
+        }
+      });
       return;
     }
     if (args.includes('--report')) { await report(c); return; }
     const positional = args.filter((a, i) => !a.startsWith('-') && !(i > 0 && WITH_VALUE.has(args[i - 1])));
-    if (args.includes('--apply') && kinds) { await applyKinds(c, kinds); return; }
+    if (args.includes('--apply') && kinds) { await withFixLock(() => applyKinds(c, kinds)); return; }
     const p = await plan(c);
     if (positional[0]) {
       const f = p.fixes.find((x) => x.id === positional[0]) ?? (p.fixes.filter((x) => x.id.startsWith(positional[0])).length === 1 ? p.fixes.find((x) => x.id.startsWith(positional[0])) : undefined);
       if (!f) throw new Error(`처방을 찾지 못함: ${positional[0]} — forgen fix --list (원천이 바뀌면 처방도 바뀐다)`);
       if (!args.includes('--apply')) { show(f); return; }
-      ensureBaseline(p.run);
-      const r = applyFix(f, newBackupRoot());
+      const r = await withFixLock(async () => { ensureBaseline(p.run); return applyFix(f, newBackupRoot()); });
       console.log(`✓ [forgen] ${f.id} 적용 · 스냅샷 ${r.backup}\n  되돌리기: forgen fix --undo ${f.id}`);
       return;
     }

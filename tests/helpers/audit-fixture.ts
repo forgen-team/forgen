@@ -94,7 +94,7 @@ export function buildFixture(root: string): Fixture {
   W(path.join(forgenHome, 'state', 'marker.json'), '{}');
   return {
     home, claude, forgenHome, A, B, C, folders: [A, B, C, home],
-    planted: { dup: ['dq01', 'dq02', 'dq03', 'dq04'], conflict: ['cq01', 'cq02'], mix: ['projc release checklist', 'rebuild the synthetic image', 'nightly import runs'], stale: 4, sameSentence: 1, truncated: 1 },
+    planted: { dup: ['dq01', 'dq02', 'dq03', 'dq04'], conflict: ['cq01', 'cq02'], mix: ['projc release checklist', 'rebuild the synthetic image', 'nightly import runs', 'schema migration check'], stale: 4, sameSentence: 1, truncated: 1 },
   };
 }
 
@@ -106,7 +106,13 @@ export function addRules(createRule: (o: Record<string, unknown>) => Record<stri
     saveRule(r as never);
     ids[key] = String(r.rule_id);
   };
-  mk('mix', '[[MIX]] For projc always rebuild the synthetic image before testing');
+  // 채굴 룰(중요 지침 아님) — 범위 옮기기를 묶음으로 적용할 수 있다
+  mk('mix', '[[MIX]] For projc always rebuild the synthetic image before testing', { source: 'behavior_inference' });
+  // 중요 지침(strong) 섞임 — 범위 옮기기는 하나씩만(묶음 제외), 옮기면 다른 폴더에서 누락으로 센다
+  mk('mixImportant', '[[MIX]] For projc never skip the projc schema migration check', { strength: 'strong' });
+  // 같은 뜻 forgen 룰 둘: 직접 교정(중요) · 채굴 — 지워지는 쪽은 채굴만
+  mk('dq06a', 'dq06 Keep generated fixture files out of the main source folder', { source: 'behavior_inference' });
+  mk('dq06b', 'dq06 Generated fixture files must stay out of the main source folder');
   mk('gen', '[[GEN]] Reply in Korean even when the work is about projc');
   mk('shared', SHARED.slice(2));
   mk('scoped', 'Scoped rule only for proj-a work', { projects: ['proj-a'] });

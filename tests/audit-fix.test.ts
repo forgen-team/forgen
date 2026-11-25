@@ -24,7 +24,7 @@ process.env.FAKE_STATE = FAKE;
 process.env.PATH = `${BIN}${path.delimiter}${process.env.PATH}`;
 delete process.env.FORGEN_CWD;
 
-const { planFixes, applyFix, undoFix, newBackupRoot, measure, lossCheck, readLedger, applyTextOps, writeBlock, unifiedDiff, skillUsage } = await import('../src/audit/fix.js');
+const { planFixes, applyFix, undoFix, newBackupRoot, measure, lossCheck, readLedger, applyTextOps, writeBlock, unifiedDiff, skillUsage, atomicWrite, stateHash, withFixLock } = await import('../src/audit/fix.js');
 const { handleFix } = await import('../src/audit/fix-cli.js');
 const { Judge } = await import('../src/audit/judge.js');
 const { runAudit } = await import('../src/audit/run.js');
@@ -110,7 +110,16 @@ describe('처방 계획 — 합성 A·B·C', () => {
     expect(ov.some((f) => f.evidence.join(' ').includes('dq01'))).toBe(true);
     expect(ov.some((f) => f.ops.some((o) => o.op === 'rule' && o.ruleId === ids.shared))).toBe(true);
     // 섞임 확정 → 범위 옮기기(forgen 룰) · 폴더 전용 룰로 옮기기(사용자 .claude/rules) · 사용자 CLAUDE.md 는 git 밖이라 지적만
-    expect(ready('scope').map((f) => f.ops[0])).toEqual([expect.objectContaining({ ruleId: ids.mix, change: 'scope', projects: ['projc'] })]);
+    expect(ready('scope').filter((f) => !f.manual).map((f) => f.ops[0])).toEqual([expect.objectContaining({ ruleId: ids.mix, change: 'scope', projects: ['projc'] })]);
+    // 중요 지침(strong) 섞임은 하나씩만(묶음 제외)
+    const imp = ready('scope').find((f) => f.ops.some((o) => o.op === 'rule' && o.ruleId === ids.mixImportant));
+    expect(imp?.manual).toMatch(/중요 지침/);
+    // 중요 지침은 합치기에서 지워지는 쪽이 되지 않는다: dq06 은 직접 교정 룰을 남기고 채굴 룰만 대체
+    const dq06 = ready('merge').find((f) => f.evidence.join(' ').includes('dq06'));
+    expect(dq06?.ops.filter((o) => o.op === 'rule' && o.change === 'supersede').map((o) => (o as { ruleId: string }).ruleId)).toEqual([ids.dq06a]);
+    for (const f of p.fixes) for (const o of f.ops) if (o.op === 'rule' && (o.change === 'supersede' || o.change === 'suppress')) expect([ids.dq06b, ids.dq01, ids.shared, ids.dq04, ids.rw01, ids.mixImportant]).not.toContain(o.ruleId);
+    // 합친 문장의 "같은 뜻인가" 채점은 Sonnet(처방 문안 Haiku 와 다른 판정자)
+    expect(readJudgeCalls(FAKE).some((l) => /^dup \d+ claude-sonnet-5-5$/.test(l))).toBe(true);
     expect(ready('move').length).toBe(1);
     expect(ready('move')[0].ops.some((o) => o.op === 'append' && o.path === path.join(FX.C, '.claude', 'rules', 'moved-projc.md'))).toBe(true);
     expect(of('move').filter((f) => f.blocked).every((f) => /git 밖/.test(f.blocked ?? ''))).toBe(true);
@@ -207,7 +216,10 @@ describe('전부 적용 → 측정 → 전부 되돌리기 (§9.1 0.9.0 확인 �
     expect(r.medianPct).toBeLessThan(0);
     expect(r.loss).toEqual([]);
     // 섞임: 남은 것은 쓸 수 없는 사용자 CLAUDE.md 한 줄(지적만)뿐
-    expect(r.mixConfirmed).toBe(1);
+    // + 하나씩만 적용하는 중요 지침 섞임 1(묶음에서 뺌)
+    expect(r.mixConfirmed).toBe(2);
+    // 기억 추가는 N3 다이어트 비교에서 따로 센다
+    expect(r.folders.find((f: { folder: string }) => f.folder === FX.A).addedMemory).toBeGreaterThan(0);
     expect(r.rates.applied).toBeGreaterThan(0);
     // 누락 검사는 실제로 잡는다: 처방 기록 없이 중요 룰이 빠지면 누락
     const m1 = measure(runAudit({ folders: FX.folders, claudeDir: FX.claude }));
@@ -239,6 +251,61 @@ describe('전부 적용 → 측정 → 전부 되돌리기 (§9.1 0.9.0 확인 �
     fs.writeFileSync(file, edited.replace('- user edit after the fix\n', ''));
     expect(undoFix(f.id)).toMatchObject({ restored: 1 });
     process.exitCode = 0;
+  });
+
+  it('중요 지침 범위 옮기기는 <id> --apply 로만, 적용하면 다른 폴더에서 누락으로 센다', async () => {
+    const p = await planFixes({ folders: FX.folders, claudeDir: FX.claude, judge: new Judge({ model: true }) });
+    const imp = p.fixes.find((f) => f.kind === 'scope' && f.manual);
+    if (!imp) throw new Error('중요 지침 범위 옮기기 처방이 없다');
+    const m0 = measure(p.run);
+    const out = await quiet(() => handleFix([imp.id, '--apply', ...ARGS()]));
+    expect(out.out).toContain(`${imp.id} 적용`);
+    const m1 = measure(runAudit({ folders: FX.folders, claudeDir: FX.claude }));
+    const loss = lossCheck(m0, m1, readLedger());
+    expect(loss.some((l) => l.folder !== FX.C && l.missing.includes(`rule:${ids.mixImportant}`))).toBe(true);
+    await quiet(() => handleFix(['--undo', imp.id]));
+    expect(loadRule(ids.mixImportant)?.projects).toBeUndefined();
+  }, 30_000);
+
+  it('전역 잠금: 동시에 두 번 적용하면 하나는 기다리지 않고 실패, 죽은 프로세스의 오래된 잠금은 회수', async () => {
+    const lock = path.join(FX.forgenHome, 'audit', 'fix', 'run.lock');
+    // 다른 실행이 잠금을 쥔 동안(살아 있는 pid) 적용·되돌리기는 기다리지 않고 실패하고 아무것도 쓰지 않는다
+    let release: () => void = () => {};
+    const holder = withFixLock(() => new Promise<void>((r) => { release = r; }));
+    await new Promise((r) => setTimeout(r, 50));
+    const src0 = SRC();
+    const b = await quiet(() => handleFix(['--kind', 'plugin-off', '--apply', ...ARGS()]));
+    const u = await quiet(() => handleFix(['--undo', 'all']));
+    expect(b.out).toContain('다른 forgen fix 가 적용·되돌리기 중');
+    expect(u.out).toContain('다른 forgen fix 가 적용·되돌리기 중');
+    expect(SRC()).toEqual(src0);
+    release();
+    await holder;
+    expect(fs.existsSync(lock)).toBe(false);
+    const a = await quiet(() => handleFix(['--kind', 'plugin-off', '--apply', ...ARGS()]));
+    expect(a.out).toMatch(/처방 [1-9]\d*개 적용/);
+    // 죽은 pid · 31초 전 잠금 → 회수하고 진행
+    fs.writeFileSync(lock, JSON.stringify({ pid: 2 ** 22 + 12345, ts: Date.now() - 31_000, token: 'x' }));
+    const old = new Date(Date.now() - 31_000);
+    fs.utimesSync(lock, old, old);
+    const c = await quiet(() => handleFix(['--undo', 'all']));
+    expect(c.out).not.toContain('다른 forgen fix');
+    expect(fs.existsSync(lock)).toBe(false);
+    process.exitCode = 0;
+  }, 60_000);
+
+  it('원자적 쓰기: 심링크는 대상에 쓰고 임시 파일을 남기지 않는다, 상태 지문은 대상 기준', () => {
+    const real = path.join(ROOT, 'link-target.md');
+    const link = path.join(ROOT, 'link.md');
+    fs.writeFileSync(real, 'a\n');
+    fs.symlinkSync(real, link);
+    const h0 = stateHash(link);
+    atomicWrite(link, 'b\n');
+    expect(fs.lstatSync(link).isSymbolicLink()).toBe(true);
+    expect(fs.readFileSync(real, 'utf-8')).toBe('b\n');
+    expect(stateHash(link)).not.toBe(h0);
+    expect(stateHash(link)).toBe(stateHash(real));
+    expect(fs.readdirSync(ROOT).filter((n) => n.includes('.forgen-fix-'))).toEqual([]);
   });
 
   it('CLI: --list · <id>(diff) · 모르는 옵션은 실패', async () => {
