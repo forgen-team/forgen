@@ -33,7 +33,7 @@ const FAIL_COUNTER_PATH = path.join(STATE_DIR, 'pre-tool-fail-counter.json');
 /** forgen MCP 의 교정 기록 도구 (플러그인 설치면 서버 이름 앞에 plugin_ 접두가 붙는다). */
 /** forgen MCP 의 교정 기록 도구. Claude: mcp__forgen-compound__correction-record (플러그인이면 plugin_…_ 접두),
  *  Codex 0.163: mcp__forgen_compound__correction_record (하이픈을 밑줄로). 둘 다 잡는다. */
-const CORRECTION_RECORD_TOOL = /^mcp__(?:plugin_[A-Za-z0-9-]+_)?forgen[-_]compound__correction[-_]record$/;
+const CORRECTION_RECORD_TOOL = /^mcp__(?:plugin_[A-Za-z0-9_-]+?_)?forgen[-_]compound__correction[-_]record$/;
 const FAIL_CLOSE_THRESHOLD = 3; // 연속 3회 파싱 실패 시에만 reject
 
 interface PreToolInput {
