@@ -10,7 +10,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { projectCodexToClaude } from '../../src/host/projection.js';
-import { approve, approveWithContext, approveWithWarning, ask, blockStop, deny } from '../../src/hooks/shared/hook-response.js';
+import { approve, approveWithContext, approveWithUpdatedInput, approveWithWarning, ask, blockStop, deny } from '../../src/hooks/shared/hook-response.js';
 
 type Schema = Record<string, unknown>;
 const FIXTURES = path.join(process.cwd(), 'tests', 'fixtures', 'codex-hook-schemas');
@@ -70,6 +70,13 @@ describe('Codex 0.153.4 hook output schema conformance (사영 후)', () => {
 
   it('approve() 는 모든 이벤트에서 유효', () => {
     for (const ev of ALL_EVENTS) assertValid(ev, approve());
+  });
+
+  it('approveWithUpdatedInput() (0.8.0 S1) 은 PreToolUse 에서 유효하고 updatedInput 이 살아 있다', () => {
+    const raw = approveWithUpdatedInput({ session_id: 's1', origin: { cwd: '/x', tool_use_id: 't1' } });
+    assertValid('PreToolUse', raw);
+    const projected = projectCodexToClaude(JSON.parse(raw), { hook_event_name: 'PreToolUse' } as never) as { hookSpecificOutput?: { updatedInput?: unknown } };
+    expect(projected.hookSpecificOutput?.updatedInput).toEqual({ session_id: 's1', origin: { cwd: '/x', tool_use_id: 't1' } });
   });
 
   it('approveWithWarning() (systemMessage + suppressOutput:false) 는 모든 이벤트에서 유효', () => {

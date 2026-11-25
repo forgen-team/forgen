@@ -291,6 +291,11 @@ export async function runDoctor(opts: DoctorOptions = {}): Promise<number> {
   } catch {
     /* rule-store 로드 실패는 무해 — 스킵 */
   }
+  try {
+    const { missingRegistryPaths } = await import('../store/project-registry.js');
+    const missing = missingRegistryPaths();
+    if (missing.length) info(`프로젝트 키 등록부에 없는 폴더 ${missing.length}개`, `forgen project list 로 확인 (${missing.slice(0, 3).map((m) => `${m.key}:${m.path}`).join(', ')})`);
+  } catch { /* 등록부 문제는 무해 */ }
   console.log();
 
   section('Environment');

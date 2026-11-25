@@ -114,6 +114,14 @@ const commands: Command[] = [
     },
   },
   {
+    name: 'project',
+    description: 'Project keys: group several folders (repos or not) under one key — forgen project add|list|remove',
+    handler: async (args) => {
+      const { handleProject } = await import('./core/project-cli.js');
+      handleProject(args);
+    },
+  },
+  {
     name: 'way',
     description: 'Your way of working: summary, export to other models, import, collect host memory',
     handler: async (args) => {
@@ -761,6 +769,8 @@ function printHelp() {
     forgen config hooks             Hook management
     forgen mcp                      MCP server management
     forgen skill promote|list       Skill management (promote writes a standard SKILL.md; --install → ~/.claude/skills)
+    forgen project add <key> <folder...> [--alias old]   Group folders (repos or not) under one project key
+    forgen project list|remove <key>|which [folder]      Show / drop keys, or which key a folder resolves to
     forgen way [--all|--json]       Your way of working in one screen: rules you said vs inferred, enforced vs advisory
     forgen way export --target <agents-md|claude-rules|skill|system-prompt|gemini|cursor|workflow|json>
                                     [--project k] [--budget n] [--out dir] [--force]  (stdout preview unless --out)

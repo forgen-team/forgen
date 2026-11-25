@@ -27,7 +27,7 @@ import { isHaikuCompoundEnabled, getHaikuConsentState } from './compound-consent
 import { digestTranscriptFile, renderDigest } from './transcript-summary.js';
 import { getCursor, setCursor, markRun, enqueue, claimDue, completeEntry, acquireRunnerLock, releaseRunnerLock, transcriptSignature, resetIfReplaced, getDonePhases, setDonePhases, type Phase } from './extraction-queue.js';
 import { releaseAutoCompoundInflight } from './spawn.js';
-import { projectKeyFor } from '../store/rule-scope.js';
+import { dominantProject } from './session-context.js';
 import { reopenIfReExtracted } from '../engine/compound-lifecycle.js';
 import { callHaiku, probeClaudeAvailability, writeHaikuStatus, appendExtractionEvent } from './extraction-haiku.js';
 import { loadProfile } from '../store/profile-store.js';
@@ -317,7 +317,11 @@ function phaseSolution(summary: string, attempt: number, sessId: string = sid): 
     const rawContent = match[2].replace(/\\"/g, '"').trim();
     const condition = (match[3] ?? '').replace(/\\"/g, '"').trim();
     const projectOnly = (match[4] ?? '').trim() === '이 프로젝트';
-    const projectKey = projectOnly ? projectKeyFor(cwd) : null;
+    let projectKey: string | null = null;
+    if (projectOnly) {
+      const w = dominantProject(sid, cwd);
+      if (w.kind === 'project') projectKey = w.key;
+    }
     if (!title || rawContent.length < 20) continue;
     // 보안(argument confusion): title/content 는 untrusted 모델 출력이다. execFileSync 인자로 넘기므로
     // 셸 인젝션은 없지만 '-' 로 시작하면 forgen 의 인자 파서가 플래그로 오해석할 수 있다 → 스킵.
@@ -432,10 +436,14 @@ ${summary}
   return { ok: true, retriable: false };
 }
 
-function minedScope(generality: 'project' | 'general'): { scope_hint?: 'general'; projects?: string[] } {
+/**
+ * 추론 교정의 범위. general → 전역. project → 이 세션의 주 프로젝트(사용자 턴 80% 이상, 0.8.0 S1).
+ * 주 프로젝트를 못 정하면 전역이 아니라 미정(S2). 세션 파일이 없으면 러너 폴더로 판정(예전 동작).
+ */
+function minedScope(generality: 'project' | 'general', sessId: string = sid): { scope_hint?: 'general'; projects?: string[]; scope_state?: 'unresolved' } {
   if (generality === 'general') return { scope_hint: 'general' };
-  const key = projectKeyFor(cwd);
-  return key ? { projects: [key] } : {};
+  const work = dominantProject(sessId, cwd);
+  return work.kind === 'project' ? { projects: [work.key] } : { scope_state: 'unresolved' };
 }
 
 async function phaseLearning(summary: string, attempt: number, sessId: string = sid): Promise<PhaseResult> {

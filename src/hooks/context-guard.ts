@@ -323,6 +323,10 @@ export async function main(): Promise<void> {
   if (input.prompt) {
     const state = loadContextState(sessionId);
     state.promptCount++;
+    // 0.8.0 S1: 프로젝트별 사용자 턴 수 — 러너가 이 세션의 주 프로젝트를 정할 때 쓴다.
+    if (process.env.FORGEN_NESTED_RUN !== '1') {
+      try { (await import('../core/session-context.js')).recordWorkContext(input.session_id, input.cwd, { countTurn: true }); } catch { /* fail-open */ }
+    }
 
     // ADR-008 / docs/codex-integration.md — prompt-history writer 활성화
     appendPromptHistory(sessionId, input.prompt);

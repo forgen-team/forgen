@@ -255,6 +255,37 @@ function mergedRuleProjects(
 }
 
 /**
+ * 0.8.0 S2: 범위 결과를 projects / scope_state('unresolved') / 전역 중 하나로 정한다.
+ * 미정 룰은 "모름"이라 다음 교정의 범위를 그대로 받는다(프로젝트면 그 프로젝트, 전역이면 전역).
+ * 미정은 프로젝트를 넓히지 않고, 전역 룰을 미정으로 좁히지도 않는다.
+ */
+function scopeAfterMerge(
+  existing: Pick<Rule, 'status' | 'projects' | 'scope_state'>,
+  payload: Record<string, unknown> | undefined,
+  /** live = 기존 룰이 활성·후보인가. 값은 이 함수가 한 번만 계산해 넘긴다. */
+  merge: (live: boolean) => string[] | undefined,
+): { projects?: string[]; scope_state?: 'unresolved' } {
+  const incoming = Array.isArray(payload?.projects) ? ((payload?.projects ?? []) as unknown[]).filter((p): p is string => typeof p === 'string' && p.length > 0) : [];
+  const incomingUnresolved = payload?.scope_state === 'unresolved' && incoming.length === 0;
+  const existingUnresolved = existing.scope_state === 'unresolved' && !existing.projects?.length;
+  const live = existing.status === 'active' || existing.status === 'candidate';
+  if (live && existingUnresolved) {
+    if (incoming.length) return { projects: [...new Set(incoming)].sort() };
+    return incomingUnresolved ? { scope_state: 'unresolved' } : {};
+  }
+  const projects = merge(live);
+  if (projects?.length) return { projects };
+  if (!live && incomingUnresolved) return { scope_state: 'unresolved' };
+  return {};
+}
+
+/** 새 룰의 범위 필드. */
+function scopeForNew(projects: string[] | undefined, payload: Record<string, unknown> | undefined): { projects?: string[]; scope_state?: 'unresolved' } {
+  if (projects?.length) return { projects };
+  return payload?.scope_state === 'unresolved' && payload?.scope_hint !== 'general' ? { scope_state: 'unresolved' } : {};
+}
+
+/**
  * D3 (2026-11 재설계): 교정 1건이 scope:'session' 임시 룰과 승급된 scope:'me' 룰, 활성 룰 2개로 남지 않게
  * 같은 evidence 로 만든 활성 session 룰을 승급 직후 superseded 로 바꾼다. 승급 저장이 성공한 뒤에만 호출한다.
  * (12시간 유예는 아직 승급 안 된 session 룰을 지키는 장치라 여기와 충돌하지 않는다.) 바꾼 수를 돌려준다.
@@ -352,12 +383,12 @@ export function promoteSessionCandidates(sessionId: string): number {
             const evidenceRefs = hit.evidence_refs.includes(candidate.evidence_id)
               ? hit.evidence_refs
               : [...hit.evidence_refs, candidate.evidence_id];
-            const { projects: _p, ...hitWithoutProjects } = hit;
-            const projects = mergeMinedProjects(hit, payload);
+            const { projects: _p, scope_state: _s, ...hitWithoutProjects } = hit;
+            const scope = scopeAfterMerge(hit, payload, () => mergeMinedProjects(hit, payload));
             const status = hit.status === 'active' ? 'active' : minedStatusFor(evidenceRefs);
             saveRule({
               ...withMinedStatus(hitWithoutProjects as Rule, status, 'candidate-confirmed'),
-              ...(projects ? { projects } : {}),
+              ...scope,
               evidence_refs: evidenceRefs,
               strength: 'default',
             });
@@ -413,23 +444,22 @@ export function promoteSessionCandidates(sessionId: string): number {
         // rule_id/created_at 은 그대로 두고 status 만 'active' 로 되돌린다 — 재활성화된
         // rule 은 다음 retireStaleAutoMinedRules() 호출 때 기존 나이 기준으로 다시
         // 은퇴 여부가 평가된다(의도된 동작, thrash 아님: 최소 1세션은 유효하게 주입됨).
-        const { projects: _previousProjects, ...existingWithoutProjects } = existingRule;
+        const { projects: _previousProjects, scope_state: _previousScope, ...existingWithoutProjects } = existingRule;
         if (autoMined) {
           // 0.7.0 D5: 활성은 그대로, 후보·은퇴·대체된 룰은 근거 세션 수로 활성/후보를 정한다.
-          const live = existingRule.status === 'active' || existingRule.status === 'candidate';
-          const projects = live ? mergeMinedProjects(existingRule, payload) : minedProjectsForNew(payload);
+          const scope = scopeAfterMerge(existingRule, payload, (live) => (live ? mergeMinedProjects(existingRule, payload) : minedProjectsForNew(payload)));
           const status = existingRule.status === 'active' ? 'active' : minedStatusFor(evidenceRefs);
           saveRule({
             ...withMinedStatus(existingWithoutProjects as Rule, status, existingRule.status === 'candidate' ? 'candidate-confirmed' : 'mined-reobserved'),
-            ...(projects ? { projects } : {}),
+            ...scope,
             evidence_refs: evidenceRefs,
             strength,
           });
         } else {
-          const projects = mergedRuleProjects(existingRule, payload?.projects);
+          const scope = scopeAfterMerge(existingRule, payload, () => mergedRuleProjects(existingRule, payload?.projects));
           saveRule({
             ...existingWithoutProjects,
-            ...(projects ? { projects } : {}),
+            ...scope,
             status: 'active',
             evidence_refs: evidenceRefs,
             strength,
@@ -462,11 +492,8 @@ export function promoteSessionCandidates(sessionId: string): number {
         source,
         evidence_refs: [candidate.evidence_id],
         render_key: renderKey,
-        ...(() => {
-          const projects = autoMined ? minedProjectsForNew(payload)
-            : Array.isArray(payload.projects) ? payload.projects as string[] : undefined;
-          return projects?.length ? { projects } : {};
-        })(),
+        ...scopeForNew(autoMined ? minedProjectsForNew(payload)
+          : Array.isArray(payload.projects) ? payload.projects as string[] : undefined, payload),
       });
       if (autoMined) {
         // 0.7.0 D5: 채굴 룰은 후보로 태어난다 — 다른 세션에서 같은 개념이 다시 잡혀야 주입된다.

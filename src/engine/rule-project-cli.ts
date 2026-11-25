@@ -35,6 +35,7 @@ export function setRuleProject(prefix: string, projects: string[] | null): Rule 
   const next: Rule = { ...matches[0] };
   if (projects) next.projects = projects;
   else delete next.projects;
+  delete next.scope_state; // 사용자가 범위를 정했으니 더는 미정이 아니다(0.8.0 S2).
   saveRule(next);
   return next;
 }

@@ -26,6 +26,8 @@ export interface RuleListItem {
   origin: 'user' | 'mined' | 'default' | 'other';
   scope: Rule['scope'];
   projects: string[];
+  /** 0.8.0: 프로젝트 한정인데 어느 프로젝트인지 못 정한 룰이면 'unresolved'. 필드 추가만(v1 호환). */
+  scopeState?: 'unresolved';
   statement: string;
   trigger: string;
   renderKey: string;
@@ -100,6 +102,7 @@ export function toRuleListItem(r: Rule, archived: boolean, cache: Map<string, Ev
     origin: r.source === 'explicit_correction' ? 'user' : r.source === 'behavior_inference' ? 'mined' : r.source === 'onboarding' ? 'default' : 'other',
     scope: r.scope,
     projects: r.projects ?? [],
+    ...(r.scope_state === 'unresolved' && !r.projects?.length ? { scopeState: 'unresolved' as const } : {}),
     statement: r.policy,
     trigger: r.trigger,
     renderKey: r.render_key,

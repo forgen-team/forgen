@@ -31,6 +31,7 @@ export function createRule(params: {
   render_key: string;
   session_id?: string;
   projects?: string[];
+  scope_state?: 'unresolved';
 }): Rule {
   const now = new Date().toISOString();
   return {
@@ -45,7 +46,7 @@ export function createRule(params: {
     evidence_refs: params.evidence_refs ?? [],
     render_key: params.render_key,
     ...(params.session_id ? { session_id: params.session_id } : {}),
-    ...(params.projects?.length ? { projects: params.projects } : {}),
+    ...(params.projects?.length ? { projects: params.projects } : params.scope_state ? { scope_state: params.scope_state } : {}),
     created_at: now,
     updated_at: now,
   };
