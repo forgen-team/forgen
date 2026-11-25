@@ -24,10 +24,29 @@ export function recordFrozenUse(feature: FrozenFeature, opts: { notice?: boolean
   try {
     fs.mkdirSync(path.dirname(FROZEN_USAGE_PATH), { recursive: true });
     fs.appendFileSync(FROZEN_USAGE_PATH, JSON.stringify({ at: new Date().toISOString(), feature }) + '\n', { mode: 0o600 });
+    trimOldLines();
   } catch { /* 계측 실패가 기능을 막지 않는다 */ }
   if (opts.notice) {
     process.stderr.write(`[forgen] 동결된 기능입니다 — 0.9 에서 제거 예정: ${FROZEN_FEATURES[feature]}. 계속 쓰신다면 이슈로 알려 주세요.\n`);
   }
+}
+
+const TRIM_OVER_BYTES = 256 * 1024;
+const KEEP_DAYS = 90; // 화면은 30일 창만 쓴다
+
+/** 파일이 커지면 90일 지난 줄을 버린다(state-gc 대상 밖이라 여기서 스스로 관리). */
+function trimOldLines(): void {
+  try {
+    if (fs.statSync(FROZEN_USAGE_PATH).size <= TRIM_OVER_BYTES) return;
+    const cut = Date.now() - KEEP_DAYS * 86_400_000;
+    const kept = fs.readFileSync(FROZEN_USAGE_PATH, 'utf-8').split('\n').filter((l) => {
+      if (!l) return false;
+      try { return Date.parse((JSON.parse(l) as { at?: string }).at ?? '') >= cut; } catch { return false; }
+    });
+    const tmp = `${FROZEN_USAGE_PATH}.${process.pid}.tmp`;
+    fs.writeFileSync(tmp, kept.length ? kept.join('\n') + '\n' : '', { mode: 0o600 });
+    fs.renameSync(tmp, FROZEN_USAGE_PATH);
+  } catch { /* 정리 실패는 다음 기록 때 다시 */ }
 }
 
 /** 기간 안 동결 기능별 사용 횟수(많은 순). */
