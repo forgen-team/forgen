@@ -155,7 +155,7 @@ const commands: Command[] = [
   },
   {
     name: 'audit',
-    description: 'Audit host memory read-only: CLAUDE.md layers, .claude/rules, auto memory, AGENTS.md, forgen rules (forgen audit [tokens] [--folder p] [--json] [--timing])',
+    description: 'Audit host memory read-only: CLAUDE.md layers, .claude/rules, auto memory, AGENTS.md, forgen rules (forgen audit [tokens|recurrence|baseline|review|score] [--folder p] [--json] [--timing])',
     handler: async (args) => {
       const { handleAudit } = await import('./audit/cli.js');
       await handleAudit(args);
@@ -787,6 +787,10 @@ function printHelp() {
                                     Read-only memory audit (truncation·tokens·same sentence·stale·cross-project candidates·unscoped rules)
                                     → ~/.forgen/audit/<run>/audit.html + manifest.json
     forgen audit tokens [--folder p]  Always-loaded memory tokens per folder and layer (writes nothing)
+    forgen audit recurrence [--since d] [--until d] [--lookback 30d] [--limit N] [--no-model]
+                                    Replay transcripts: corrections you had to repeat (per 1,000 prompts; local claude CLI judge, cached)
+    forgen audit review [--import f] · forgen audit score   Owner check of 25 judged pairs (local page) → judge/owner agreement
+    forgen audit baseline [--freeze [--force]]  Fix the N4 baseline (last 6 weeks + 12 weeks) → ~/.forgen/audit/baseline.json
     forgen workflows install|list   Install forgen dynamic-workflow templates to .claude/workflows/
     forgen changelog                Auto-summarize commits since last release tag
     forgen compound                 Manage accumulated knowledge

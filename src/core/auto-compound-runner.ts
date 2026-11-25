@@ -856,6 +856,17 @@ try {
     process.stderr.write(`[forgen-auto-compound] correction clustering: ${e instanceof Error ? e.message : String(e)}\n`);
   }
 
+  // Step 4c (0.9.0): 교정 원장 pending → 쌍 판정(감사관 판정기·캐시). 훅에서는 모델을 부르지 않고 후보만 적었다. fail-open.
+  if (isHaikuCompoundEnabled()) {
+    try {
+      const { resolvePendingCorrections } = await import('./correction-ledger-judge.js');
+      const r = await resolvePendingCorrections();
+      if (r.resolved || r.stopped) process.stderr.write(`[forgen-auto-compound] correction ledger: judged ${r.resolved} pending, ${r.left} left${r.stopped ? ` (${r.stopped})` : ''}\n`);
+    } catch (e) {
+      process.stderr.write(`[forgen-auto-compound] correction ledger judge: ${e instanceof Error ? e.message : String(e)}\n`);
+    }
+  }
+
   // H2: 이번 실행 전후 솔루션 차분 → Stop hook 알림용 "N개 패턴 학습됨".
   try {
     if (fs.existsSync(SOLUTIONS_DIR)) {

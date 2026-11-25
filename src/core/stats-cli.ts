@@ -384,11 +384,11 @@ export function renderStats(s: StatsSnapshot): string {
   try {
     // 0.8.0 M2: 같은 교정이 되풀이되는가 — 룰이 있는데 안 먹힘(재발) / 룰이 있는데 안 들어감(전달 실패) / 새 교정
     const c = summarizeLedger(Date.now() - 14 * 86_400_000);
-    const total = c.recurrence + c['delivery-failure'] + c.new + c['unknown-delivery'];
+    const total = c.recurrence + c['delivery-failure'] + c.new + c['unknown-delivery'] + c.pending;
     const dc = summarizeDecisions();
     const dn = Object.values(dc).reduce((a, b) => a + b, 0);
     if (dn > 0) lines.push(`  Decisions (you)       ${padNum(dn)}    — 선택 질문의 답: 추천 그대로 ${dc.accept} · 다르게 ${dc.override} · 직접 입력 ${dc.free} · 복수 ${dc.multi}${dc.unanswered ? ` · 답 없음 ${dc.unanswered}` : ''}${dc['hidden-accept'] + dc['hidden-override'] ? ` · 추천 숨김 표본 ${dc['hidden-accept'] + dc['hidden-override']}(숨긴 추천과 같음 ${dc['hidden-accept']})` : ''} (기기 밖으로 안 나감)`);
-    if (total > 0) lines.push(`    분류 (14d)          재발 ${c.recurrence} · 전달 실패 ${c['delivery-failure']} · 신규 ${c.new}${c['unknown-delivery'] ? ` · 판정 불가 ${c['unknown-delivery']}` : ''}    — 판정은 표본 검수 전까지 참고`);
+    if (total > 0) lines.push(`    분류 (14d)          재발 ${c.recurrence} · 전달 실패 ${c['delivery-failure']} · 신규 ${c.new}${c['unknown-delivery'] ? ` · 판정 불가 ${c['unknown-delivery']}` : ''}${c.pending ? ` · 판정 대기 ${c.pending}(풀기: forgen audit recurrence)` : ''}    — 판정은 표본 검수 전까지 참고`);
   } catch { /* 표시 실패 무시 */ }
   lines.push(`  Mined (Haiku)         ${padNum(s.minedTotal)}    (+${s.mined7d} last 7d) — 대화에서 추론한 후보, 당신의 발화 아님`);
   for (const e of s.readErrors) lines.push(`  ⚠ 읽기 문제: ${e}`);
