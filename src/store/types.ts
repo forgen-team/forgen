@@ -170,6 +170,11 @@ export interface Rule {
    * projects 가 비어 있을 때만 뜻이 있다. 주입은 하되 전역 룰보다 뒤 순위이고 차단에는 쓰지 않는다.
    */
   scope_state?: 'unresolved';
+  /**
+   * 0.9.0 처방 "겹치는 교정 한 곳만"(오너 결정 Q4): 같은 교정이 호스트 기억(CLAUDE.md·.claude/rules·메모 색인 줄)에 이미
+   * 세션 시작마다 실려서, forgen 은 세션 시작 주입에서만 뺀다. 룰은 강제·측정용으로 그대로 남는다(status 는 active).
+   */
+  host_copy?: { path: string; line?: number; at: string; fix?: string };
   /** source 'imported' 일 때 가져온 곳(파일 경로 등). 사용자 발화가 아니라는 표시이기도 하다. */
   imported_from?: string;
   /** 세션 임시 룰의 소유 세션. 다른 실행 중인 세션의 임시 룰을 정리하지 않기 위해 쓴다. */

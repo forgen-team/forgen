@@ -5,7 +5,7 @@
  *   자동 메모 주제 파일 대화 기록 안 그 파일에 대한 첫 Write/Edit 시각
  *   MEMORY.md 색인 줄   그 줄 문장이 처음 들어간 Write/Edit 시각
  *   CLAUDE.md·.claude/rules·AGENTS.md 줄   git blame 의 줄별 작성 시각(커밋 안 된 줄·git 밖 파일은 수정 시각 — 늦게 잡혀 보수적)
- *   지운 기억(§4.3)    <FORGEN_HOME>/audit/deleted.jsonl — 처방(forgen fix)이 남길 지움 표시. 지금은 읽는 자리만
+ *   지운 기억(§4.3)    <FORGEN_HOME>/audit/deleted.jsonl — 처방(forgen fix, src/audit/fix.ts)이 남기는 지움 표시 + 지문(fp)
  * 시점을 모르는 기억(since = null)은 "적혀 있던 것"으로 세지 않는다. 읽기만 한다(git 은 blame 만 부름).
  */
 import * as fs from 'node:fs';
@@ -157,7 +157,7 @@ export function hostFileItems(reader: SourceReader, env: AuditEnv, files: Array<
   return out;
 }
 
-/** §4.3 지움 표시: {at, text, kind?, path?, line?, ruleId?, since?} 한 줄씩. 처방(forgen fix)이 남긴다 — 지금은 읽기만. */
+/** §4.3 지움 표시: {at, text, kind?, path?, line?, ruleId?, since?, fp, fix} 한 줄씩. 처방(forgen fix)이 남기고, 되돌리면 그 줄을 거둔다. */
 export function deletedItems(file = path.join(FORGEN_HOME, 'audit', 'deleted.jsonl')): MemoryItem[] {
   let text = '';
   try { text = fs.readFileSync(file, 'utf-8'); } catch { return []; }

@@ -42,6 +42,7 @@ export function buildFixture(root: string): Fixture {
     '- dq01 Always confirm the deploy target with the owner before shipping a release',
     '',
   ].join('\n'));
+  W(path.join(claude, 'rules', 'global.md'), '- [[MIX]] For projc the nightly import runs from the projc data bucket first\n');
 
   // 합성 A: 300줄 단일 CLAUDE.md — 같은 문장·낡은 경로·없는 npm 스크립트·부딪힘, 같은 뜻 짝은 룰 파일에
   fs.mkdirSync(path.join(A, '.git'), { recursive: true });
@@ -93,7 +94,7 @@ export function buildFixture(root: string): Fixture {
   W(path.join(forgenHome, 'state', 'marker.json'), '{}');
   return {
     home, claude, forgenHome, A, B, C, folders: [A, B, C, home],
-    planted: { dup: ['dq01', 'dq02', 'dq03', 'dq04'], conflict: ['cq01', 'cq02'], mix: ['projc release checklist', 'rebuild the synthetic image'], stale: 4, sameSentence: 1, truncated: 1 },
+    planted: { dup: ['dq01', 'dq02', 'dq03', 'dq04'], conflict: ['cq01', 'cq02'], mix: ['projc release checklist', 'rebuild the synthetic image', 'nightly import runs'], stale: 4, sameSentence: 1, truncated: 1 },
   };
 }
 
@@ -113,7 +114,7 @@ export function addRules(createRule: (o: Record<string, unknown>) => Record<stri
   mk('cq02a', 'cq02 Run the full lint pass after every change you make');
   mk('cq02b', 'cq02 Do not run the full lint pass after every change you make, only on commit');
   mk('dq04', 'dq04 Always answer the owner in Korean and never in English');
-  mk('rw01', `rw01 When you prepare a release, ${'check the changelog entry, the version field, the migration notes and the rollback plan, then '.repeat(5)}report what you checked`);
+  mk('rw01', `rw01 dq05 When you prepare a release, ${'check the changelog entry, the version field, the migration notes and the rollback plan, then '.repeat(5)}report what you checked`);
   fs.writeFileSync(broken, '{ not json');
   return ids;
 }

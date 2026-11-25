@@ -57,7 +57,7 @@ describe('모델 판정 검사 — 합성 A·B·C', () => {
     expect(recall(conFound, FX.planted.conflict)).toBeGreaterThanOrEqual(0.8);
     // 짝이 아닌 것은 예가 아니다(정밀도): 예 쌍은 모두 같은 표지를 가진다
     for (const p of mc.dup.filter((x) => x.verdict === 'yes')) expect(p.a.text.match(/dq\d\d/)?.[0]).toBe(p.b.text.match(/dq\d\d/)?.[0]);
-    // 섞임: [[MIX]] 2개 확정, [[GEN]](일반 원칙)은 섞임 아님, 홈 메모 색인은 판정에 보내지 않음
+    // 섞임: [[MIX]] 3개 확정, [[GEN]](일반 원칙)은 섞임 아님, 홈 메모 색인은 판정에 보내지 않음
     const confirmed = mc.mix.filter((m) => m.verdict === 'project');
     expect(FX.planted.mix.filter((t) => confirmed.some((m) => m.text.includes(t))).length / FX.planted.mix.length).toBeGreaterThanOrEqual(0.8);
     expect(confirmed.every((m) => m.text.includes('[[MIX]]'))).toBe(true);
@@ -66,8 +66,8 @@ describe('모델 판정 검사 — 합성 A·B·C', () => {
     expect(confirmed.every((m) => m.judgedProject === 'projc')).toBe(true);
     // 첫 화면 셋째 줄 = 확정 지적 수
     const f = run.result.summary.findings;
-    expect(f).toMatchObject({ conflicts: mc.counts.conflicts, dupGroups: mc.counts.dupGroups, mixConfirmed: 2 });
-    expect(topLines(run.result)[2]).toMatch(/^부딪힘 \d+쌍 · 같은 뜻 중복 \d+묶음 · 다른 프로젝트 섞임 2개 \(모델 판정\)/);
+    expect(f).toMatchObject({ conflicts: mc.counts.conflicts, dupGroups: mc.counts.dupGroups, mixConfirmed: 3 });
+    expect(topLines(run.result)[2]).toMatch(/^부딪힘 \d+쌍 · 같은 뜻 중복 \d+묶음 · 다른 프로젝트 섞임 3개 \(모델 판정\)/);
     expect(run.result.model.used).toBe(true);
     expect(run.manifest.model).toMatchObject({ used: true });
     // 페이지 탭에 판정 결과·근거

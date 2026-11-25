@@ -269,18 +269,26 @@ async function handleClassifyFromSessions(args: string[]): Promise<void> {
   if (chosen.length === 0) { console.log('바꿀 룰이 없습니다.'); return; }
   const snapshot = createSnapshot('pre-classify-sessions');
   let n = 0;
-  for (const p of chosen) {
-    try {
-      withFileLockSync(rulePath(p.rule.rule_id), () => {
-        const fresh = loadRule(p.rule.rule_id);
-        if (!fresh || fresh.projects?.length) return;
-        const { scope_state: _s, ...rest } = fresh;
-        saveRule({ ...rest, projects: p.projects });
-        n++;
-      });
-    } catch { /* 잠금 실패 — 다시 실행 */ }
-  }
+  for (const p of chosen) if (applyRuleProjects(p.rule.rule_id, p.projects)) n++;
   console.log(`✓ [forgen] ${n}개 룰에 프로젝트 범위를 넣었습니다. 되돌리기: forgen rule restore ${snapshot} --yes`);
+}
+
+/**
+ * 범위 없는 룰 하나에 프로젝트 범위를 넣는다(classify-projects --apply 와 forgen fix 의 "forgen 룰 범위 옮기기"가 같이 쓴다).
+ * 잠금 안에서 다시 읽어 이미 범위가 있거나 hard 룰이면 바꾸지 않는다. 바꿨으면 true.
+ */
+export function applyRuleProjects(ruleId: string, projects: string[]): boolean {
+  let changed = false;
+  try {
+    withFileLockSync(rulePath(ruleId), () => {
+      const fresh = loadRule(ruleId);
+      if (!fresh || fresh.projects?.length || fresh.strength === 'hard') return;
+      const { scope_state: _s, ...rest } = fresh;
+      saveRule({ ...rest, projects });
+      changed = true;
+    });
+  } catch { /* 잠금 실패 — 다시 실행 */ }
+  return changed;
 }
 
 export async function handleClassifyProjects(args: string[]): Promise<void> {

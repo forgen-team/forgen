@@ -223,7 +223,8 @@ export function renderRulesDetailed(
   profile: Profile | null | undefined,
   ctx: RenderContext = DEFAULT_CONTEXT,
 ): RenderResult {
-  const deduped = dedupeByRenderKey(rules.filter((r) => r.status === 'active')).sort(byPriority);
+  // host_copy: 같은 교정이 호스트 기억에 실려 주입만 뺀 룰(0.9.0 처방 Q4) — 강제는 그대로.
+  const deduped = dedupeByRenderKey(rules.filter((r) => r.status === 'active' && !r.host_copy)).sort(byPriority);
 
   initLocaleFromConfig();
   const ecStrings = RULE_RENDERER[getLocale()];

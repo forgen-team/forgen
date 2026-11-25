@@ -128,7 +128,13 @@ export async function runModelChecks(result: AuditResult, ctx: AuditContext, jud
   const cand = pairCandidates(ctx);
   const dupV = await judge.checkPairs('dup', cand.dup.map((p) => ({ id: p.id, a: p.a.text, b: p.b.text })));
   const conV = await judge.checkPairs('conflict', cand.conflict.map((p) => ({ id: p.id, a: p.a.text, b: p.b.text })));
-  const mixAll = result.checks.mix.map((c) => ({ ...c, id: mixId(c) }));
+  // 섞임 후보 = C1 의 결정적 후보 + 세션에 실리는 전역 forgen 룰 전부(hard 제외). 결정적 신호(이름 언급·근거 교정 위치)는
+  // 근거 교정 기록이 지워진 룰을 놓친다(§8: 결정적 11·13개 vs 내용 판정 17개) — 전역 룰은 내용 판정에 다 보낸다(≤ 80개씩, §2.4).
+  const seen = new Set(result.checks.mix.map((c) => `${c.ruleId ?? c.path}:${c.line}`));
+  const extra = ctx.units.filter((u) => u.layer === 'forgen-rule' && u.ruleId && !seen.has(`${u.ruleId}:0`) && (ctx.loadedIn.get(unitKey(u))?.length ?? 0) > 0)
+    .filter((u) => { const r = ctx.rules.get(u.ruleId as string); return r && !r.projects?.length && r.strength !== 'hard'; })
+    .map((u): MixCandidate => ({ path: u.path, line: u.line, layer: u.layer, ruleId: u.ruleId, text: u.text, project: null, why: ['전역 룰 내용 판정(결정적 신호 없음)'], tokens: u.tokens }));
+  const mixAll = [...result.checks.mix, ...extra].map((c) => ({ ...c, id: mixId(c) }));
   const mixToJudge = mixAll.filter((c) => !ctx.homeMemoryIndex.has(c.path));
   const mixV = await judge.mixes(mixToJudge.map((c) => ({ id: c.id, text: c.text, guess: c.project, projects: ctx.projectKeys })));
   const fin = (p: Omit<PairFinding, 'verdict' | 'reason'>, v: CheckVerdict | null | undefined): PairFinding => ({ ...p, verdict: v?.answer ?? null, reason: v?.reason ?? '' });
