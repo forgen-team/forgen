@@ -24,6 +24,9 @@ export interface Unit {
   memoryType?: string;
 }
 
+/** 중요 지침(§2.3 확정): hard·strong·직접 교정 룰. 처방이 지우거나 묶음으로 범위를 옮기지 않는다. */
+export const isImportantRule = (r: { strength: string; source: string }) => r.strength === 'hard' || r.strength === 'strong' || r.source === 'explicit_correction';
+
 const byLoc = (a: { path: string; line: number }, b: { path: string; line: number }) => (a.path < b.path ? -1 : a.path > b.path ? 1 : a.line - b.line);
 
 /** 같은 문장 비교용 정규화: 목록 표지·강조·링크 주소·문장부호·공백을 걷고 소문자로. */

@@ -12,7 +12,7 @@
 import { isNeg } from '../way/conflict.js';
 import { bigrams, topK } from './lexical.js';
 import { CHECK_MODEL, CONFLICT_PROMPT_VERSION, DUP_PROMPT_VERSION, MIX_PROMPT_VERSION, type CheckVerdict, type Judge, type MixVerdict } from './judge.js';
-import type { MixCandidate, Unit, UnitLayer } from './checks.js';
+import { isImportantRule, type MixCandidate, type Unit, type UnitLayer } from './checks.js';
 import { unitKey, type AuditContext, type AuditResult } from './run.js';
 import { createHash } from 'node:crypto';
 
@@ -130,9 +130,10 @@ export async function runModelChecks(result: AuditResult, ctx: AuditContext, jud
   const conV = await judge.checkPairs('conflict', cand.conflict.map((p) => ({ id: p.id, a: p.a.text, b: p.b.text })));
   // 섞임 후보 = C1 의 결정적 후보 + 세션에 실리는 전역 forgen 룰 전부(hard 제외). 결정적 신호(이름 언급·근거 교정 위치)는
   // 근거 교정 기록이 지워진 룰을 놓친다(§8: 결정적 11·13개 vs 내용 판정 17개) — 전역 룰은 내용 판정에 다 보낸다(≤ 80개씩, §2.4).
+  // 중요 지침(hard·strong·직접 교정)은 결정적 신호가 없으면 보내지 않는다(범위를 옮기면 다른 폴더에서 누락).
   const seen = new Set(result.checks.mix.map((c) => `${c.ruleId ?? c.path}:${c.line}`));
   const extra = ctx.units.filter((u) => u.layer === 'forgen-rule' && u.ruleId && !seen.has(`${u.ruleId}:0`) && (ctx.loadedIn.get(unitKey(u))?.length ?? 0) > 0)
-    .filter((u) => { const r = ctx.rules.get(u.ruleId as string); return r && !r.projects?.length && r.strength !== 'hard'; })
+    .filter((u) => { const r = ctx.rules.get(u.ruleId as string); return r && !r.projects?.length && !isImportantRule(r); })
     .map((u): MixCandidate => ({ path: u.path, line: u.line, layer: u.layer, ruleId: u.ruleId, text: u.text, project: null, why: ['전역 룰 내용 판정(결정적 신호 없음)'], tokens: u.tokens }));
   const mixAll = [...result.checks.mix, ...extra].map((c) => ({ ...c, id: mixId(c) }));
   const mixToJudge = mixAll.filter((c) => !ctx.homeMemoryIndex.has(c.path));

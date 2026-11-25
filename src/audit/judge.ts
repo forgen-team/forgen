@@ -343,13 +343,14 @@ export class Judge {
   }
 
   /** 같은 뜻 중복·부딪힘(Haiku, 대칭 질문 — 두 문장을 정렬해서 보내므로 순서가 달라도 같은 판정·같은 캐시). */
-  checkPairs(kind: 'dup' | 'conflict', items: Array<{ id: string; a: string; b: string }>): Promise<Map<string, CheckVerdict | null>> {
+  /** model: 기본 Haiku(감사 판정). 처방 문안(Haiku)을 채점할 때는 다른 판정자(Sonnet, PAIR_MODEL)를 넘긴다 — §1.2 판정자 분리. */
+  checkPairs(kind: 'dup' | 'conflict', items: Array<{ id: string; a: string; b: string }>, model: string = CHECK_MODEL): Promise<Map<string, CheckVerdict | null>> {
     const version = kind === 'dup' ? DUP_PROMPT_VERSION : CONFLICT_PROMPT_VERSION;
     return this.run<{ a: string; b: string }, CheckVerdict>({
-      version, model: CHECK_MODEL, header: kind === 'dup' ? DUP_PROMPT : CONFLICT_PROMPT,
+      version, model, header: kind === 'dup' ? DUP_PROMPT : CONFLICT_PROMPT,
       items: items.map((it) => {
         const [a, b] = [prepareText(it.a, CHECK_TEXT_MAX), prepareText(it.b, CHECK_TEXT_MAX)].sort();
-        return { id: it.id, key: sha(`${version}\0${CHECK_MODEL}\0${a}\0${b}`), input: { a, b } };
+        return { id: it.id, key: sha(`${version}\0${model}\0${a}\0${b}`), input: { a, b } };
       }),
       block: (c) => `A: ${c.a}\nB: ${c.b}`,
       parse: (r) => (r.answer === 'yes' || r.answer === 'no' || r.answer === 'unknown' ? { answer: r.answer, reason: String(r.reason ?? '').slice(0, 120) } : undefined),
@@ -395,6 +396,7 @@ export const MODEL_DISCLOSURE = [
   `  쌍 판정(N4·원장)     교정 요지 한 줄(≤ ${GIST_MAX}자) + 기억 문장(≤ ${PAIR_TEXT_MAX}자) — 사전 필터를 지난 쌍만, 쌍마다 1회   ${PAIR_MODEL}  결정적 검사만 남음`,
   `  지시 검사(N2)        같은 뜻 중복·부딪힘 후보 쌍(각 ≤ ${CHECK_TEXT_MAX}자), 섞임 후보 지시(≤ ${MIX_TEXT_MAX}자) + 프로젝트 키 목록      ${CHECK_MODEL}   결정적 검사만 남음`,
   `  처방 문안(forgen fix) 고칠 지시 문장들(합치기·짧게·색인·메모 초안)                                ${CHECK_MODEL}   결정적 처방(이동·같은 문장 정리)만`,
+  `  처방 채점            합친·줄인 문장 ↔ 원문(각 ≤ ${CHECK_TEXT_MAX}자) "같은 뜻인가"                                   ${PAIR_MODEL}  결정적 처방만`,
   '  보내는 곳은 내가 이미 쓰는 로컬 `claude` CLI 뿐입니다(forgen 서버·제3자 없음). 대화 전체·파일 전체는 보내지 않고, 비밀키는 가리며 <private> 구간은 뺍니다.',
   '  판정 결과는 ~/.forgen/audit/cache/ 에 캐시되어 같은 입력은 다시 보내지 않습니다.',
 ].join('\n');
