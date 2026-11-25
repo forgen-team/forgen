@@ -1,0 +1,166 @@
+/**
+ * 0.8.0 S5: 프로젝트 밖에서 시작한 세션은 전역·미정 룰 + 색인만 받고, 작업이 프로젝트로 들어갈 때 그 룰을 한 번 받는다.
+ * 실제 dist 훅 프로세스(session-recovery, context-guard, post-tool-use)로 검증한다.
+ */
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { spawnSync } from 'node:child_process';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+
+const ROOT = path.resolve(import.meta.dirname, '..');
+const DIST = path.join(ROOT, 'dist');
+const have = fs.existsSync(path.join(DIST, 'hooks', 'post-tool-use.js'));
+
+let root: string; let home: string; let fhome: string; let repoA: string; let repoB: string;
+
+const env = () => {
+  const e: Record<string, string | undefined> = { ...process.env, HOME: home, FORGEN_HOME: fhome, FORGEN_NO_BLOCK_JUDGE: '1', FORGEN_NESTED_RUN: '' };
+  delete e.FORGEN_CWD; delete e.COMPOUND_CWD; delete e.FORGEN_SESSION_ID; delete e.FORGEN_RUNTIME; delete e.FORGEN_HOST;
+  return e as NodeJS.ProcessEnv;
+};
+function hook(name: string, payload: Record<string, unknown>) {
+  const r = spawnSync(process.execPath, [path.join(DIST, 'hooks', `${name}.js`)], { input: JSON.stringify(payload), encoding: 'utf-8', timeout: 20000, cwd: home, env: env() });
+  expect(r.status, r.stderr).toBe(0);
+  const line = r.stdout.trim().split('\n').filter(Boolean).pop() ?? '{}';
+  const j = JSON.parse(line);
+  return { ctx: String(j.hookSpecificOutput?.additionalContext ?? ''), json: j };
+}
+function writeRule(id: string, policy: string, extra: Record<string, unknown> = {}) {
+  const now = new Date().toISOString();
+  fs.writeFileSync(path.join(fhome, 'me', 'rules', `${id}.json`), JSON.stringify({
+    rule_id: id, category: 'workflow', scope: 'me', trigger: 't', policy, strength: 'default', source: 'explicit_correction',
+    status: 'active', evidence_refs: [], render_key: `k.${id}`, created_at: now, updated_at: now, ...extra,
+  }));
+}
+
+beforeAll(() => {
+  root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'forgen-switch-')));
+  home = path.join(root, 'home'); fhome = path.join(home, '.forgen');
+  repoA = path.join(home, 'ws', 'repo-a'); repoB = path.join(home, 'ws', 'repo-b');
+  for (const d of [path.join(repoA, '.git'), path.join(repoB, '.git'), path.join(repoB, 'src'), path.join(fhome, 'me', 'rules'), path.join(fhome, 'state')]) fs.mkdirSync(d, { recursive: true });
+  writeRule('g1', '전역 룰 본문입니다');
+  writeRule('u1', '미정 룰 본문입니다', { scope_state: 'unresolved' });
+  writeRule('a1', 'repo-a 전용 룰 본문입니다', { projects: ['repo-a'] });
+  writeRule('b1', 'repo-b 전용 룰 본문입니다', { projects: ['repo-b'] });
+});
+afterAll(() => fs.rmSync(root, { recursive: true, force: true }));
+
+describe.skipIf(!have)('S5 위치 전환 주입', () => {
+  const sid = 'switch-sess-1';
+  it('프로젝트 밖 세션 시작: 전역·미정 + 색인, 프로젝트 룰 본문 없음', () => {
+    const { ctx } = hook('session-recovery', { session_id: sid, cwd: home, source: 'startup', hook_event_name: 'SessionStart' });
+    expect(ctx).toContain('전역 룰 본문');
+    expect(ctx).toContain('미정 룰 본문');
+    expect(ctx).toContain('project-unknown');
+    expect(ctx).not.toContain('repo-a 전용 룰');
+    expect(ctx).toContain('## Project Rules');
+    expect(ctx).toMatch(/repo-a 1/);
+  });
+  it('프롬프트가 repo-a 에서 오면 repo-a 룰을 한 번 넣는다', () => {
+    const first = hook('context-guard', { session_id: sid, cwd: repoA, prompt: 'do it', hook_event_name: 'UserPromptSubmit' });
+    expect(first.ctx).toContain('repo-a 전용 룰');
+    expect(first.ctx).not.toContain('repo-b 전용 룰');
+    expect(first.ctx).not.toContain('전역 룰 본문'); // 전역은 이미 세션 시작에 들어갔다
+    const again = hook('context-guard', { session_id: sid, cwd: repoA, prompt: 'again', hook_event_name: 'UserPromptSubmit' });
+    expect(again.ctx).toBe('');
+  });
+  it('홈에서 repo-b 파일을 만지면 도구 직후 repo-b 룰을 한 번 넣는다', () => {
+    const r = hook('post-tool-use', { session_id: sid, cwd: home, tool_name: 'Read', tool_input: { file_path: path.join(repoB, 'src', 'x.ts') }, tool_response: 'ok', hook_event_name: 'PostToolUse' });
+    expect(r.json.hookSpecificOutput?.hookEventName).toBe('PostToolUse');
+    expect(r.ctx).toContain('repo-b 전용 룰');
+    const again = hook('post-tool-use', { session_id: sid, cwd: home, tool_name: 'Read', tool_input: { file_path: path.join(repoB, 'src', 'y.ts') }, tool_response: 'ok' });
+    expect(again.ctx).toBe('');
+  });
+  it('Grep 처럼 path 로 다른 저장소를 찾아도 그 프로젝트 룰을 넣는다', () => {
+    const s = 'switch-sess-grep';
+    hook('session-recovery', { session_id: s, cwd: home, source: 'startup', hook_event_name: 'SessionStart' });
+    const r = hook('post-tool-use', { session_id: s, cwd: home, tool_name: 'Grep', tool_input: { pattern: 'x', path: repoB }, tool_response: 'ok', hook_event_name: 'PostToolUse' });
+    expect(r.ctx).toContain('repo-b 전용 룰');
+  });
+  it('압축 뒤 세션 재시작이면 기록을 새로 시작해 다시 넣는다', () => {
+    hook('session-recovery', { session_id: sid, cwd: home, source: 'compact', hook_event_name: 'SessionStart' });
+    expect(hook('context-guard', { session_id: sid, cwd: repoA, prompt: 'p', hook_event_name: 'UserPromptSubmit' }).ctx).toContain('repo-a 전용 룰');
+  });
+  it('프로젝트 안에서 시작한 세션은 그 프로젝트를 다시 넣지 않는다', () => {
+    const s2 = 'switch-sess-2';
+    const start = hook('session-recovery', { session_id: s2, cwd: repoA, source: 'startup', hook_event_name: 'SessionStart' });
+    expect(start.ctx).toContain('repo-a 전용 룰');
+    expect(start.ctx).not.toContain('## Project Rules');
+    expect(hook('context-guard', { session_id: s2, cwd: repoA, prompt: 'p', hook_event_name: 'UserPromptSubmit' }).ctx).toBe('');
+  });
+  it('색인은 별칭을 등록부 키로 합쳐 센다', () => {
+    fs.writeFileSync(path.join(fhome, 'projects.json'), JSON.stringify({ version: 1, projects: { prod: { paths: [repoA], aliases: ['repo-a'] } } }));
+    try {
+      const { ctx } = hook('session-recovery', { session_id: 'switch-sess-idx', cwd: home, source: 'startup', hook_event_name: 'SessionStart' });
+      expect(ctx).toMatch(/prod 1/);
+      expect(hook('context-guard', { session_id: 'switch-sess-idx', cwd: repoA, prompt: 'p', hook_event_name: 'UserPromptSubmit' }).ctx).toContain('repo-a 전용 룰');
+    } finally { fs.unlinkSync(path.join(fhome, 'projects.json')); }
+  });
+  it('서브에이전트 도구 호출은 주입하지 않는다', () => {
+    const s3 = 'switch-sess-3';
+    hook('session-recovery', { session_id: s3, cwd: home, source: 'startup', hook_event_name: 'SessionStart' });
+    const r = hook('post-tool-use', { session_id: s3, agent_id: 'ag1', cwd: repoB, tool_name: 'Read', tool_input: { file_path: path.join(repoB, 'a') }, tool_response: 'ok' });
+    expect(r.ctx).toBe('');
+    expect(hook('context-guard', { session_id: s3, cwd: repoB, prompt: 'p', hook_event_name: 'UserPromptSubmit' }).ctx).toContain('repo-b 전용 룰');
+  });
+});
+
+describe.skipIf(!have)('새 설치(state 폴더 없음)에서도 한 번만 넣는다', () => {
+  it('state 가 없어도 두 번째 프롬프트에는 다시 넣지 않는다', () => {
+    fs.rmSync(path.join(fhome, 'state'), { recursive: true, force: true });
+    const s = 'fresh-install-1';
+    expect(hook('context-guard', { session_id: s, cwd: repoA, prompt: 'p', hook_event_name: 'UserPromptSubmit' }).ctx).toContain('repo-a 전용 룰');
+    expect(hook('context-guard', { session_id: s, cwd: repoA, prompt: 'p2', hook_event_name: 'UserPromptSubmit' }).ctx).toBe('');
+  });
+});
+
+describe.skipIf(!have)('G8 고장 주입 — 세션이 막히지 않는다', () => {
+  it('세션 위치 파일이 깨져도 훅은 정상 응답하고 다시 쓴다', () => {
+    const s = 'broken-wc';
+    fs.mkdirSync(path.join(fhome, 'state'), { recursive: true });
+    fs.writeFileSync(path.join(fhome, 'state', `work-context-${s}.json`), '{not json');
+    const r = hook('context-guard', { session_id: s, cwd: repoA, prompt: 'p', hook_event_name: 'UserPromptSubmit' });
+    expect(r.json.continue).toBe(true);
+    expect(JSON.parse(fs.readFileSync(path.join(fhome, 'state', `work-context-${s}.json`), 'utf-8')).project).toBe('repo-a');
+  });
+  it('등록부가 깨져도 훅은 정상 응답(git 판정으로)', () => {
+    fs.writeFileSync(path.join(fhome, 'projects.json'), '{broken');
+    try {
+      const r = hook('post-tool-use', { session_id: 'broken-reg', cwd: repoB, tool_name: 'Read', tool_input: { file_path: path.join(repoB, 'x') }, tool_response: 'ok' });
+      expect(r.json.continue).toBe(true);
+      expect(r.ctx).toContain('repo-b 전용 룰');
+    } finally { fs.unlinkSync(path.join(fhome, 'projects.json')); }
+  });
+  it('state 폴더에 쓸 수 없어도 훅은 정상 응답한다', () => {
+    if (process.getuid?.() === 0) return; // root 는 권한을 무시한다
+    const st = path.join(fhome, 'state');
+    fs.chmodSync(st, 0o500);
+    try {
+      for (const [name, payload] of [
+        ['context-guard', { session_id: 'ro-1', cwd: repoA, prompt: 'p', hook_event_name: 'UserPromptSubmit' }],
+        ['post-tool-use', { session_id: 'ro-1', cwd: repoA, tool_name: 'Read', tool_input: { file_path: path.join(repoA, 'x') }, tool_response: 'ok' }],
+        ['pre-tool-use', { session_id: 'ro-1', cwd: repoA, tool_name: 'mcp__forgen-compound__correction-record', tool_input: {} }],
+      ] as const) {
+        const r = spawnSync(process.execPath, [path.join(DIST, 'hooks', `${name}.js`)], { input: JSON.stringify(payload), encoding: 'utf-8', timeout: 20000, cwd: home, env: env() });
+        expect(r.status, `${name}: ${r.stderr}`).toBe(0);
+        expect(() => JSON.parse(r.stdout.trim().split('\n').pop() ?? ''), name).not.toThrow();
+      }
+    } finally { fs.chmodSync(st, 0o755); }
+  });
+});
+
+describe.skipIf(!have)('전역 룰이 하나도 없어도 색인은 나온다', () => {
+  it('프로젝트 룰만 있는 홈 세션', () => {
+    const h2 = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'forgen-noglobal-')));
+    const f2 = path.join(h2, '.forgen'); const r2 = path.join(h2, 'r2');
+    fs.mkdirSync(path.join(r2, '.git'), { recursive: true }); fs.mkdirSync(path.join(f2, 'me', 'rules'), { recursive: true });
+    const now = new Date().toISOString();
+    fs.writeFileSync(path.join(f2, 'me', 'rules', 'p.json'), JSON.stringify({ rule_id: 'p', category: 'workflow', scope: 'me', trigger: 't', policy: 'r2 전용', strength: 'default', source: 'explicit_correction', status: 'active', evidence_refs: [], render_key: 'k.p', created_at: now, updated_at: now, projects: ['r2'] }));
+    const r = spawnSync(process.execPath, [path.join(DIST, 'hooks', 'session-recovery.js')], { input: JSON.stringify({ session_id: 'ng', cwd: h2, source: 'startup', hook_event_name: 'SessionStart' }), encoding: 'utf-8', cwd: h2, env: { ...env(), HOME: h2, FORGEN_HOME: f2 } });
+    const ctx = String(JSON.parse(r.stdout.trim().split('\n').pop() ?? '{}').hookSpecificOutput?.additionalContext ?? '');
+    fs.rmSync(h2, { recursive: true, force: true });
+    expect(ctx).toContain('## Project Rules');
+    expect(ctx).toMatch(/r2 1/);
+  });
+});

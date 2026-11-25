@@ -35,6 +35,7 @@ const SESSION_SCOPED_PREFIXES = [
   'reminder-',
   'context-',
   'last-',
+  'work-context-', // 0.8.0 S1: 세션별 현재 작업 위치
   'current-model-', // W4-3 per-model 가드 프로필의 세션별 모델 캐시
 ];
 

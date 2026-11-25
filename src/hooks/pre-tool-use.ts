@@ -22,13 +22,18 @@ import { incrementEvidence } from '../engine/solution-writer.js';
 import { isReflectionCandidate } from './compound-reflection.js';
 import { stripPrivate } from '../engine/private-filter.js';
 import { isHookEnabled } from './hook-config.js';
-import { approve, approveWithWarning, ask, denyOrObserve, failOpenWithTracking } from './shared/hook-response.js';
+import { approve, approveWithUpdatedInput, approveWithWarning, ask, denyOrObserve, failOpenWithTracking } from './shared/hook-response.js';
+import { recordWorkContext } from '../core/session-context.js';
 import { FORGEN_HOME, STATE_DIR } from '../core/paths.js';
 import { recordHookTiming } from './shared/hook-timing.js';
 import { maskQuotedContent } from './shared/command-parser.js';
 import { analyzeCommand, worstFinding, MAX_COMMAND_LENGTH } from './shared/command-analyzer.js';
 import { checkGitSecretsBudgeted } from './shared/commit-guard.js';
 const FAIL_COUNTER_PATH = path.join(STATE_DIR, 'pre-tool-fail-counter.json');
+/** forgen MCP 의 교정 기록 도구 (플러그인 설치면 서버 이름 앞에 plugin_ 접두가 붙는다). */
+/** forgen MCP 의 교정 기록 도구. Claude: mcp__forgen-compound__correction-record (플러그인이면 plugin_…_ 접두),
+ *  Codex 0.163: mcp__forgen_compound__correction_record (하이픈을 밑줄로). 둘 다 잡는다. */
+const CORRECTION_RECORD_TOOL = /^mcp__(?:plugin_[A-Za-z0-9-]+_)?forgen[-_]compound__correction[-_]record$/;
 const FAIL_CLOSE_THRESHOLD = 3; // 연속 3회 파싱 실패 시에만 reject
 
 interface PreToolInput {
@@ -38,6 +43,7 @@ interface PreToolInput {
   toolInput?: Record<string, unknown>;
   session_id?: string;
   cwd?: string;
+  tool_use_id?: string;
 }
 
 interface DangerousPatternEntry {
@@ -446,6 +452,22 @@ async function main(): Promise<void> {
   // D12-D: 중첩(추출) 실행에서는 위험 차단만 유지하고 학습·로그 부수효과는 건너뛴다.
   const nested = process.env.FORGEN_NESTED_RUN === '1';
   if (toolName && !nested) logToolCallSupplement(sessionId, toolName);
+
+  // 0.8.0 S1: 이 세션의 현재 위치를 적고(값이 바뀔 때만 쓴다), forgen 의 correction-record 호출에는
+  // 실제 session_id 와 호출 시점 cwd 를 붙여 보낸다. MCP 서버는 뜰 때 폴더를 고정해 세션 이동을 모른다.
+  if (!nested && data.session_id) {
+    try { recordWorkContext(data.session_id, hookCwd); } catch (e) { log.debug('work-context 기록 실패', e); }
+    if (CORRECTION_RECORD_TOOL.test(toolName) && toolInput && typeof toolInput === 'object') {
+      const origin: Record<string, string> = {};
+      if (hookCwd) origin.cwd = hookCwd;
+      if (data.tool_use_id) origin.tool_use_id = data.tool_use_id;
+      // 여기서 바로 끝내도 되는 이유: correction-record 는 forgen 자신의 기록 전용 MCP 도구라 아래의
+      // Mech-A(셸 명령)·commit-guard(git)·위험 명령 감지 대상이 아니다. 이 패턴을 다른 도구로 넓힐 때는
+      // 뒤의 판정을 건너뛰게 되는지 먼저 검토할 것.
+      console.log(approveWithUpdatedInput({ ...toolInput, session_id: data.session_id, ...(Object.keys(origin).length ? { origin } : {}) }));
+      return;
+    }
+  }
 
   // ADR-001 Mech-A PreToolUse dispatcher — 사용자가 정의한 rule 이 빌트인 위험-명령 감지보다 먼저.
   // 이렇게 해야 rule.block_message (맥락 있는 안내) 가 제네릭 "Dangerous command blocked" 대신 노출됨.

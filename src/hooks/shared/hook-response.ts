@@ -78,6 +78,21 @@ export function deny(reason: string): string {
   });
 }
 
+/**
+ * PreToolUse 통과 + 도구 입력 보강 (0.8.0 S1). forgen 자신의 MCP 도구(correction-record)에만 쓴다.
+ * Claude Code 는 permissionDecision 'allow' 와 함께 온 updatedInput 으로 도구를 실행한다(2.1.332 실측).
+ */
+export function approveWithUpdatedInput(updatedInput: Record<string, unknown>): string {
+  return JSON.stringify({
+    continue: true,
+    hookSpecificOutput: {
+      hookEventName: 'PreToolUse',
+      permissionDecision: 'allow',
+      updatedInput,
+    },
+  });
+}
+
 /** 사용자 확인 요청 (PreToolUse 전용) */
 export function ask(reason: string): string {
   return JSON.stringify({

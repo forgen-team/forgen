@@ -436,7 +436,7 @@ Knowledge accumulates across sessions with a trust-based lifecycle:
 experiment (0.30) → candidate (0.55) → verified (0.75) → mature (0.90)
 ```
 
-Each solution starts as an `experiment`. As it gets reflected in your code across sessions, it's automatically promoted. Negative evidence triggers a circuit breaker (auto-retire). This means only patterns that actually work for you survive.
+An auto-extracted lesson is saved only with a verbatim quote from the conversation, and starts as `candidate`. When it shows up again in another session it joins the approval list in `forgen compound review`, and **becomes `verified` only when you approve it** (no automatic promotion since 0.8.0 — appearing often is not the same as being right). Negative evidence triggers a circuit breaker (auto-retire).
 
 | Type | Source | How Claude uses it |
 |------|--------|--------------------|
@@ -445,7 +445,7 @@ Each solution starts as an `experiment`. As it gets reflected in your code acros
 | **Behavioral patterns** | Auto-detected at 3+ observations | Applied to `forge-behavioral.md` |
 | **Evidence** | Corrections + observations | Drives facet adjustments + rule creation |
 
-*Solutions and behavioral patterns come from the **opt-in** transcript-extraction pass (`forgen compound consent on`, off by default). Corrections → rules and facet adjustments are always-on and never leave your machine.*
+*Solutions and behavioral patterns come from the transcript-extraction pass (on by default; turn off with `forgen compound consent off`). Corrections → rules and facet adjustments are always-on and never leave your machine.*
 
 ### Keeping things out of the corpus (`<private>`)
 

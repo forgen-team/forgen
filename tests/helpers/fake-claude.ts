@@ -25,7 +25,9 @@ case "$input" in *"forgen compound --solution"*) kind=solution;; *"작업 습관
 echo "$kind" >> "$S/calls.log"
 if [ "$kind" = "$FAKE_FAIL_PHASE" ]; then echo "Please run /login" >&2; exit 1; fi
 case $kind in
-  solution) echo 'forgen compound --solution "fake-process-title" "이 상황에서는 이렇게 한다. 근거와 주의를 포함한 충분히 긴 본문입니다. 테스트 전용 솔루션" "테스트 조건"';;
+  solution)
+    if [ -n "$FAKE_SOLUTION_LINE" ]; then echo "$FAKE_SOLUTION_LINE"
+    else echo 'forgen compound --solution "fake-process-title" "이 상황에서는 이렇게 한다. 근거와 주의를 포함한 충분히 긴 본문입니다. 테스트 전용 솔루션" "테스트 조건" "" "assistant" "토큰을 갱신하고 실패하면 한 번만 재시도하며"'; fi;;
   behavior) echo "- [워크플로우] 테스트 먼저 작성하고 구현한 뒤 리팩토링하는 순서로 일한다 (관찰 근거)";;
   learning) echo '{"corrections":[],"observations":[],"pack_direction":null,"profile_delta":{}}';;
 esac

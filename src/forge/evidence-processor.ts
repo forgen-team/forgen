@@ -43,7 +43,8 @@ export function processCorrection(req: CorrectionRequest): CorrectionResult {
       // ADR-017 D0: 사용자 발화 원문(있을 때만). rule-origin 이 "당신의 말" 인용에 사용.
       ...(req.user_quote ? { user_quote: req.user_quote } : {}),
       ...(req.rule_id ? { target_rule_id: req.rule_id } : {}),
-      ...(req.projects?.length ? { projects: req.projects } : {}),
+      ...(req.projects?.length ? { projects: req.projects } : req.scope_state ? { scope_state: req.scope_state } : {}),
+      ...(req.origin ? { origin: req.origin } : {}),
       // 모델은 자기 세션 ID 를 확실히 알 수 없다. ID 가 어긋나도 승급되도록 표시한다(소비되면 다시 승급되지 않음).
       ...(req.kind === 'prefer-from-now' || req.kind === 'avoid-this' ? { pending_promotion: true } : {}),
     },
@@ -73,7 +74,7 @@ export function processCorrection(req: CorrectionRequest): CorrectionResult {
       source: 'explicit_correction',
       evidence_refs: [evidence.evidence_id],
       session_id: req.session_id,
-      ...(req.projects?.length ? { projects: req.projects } : {}),
+      ...(req.projects?.length ? { projects: req.projects } : req.scope_state ? { scope_state: req.scope_state } : {}),
       render_key: `${req.axis_hint ?? 'workflow'}.${req.target.toLowerCase().replace(/\s+/g, '-').slice(0, 30)}`,
     });
     // ADR-001 auto-classify on creation — 교정 즉시 enforce_via 가 붙어야 다음 턴부터 Mech-A/B 발화.

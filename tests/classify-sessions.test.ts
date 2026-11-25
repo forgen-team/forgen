@@ -10,7 +10,7 @@ const TMP_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'fg-classify-sessions-'))
 process.env.FORGEN_HOME = TMP_HOME;
 process.env.FORGEN_DISABLE_PROJECT_RULES = '1';
 
-const { sessionCwd, planSessionScopes } = await import('../src/engine/rule-project-cli.js');
+const { sessionCwd, planSessionScopes, evidenceProjectKey } = await import('../src/engine/rule-project-cli.js');
 const { createRule, saveRule } = await import('../src/store/rule-store.js');
 const { createEvidence, saveEvidence } = await import('../src/store/evidence-store.js');
 
@@ -59,4 +59,30 @@ describe('planSessionScopes', () => {
     rule('cand', [ev('s3')], { status: 'candidate', source: 'behavior_inference', render_key: 'auto:w.c' });
     expect(plan().map((p) => p.rule.rule_id)).toEqual(['cand']);
   });
+});
+
+describe('evidenceProjectKey — 교정 시점 위치 (0.8.0 S4)', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fg-tx-'));
+  const keyOf = (c: string) => (c.startsWith('/w/') ? c.split('/')[2] : null);
+  const line = (ts: string, cwd: string, file?: string) => JSON.stringify({ timestamp: ts, cwd, message: { content: file ? [{ type: 'tool_use', input: { file_path: file } }] : 'x' } });
+  fs.mkdirSync(path.join(dir, 'proj'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'proj', 'sx.jsonl'), [
+    line('2026-11-01T00:00:00Z', '/home/u'),
+    line('2026-11-01T01:00:00Z', '/w/alpha/src'),
+    line('2026-11-01T02:00:00Z', '/home/u', '/w/beta/a.ts'),
+    line('2026-11-01T02:01:00Z', '/home/u', '/w/beta/b.ts'),
+    line('2026-11-01T02:02:00Z', '/home/u', '/w/gamma/c.ts'),
+  ].join('\n'));
+  const at = (ts: string, payload: Record<string, unknown> = {}) => evidenceProjectKey({ session_id: 'sx', timestamp: ts, raw_payload: payload }, { projectsDir: dir, keyOf });
+
+  it('세션 첫 폴더(홈)가 아니라 교정 직전 폴더를 본다', () => expect(at('2026-11-01T01:30:00Z')).toBe('alpha'));
+  it('직전 폴더가 홈이면 최근에 만진 파일의 프로젝트 중 과반', () => expect(at('2026-11-01T03:00:00Z')).toBe('beta'));
+  it('기록보다 이른 교정은 모름', () => expect(at('2026-10-01T00:00:00Z')).toBeNull());
+  it('0.8.0 근거의 origin.project 가 있으면 그것을 쓴다', () => expect(at('2026-11-01T00:30:00Z', { origin: { project: 'delta' } })).toBe('delta'));
+  it('깨진 줄·cwd 없는 줄은 건너뛴다', () => {
+    fs.appendFileSync(path.join(dir, 'proj', 'sx.jsonl'), '\n{not json\n{"timestamp":"2026-11-01T04:00:00Z"}\n');
+    expect(at('2026-11-01T05:00:00Z')).toBe('beta');
+  });
+  it('origin.project 가 빈 문자열이면 기록으로 판정', () => expect(at('2026-11-01T01:30:00Z', { origin: { project: '' } })).toBe('alpha'));
+  it('기록이 없는 세션은 모름', () => expect(evidenceProjectKey({ session_id: 'none', timestamp: 'z' }, { projectsDir: dir, keyOf })).toBeNull());
 });

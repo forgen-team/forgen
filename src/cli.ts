@@ -114,6 +114,22 @@ const commands: Command[] = [
     },
   },
   {
+    name: 'project',
+    description: 'Project keys: group several folders (repos or not) under one key — forgen project add|list|remove',
+    handler: async (args) => {
+      const { handleProject } = await import('./core/project-cli.js');
+      handleProject(args);
+    },
+  },
+  {
+    name: 'eval',
+    description: 'Measure recall on your own prompts: forgen eval recall-sample|recall-label|recall-score (data stays in ~/.forgen/eval)',
+    handler: async (args) => {
+      const { handleEval } = await import('./core/recall-eval.js');
+      await handleEval(args);
+    },
+  },
+  {
     name: 'way',
     description: 'Your way of working: summary, export to other models, import, collect host memory',
     handler: async (args) => {
@@ -419,7 +435,7 @@ async function handleRuleNamespace(args: string[]): Promise<void> {
     forgen rule restore [<name> --yes]     List snapshots or restore one
     forgen rule set-project <id> <key>|--global         Limit a rule to one project
     forgen rule classify-projects --project <key> --keywords a,b [--apply]
-    forgen rule classify-projects --from-sessions [--apply [id...]]  Suggest scopes from the sessions' folders
+    forgen rule classify-projects --from-sessions [--apply [id...]] [--no-llm]  Suggest scopes from where each correction happened (+ Haiku content check)
     forgen rule import-pack <pack> [--project <key>] [--apply]
     forgen rule merge-mined [--apply]      ADR-017 D3: merge mined (auto:) rules among themselves,
                                            link same-concept ones to explicit rules (dry-run by default)
@@ -494,7 +510,7 @@ async function handleRuleNamespace(args: string[]): Promise<void> {
     case 'import-pack': {
       const { handleSetProject, handleClassifyProjects, handleImportPack } = await import('./engine/rule-project-cli.js');
       if (sub === 'set-project') handleSetProject(rest);
-      else if (sub === 'classify-projects') handleClassifyProjects(rest);
+      else if (sub === 'classify-projects') await handleClassifyProjects(rest);
       else handleImportPack(rest);
       return;
     }
@@ -761,6 +777,9 @@ function printHelp() {
     forgen config hooks             Hook management
     forgen mcp                      MCP server management
     forgen skill promote|list       Skill management (promote writes a standard SKILL.md; --install → ~/.claude/skills)
+    forgen project add <key> <folder...> [--alias old]   Group folders (repos or not) under one project key
+    forgen eval recall-sample [--n 100] | recall-label | recall-score   Gold sample of your own prompts for the solution gate (local only)
+    forgen project list|remove <key>|which [folder]      Show / drop keys, or which key a folder resolves to
     forgen way [--all|--json]       Your way of working in one screen: rules you said vs inferred, enforced vs advisory
     forgen way export --target <agents-md|claude-rules|skill|system-prompt|gemini|cursor|workflow|json>
                                     [--project k] [--budget n] [--out dir] [--force]  (stdout preview unless --out)

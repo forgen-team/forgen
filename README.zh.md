@@ -166,7 +166,7 @@ forgen                    # 用它代替 `claude`
 
 Claude 调用 `correction-record` MCP 工具。纠正作为结构化证据存储，包含轴分类（`judgment_philosophy`）、种类（`avoid-this`）和置信度分数。为当前会话创建一条临时规则以立即生效。会话结束时，该规则会晋升为**永久规则** —— 这条确定性的 corrections → rules 路径以**零网络 egress** 运行，我们测得的 cross-session δ 正是建立在这条路径上。
 
-那些你从未明确指出的柔性纠正（"嗯…只写这么点最小实现，以后不会全部返工吗?"）在实时中更难捕捉。如果你 opt-in 启用 transcript 提取（见下文），forgen 还会从对话中**回溯挖掘（retroactively mine）**这类纠正 —— 但这样自动挖掘出的规则是 **advisory-only**（仅作为上下文呈现，绝不阻断或强制），若你始终不采纳，它们会随时间 age-out。
+那些你从未明确指出的柔性纠正（"嗯…只写这么点最小实现，以后不会全部返工吗?"）在实时中更难捕捉。transcript 提取（见下文，默认开启）启用时，forgen 还会从对话中**回溯挖掘（retroactively mine）**这类纠正 —— 但这样自动挖掘出的规则是 **advisory-only**（仅作为上下文呈现，绝不阻断或强制），若你始终不采纳，它们会随时间 age-out。
 
 ### 会话之间（自动）
 
@@ -299,7 +299,7 @@ forgen config default-host codex   # 设置持久默认主机
 experiment (0.30) → candidate (0.55) → verified (0.75) → mature (0.90)
 ```
 
-每个解决方案从 `experiment` 开始。随着它在多个会话中被反映到你的代码里，会自动晋升。负面证据触发熔断机制（自动退役）。这意味着只有真正适合你的模式才能留存。
+自动提取的经验必须附带对话原文引用才会保存，并从 `candidate` 开始。在其他会话中再次出现时，会进入 `forgen compound review` 的待批准列表，**只有你批准后才会变为 `verified`**（自 0.8.0 起不再自动晋升——出现得多不等于正确）。负面证据触发熔断机制（自动退役）。
 
 | 类型 | 来源 | Claude 如何使用 |
 |------|------|----------------|
@@ -308,7 +308,7 @@ experiment (0.30) → candidate (0.55) → verified (0.75) → mature (0.90)
 | **行为模式** | 3次以上观察时自动检测 | 应用到 `forge-behavioral.md` |
 | **证据** | 纠正 + 观察 | 驱动 facet 调整 + 规则创建 |
 
-*解决方案与行为模式来自 **opt-in** 的 transcript 提取通道（`forgen compound consent on`，默认关闭）。corrections → rules 与 facet 调整则始终在线（always-on），绝不离开你的机器。*
+*解决方案与行为模式来自 transcript 提取通道（默认开启，关闭：`forgen compound consent off`）。corrections → rules 与 facet 调整则始终在线（always-on），绝不离开你的机器。*
 
 ### 解决方案自动注入
 

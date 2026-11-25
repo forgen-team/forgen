@@ -128,7 +128,7 @@ forgen                    # `claude` 대신 사용
 
 Claude가 `correction-record` MCP 도구를 호출합니다. 교정은 축 분류(`judgment_philosophy`), 종류(`avoid-this`), 신뢰도 점수가 포함된 구조화된 evidence로 저장됩니다. 현재 세션에 즉시 효과를 주는 임시 규칙이 생성됩니다. 세션이 끝나면 이 규칙은 **영구 규칙**으로 승급됩니다 — 이 결정론적 corrections → rules 경로는 **네트워크 egress 0** 으로 동작하며, 우리가 측정한 cross-session δ가 바로 이 경로에 실립니다.
 
-당신이 명시적으로 짚지 않은 완곡한 교정("음… 이렇게 최소로만 짜면 나중에 다 다시 해야 하는 거 아니야?")은 실시간으로 잡기 어렵습니다. transcript 추출(아래)에 opt-in 하면 forgen이 대화에서 그런 교정도 **retroactive하게 채굴**합니다 — 단, 이렇게 자동 채굴된 규칙은 **advisory-only**(컨텍스트로 표시될 뿐 절대 차단·강제하지 않음)이며, 당신이 반응하지 않으면 시간이 지나 age-out 됩니다.
+당신이 명시적으로 짚지 않은 완곡한 교정("음… 이렇게 최소로만 짜면 나중에 다 다시 해야 하는 거 아니야?")은 실시간으로 잡기 어렵습니다. transcript 추출(아래, 기본 ON)이 켜져 있으면 forgen이 대화에서 그런 교정도 **retroactive하게 채굴**합니다 — 단, 이렇게 자동 채굴된 규칙은 **advisory-only**(컨텍스트로 표시될 뿐 절대 차단·강제하지 않음)이며, 당신이 반응하지 않으면 시간이 지나 age-out 됩니다.
 
 ### 세션 사이 (자동)
 
@@ -306,7 +306,7 @@ Soft layer는 모델에게 "지켜줘"라고 요청하고, Hard layer는 요청�
 experiment (0.30) → candidate (0.55) → verified (0.75) → mature (0.90)
 ```
 
-각 솔루션은 `experiment`로 시작합니다. 세션을 거치며 코드에 반영될수록 자동 승격됩니다. 부정적 evidence는 서킷 브레이커를 작동시켜 자동 은퇴시킵니다. 실제로 당신에게 맞는 패턴만 살아남습니다.
+자동 추출한 교훈은 대화 원문 인용이 있어야 저장되고 `candidate`로 시작합니다. 서로 다른 세션에서 다시 나오면 `forgen compound review`의 승인 대기 목록에 오르고, **승인해야 `verified`가 됩니다**(0.8.0부터 자동 승격 없음 — 자주 나온 것과 맞는 것은 다르기 때문). 부정적 evidence는 서킷 브레이커를 작동시켜 자동 은퇴시킵니다.
 
 | 유형 | 출처 | Claude 활용 방법 |
 |------|------|-----------------|
@@ -315,7 +315,7 @@ experiment (0.30) → candidate (0.55) → verified (0.75) → mature (0.90)
 | **행동 패턴** | 3회 이상 관찰 시 자동 감지 | `forge-behavioral.md`에 적용 |
 | **Evidence** | 교정 + 관찰 | facet 조정 및 규칙 생성의 근거 |
 
-*솔루션과 행동 패턴은 **opt-in** transcript 추출 패스(`forgen compound consent on`, 기본 off)에서 나옵니다. corrections → rules 와 facet 조정은 always-on 이며 절대 당신의 머신을 떠나지 않습니다.*
+*솔루션과 행동 패턴은 transcript 추출 패스(기본 ON, 끄기: `forgen compound consent off`)에서 나옵니다. corrections → rules 와 facet 조정은 always-on 이며 절대 당신의 머신을 떠나지 않습니다.*
 
 ### Solution 자동 주입
 

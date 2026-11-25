@@ -13,6 +13,7 @@ import { logFilesWithin } from '../engine/lifecycle/rotated-logs.js';
 import { scanRuleFiles } from '../store/rule-store.js';
 import { getHaikuConsentState, apiBillingNote } from './compound-consent.js';
 import { summarizeRenderReport } from '../renderer/render-report.js';
+import { surfacedTimesSince } from './observability-store.js';
 
 const DAY = 24 * 60 * 60 * 1000;
 export const FLOW_WINDOW_DAYS = 7;
@@ -290,6 +291,7 @@ export function computeFlow(days: number = FLOW_WINDOW_DAYS, now = Date.now()): 
   const acks = readJsonlTimes(path.join(STATE_DIR, 'enforcement', 'acknowledgments.jsonl'), 'at');
   const verdicts = readJsonlTimes(path.join(STATE_DIR, 'enforcement', 'verdicts.jsonl'), 'at');
   const render = summarizeRenderReport();
+  const surfaced = surfacedTimesSince(now - days * DAY);
 
   const extractTimes = ext.ok;
   const lastRun = lastExtractionTime();
@@ -306,10 +308,15 @@ export function computeFlow(days: number = FLOW_WINDOW_DAYS, now = Date.now()): 
     }),
     stage('저장', '새 솔루션(created) + 새 룰(created_at)', saved,
       { note: saved.undated > 0 ? `created 없는 솔루션 ${saved.undated}개는 집계 제외` : undefined }),
-    stage('주입', '후보가 나온 recall (hook)', matchLog, {
-      note: render ? `룰 렌더 마지막 ${formatWhen(Date.parse(render.at), now)}: 포함 ${render.included} · 누락 ${render.omitted}${render.omitted ? ` (${Object.entries(render.omittedByStrength).map(([k, v]) => `${k} ${v}`).join(', ')})` : ''}` : '룰 렌더 기록 없음',
+    // 0.8.0 M1: "주입"은 게이트를 통과해 실제로 모델에게 보인 솔루션(surfaced). 예전 값(후보가 나온 프롬프트)은 note 로.
+    stage('주입', surfaced.error ? '실제 노출 기록을 읽을 수 없음 — 후보가 나온 프롬프트로 대신 표시' : '게이트를 통과해 실제로 보인 솔루션 (surfaced)', surfaced.error ? { times: matchLog.times } : surfaced, {
+      note: [
+        `후보가 나온 프롬프트 ${countSince(matchLog.times, days, now)}건`,
+        render ? `룰 렌더 마지막 ${formatWhen(Date.parse(render.at), now)}: 포함 ${render.included} · 누락 ${render.omitted}${render.omitted ? ` (${Object.entries(render.omittedByStrength).map(([k, v]) => `${k} ${v}`).join(', ')})` : ''}` : '룰 렌더 기록 없음',
+      ].join(' · '),
     }),
-    stage('사용', '응답에 인용된 recall', referenced),
+    // 판정식이 응답에 솔루션 이름·식별자가 그대로 나와야만 잡아서, 써도 0 으로 나온다. 숨기지 않고 그렇게 적는다.
+    stage('사용', '응답에 인용된 recall (판정 한계: 이름이 그대로 나와야 잡힘)', referenced, { note: '사용 판정은 아직 신뢰할 수 없음 — 0 이어도 안 쓰였다는 뜻이 아님' }),
     stage('피드백', '차단 승인(ack) + 차단 판정', { times: [...acks.times, ...verdicts.times], error: acks.error ?? verdicts.error }),
   ];
 }
@@ -326,13 +333,14 @@ export const FLOW_MIN_SESSIONS = 3;
 /**
  * 0건 경고 판정. 활동이 충분할 때만, 그리고 그 단계가 정상적으로 0일 수 없을 때만 낸다.
  *   추출·저장·주입: 세션이 충분한데 0건이면 경고.
- *   사용: 주입이 있는데 인용이 0건일 때만 (주입이 없으면 쓸 것도 없다).
+ *   사용: 0.8.0 부터 경고하지 않는다 — 판정식이 응답에 이름이 그대로 나와야만 잡아 신뢰할 수 없다.
  *   수집·피드백: 사용자가 교정·차단을 만나야 쌓이는 값이라 0건이 정상 — 경고하지 않는다.
  */
-export function flowWarning(stage: FlowStage, stages: FlowStage[], sessions: number): string | null {
+export function flowWarning(stage: FlowStage, _stages: FlowStage[], sessions: number): string | null {
   if (stage.error || stage.count > 0 || sessions < FLOW_MIN_SESSIONS) return null;
   if (stage.label === '추출' || stage.label === '저장' || stage.label === '주입') return '⚠ 0건 — 이 단계가 끊겼을 수 있음';
-  if (stage.label === '사용') return (stages.find((x) => x.label === '주입')?.count ?? 0) > 0 ? '⚠ 주입은 있는데 인용 0건' : null;
+  // 0.8.0 M1: 사용 판정식은 신뢰할 수 없어(이름이 그대로 나와야 잡힘) 0 건을 끊김 경고로 내지 않는다.
+  if (stage.label === '사용') return null;
   return null;
 }
 

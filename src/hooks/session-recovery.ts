@@ -175,12 +175,21 @@ async function main(): Promise<void> {
   // doctor 프로브(FORGEN_DOCTOR_PROBE=1): 세션 상태 기록·백그라운드 스폰 등 부작용 경로를 건너뛴다.
   const doctorProbe = process.env.FORGEN_DOCTOR_PROBE === '1';
   let v1RenderedRules: string | null = null;
+  let bootIncluded: string[] = [];
   try {
     if (doctorProbe) throw new Error('doctor probe — 세션 상태 기록 생략');
     const { bootstrapV1Session } = await import('../core/v1-bootstrap.js');
     // 래퍼가 띄운 세션이면 주입 횟수는 래퍼 bootstrap 이 이미 셌다(D8: 세션당 1회).
     const { consumeHarnessBootstrap } = await import('../core/harness-inject-marker.js');
-    v1RenderedRules = bootstrapV1Session(sessionContext.cwd, { trackInjection: !consumeHarnessBootstrap() }).renderedRules;
+    const boot = bootstrapV1Session(sessionContext.cwd, { trackInjection: !consumeHarnessBootstrap() });
+    v1RenderedRules = boot.renderedRules;
+    bootIncluded = boot.includedRuleIds ?? [];
+    // 0.8.0 S5: 이번 블록이 어느 프로젝트 기준인지 기록(압축 뒤 재시작이면 새로 시작) — 위치 전환 주입의 기준.
+    try {
+      // 0.8.0 M2: 이 세션 시작 블록에 실제로 들어간 룰 ID 도 남긴다(교정 3분류의 "주입됐다" 판정).
+      // 전역 render-report 를 다시 읽지 않는다 — 동시 세션이 그 사이 덮어쓸 수 있다.
+      (await import('../core/project-switch.js')).markSessionStartScope(sessionContext.sessionId, sessionContext.cwd, bootIncluded);
+    } catch { /* fail-open */ }
   } catch (e) { log.debug('v1-bootstrap SessionStart 호출 실패 (fail-open)', e); }
 
   // 모든 호스트가 같은 경로로 룰을 받는다(ADR-014 D1 확장). 래퍼 없이 실행해도 매 세션 최신 룰이 들어간다.

@@ -223,7 +223,7 @@ function runEvolvePromote(candidateNameOrList: string): void {
     console.log(`\n  ✓ Promoted: ${result.dest ? path.basename(result.dest) : '(unknown)'}`);
     console.log(`    from: ${result.source}`);
     console.log(`    to:   ${result.dest}`);
-    console.log(`    Cold-start bonus active until 5 injections accumulate (auto-promotes to verified).\n`);
+    console.log(`    Verified only when you approve it: forgen compound review --approve <name>\n`);
   } else {
     console.log(`\n  ✗ Promotion refused: ${result.reason}\n`);
   }

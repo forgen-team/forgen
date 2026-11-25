@@ -165,6 +165,11 @@ export interface Rule {
   updated_at: string;
   /** 이 프로젝트들에서만 적용. 없으면 전역. rule-scope.ts 참고. */
   projects?: string[];
+  /**
+   * 0.8.0 S2: 'unresolved' = 프로젝트 한정으로 받았지만 어느 프로젝트인지 정하지 못함(전역과 다름).
+   * projects 가 비어 있을 때만 뜻이 있다. 주입은 하되 전역 룰보다 뒤 순위이고 차단에는 쓰지 않는다.
+   */
+  scope_state?: 'unresolved';
   /** source 'imported' 일 때 가져온 곳(파일 경로 등). 사용자 발화가 아니라는 표시이기도 하다. */
   imported_from?: string;
   /** 세션 임시 룰의 소유 세션. 다른 실행 중인 세션의 임시 룰을 정리하지 않기 위해 쓴다. */
@@ -369,6 +374,10 @@ export interface CorrectionRequest {
   rule_id?: string;
   /** 이 프로젝트에만 적용되는 교정이면 프로젝트 키. */
   projects?: string[];
+  /** 0.8.0 S2: 프로젝트 한정인데 어느 프로젝트인지 못 정함. projects 가 없을 때만. */
+  scope_state?: 'unresolved';
+  /** 0.8.0 S1: 호출 시점 위치(사실 기록). 범위 판단과 별개. */
+  origin?: { cwd?: string; project?: string | null; via?: string; host?: string };
 }
 
 export interface CorrectionResult {

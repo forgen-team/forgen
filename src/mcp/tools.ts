@@ -340,9 +340,11 @@ export function registerTools(server: McpServer): void {
           .describe('Which personalization axis this correction relates to (null if unclear)'),
         this_project_only: z.boolean().optional().describe('true when the correction is specific to the current project (its domain, files, product). Omit for how-I-work preferences that apply everywhere.'),
         rule_id: z.string().optional().describe('Full rule_id (see rule-list) ONLY when the user explicitly retires, replaces or amends that existing rule. Omit otherwise: existing rules are never changed by guessing.'),
+        origin: z.object({ cwd: z.string().optional(), tool_use_id: z.string().optional() }).optional()
+          .describe('Filled in automatically by the forgen hook. Do not set it yourself.'),
       },
     },
-    async ({ session_id, kind, message, target, axis_hint, user_quote, rule_id, this_project_only }) => {
+    async ({ session_id, kind, message, target, axis_hint, user_quote, rule_id, this_project_only, origin }) => {
       try {
         // v1 session_id를 환경변수에서 가져옴 (하네스가 설정)
         const effectiveSessionId = session_id || process.env.FORGEN_SESSION_ID || 'unknown';
@@ -365,8 +367,12 @@ export function registerTools(server: McpServer): void {
         const cleanQuote = typeof user_quote === 'string' && user_quote.trim() && !isFullyPrivate(user_quote)
           ? stripPrivate(user_quote).cleaned.trim()
           : '';
-        const { projectKeyFor } = await import('../store/rule-scope.js');
-        const projectKey = this_project_only ? projectKeyFor(process.env.FORGEN_CWD ?? process.cwd()) : null;
+        // 0.8.0 S1·S2: 위치는 호출 시점 값으로 푼다(훅이 붙인 origin → 세션 파일). MCP 프로세스의 폴더는
+        // 세션을 따라가지 않으므로 쓰지 않는다. 프로젝트 한정인데 못 풀면 전역이 아니라 '미정'.
+        const { resolveWorkContext } = await import('../core/session-context.js');
+        const work = resolveWorkContext({ originCwd: origin?.cwd, sessionId: effectiveSessionId });
+        const projectKey = this_project_only && work.kind === 'project' ? work.key : null;
+        const unresolved = Boolean(this_project_only) && !projectKey;
         const result = processCorrection({
           session_id: effectiveSessionId,
           kind: kind as CorrectionKind,
@@ -375,8 +381,24 @@ export function registerTools(server: McpServer): void {
           axis_hint: axis_hint as 'quality_safety' | 'autonomy' | 'judgment_philosophy' | 'communication_style' | null,
           ...(cleanQuote ? { user_quote: cleanQuote } : {}),
           ...(rule_id ? { rule_id } : {}),
-          ...(projectKey ? { projects: [projectKey] } : {}),
+          ...(projectKey ? { projects: [projectKey] } : unresolved ? { scope_state: 'unresolved' as const } : {}),
+          origin: {
+            ...(work.cwd ? { cwd: work.cwd } : {}),
+            project: work.kind === 'project' ? work.key : null,
+            via: work.via ?? 'none',
+            host: process.env.FORGEN_HOST ?? 'claude',
+          },
         });
+
+        // 0.8.0 M2: 교정 3분류(재발/전달 실패/신규) — 기록만. 실패해도 교정 기록은 그대로.
+        try {
+          const { classifyCorrection, recordCorrectionClass } = await import('../core/correction-ledger.js');
+          recordCorrectionClass(classifyCorrection({
+            sessionId: effectiveSessionId, evidenceId: result.evidence_event_id, policy: cleanMessage,
+            renderKey: `${axis_hint ?? 'workflow'}.${cleanTarget.toLowerCase().replace(/\s+/g, '-').slice(0, 30)}`,
+            project: work.kind === 'project' ? work.key : null,
+          }));
+        } catch { /* fail-open */ }
 
         // Outcome tracking (Phase 1): attribute this correction to any
         // pending injections in the session. Fail-open — attribution is a
@@ -396,8 +418,14 @@ export function registerTools(server: McpServer): void {
           `${userVisibleConfirm}${axis} — kind: ${kindLabel}`,
           `Evidence: ${result.evidence_event_id}`,
         ];
+        if (!this_project_only && work.kind === 'project') {
+          // 0.8.0 §12: 표시 없이 프로젝트 안에서 온 교정 — 전역으로 두되 위치를 남겨 범위 제안 목록에 올린다.
+          lines.push(`Location: inside project "${work.key}" — saved as global (no project-only flag). Do not change the scope yourself; it will be offered to the user for scoping in \`forgen rule classify-projects --from-sessions\`.`);
+        }
         if (this_project_only) {
-          lines.push(projectKey ? `Project: ${projectKey} only` : 'Project: not inside a git project — recorded as global');
+          lines.push(projectKey
+            ? `Project: ${projectKey} only`
+            : `Project: could not tell which project (${work.cwd ? 'not a project folder' : 'no location from hook'}) — saved as scope-unresolved, not global. Ask the user once which project it belongs to; they can set it with: forgen rule set-project <rule-id> <key>`);
         }
         if (rule_id) {
           const { loadRule } = await import('../store/rule-store.js');

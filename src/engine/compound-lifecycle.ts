@@ -20,6 +20,12 @@ const CIRCUIT_BREAKER_THRESHOLDS: Record<string, number> = {
   verified: 4,
 };
 
+/**
+ * 0.8.0: 자동 승급을 허용하는 상태. candidate → verified, verified → mature 는 오너 승인으로만 한다
+ * (재관측은 "자주 나옴"이지 "맞음"이 아니다 — docs/plans/2026-11-25-next-version-plan.md §8.1, K2).
+ */
+export const AUTO_PROMOTE_FROM: ReadonlySet<string> = new Set(['experiment']);
+
 /** Minimum age (ms) before promotion is allowed */
 const MIN_AGE_FOR_PROMOTION: Record<string, number> = {
   experiment: 7 * 24 * 60 * 60 * 1000, // 7 days
@@ -222,9 +228,12 @@ export function updateSolutionFile(
   updates: Partial<SolutionFrontmatter>,
 ): boolean {
   return mutateSolutionFile(filePath, (sol) => {
+    const statusChanged = updates.status !== undefined && updates.status !== sol.frontmatter.status;
     sol.frontmatter = {
       ...sol.frontmatter,
       ...updates,
+      // 0.8.0 K4: 상태가 바뀐 날을 남긴다(승급 최소 경과의 기준).
+      ...(statusChanged && !updates.statusSince ? { statusSince: new Date().toISOString().split('T')[0] } : {}),
     };
     return true;
   });
@@ -302,12 +311,14 @@ export function runLifecycleCheck(_sessionId: string = 'system', opts: { dryRun?
           continue;
         }
 
-        // 4. Check promotion FIRST (with minimum age gate based on updated timestamp)
+        // 4. Check promotion FIRST (with minimum age gate based on statusSince — 0.8.0 K4)
         //    Promotion must run before identifier staleness to give solutions a chance
         //    to be promoted before being penalized for stale identifiers.
-        if (checkPromotion(fm, adaptiveThresholds)) {
+        //    0.8.0 오너 결정: 검증(verified) 이상으로의 승급은 오너 승인으로만(forgen compound review --approve).
+        //    자동으로는 experiment → candidate 만 오른다.
+        if (AUTO_PROMOTE_FROM.has(fm.status) && checkPromotion(fm, adaptiveThresholds)) {
           const minAgeMs = MIN_AGE_FOR_PROMOTION[fm.status] ?? 0;
-          const ageMs = Date.now() - new Date(fm.updated || fm.created).getTime();
+          const ageMs = Date.now() - new Date(fm.statusSince || fm.created).getTime();
           if (ageMs >= minAgeMs) {
             const next = nextStatus(fm.status);
             if (next) {
@@ -425,7 +436,11 @@ function findSolutionFile(solutionName: string, cwd?: string): { filePath: strin
  * - 은퇴 사유/시각 제거, updated=오늘(오래됨 판정 리셋).
  * - contradicted 와 사유 미상(구버전 은퇴, 반증이었을 수 있다)은 negative 증거를 0 으로 되돌린다 — 그대로 두면 회로 차단기가 바로 다시 은퇴시킨다.
  */
-export function reopenSolution(solutionName: string, cwd?: string): { ok: boolean; reason?: string; previous?: RetiredReason | 'unknown'; status?: SolutionStatus } {
+/**
+ * 0.8.0: 자동 복귀(재추출로 다시 나옴)는 candidate 로만 돌린다 — 검증은 오너 승인으로만(§8.1).
+ * 오너가 직접 `forgen compound reopen` 을 치면(keepLevel) 은퇴 전 수준(confidence 기준)으로 돌린다.
+ */
+export function reopenSolution(solutionName: string, cwd?: string, opts: { keepLevel?: boolean } = {}): { ok: boolean; reason?: string; previous?: RetiredReason | 'unknown'; status?: SolutionStatus } {
   const found = findSolutionFile(solutionName, cwd);
   if (!found) return { ok: false, reason: 'not-found' };
   const { filePath, fm } = found;
@@ -434,8 +449,11 @@ export function reopenSolution(solutionName: string, cwd?: string): { ok: boolea
   let restored: SolutionStatus = 'candidate';
   const ok = mutateSolutionFile(filePath, (sol) => {
     const f = sol.frontmatter;
-    restored = f.confidence >= statusConfidence('mature') ? 'mature' : f.confidence >= statusConfidence('verified') ? 'verified' : 'candidate';
+    restored = !opts.keepLevel ? 'candidate'
+      : f.confidence >= statusConfidence('mature') ? 'mature' : f.confidence >= statusConfidence('verified') ? 'verified' : 'candidate';
     f.status = restored;
+    if (!opts.keepLevel) f.confidence = Math.min(f.confidence, statusConfidence('candidate'));
+    f.statusSince = new Date().toISOString().split('T')[0];
     f.confidence = f.confidence > 0 ? f.confidence : statusConfidence('candidate');
     delete f.retiredReason;
     delete f.retiredAt;

@@ -162,6 +162,22 @@ export function emitSolutionEvent(opts: EmitOptions): void {
   }
 }
 
+/** 0.8.0 M1: 기간 안의 실제 노출(surfaced) 시각들. DB 를 못 열면 error. */
+export function surfacedTimesSince(sinceMs: number): { times: number[]; error?: string } {
+  let db: SqliteDb | null = null;
+  try {
+    db = openObsDb();
+    if (!db) return { times: [], error: 'sessions.db 를 열 수 없음' };
+    ensureObservabilitySchema(db);
+    const rows = db.prepare(`SELECT ts FROM solution_events WHERE event_type = 'surfaced' AND ts >= ?`).all(sinceMs) as Array<{ ts: number }>;
+    return { times: rows.map((r) => r.ts) };
+  } catch (e) {
+    return { times: [], error: e instanceof Error ? e.message : String(e) };
+  } finally {
+    try { db?.close(); } catch { /* ignore */ }
+  }
+}
+
 /** 특정 세션에서 지정 시간 window 내 surfaced 이벤트 조회. */
 export function querySurfacedWithin(sessionId: string, minutesWindow: number): SurfacedEvent[] {
   let db: SqliteDb | null = null;
@@ -214,6 +230,17 @@ export function recordGateVerdict(opts: { sessionId?: string; solutionId: string
   } finally {
     try { db?.close(); } catch { /* ignore */ }
   }
+}
+
+/** 0.8.0 M4: 한 시각 근처(±windowMs)의 게이트 판정. 회수 정답 표본에서 "그때 게이트가 무엇을 통과시켰나"를 되찾는다. */
+export function gateVerdictsNear(ts: number, windowMs = 5000): Array<{ solutionId: string; gate: string }> {
+  let db: SqliteDb | null = null;
+  try {
+    db = openObsDb();
+    if (!db) return [];
+    ensureObservabilitySchema(db);
+    return db.prepare(`SELECT solution_id AS solutionId, gate FROM gate_verdicts WHERE ts BETWEEN ? AND ?`).all(ts - windowMs, ts + windowMs) as Array<{ solutionId: string; gate: string }>;
+  } catch { return []; } finally { try { db?.close(); } catch { /* ignore */ } }
 }
 
 /**

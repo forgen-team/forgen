@@ -2,17 +2,33 @@
  * 룰의 프로젝트 범위.
  *
  * 프로젝트 안: 전역 룰 + 그 프로젝트 룰만 주입·강제한다. 다른 프로젝트 룰이 무관한 응답을 막던 오탐의 원인이다.
- * 프로젝트 밖(홈 디렉터리 등): 어떤 작업인지 알 수 없으니 전부 컨텍스트로 주되, 프로젝트 룰로 차단하지는 않는다.
+ * 프로젝트 밖(홈 디렉터리 등): 전역 룰과 범위 미정 룰만 준다. 프로젝트 룰은 작업이 그 프로젝트로 들어갈 때
+ * 한 번 넣는다(project-switch.ts). 0.8.0 S5 에서 바뀜 — 예전에는 "전부 준다"였는데 활성 룰이 예산을 넘겨
+ * 관련성과 무관하게 순위로 잘리는 것이 실측됐다(93개 중 53개 탈락).
  */
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import type { Rule } from './types.js';
+import { canonicalProjectKey, registryKeyFor } from './project-registry.js';
 
-/** cwd 의 프로젝트 키: git 저장소 폴더 이름(소문자). worktree 는 본 저장소 이름. 프로젝트가 아니면 null. */
+/**
+ * cwd 의 프로젝트 키. 순서: 프로젝트 키 등록부(0.8.0 S3, git 아닌 폴더도 됨) → git 저장소 폴더 이름(소문자,
+ * worktree 는 본 저장소 이름, 등록부의 별칭이면 그 키). 프로젝트가 아니면 null.
+ */
 export function projectKeyFor(cwd: string): string | null {
   let dir: string;
   try { dir = fs.realpathSync(cwd); } catch { dir = path.resolve(cwd); }
+  try {
+    const reg = registryKeyFor(dir);
+    if (reg) return reg;
+  } catch { /* 등록부 문제는 git 판정으로 */ }
+  const git = gitProjectKey(dir);
+  if (!git) return null;
+  try { return canonicalProjectKey(git); } catch { return git; }
+}
+
+function gitProjectKey(dir: string): string | null {
   let home: string;
   try { home = fs.realpathSync(os.homedir()); } catch { home = os.homedir(); }
   for (let cur = dir; ; cur = path.dirname(cur)) {
@@ -29,16 +45,28 @@ export function projectKeyFor(cwd: string): string | null {
   }
 }
 
-/** 컨텍스트로 넣을 룰인가. */
-export function appliesForContext(rule: Rule, projectKey: string | null): boolean {
-  if (!rule.projects?.length || projectKey === null) return true;
-  return rule.projects.includes(projectKey);
+function inProjects(projects: readonly string[], projectKey: string): boolean {
+  if (projects.includes(projectKey)) return true;
+  try { return projects.some((p) => canonicalProjectKey(p) === projectKey); } catch { return false; }
 }
 
-/** 차단·판정까지 할 룰인가. */
-export function appliesForEnforcement(rule: Rule, projectKey: string | null): boolean {
+/** 범위를 정하지 못한 룰(0.8.0 S2). 주입은 하되 차단·판정에는 쓰지 않는다. */
+export function isScopeUnresolved(rule: Pick<Rule, 'scope_state' | 'projects'>): boolean {
+  return rule.scope_state === 'unresolved' && !rule.projects?.length;
+}
+
+/** 컨텍스트로 넣을 룰인가. */
+export function appliesForContext(rule: Rule, projectKey: string | null): boolean {
   if (!rule.projects?.length) return true;
-  return projectKey !== null && rule.projects.includes(projectKey);
+  if (projectKey === null) return false;
+  return inProjects(rule.projects, projectKey);
+}
+
+/** 차단·판정까지 할 룰인가. 범위 미정 룰은 어디서도 차단하지 않는다. */
+export function appliesForEnforcement(rule: Rule, projectKey: string | null): boolean {
+  if (isScopeUnresolved(rule)) return false;
+  if (!rule.projects?.length) return true;
+  return projectKey !== null && inProjects(rule.projects, projectKey);
 }
 
 /**

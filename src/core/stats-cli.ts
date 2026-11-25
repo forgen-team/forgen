@@ -12,6 +12,10 @@ import { readEvidenceCounts, readSavedTimes, countSince, formatLastExtraction, u
 import { STATE_DIR, ME_DIR } from './paths.js';
 import { readJsonlWindow, isRealBlock, isConfirmedBypass, isSyntheticEntry, precisionByRule, readVerdicts } from '../engine/lifecycle/signals.js';
 import { computeFixFeatRatio, formatFixRatio } from './git-stats.js';
+import { pendingReview, reobservedCount } from '../engine/solution-review.js';
+import { summarizeLedger } from './correction-ledger.js';
+import { summarizeDecisions } from './decision-ledger.js';
+import { summarizeJudgments } from '../engine/solution-judgment.js';
 
 // v0.4.1 격리 fix: 이전에는 os.homedir() 직접 사용해서 FORGEN_HOME env 로
 // 홈 격리해도 이 파일의 경로는 여전히 실 홈 가리켰음. paths.ts 상수 import.
@@ -376,6 +380,15 @@ export function renderStats(s: StatsSnapshot): string {
   lines.push('  ───────────────────────────');
   lines.push(`  Active rules          ${padNum(s.activeRules)}    (${s.suppressedRules} suppressed)`);
   lines.push(`  Corrections (you)     ${padNum(s.correctionsTotal)}    (+${s.corrections7d} last 7d) — 당신이 직접 한 교정`);
+  try {
+    // 0.8.0 M2: 같은 교정이 되풀이되는가 — 룰이 있는데 안 먹힘(재발) / 룰이 있는데 안 들어감(전달 실패) / 새 교정
+    const c = summarizeLedger(Date.now() - 14 * 86_400_000);
+    const total = c.recurrence + c['delivery-failure'] + c.new + c['unknown-delivery'];
+    const dc = summarizeDecisions();
+    const dn = Object.values(dc).reduce((a, b) => a + b, 0);
+    if (dn > 0) lines.push(`  Decisions (you)       ${padNum(dn)}    — 선택 질문의 답: 추천 그대로 ${dc.accept} · 다르게 ${dc.override} · 직접 입력 ${dc.free} · 복수 ${dc.multi}${dc.unanswered ? ` · 답 없음 ${dc.unanswered}` : ''} (기기 밖으로 안 나감)`);
+    if (total > 0) lines.push(`    분류 (14d)          재발 ${c.recurrence} · 전달 실패 ${c['delivery-failure']} · 신규 ${c.new}${c['unknown-delivery'] ? ` · 판정 불가 ${c['unknown-delivery']}` : ''}    — 판정은 표본 검수 전까지 참고`);
+  } catch { /* 표시 실패 무시 */ }
   lines.push(`  Mined (Haiku)         ${padNum(s.minedTotal)}    (+${s.mined7d} last 7d) — 대화에서 추론한 후보, 당신의 발화 아님`);
   for (const e of s.readErrors) lines.push(`  ⚠ 읽기 문제: ${e}`);
   lines.push('');
@@ -428,6 +441,12 @@ export function renderStats(s: StatsSnapshot): string {
     lines.push(`    Total               ${padNum(sh.total)}    ${statusParts}`);
     lines.push(`    Avg confidence      ${sh.avgConfidence.toFixed(2)}`);
     lines.push(`    Matched (7d)        ${padNum(Math.round(sh.utilization7d * sh.total))}    — 최근 7일에 한 번이라도 매칭된 솔루션 (전체 ${sh.total})`);
+    // 0.8.0 M1: 검증으로 가는 경로가 실제로 움직이는지 — 재관측(다른 세션에서 다시 나옴)과 승인 대기.
+    try {
+      lines.push(`    검증 경로          재관측 ${reobservedCount()} · 승인 대기 ${pendingReview().length}    — 검증은 forgen compound review --approve 로만`);
+      const jg = summarizeJudgments(Date.now() - 30 * 86_400_000);
+      if (jg.used + jg.ignored + jg.wrong > 0) lines.push(`    사용 판정 (30d)     썼다 ${jg.used} · 무시 ${jg.ignored} · 틀림 ${jg.wrong}    — 기록만(표본 검수 전까지 반영 안 함)`);
+    } catch { /* 표시 실패는 무시 */ }
     lines.push('');
   }
 

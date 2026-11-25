@@ -29,6 +29,12 @@ const evidence = (h: string, id: string, source: string, type = 'explicit_correc
   fs.writeFileSync(F(h, 'me/behavior', `${id}.json`), JSON.stringify({ evidence_id: id, type, session_id: 's', timestamp: iso(daysAgo), source_component: source, summary: 'x'.repeat(30), axis_refs: [], candidate_rule_refs: [], confidence: 0.5, raw_payload: {} }));
 const solution = (h: string, name: string, createdDaysAgo: number) =>
   fs.writeFileSync(F(h, 'me/solutions', `${name}.md`), `---\nname: ${name}\nstatus: candidate\nconfidence: 0.5\ncreated: ${iso(createdDaysAgo)}\n---\nbody\n`);
+/** 실제 노출(surfaced) 이벤트를 sessions.db 에 남긴다 — 훅이 쓰는 함수 그대로. */
+const surfaced = (h: string, n: number) => {
+  const mod = path.resolve(import.meta.dirname, '..', 'dist', 'core', 'observability-store.js');
+  const r = spawnSync('node', ['--input-type=module', '-e', `import * as m from ${JSON.stringify(mod)}; for (let i = 0; i < ${n}; i++) m.emitSolutionEvent({ sessionId: 's' + i, solutionId: 'sol' + i, eventType: 'surfaced', signalSource: 'hook-prepend' });`], { env: { ...process.env, HOME: h, FORGEN_HOME: path.join(h, '.forgen') }, encoding: 'utf-8' });
+  if (r.status !== 0) throw new Error(r.stderr);
+};
 /** 흐름 표에서 단계 줄의 건수 */
 const stageCount = (out: string, label: string): number => Number(out.match(new RegExp(`^\\s+${label}\\s+(\\d+)건`, 'm'))?.[1] ?? NaN);
 
@@ -59,12 +65,16 @@ describe('status 흐름 6단계', () => {
     expect(stageCount(out, '수집')).toBe(2);
     expect(stageCount(out, '추출')).toBe(2);
     expect(stageCount(out, '저장')).toBe(1); // 40일 전 created 솔루션은 제외, 룰은 없음
-    expect(stageCount(out, '주입')).toBe(4); // 후보 0건·mcp 는 제외
+    // 0.8.0 M1: 주입 = 실제 노출(surfaced). 후보가 나온 프롬프트 수(후보 0건·mcp 제외)는 보조 줄로.
+    expect(stageCount(out, '주입')).toBe(0);
+    expect(out).toContain('후보가 나온 프롬프트 4건');
     expect(stageCount(out, '사용')).toBe(2);
     expect(stageCount(out, '피드백')).toBe(1);
     // 하나 더 주입하면 정확히 +1
     jl(F(h, 'state/implicit-feedback.jsonl'), [{ type: 'recall_referenced', at: iso(0) }]);
     expect(stageCount(run(h, ['status']).out, '사용')).toBe(3);
+    surfaced(h, 2);
+    expect(stageCount(run(h, ['status']).out, '주입')).toBe(2);
   });
 
   it('추출 연속 실패와 Haiku 상태를 현재 값으로 표시한다', () => {
@@ -308,18 +318,17 @@ describe('흐름 경고 — 활동이 충분할 때만', () => {
     expect(out).not.toMatch(/아직 세션 없음/);
   });
 
-  it('사용 0건은 주입이 있는데 인용이 없을 때만 경고한다', () => {
+  it('사용 0건은 경고하지 않고 판정 한계를 적는다 (0.8.0 M1: 판정식이 신뢰할 수 없음)', () => {
     const h = mkHome(); sessions(h, 5);
-    jl(F(h, 'state/match-eval-log.jsonl'), [{ ts: iso(0), source: 'hook', candidates: [{ name: 'a' }] }]);
+    surfaced(h, 1);
     const { out } = run(h, ['status']);
-    expect(out).toMatch(/사용\s+0건.*⚠ 주입은 있는데 인용 0건/);
-    jl(F(h, 'state/implicit-feedback.jsonl'), [{ type: 'recall_referenced', at: iso(0) }]);
-    expect(warned(run(h, ['status']).out, '사용')).toBe(false);
+    expect(warned(out, '사용')).toBe(false);
+    expect(out).toContain('사용 판정은 아직 신뢰할 수 없음');
   });
 });
 
 describe('흐름과 추세의 같은 단어는 같은 정의', () => {
-  it('Recall hits(추세)·주입(흐름)·Today Recall hits 는 후보가 나온 hook recall 만 센다', () => {
+  it('Recall hits(추세)·흐름의 "후보가 나온 프롬프트"·Today Recall hits 는 후보가 나온 hook recall 만 센다', () => {
     const h = mkHome();
     jl(F(h, 'state/match-eval-log.jsonl'), [
       ...[0, 0, 0].map(() => ({ ts: iso(0), source: 'hook', candidates: [{ name: 'a' }] })),
@@ -327,7 +336,7 @@ describe('흐름과 추세의 같은 단어는 같은 정의', () => {
       { ts: iso(10), source: 'hook', candidates: [{ name: 'a' }] },
     ]);
     const { out } = run(h, ['status']);
-    expect(stageCount(out, '주입')).toBe(3);
+    expect(out).toContain('후보가 나온 프롬프트 3건');
     expect(out).toMatch(/Recall hits\s+3\b/); // Today
     expect(out).toMatch(/Recall hits\s+3 →\s+1 prev/); // 추세: 이번 주 3, 지난주 1
   });
@@ -379,7 +388,7 @@ describe('회전된 로그도 status 가 읽는다', () => {
     jl(`${p}.1`, [hit, hit]);
     jl(`${p}.${Date.now()}`, [hit]);
     const { out } = run(h, ['status']);
-    expect(stageCount(out, '주입')).toBe(4);
+    expect(out).toContain('후보가 나온 프롬프트 4건');
     expect(out).toMatch(/Recall hits\s+4 →/);
   });
 
