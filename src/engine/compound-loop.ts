@@ -585,6 +585,7 @@ export async function handleCompound(args: string[]): Promise<void> {
 
   // --- auto save mode ---
   if (args.includes('--save')) {
+    (await import('../core/frozen-features.js')).recordFrozenUse('compound-save', { notice: true });
     const { runExtraction } = await import('./compound-extractor.js');
     const sessionId = `compound-cli-${Date.now()}`;
     const result = await runExtraction(cwd, sessionId);

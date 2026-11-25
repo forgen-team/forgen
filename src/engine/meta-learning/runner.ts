@@ -10,6 +10,7 @@
  *   - Session quality scoring always runs first (feeds other features)
  */
 
+import { recordFrozenUse } from '../../core/frozen-features.js';
 import * as path from 'node:path';
 import { safeReadJSON } from '../../hooks/shared/atomic-write.js';
 import { computeAdaptiveThresholds } from './adaptive-thresholds.js';
@@ -44,6 +45,7 @@ export function runMetaLearning(sessionId: string, cwd: string): MetaLearningRes
     return { skipped: true, reason: 'meta-learning disabled in config' };
   }
 
+  recordFrozenUse('meta-learning'); // 켜 둔 사용자만 여기 온다(기본 off)
   const result: MetaLearningResult = {};
 
   // Feature 1: Session Quality Scorer (always first — feeds other features)

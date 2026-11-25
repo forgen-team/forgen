@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.3] — 2026-11-25 — 안 쓰는 기능 동결 표시
+
+0.8.0 계획 오너 결정 Q4("0.8.0 은 동결 표시만, 0.9 에서 제거")를 0.8.0 에서 빠뜨려 여기서 넣는다.
+
+### Changed
+- 동결: meta-learning(승급 임계·매처 가중치 자동 조정, 기본 off), `forgen compound --save`(git diff 추출기), `forgen inspect`, `status --overview`(`dashboard` 별칭), 일회성 룰 복구 명령(restore-demoted·revive·recover·unflag·unmerge). CLI 로 쓰면 "0.9 에서 제거 예정" 한 줄이 뜬다.
+- 쓰일 때마다 `state/metrics/frozen-usage.jsonl` 에 기능 이름과 시각만 남기고, `forgen status` 에 30일 사용 횟수를 보여 준다 — 0.9 에서 지우기 전 "정말 안 쓰이는가"의 근거.
+- 솔루션 진화 설계 문서와 `ch-solution-evolver` 에이전트에 보류 표시.
+
 ## [0.8.2] — 2026-11-25 — `forgen project add` 옵션 파싱
 
 ### Fixed

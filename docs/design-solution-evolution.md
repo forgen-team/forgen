@@ -1,6 +1,7 @@
 # Solution Evolution — Phase 4 설계
 
-> Status: **Design (2026-04-16)**. Not yet implemented.
+> Status: **보류 (2026-11-25, 0.8.3)**. 미구현. 문제는 후보 생성이 아니라 선별·회수다(계획 2026-11-25 §3.4). `ch-solution-evolver` 에이전트도 같이 보류.
+> 원래 상태: Design (2026-04-16).
 > Precedes: Phase 1 (outcome tracking + fitness), delivered in same week.
 
 ## 개요

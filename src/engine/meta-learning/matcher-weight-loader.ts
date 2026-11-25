@@ -5,6 +5,7 @@
  * state with a 1-minute in-process TTL cache.
  */
 
+import { recordFrozenUse } from '../../core/frozen-features.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { META_LEARNING_DIR } from '../../core/paths.js';
@@ -18,6 +19,7 @@ const WEIGHTS_CACHE_TTL = 60_000; // 1 minute cache
  * Returns undefined (use defaults) if no tuned weights exist.
  * Cached for 1 minute to avoid re-reading per matchSolutions call.
  */
+let _frozenRecorded = false;
 export function loadTunedMatcherWeights(): { tfidf: number; bm25: number; bigram: number } | undefined {
   const now = Date.now();
   if (_cachedWeights !== undefined && now - _weightsCacheTime < WEIGHTS_CACHE_TTL) {
@@ -42,6 +44,7 @@ export function loadTunedMatcherWeights(): { tfidf: number; bm25: number; bigram
     ) {
       _cachedWeights = { tfidf: data.tfidf, bm25: data.bm25, bigram: data.bigram };
       _weightsCacheTime = now;
+      if (!_frozenRecorded) { _frozenRecorded = true; recordFrozenUse('meta-learning'); } // 프로세스당 1회
       return _cachedWeights;
     }
   } catch {

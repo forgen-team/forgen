@@ -1,6 +1,6 @@
 ---
 name: ch-solution-evolver
-description: Propose 3 novel compound-solution candidates from a weakness report (Phase 4 evolution loop)
+description: "[보류 0.8.3 — 0.9 에서 제거 예정] Propose 3 novel compound-solution candidates from a weakness report (Phase 4 evolution loop)"
 model: opus
 maxTurns: 10
 color: cyan

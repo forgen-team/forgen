@@ -154,6 +154,7 @@ export async function handleStatus(args: string[]): Promise<void> {
       return;
     }
     case '--overview': {
+      (await import('./frozen-features.js')).recordFrozenUse('status-overview', { notice: true });
       // 리치 운영 대시보드(hook health·session history·learning curve·multi-host).
       // 구 `forgen dashboard`의 고유 콘텐츠 — --compound(ROI/compound)와 다른 축이라
       // 별도 뷰로 보존 (Wave 1 리뷰: 콘텐츠 손실 방지).
