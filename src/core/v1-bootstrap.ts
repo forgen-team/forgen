@@ -93,6 +93,8 @@ function renderWithoutProfile(cwd?: string): string | null {
     if (rules.length === 0) {
       // 전역 룰이 없어도 프로젝트 룰이 있으면 색인은 보여 준다(그 프로젝트로 들어가면 들어온다는 안내).
       const idx = projectKeyFor(cwd ?? process.env.FORGEN_CWD ?? process.cwd()) === null ? projectRuleIndex() : null;
+      // 렌더 보고도 "들어간 룰 없음"으로 남긴다 — 이전 세션의 보고가 남아 옛 룰 파일 정리·누락 표시가 어긋나지 않게.
+      try { recordRenderReport({ text: idx ?? '', included: [], omitted: [] } as unknown as Parameters<typeof recordRenderReport>[0]); } catch { /* fail-open */ }
       return idx;
     }
     const state = { warnings: [] } as unknown as SessionEffectiveState;

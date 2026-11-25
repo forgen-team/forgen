@@ -1,8 +1,8 @@
 {
   "schema": "smoke-report/v1",
   "passed": true,
-  "at": "2026-11-25T08:07:51.983Z",
-  "version": "0.8.0",
+  "at": "2026-11-25T08:30:25.051Z",
+  "version": "0.8.1",
   "mock_detected": false,
   "node": "v22.22.0",
   "checks": [
@@ -14,7 +14,7 @@
     {
       "name": "cli-version",
       "passed": true,
-      "summary": "0.8.0"
+      "summary": "0.8.1"
     },
     {
       "name": "statusline-roundtrip",
