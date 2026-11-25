@@ -22,6 +22,7 @@ import { incrementEvidence } from '../engine/solution-writer.js';
 import { isReflectionCandidate } from './compound-reflection.js';
 import { stripPrivate } from '../engine/private-filter.js';
 import { isHookEnabled } from './hook-config.js';
+import { hideRecommendations } from '../core/hidden-recommendation.js';
 import { approve, approveWithUpdatedInput, approveWithWarning, ask, denyOrObserve, failOpenWithTracking } from './shared/hook-response.js';
 import { recordWorkContext } from '../core/session-context.js';
 import { FORGEN_HOME, STATE_DIR } from '../core/paths.js';
@@ -466,6 +467,14 @@ async function main(): Promise<void> {
       // 뒤의 판정을 건너뛰게 되는지 먼저 검토할 것.
       console.log(approveWithUpdatedInput({ ...toolInput, session_id: data.session_id, ...(Object.keys(origin).length ? { origin } : {}) }));
       return;
+    }
+    // 0.9.0 결정 학습: 되돌릴 수 있는 질문 5번에 1번은 추천을 숨기고 섞어 묻는다(hidden-recommendation.ts).
+    // permissionDecision 을 주면 질문 화면이 건너뛰어지므로 updatedInput 만 준다. 아래 판정은 질문 도구와 무관하다.
+    if (toolName === 'AskUserQuestion') {
+      try {
+        const r = hideRecommendations(toolInput, data.tool_use_id);
+        if (r) { console.log(JSON.stringify({ continue: true, hookSpecificOutput: { hookEventName: 'PreToolUse', updatedInput: r.input } })); return; }
+      } catch (e) { log.debug('추천 숨김 표본 실패 — 원래 질문 그대로', e); }
     }
   }
 
