@@ -5,6 +5,7 @@
  * what forgen is *already* learning so users can verify the trust layer is
  * working between Claude sessions.
  */
+import { frozenUsageSince } from './frozen-features.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { loadAllRules, scanRuleFiles } from '../store/rule-store.js';
@@ -447,6 +448,13 @@ export function renderStats(s: StatsSnapshot): string {
       const jg = summarizeJudgments(Date.now() - 30 * 86_400_000);
       if (jg.used + jg.ignored + jg.wrong > 0) lines.push(`    사용 판정 (30d)     썼다 ${jg.used} · 무시 ${jg.ignored} · 틀림 ${jg.wrong}    — 기록만(표본 검수 전까지 반영 안 함)`);
     } catch { /* 표시 실패는 무시 */ }
+    lines.push('');
+  }
+
+  // 0.8.3: 동결 기능 사용 — 0.9 제거 전에 "정말 안 쓰이는가"를 숫자로 본다.
+  {
+    const fz = frozenUsageSince(Date.now() - 30 * 86_400_000);
+    lines.push(`  동결 기능 (30일)   ${fz.length ? fz.map((f) => `${f.feature} ${f.count}`).join(' · ') : '사용 없음'}    — 0.9 에서 제거 예정`);
     lines.push('');
   }
 

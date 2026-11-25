@@ -308,6 +308,7 @@ const commands: Command[] = [
     name: 'inspect',
     description: 'v1 state inspector (profile|rules|evidence|session)',
     handler: async (args) => {
+      (await import('./core/frozen-features.js')).recordFrozenUse('inspect', { notice: true });
       const { handleInspect } = await import('./core/inspect-cli.js');
       await handleInspect(args);
     },
@@ -453,6 +454,10 @@ async function handleRuleNamespace(args: string[]): Promise<void> {
     return;
   }
 
+  if (['restore-demoted', 'revive', 'recover', 'unflag', 'unmerge', 'unmerge-cluster'].includes(sub)) {
+    const { recordFrozenUse } = await import('./core/frozen-features.js');
+    recordFrozenUse('rule-recovery', { notice: true });
+  }
   switch (sub) {
     case 'list': {
       if (rest.includes('--json')) {
