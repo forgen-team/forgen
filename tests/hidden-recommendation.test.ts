@@ -27,6 +27,8 @@ describe('고르기', () => {
     expect(h.eligible(q('npm 에 배포할까요?', ['지금 배포 (추천)', '보류']))).toBe(false);
     expect(h.eligible(q('브랜치를 push 할까요?', ['push (추천)', '보류']))).toBe(false);
     expect(h.eligible(q('여럿?', ['A (추천)', 'B'], true))).toBe(false);
+    expect(h.eligible(q('설정을 초기화할까요?', ['초기화 (추천)', '유지']))).toBe(false);
+    expect(h.eligible(q('파일을 덮어쓸까요?', ['덮어쓰기 (추천)', '새 이름']))).toBe(false);
     expect(h.eligible(q('추천 없음', ['A', 'B']))).toBe(false);
     expect(h.eligible(q('둘', ['A (추천)', 'B (Recommended)']))).toBe(false);
   });

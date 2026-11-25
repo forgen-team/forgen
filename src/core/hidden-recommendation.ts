@@ -21,7 +21,7 @@ export const HIDDEN_RATE = 5;
 const REC_MARK = /\s*\((추천|recommended)\)\s*/gi;
 const REC_TEST = /\((추천|recommended)\)/i;
 /** 되돌리기 어려운 결정 — 이런 질문에서는 추천을 숨기지 않는다. */
-const IRREVERSIBLE = /배포|푸시|머지|병합|삭제|지우|결제|발송|전송|공개|출시|릴리스|태그|publish|deploy|push|merge|delete|remove|drop|pay|send|release|tag\b|force|reset|rm\s/i;
+const IRREVERSIBLE = /배포|푸시|머지|병합|삭제|지우|결제|발송|전송|공개|출시|릴리스|태그|덮어쓰|초기화|마이그레이션|이전하|폐기|overwrite|migrat|reinit|publish|deploy|push|merge|delete|remove|drop|pay|send|release|tag\b|force|reset|rm\s/i;
 
 interface Option { label: string; description?: string; [k: string]: unknown }
 interface Question { question: string; header?: string; options?: Option[]; multiSelect?: boolean; [k: string]: unknown }

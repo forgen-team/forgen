@@ -213,6 +213,8 @@ export function summarizeDecisions(sinceMs = 0): Record<DecisionKind, number> {
 /**
  * N6(계획 2026-11-25-v1.0 §1.2): ⓐ 추천이 붙은 단일 선택 답 중 추천 그대로 / ⓑ 추천을 숨긴 단일 선택 답 중 숨긴 추천과 같음.
  * 직접 입력(free)은 분모에 넣는다(ⓐ 는 추천이 보였던 것, ⓑ 는 숨김 표본만). 표본 하한 30 미만이면 judgeable=false.
+ * 주의: ⓑ 의 모집단은 ⓐ 의 부분집합이다(되돌릴 수 있는 질문만 숨긴다). gap 은 같은 조건 질문끼리 비교한 것이 아니며,
+ * 비가역 결정(배포·삭제 등)은 ⓑ 에 들어가지 않는다. 표본은 forgen PreToolUse 훅이 도는 대화형 Claude 세션에 한정된다.
  */
 export interface DecisionScore { shownRate: number | null; shownN: number; hiddenRate: number | null; hiddenN: number; gap: number | null; judgeable: boolean }
 export function scoreDecisions(sinceMs = 0, untilMs = Number.POSITIVE_INFINITY): DecisionScore {
