@@ -116,7 +116,7 @@ export function scrubHostTail(statement: string): { text: string; removed: boole
 const PRODUCT_NOT = new Set(['Always', 'Never', 'Prefer', 'Avoid', 'Keep', 'Before', 'After', 'When', 'Make', 'Write', 'Check', 'Ensure', 'Only', 'Every', 'Each', 'Please', 'Don', 'Run', 'Read', 'Test', 'Tests', 'Commit', 'Ask']);
 const PRODUCT_RE = /^(?:\[[^\]]*\]\s*)?([A-Z][A-Za-z0-9_]{3,})(?=[\s(,:은는이가의]|$)/;
 
-function projectKeysIn(text: string, keys: Iterable<string>): string[] {
+export function projectKeysIn(text: string, keys: Iterable<string>): string[] {
   const lower = text.toLowerCase();
   return [...keys].filter((k) => k.length >= 3 && lower.includes(k));
 }

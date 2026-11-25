@@ -249,7 +249,7 @@ export function decodeProjectDir(name: string): string | null {
   return cur;
 }
 
-function isHomeDir(abs: string): boolean {
+export function isHomeDir(abs: string): boolean {
   let home = os.homedir();
   try { home = fs.realpathSync(home); } catch { /* 그대로 */ }
   // 메모리가 만들어진 기계의 홈일 수 있으므로(복사본 포함) /home/<user> 형태도 홈으로 본다.

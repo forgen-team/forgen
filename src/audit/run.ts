@@ -1,0 +1,337 @@
+/**
+ * `forgen audit` 한 회차 — 원천 읽기 → 결정적 검사 → 결과(JSON) · manifest.
+ * 쓰기는 writeRun() 하나뿐이고 그 위치는 <FORGEN_HOME>/audit/<회차>/ 다. 나머지는 읽기만 한다.
+ */
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { createHash } from 'node:crypto';
+import { performance } from 'node:perf_hooks';
+import { FORGEN_HOME, ME_RULES } from '../core/paths.js';
+import { renderSessionStartReadOnly } from '../core/v1-bootstrap.js';
+import { planSessionScopes } from '../engine/rule-project-cli.js';
+import { ruleToText } from '../renderer/rule-renderer.js';
+import { readProjectRegistry } from '../store/project-registry.js';
+import { scanRuleFiles } from '../store/rule-store.js';
+import { projectKeyFor } from '../store/rule-scope.js';
+import type { Rule } from '../store/types.js';
+import { projectKeysIn, projectSpecificSuspects } from '../way/compile.js';
+import { isHomeDir } from '../way/io.js';
+import type { WayItem } from '../way/types.js';
+import {
+  checkSameSentence, checkStale, checkTruncation, markdownUnits, mergeMixCandidates, normalizeSentence,
+  type MixCandidate, type SameSentenceGroup, type StaleRef, type TruncationResult, type Unit, type UnscopedRule,
+} from './checks.js';
+import {
+  defaultEnv, defaultFolders, gitRootOf, hostLoadFor, listMemoryDirs, readMemoryDir, SourceReader,
+  type AuditEnv, type FolderLoad, type Layer, type MemoryDir,
+} from './sources.js';
+import { estimateTokens } from './tokens.js';
+
+export const AUDIT_SCHEMA = 'forgen-audit/1' as const;
+export const MANIFEST_SCHEMA = 'forgen-audit-manifest/1' as const;
+
+export interface AuditOptions {
+  folders?: string[];
+  cwd?: string;
+  claudeDir?: string;
+  now?: Date;
+  /** 섞임 후보의 "근거가 한 프로젝트" 신호(대화 기록에서 교정 위치 찾기). 기본 켬. */
+  sessionEvidence?: boolean;
+}
+
+export interface FolderSummary {
+  folder: string;
+  projectKey: string | null;
+  memoryDir: string | null;
+  totalTokens: number;
+  byLayer: Partial<Record<Layer, number>>;
+  entries: FolderLoad['entries'];
+  forgenRules: number;
+  /** 결정적으로 줄일 수 있는 몫: 같은 문장의 남는 사본 + 낡은 줄. */
+  reducible: { duplicate: number; stale: number; total: number; pct: number };
+  /** 다른 프로젝트 섞임 후보가 이 폴더에서 차지하는 토큰(모델 판정 전). */
+  mixCandidateTokens: number;
+}
+
+export interface AuditResult {
+  schema: typeof AUDIT_SCHEMA;
+  forgenVersion: string;
+  generatedAt: string;
+  claudeDir: string;
+  forgenHome: string;
+  model: { used: false; note: string };
+  summary: {
+    recurrence: { status: 'pending'; note: string };
+    tokens: { folders: number; min: number; max: number; median: number; reduciblePctMin: number; reduciblePctMax: number; reduciblePctMedian: number };
+    findings: { sameSentence: number; mixCandidates: number; stale: number; unscopedRules: number; claudeMdOver200: number; conflicts: 'pending' };
+    truncation: { memoryDirs: number; truncated: number; tightest: { dir: string; folder: string | null; spareLines: number; spareBytes: number; spareItems: number; firstLimit: 'lines' | 'bytes' } | null };
+  };
+  folders: FolderSummary[];
+  checks: {
+    truncation: TruncationResult[];
+    claudeMdOver200: Array<{ path: string; layer: Layer; lines: number }>;
+    sameSentence: SameSentenceGroup[];
+    stale: StaleRef[];
+    mix: MixCandidate[];
+    unscopedRules: UnscopedRule[];
+  };
+  sources: { files: number; bytes: number; unreadable: Array<{ path: string; error: string }>; brokenRules: Array<{ file: string; error: string }> };
+}
+
+export interface ManifestSource { path: string; layers: string[]; bytes: number; sha256: string; error?: string }
+export interface AuditManifest {
+  schema: typeof MANIFEST_SCHEMA;
+  forgenVersion: string;
+  runId: string;
+  generatedAt: string;
+  claudeDir: string;
+  forgenHome: string;
+  folders: string[];
+  sources: ManifestSource[];
+  /** 원천 목록(경로·크기·해시) 전체의 해시. 같으면 같은 원천. */
+  sourcesDigest: string;
+  /** 결과(생성 시각 제외)의 해시. 같은 원천이면 같아야 한다. */
+  resultDigest: string;
+  model: { used: false };
+}
+
+export interface AuditRun { result: AuditResult; manifest: Omit<AuditManifest, 'runId'>; timing: Record<string, number> }
+
+export function forgenVersion(): string {
+  try { return (JSON.parse(fs.readFileSync(new URL('../../package.json', import.meta.url), 'utf-8')) as { version?: string }).version ?? ''; } catch { return ''; }
+}
+
+const sha = (s: string) => createHash('sha256').update(s).digest('hex');
+const median = (xs: number[]) => { if (!xs.length) return 0; const s = [...xs].sort((a, b) => a - b); const m = s.length >> 1; return s.length % 2 ? s[m] : Math.round((s[m - 1] + s[m]) / 2); };
+const GENERIC_KEYS = new Set(['home', 'workspace', 'projects', 'project', 'users', 'src', 'docs', 'test', 'tests', 'tmp', 'claude', 'memory']);
+
+function ruleItem(r: Rule): WayItem {
+  return { id: r.rule_id, kind: 'rule', statement: r.policy, applies_when: '', why: '', projects: r.projects ?? [], strength: r.strength, provenance: { kind: 'mined' }, enforceable: false };
+}
+
+/** 원천을 읽어 결정적 검사까지. 아무 파일도 쓰지 않는다. */
+export function runAudit(opts: AuditOptions = {}): AuditRun {
+  const timing: Record<string, number> = {};
+  let t0 = performance.now();
+  const lap = (k: string) => { const t = performance.now(); timing[k] = Math.round(t - t0); t0 = t; };
+  const env: AuditEnv = defaultEnv(opts.claudeDir);
+  const reader = new SourceReader();
+  const folders = (opts.folders?.length ? opts.folders.map((f) => path.resolve(f)) : defaultFolders(env, opts.cwd ?? process.cwd()));
+  const uniqFolders = [...new Set(folders.map((f) => { try { return fs.realpathSync(f); } catch { return f; } }))].sort();
+
+  // 1. 호스트 기억 층 + 메모 폴더
+  const memory = new Map<string, MemoryDir>();
+  const hostLoads = uniqFolders.map((f) => hostLoadFor(reader, env, f, memory));
+  for (const d of listMemoryDirs(env.claudeDir)) if (!memory.has(d)) memory.set(d, readMemoryDir(reader, d));
+  lap('sources');
+
+  // 2. forgen 룰 + 폴더별 세션 시작 렌더(상태를 쓰지 않는 경로)
+  const scan = scanRuleFiles();
+  for (const f of (() => { try { return fs.readdirSync(ME_RULES).filter((n) => n.endsWith('.json')).sort(); } catch { return []; } })()) reader.read(path.join(ME_RULES, f));
+  const active = scan.rules.filter((r) => r.status === 'active');
+  const ruleById = new Map(active.map((r) => [r.rule_id, r]));
+  const loads: FolderLoad[] = hostLoads.map((h) => {
+    let forgen = { tokens: 0, ruleIds: [] as string[] };
+    try {
+      const r = renderSessionStartReadOnly(h.folder);
+      forgen = { tokens: estimateTokens(r.text), ruleIds: [...r.includedRuleIds].sort() };
+    } catch { /* 렌더 실패는 0 으로 */ }
+    const hostTokens = h.entries.filter((e) => e.always).reduce((n, e) => n + e.tokens, 0);
+    let projectKey: string | null = null;
+    try { projectKey = projectKeyFor(h.folder); } catch { /* 없음 */ }
+    return { ...h, projectKey, forgen, totalTokens: hostTokens + forgen.tokens };
+  });
+  lap('forgenRender');
+
+  // 3. 비교 단위
+  const layerOf = new Map<string, Layer>();
+  for (const l of loads) for (const e of l.entries) if (!layerOf.has(e.path)) layerOf.set(e.path, e.layer);
+  const instructionUnits: Unit[] = [];
+  for (const [p, layer] of [...layerOf].sort((a, b) => (a[0] < b[0] ? -1 : 1))) {
+    const sf = reader.files.get(p);
+    if (!sf) continue;
+    const m = layer === 'memory-index' ? [...memory.values()].find((x) => x.index?.path === p) : undefined;
+    instructionUnits.push(...markdownUnits(sf, layer, m ? m.loadedLines : Infinity));
+  }
+  // 잘린 뒤의 색인 줄도 같은 문장·낡음 대상(세션 시작엔 안 실림)
+  for (const m of [...memory.values()].sort((a, b) => (a.dir < b.dir ? -1 : 1))) {
+    if (!m.index || m.index.error) continue;
+    const loadedHere = layerOf.has(m.index.path);
+    instructionUnits.push(...markdownUnits(m.index, 'memory-index').filter((u) => !loadedHere || u.line > m.loadedLines));
+  }
+  const ruleUnits: Unit[] = active.map((r) => ({ text: r.policy, norm: normalizeSentence(r.policy), path: path.join(ME_RULES, `${r.rule_id}.json`), line: 0, layer: 'forgen-rule' as const, ruleId: r.rule_id, tokens: estimateTokens(ruleToText(r)) }));
+  const auditedMemory = new Set(loads.map((l) => l.memoryDir).filter(Boolean));
+  const topicUnits: Unit[] = [];
+  for (const m of memory.values()) if (auditedMemory.has(m.dir)) for (const t of m.topics) topicUnits.push(...markdownUnits(t, 'memory-topic'));
+
+  // 4. 검사
+  const truncation = [...memory.values()].map(checkTruncation).filter((x): x is TruncationResult => !!x).sort((a, b) => (a.dir < b.dir ? -1 : 1));
+  const sameSentence = checkSameSentence([...instructionUnits, ...ruleUnits, ...topicUnits]);
+  const rootCache = new Map<string, string | null>();
+  const rootOf = (file: string) => { const d = path.dirname(file); if (!rootCache.has(d)) rootCache.set(d, gitRootOf(d, env.home)); return rootCache.get(d) ?? null; };
+  const memFolder = new Map<string, string | null>();
+  for (const m of memory.values()) if (m.index) memFolder.set(m.index.path, m.folder ? (gitRootOf(m.folder, env.home) ?? m.folder) : null);
+  const projectDirOf = (u: Unit): string | null => {
+    if (u.layer === 'memory-index') return memFolder.get(u.path) ?? null;
+    if (u.layer === 'project' || u.layer === 'project-local' || u.layer === 'project-rules' || u.layer === 'agents') return rootOf(u.path) ?? path.dirname(u.path);
+    return null;
+  };
+  const stale = checkStale([...instructionUnits, ...ruleUnits], { home: env.home, projectDirOf });
+
+  // 섞임 후보: 전역 층(관리형·사용자·사용자 룰·그 import, 홈 메모 색인, forgen 전역 룰)
+  const keys = new Set<string>();
+  for (const r of scan.rules) for (const p of r.projects ?? []) keys.add(p.toLowerCase());
+  try { for (const k of Object.keys(readProjectRegistry().projects)) keys.add(k.toLowerCase()); } catch { /* 없음 */ }
+  for (const l of loads) { if (l.projectKey) keys.add(l.projectKey); if (l.gitRoot) keys.add(path.basename(l.gitRoot).toLowerCase()); }
+  keys.delete(path.basename(env.home).toLowerCase());
+  for (const k of [...keys]) if (k.length < 4 || GENERIC_KEYS.has(k)) keys.delete(k);
+  const globalFiles = new Set<string>();
+  for (const l of loads) for (const e of l.entries) {
+    if (e.layer === 'managed' || e.layer === 'user' || (e.layer === 'user-rules' && e.always)) globalFiles.add(e.path);
+    if (e.layer === 'import' && e.via && globalFiles.has(e.via)) globalFiles.add(e.path);
+  }
+  const homeMemory = [...memory.values()].filter((m) => m.folder && (m.folder === env.home || isHomeDir(m.folder)));
+  for (const m of homeMemory) if (m.index) globalFiles.add(m.index.path);
+  const mixRaw: MixCandidate[] = [];
+  const mixOf = (u: Unit, project: string | null, why: string) => mixRaw.push({ path: u.path, line: u.line, layer: u.layer, ...(u.ruleId ? { ruleId: u.ruleId } : {}), text: u.text, project, why: [why], tokens: u.tokens });
+  const sortedKeys = [...keys].sort();
+  for (const u of instructionUnits) {
+    if (!globalFiles.has(u.path)) continue;
+    const hit = projectKeysIn(u.text, sortedKeys);
+    if (hit.length === 1) mixOf(u, hit[0], `프로젝트 "${hit[0]}" 언급`);
+  }
+  const globalRules = ruleUnits.filter((u) => { const r = ruleById.get(u.ruleId ?? ''); return r && !r.projects?.length && r.strength !== 'hard'; });
+  const unitByRule = new Map(globalRules.map((u) => [u.ruleId, u]));
+  for (const u of globalRules) {
+    const hit = projectKeysIn(u.text, sortedKeys);
+    if (hit.length === 1) mixOf(u, hit[0], `프로젝트 "${hit[0]}" 언급`);
+  }
+  const phantom: WayItem[] = sortedKeys.map((k) => ({ id: `key:${k}`, kind: 'habit', statement: '', applies_when: '', why: '', projects: [k], strength: 'default', provenance: { kind: 'mined' }, enforceable: false }));
+  for (const s of projectSpecificSuspects([...globalRules.map((u) => ruleItem(ruleById.get(u.ruleId ?? '') as Rule)), ...phantom])) {
+    const u = unitByRule.get(s.id);
+    if (u && !s.why.startsWith('프로젝트')) mixOf(u, null, s.why);
+  }
+  if (opts.sessionEvidence !== false) {
+    try {
+      for (const p of planSessionScopes({ projectsDir: path.join(env.claudeDir, 'projects') })) {
+        const u = unitByRule.get(p.rule.rule_id);
+        if (u && p.projects.length === 1) mixOf(u, p.projects[0], `근거 교정 ${p.sessions}세션이 모두 "${p.projects[0]}" 안`);
+      }
+    } catch { /* 대화 기록 문제는 이 신호만 빠진다 */ }
+  }
+  const mix = mergeMixCandidates(mixRaw);
+
+  // paths: 없는 룰, 200줄 넘는 CLAUDE.md
+  const ruleFolders = new Map<string, number>();
+  for (const l of loads) for (const e of l.entries) if ((e.layer === 'user-rules' || e.layer === 'project-rules') && e.always) ruleFolders.set(e.path, (ruleFolders.get(e.path) ?? 0) + 1);
+  const unscopedRules: UnscopedRule[] = [...ruleFolders].map(([p, n]) => {
+    const sf = reader.files.get(p);
+    return { path: p, layer: layerOf.get(p) ?? 'project-rules', tokens: sf ? estimateTokens(sf.text) : 0, lines: sf?.lines ?? 0, folders: n };
+  }).sort((a, b) => (a.path < b.path ? -1 : 1));
+  const mdLayers = new Set<Layer>(['managed', 'user', 'project', 'project-local', 'agents', 'import']);
+  const claudeMdOver200 = [...layerOf].filter(([p, l]) => mdLayers.has(l) && (reader.files.get(p)?.lines ?? 0) > 200)
+    .map(([p, l]) => ({ path: p, layer: l, lines: reader.files.get(p)?.lines ?? 0 })).sort((a, b) => (a.path < b.path ? -1 : 1));
+
+  // 5. 폴더별 토큰과 결정적으로 줄일 몫
+  const staleKeys = new Set(stale.map((s) => `${s.ruleId ?? s.path}:${s.line}`));
+  const folderSummaries: FolderSummary[] = loads.map((l) => {
+    const always = new Set(l.entries.filter((e) => e.always).map((e) => e.path));
+    const memIdx = l.memoryDir ? memory.get(l.memoryDir) : undefined;
+    const included = new Set(l.forgen.ruleIds);
+    const loaded = (u: { path: string; line: number; ruleId?: string; layer: string }) =>
+      u.ruleId ? included.has(u.ruleId) : always.has(u.path) && (u.layer !== 'memory-index' || !memIdx || u.line <= memIdx.loadedLines);
+    const unitsHere = [...instructionUnits, ...ruleUnits].filter(loaded);
+    const byNorm = new Map<string, Unit[]>();
+    for (const u of unitsHere) if (u.norm.length >= 20) { const g = byNorm.get(u.norm); if (g) g.push(u); else byNorm.set(u.norm, [u]); }
+    const counted = new Set<string>();
+    let duplicate = 0;
+    for (const g of byNorm.values()) {
+      const distinct = new Map<string, Unit>();
+      for (const u of g) distinct.set(`${u.ruleId ?? u.path}:${u.line}`, u);
+      if (new Set([...distinct.values()].map((u) => u.ruleId ?? u.path)).size < 2) continue;
+      [...distinct.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1)).slice(1).forEach(([k, u]) => { counted.add(k); duplicate += u.tokens; });
+    }
+    let staleTok = 0;
+    for (const u of unitsHere) { const k = `${u.ruleId ?? u.path}:${u.line}`; if (staleKeys.has(k) && !counted.has(k)) { counted.add(k); staleTok += u.tokens; } }
+    const mixTok = mix.filter((c) => loaded(c) && c.project !== l.projectKey).reduce((n, c) => n + c.tokens, 0);
+    const byLayer: Partial<Record<Layer, number>> = {};
+    for (const e of l.entries) if (e.always) byLayer[e.layer] = (byLayer[e.layer] ?? 0) + e.tokens;
+    if (l.forgen.tokens) byLayer['forgen-render'] = l.forgen.tokens;
+    const total = duplicate + staleTok;
+    return {
+      folder: l.folder, projectKey: l.projectKey, memoryDir: l.memoryDir, totalTokens: l.totalTokens, byLayer, entries: l.entries,
+      forgenRules: l.forgen.ruleIds.length,
+      reducible: { duplicate, stale: staleTok, total, pct: l.totalTokens ? Math.round((total / l.totalTokens) * 1000) / 10 : 0 },
+      mixCandidateTokens: mixTok,
+    };
+  });
+  lap('checks');
+
+  const tokens = folderSummaries.map((f) => f.totalTokens);
+  const pcts = folderSummaries.map((f) => f.reducible.pct);
+  const tight = [...truncation].sort((a, b) => a.spareItems - b.spareItems || (a.dir < b.dir ? -1 : 1))[0];
+  const files = [...reader.files.values()].sort((a, b) => (a.path < b.path ? -1 : 1));
+  const result: AuditResult = {
+    schema: AUDIT_SCHEMA,
+    forgenVersion: forgenVersion(),
+    generatedAt: (opts.now ?? new Date()).toISOString(),
+    claudeDir: env.claudeDir,
+    forgenHome: FORGEN_HOME,
+    model: { used: false, note: '모델 판정(같은 뜻 중복·부딪힘·섞임 확정·같은 말 다시 하기)은 다음 버전에서. 지금은 결정적 검사만이고 아무것도 기기 밖으로 보내지 않는다.' },
+    summary: {
+      recurrence: { status: 'pending', note: '대화 기록 재생(같은 말 다시 하기)은 곧 — 다음 버전' },
+      tokens: { folders: tokens.length, min: tokens.length ? Math.min(...tokens) : 0, max: tokens.length ? Math.max(...tokens) : 0, median: median(tokens), reduciblePctMin: pcts.length ? Math.min(...pcts) : 0, reduciblePctMax: pcts.length ? Math.max(...pcts) : 0, reduciblePctMedian: pcts.length ? [...pcts].sort((a, b) => a - b)[pcts.length >> 1] : 0 },
+      findings: { sameSentence: sameSentence.length, mixCandidates: mix.length, stale: stale.length, unscopedRules: unscopedRules.length, claudeMdOver200: claudeMdOver200.length, conflicts: 'pending' },
+      truncation: { memoryDirs: truncation.length, truncated: truncation.filter((t) => t.overLines || t.overBytes).length, tightest: tight ? { dir: tight.dir, folder: tight.folder, spareLines: tight.spareLines, spareBytes: tight.spareBytes, spareItems: tight.spareItems, firstLimit: tight.firstLimit } : null },
+    },
+    folders: folderSummaries,
+    checks: { truncation, claudeMdOver200, sameSentence, stale, mix, unscopedRules },
+    sources: {
+      files: files.length, bytes: files.reduce((n, f) => n + f.bytes, 0),
+      unreadable: files.filter((f) => f.error).map((f) => ({ path: f.path, error: f.error ?? '' })),
+      brokenRules: [...scan.broken].sort((a, b) => (a.file < b.file ? -1 : 1)),
+    },
+  };
+  const layersByPath = new Map<string, Set<string>>();
+  const tag = (p: string, layer: string) => { const s = layersByPath.get(p) ?? new Set<string>(); s.add(layer); layersByPath.set(p, s); };
+  for (const l of loads) for (const e of l.entries) tag(e.path, e.layer);
+  for (const m of memory.values()) {
+    if (m.index) tag(m.index.path, 'memory-index');
+    for (const t of m.topics) tag(t.path, 'memory-topic');
+  }
+  const sources: ManifestSource[] = files.map((f) => ({
+    path: f.path,
+    layers: [...(layersByPath.get(f.path) ?? new Set(f.path.startsWith(ME_RULES) ? ['forgen-rule'] : ['other']))].sort(),
+    bytes: f.bytes, sha256: f.sha256, ...(f.error ? { error: f.error } : {}),
+  }));
+  const manifest = {
+    schema: MANIFEST_SCHEMA, forgenVersion: result.forgenVersion, generatedAt: result.generatedAt,
+    claudeDir: env.claudeDir, forgenHome: FORGEN_HOME, folders: uniqFolders, sources,
+    sourcesDigest: sha(JSON.stringify(sources)), resultDigest: resultDigest(result), model: { used: false as const },
+  };
+  return { result, manifest, timing };
+}
+
+/** 생성 시각을 뺀 결과의 해시 — 같은 원천이면 같은 값. */
+export function resultDigest(r: AuditResult): string {
+  const { generatedAt: _g, ...rest } = r;
+  return sha(JSON.stringify(rest));
+}
+
+/** <FORGEN_HOME>/audit/<회차>/ 에 manifest.json 과 audit.html 을 쓴다(권한 600, 폴더 700). */
+export function writeRun(run: AuditRun, html: (r: AuditResult, runId: string) => string): { dir: string; runId: string; manifestPath: string; htmlPath: string } {
+  const base = path.join(FORGEN_HOME, 'audit');
+  const stamp = run.result.generatedAt.replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
+  let runId = `${stamp}-${run.manifest.sourcesDigest.slice(0, 8)}`;
+  for (let i = 2; fs.existsSync(path.join(base, runId)); i++) runId = `${stamp}-${run.manifest.sourcesDigest.slice(0, 8)}-${i}`;
+  const dir = path.join(base, runId);
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  try { fs.chmodSync(base, 0o700); fs.chmodSync(dir, 0o700); } catch { /* 윈도우 등 */ }
+  const manifest: AuditManifest = { ...run.manifest, runId };
+  const manifestPath = path.join(dir, 'manifest.json');
+  const htmlPath = path.join(dir, 'audit.html');
+  fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o600 });
+  fs.writeFileSync(htmlPath, html(run.result, runId), { mode: 0o600 });
+  try { fs.chmodSync(manifestPath, 0o600); fs.chmodSync(htmlPath, 0o600); } catch { /* 윈도우 등 */ }
+  return { dir, runId, manifestPath, htmlPath };
+}
