@@ -4,6 +4,7 @@ import { ME_SOLUTIONS, ME_RULES } from '../core/paths.js';
 import { resolveScope } from '../core/scope-resolver.js';
 import { serializeSolutionV3, extractSolutionTags, DEFAULT_EVIDENCE, slugify } from './solution-format.js';
 import type { SolutionV3, SolutionType } from './solution-format.js';
+import { mutateSolutionFile } from './solution-writer.js';
 
 export interface CompoundInsight {
   id: string;
@@ -15,11 +16,50 @@ export interface CompoundInsight {
   classification: 'personal' | 'team';
   /** 분류 근거 */
   reason: string;
-  source: 'session' | 'manual';
+  /** session = 예전 경로, manual = 사람이 직접 추가, auto = 자동 추출(러너, 0.8.0 K3) */
+  source: 'session' | 'manual' | 'auto';
   /** 적용 조건·출처 (솔루션 `## Context` 칸). 없으면 빈 칸. */
   context?: string;
   /** 적용 프로젝트 키들 (없으면 전역). */
   projects?: string[];
+  /** 0.8.0 K2: 추출된 세션 ID (재관측 판정). */
+  sessionId?: string;
+  /** 0.8.0 K1: 대화 요약에 실제로 있던 근거 인용. */
+  grounding?: { kind: 'user' | 'assistant'; quote: string };
+}
+
+const MAX_EVIDENCE_SESSIONS = 20;
+
+/**
+ * 0.8.0 K2: 같은 이름의 자동 추출 교훈이 다른 세션에서 다시 나오면 새 파일을 만들지 않고 근거 세션을 더한다.
+ * 이전에 없던 세션일 때만 재추출 +1. 같은 세션의 증분 추출은 세지 않는다. 상태는 바꾸지 않는다(검증은 오너 승인).
+ *
+ * "같은 교훈"의 판정은 추출 모델이 기존 이름을 그대로 쓴 것이다(프롬프트가 그렇게 시킨다). 본문 유사도는 쓰지 않는다:
+ * 2026-11-25 실측에서 모델이 같은 교훈이라며 이름을 재사용한 쌍의 contentSimilarity 가 0.10·0.13 이었고,
+ * 무관한 솔루션 7,140쌍의 상위 1% 가 0.074, 최댓값 0.152 라 어떤 임계로도 가를 수 없었다.
+ * 잘못 합쳐도 검증은 오너 승인을 거치고, 승인 화면에 세션별 근거 인용이 나란히 보인다(grounding).
+ * 돌려주는 값: 'reobserved' | 'same-session' | null(재관측 대상 아님 — 사람이 추가했거나 세션이 없음, 은퇴).
+ */
+function recordReobservation(filePath: string, insight: CompoundInsight): 'reobserved' | 'same-session' | null {
+  if (insight.source !== 'auto' || !insight.sessionId) return null;
+  let outcome: 'reobserved' | 'same-session' | null = null;
+  mutateSolutionFile(filePath, (sol) => {
+    const fm = sol.frontmatter;
+    if (fm.status === 'retired') return false;
+    // 0.8.0 이전 솔루션은 세션 기록이 없다. 러너가 Context 에 남긴 "세션 xxxxxxxx" 표식으로 원래 세션을 되살린다
+    // (앞 8자리만 남아 있어 'legacy:' 접두로 구분). 같은 세션의 재실행을 재관측으로 세지 않기 위해서다.
+    const legacy = /출처: .+ 세션 ([0-9a-f]{8}) \(\d{4}-\d{2}-\d{2}\), auto-compound/.exec(sol.context ?? '')?.[1];
+    const sessions = fm.evidenceSessions?.length ? fm.evidenceSessions : legacy ? [`legacy:${legacy}`] : [];
+    const sid = insight.sessionId as string;
+    const seen = sessions.some((s) => s === sid || (s.startsWith('legacy:') && sid.startsWith(s.slice(7))));
+    if (seen) { outcome = 'same-session'; return false; }
+    fm.evidenceSessions = [...sessions, sid].slice(-MAX_EVIDENCE_SESSIONS);
+    fm.evidence = { ...fm.evidence, reExtracted: (fm.evidence?.reExtracted ?? 0) + 1 };
+    if (insight.grounding) fm.grounding = [...(fm.grounding ?? []), { ...insight.grounding, session: insight.sessionId }].slice(-5);
+    outcome = 'reobserved';
+    return true;
+  });
+  return outcome;
 }
 
 /** 키워드 기반으로 인사이트를 개인/팀으로 자동 분류 */
@@ -89,6 +129,8 @@ export async function runCompoundLoop(cwd: string, insights: CompoundInsight[]):
           }
         }
         if (!differentFromRetired) {
+          const re = recordReobservation(destPath, insight);
+          if (re === 'reobserved') { saved.push(`${insight.scope}/${insight.type}: ${insight.title} (re-observed in another session)`); continue; }
           skipped.push(`${insight.title}: already exists`);
           continue;
         }
@@ -168,9 +210,12 @@ function formatInsight(insight: CompoundInsight, name?: string): string {
       evidence: { ...DEFAULT_EVIDENCE },
       created: today,
       updated: today,
+      statusSince: today,
       supersedes: null,
       extractedBy: insight.source === 'manual' ? 'manual' : 'auto',
       ...(insight.projects?.length ? { projects: insight.projects } : {}),
+      ...(insight.sessionId ? { evidenceSessions: [insight.sessionId] } : {}),
+      ...(insight.grounding ? { grounding: [{ ...insight.grounding, ...(insight.sessionId ? { session: insight.sessionId } : {}) }] } : {}),
     },
     context: insight.context ?? '',
     content: insight.content,
@@ -257,6 +302,10 @@ export async function handleCompound(args: string[]): Promise<void> {
     forgen compound --lifecycle [--apply]
                                      Preview promotion/demotion/circuit-breaker changes (--apply to write)
     forgen compound --verify <name>  Manually promote solution to verified
+    forgen compound review [--approve <name...>]
+                                     Lessons re-observed in 2+ sessions, waiting for your approval (only approval makes verified)
+    forgen compound relabel [--apply|--undo]
+                                     Fix auto-extracted solutions that were labelled manual (preview by default)
 
   Export/Import (whole store, tar.gz):
     forgen compound export [--output path]
@@ -435,7 +484,7 @@ export async function handleCompound(args: string[]): Promise<void> {
     const name = args[1];
     if (!name || name.startsWith('--')) { console.log('  Usage: forgen compound reopen <solution-name>\n'); return; }
     const { reopenSolution } = await import('./compound-lifecycle.js');
-    const r = reopenSolution(name, process.cwd());
+    const r = reopenSolution(name, process.cwd(), { keepLevel: true }); // 오너가 직접 친 명령 — 은퇴 전 수준 유지
     if (r.ok) console.log(`\n  ✓ Reopened: ${name} (이전 은퇴 사유: ${r.previous}) → ${r.status ?? 'candidate'}\n`);
     else console.log(`\n  Reopen 실패: ${name} (${r.reason})\n`);
     return;
@@ -445,6 +494,14 @@ export async function handleCompound(args: string[]): Promise<void> {
     if (!name || name.startsWith('--')) { console.log('  Usage: forgen compound deactivate <solution-name>   (사용자가 끔 — retiredReason=manual, 자동 복귀 없음)\n'); return; }
     const { deactivateSolution } = await import('./compound-lifecycle.js');
     console.log(deactivateSolution(name) ? `\n  ✓ Deactivated: ${name} (manual). 되돌리기: forgen compound reopen ${name}\n` : `\n  Deactivate 실패: ${name} (없거나 이미 은퇴)\n`);
+    return;
+  }
+  if (args[0] === 'review') {
+    (await import('./solution-review.js')).handleReview(args.slice(1));
+    return;
+  }
+  if (args[0] === 'relabel') {
+    (await import('./solution-review.js')).handleRelabel(args.slice(1));
     return;
   }
   if (args[0] === 'retired') {
@@ -558,7 +615,7 @@ export async function handleCompound(args: string[]): Promise<void> {
   const knownFlags = [
     '--solution', '--rule', '--convention', '--pattern', '--to', '--pause-auto', '--resume-auto',
     '--lifecycle', '--apply', '--verify', '--save', '--interactive', '--project',
-    'list', 'inspect', 'remove', 'rollback', 'retag', 'lifecycle', 'habits', '--habits', 'reopen', 'retired', 'deactivate',
+    'list', 'inspect', 'remove', 'rollback', 'retag', 'lifecycle', 'habits', '--habits', 'reopen', 'retired', 'deactivate', 'review', 'relabel',
     '--list', '--inspect', '--remove', '--rollback', '--retag', '--since', 'interactive',
     'export', 'import', '--output', '--out', '--dry-run',
   ];
@@ -603,9 +660,23 @@ async function handleManualAdd(
   // --context <text>: 값이 위치 인자로 새지 않도록 플래그와 함께 제거.
   const ctxIdx = args.indexOf('--context');
   const context = ctxIdx !== -1 ? args[ctxIdx + 1] : undefined;
-  const prjIdx = args.indexOf('--project');
-  const projectOpt = prjIdx !== -1 && args[prjIdx + 1] && !args[prjIdx + 1].startsWith('--') ? args[prjIdx + 1].toLowerCase() : undefined;
-  const argsNoPrj = prjIdx !== -1 ? [...args.slice(0, prjIdx), ...args.slice(prjIdx + 2)] : args;
+  // 0.8.0 K1~K3: 러너가 넘기는 값 — 출처(--source auto), 세션(--session), 근거 인용(--quote-kind, --quote). 값과 함께 뺀다.
+  let rest = args;
+  const takeOpt = (name: string): string | undefined => {
+    const i = rest.indexOf(name);
+    if (i === -1) return undefined;
+    const v = rest[i + 1];
+    if (v === undefined || v.startsWith('--')) { rest = [...rest.slice(0, i), ...rest.slice(i + 1)]; return undefined; }
+    rest = [...rest.slice(0, i), ...rest.slice(i + 2)];
+    return v;
+  };
+  const sourceOpt = takeOpt('--source');
+  const sessionOpt = takeOpt('--session');
+  const quoteKind = takeOpt('--quote-kind');
+  const quoteOpt = takeOpt('--quote');
+  const prjIdx = rest.indexOf('--project');
+  const projectOpt = prjIdx !== -1 && rest[prjIdx + 1] && !rest[prjIdx + 1].startsWith('--') ? rest[prjIdx + 1].toLowerCase() : undefined;
+  const argsNoPrj = prjIdx !== -1 ? [...rest.slice(0, prjIdx), ...rest.slice(prjIdx + 2)] : rest;
   const ctxIdx2 = argsNoPrj.indexOf('--context');
   const argsNoCtx = ctxIdx2 !== -1 ? [...argsNoPrj.slice(0, ctxIdx2), ...argsNoPrj.slice(ctxIdx2 + 2)] : argsNoPrj;
   const positionalArgs = argsNoCtx.slice(argsNoCtx.indexOf(typeFlag) + 1).filter(a => !a.startsWith('--'));
@@ -628,9 +699,11 @@ async function handleManualAdd(
     scope: scopeTarget,
     classification,
     reason,
-    source: 'manual',
+    source: sourceOpt === 'auto' ? 'auto' : 'manual',
     ...(context && !context.startsWith('--') ? { context: context.slice(0, 600) } : {}),
     ...(projectOpt ? { projects: [projectOpt] } : {}),
+    ...(sessionOpt && /^[A-Za-z0-9._-]{1,128}$/.test(sessionOpt) ? { sessionId: sessionOpt } : {}),
+    ...(quoteOpt && (quoteKind === 'user' || quoteKind === 'assistant') ? { grounding: { kind: quoteKind, quote: quoteOpt.slice(0, 300) } } : {}),
   };
 
   const result = await runCompoundLoop(cwd, [insight]);

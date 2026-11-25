@@ -42,6 +42,15 @@ export interface SolutionFrontmatter {
   /** 은퇴 사유 (D6). stale=기간 경과, contradicted=반증, manual=사용자 지정. 없으면 사유 미상(구버전 은퇴). */
   retiredReason?: RetiredReason;
   retiredAt?: string;
+  /**
+   * 0.8.0 K4: 지금 상태가 된 날(YYYY-MM-DD). 승급 최소 경과는 이 값(없으면 created)으로 잰다.
+   * `updated` 는 마지막 활동이라 카운터가 오를 때마다 바뀐다 — 그것으로 재면 쓰일수록 승급 시계가 0 이 됐다.
+   */
+  statusSince?: string;
+  /** 0.8.0 K2: 이 교훈이 추출된 서로 다른 세션 ID(최대 20). 재관측의 근거. 검증(verified)은 오너 승인으로만. */
+  evidenceSessions?: string[];
+  /** 0.8.0 K1: 자동 추출의 근거 — 대화 요약에 실제로 있던 원문 인용. user = 사용자 발화, assistant = 어시스턴트 발화. */
+  grounding?: Array<{ kind: 'user' | 'assistant'; quote: string; session?: string }>;
 }
 
 export type RetiredReason = 'stale' | 'contradicted' | 'manual';

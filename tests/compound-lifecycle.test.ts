@@ -307,10 +307,10 @@ describe('MIN_AGE_FOR_PROMOTION (age gate)', () => {
     expect(result.promoted.some(p => p.includes('age-block-cand'))).toBe(false);
   });
 
-  it('candidate는 생성일이 14일 이상이면 promotion이 허용된다', () => {
+  it('candidate는 조건·기간을 채워도 자동으로 verified 가 되지 않는다 (0.8.0: 검증은 오너 승인으로만)', () => {
     const fifteenDaysAgo = new Date(Date.now() - 15 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
     createSolution(SOLUTIONS_DIR, 'age-pass-cand', 'candidate', { reflected: 4, sessions: 3, negative: 0 }, 0.6, fifteenDaysAgo);
     const result = runLifecycleCheck();
-    expect(result.promoted.some(p => p.includes('age-pass-cand'))).toBe(true);
+    expect(result.promoted.some(p => p.includes('age-pass-cand'))).toBe(false);
   });
 });

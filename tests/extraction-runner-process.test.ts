@@ -239,3 +239,26 @@ describe('A5(낮음) 손상 복구', () => {
     expect(r2.stdout.trim()).toBe('1');
   });
 });
+
+describe('0.8.0 K1 근거 인용 (실제 러너 프로세스)', () => {
+  const body = '이 상황에서는 이렇게 한다. 근거와 주의를 포함한 충분히 긴 본문입니다. 테스트 전용 솔루션';
+  const read = (name: string) => fs.readFileSync(path.join(forgen, 'me', 'solutions', `${name}.md`), 'utf-8');
+  it('빈 범위 칸을 생략해 칸이 밀려도 근거 종류·인용을 찾는다', () => {
+    writeTranscript(3); login(true);
+    const r = runner('k1-shift', { final: true, extra: { FAKE_SOLUTION_LINE: `forgen compound --solution "k1-shifted" "${body}" "조건" "user" "로그인 처리 흐름을 정리하고 세션 만료 시 재시도 방식"` } });
+    expect(r.status, r.stderr).toBe(0);
+    expect(read('k1-shifted')).toContain('kind: user');
+    expect(read('k1-shifted')).toContain('extractedBy: auto');
+  });
+  it('요약에 없는 인용은 저장하지 않고 사유를 남긴다', () => {
+    writeTranscript(3); login(true);
+    runner('k1-fake', { final: true, extra: { FAKE_SOLUTION_LINE: `forgen compound --solution "k1-invented" "${body}" "조건" "" "user" "대화에 전혀 없던 지어낸 문장입니다 정말로"` } });
+    expect(solutionFiles()).not.toContain('k1-invented.md');
+    expect(events().some((e) => e.ungroundedDropped === 1)).toBe(true);
+  });
+  it('인용이 없는 옛 형식 출력은 저장하지 않는다', () => {
+    writeTranscript(3); login(true);
+    runner('k1-old', { final: true, extra: { FAKE_SOLUTION_LINE: `forgen compound --solution "k1-oldformat" "${body}" "조건"` } });
+    expect(solutionFiles()).not.toContain('k1-oldformat.md');
+  });
+});

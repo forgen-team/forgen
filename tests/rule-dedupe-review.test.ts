@@ -164,4 +164,20 @@ describe('D7 검토 대기', () => {
     expect(takeReviewNotice(now + 3600_000)).toBeNull();
     expect(takeReviewNotice(now + 86_400_000 + 1)).toContain('3개');
   });
+
+  it('0.8.0: 승인 대기 솔루션 3개 이상이면 같은 안내 한 줄에 합친다(룰이 임계 미만이어도)', () => {
+    const dir = path.join(F, 'me', 'solutions');
+    fs.mkdirSync(dir, { recursive: true });
+    for (const n of ['s1', 's2', 's3']) {
+      fs.writeFileSync(path.join(dir, `${n}.md`), `---\nname: "${n}"\nversion: 1\nstatus: "candidate"\nconfidence: 0.5\ntype: "pattern"\nscope: "me"\ntags: ["a"]\nidentifiers: []\nevidence:\n  injected: 0\n  reflected: 0\n  negative: 0\n  sessions: 0\n  reExtracted: 1\ncreated: "2026-11-01"\nupdated: "2026-11-01"\nsupersedes: null\nextractedBy: "auto"\nevidenceSessions: ["a", "b"]\n---\n\n## Context\nc\n\n## Content\nbody\n`);
+    }
+    const now = Date.parse('2026-11-25T12:00:00Z');
+    const msg = takeReviewNotice(now);
+    expect(msg).toContain('승인 대기 솔루션 3개');
+    expect(msg).not.toContain('검토 대기 룰');
+    for (const id of ['g1', 'g2', 'g3']) { const r = rule(id); saveRule({ ...r, lifecycle: { ...r.lifecycle!, phase: 'flagged' } }); }
+    const both = takeReviewNotice(now + 86_400_000 + 1);
+    expect(both).toContain('검토 대기 룰 3개');
+    expect(both).toContain('승인 대기 솔루션 3개');
+  });
 });

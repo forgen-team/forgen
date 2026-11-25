@@ -69,12 +69,12 @@ describe('reopen', () => {
   const lifecycle = (body: string) => node(`import * as m from ${JSON.stringify(path.join(DIST, 'engine', 'compound-lifecycle.js'))}; ${body}`);
   const same = '레디스 캐시 무효화 시점을 명시하고 ttl 을 짧게 둔다 만료가 길면 오래된 값이 남는다 주의 근거 포함';
 
-  it('내용이 비슷할 때만 복귀하고, verified 등급을 지킨다', () => {
+  it('내용이 비슷할 때만 복귀하고, 자동 복귀는 candidate 로만 (0.8.0 §8.1: 검증은 오너 승인)', () => {
     sol(sols, 'redis-cache', { status: 'retired', confidence: 0.75, reason: 'stale', body: same });
     const out = lifecycle(`console.log(JSON.stringify(m.reopenIfReExtracted('redis-cache', ${JSON.stringify(same + ' 추가')})))`);
     expect(out).toBe('reopened');
     const after = rd(path.join(sols, 'redis-cache.md'));
-    expect(after).toContain('status: verified');
+    expect(after).toContain('status: candidate');
     expect(after).not.toContain('retiredReason');
   });
 

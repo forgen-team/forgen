@@ -436,7 +436,7 @@ Knowledge accumulates across sessions with a trust-based lifecycle:
 experiment (0.30) → candidate (0.55) → verified (0.75) → mature (0.90)
 ```
 
-Each solution starts as an `experiment`. As it gets reflected in your code across sessions, it's automatically promoted. Negative evidence triggers a circuit breaker (auto-retire). This means only patterns that actually work for you survive.
+An auto-extracted lesson is saved only with a verbatim quote from the conversation, and starts as `candidate`. When it shows up again in another session it joins the approval list in `forgen compound review`, and **becomes `verified` only when you approve it** (no automatic promotion since 0.8.0 — appearing often is not the same as being right). Negative evidence triggers a circuit breaker (auto-retire).
 
 | Type | Source | How Claude uses it |
 |------|--------|--------------------|

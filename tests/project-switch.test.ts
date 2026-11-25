@@ -72,6 +72,12 @@ describe.skipIf(!have)('S5 위치 전환 주입', () => {
     const again = hook('post-tool-use', { session_id: sid, cwd: home, tool_name: 'Read', tool_input: { file_path: path.join(repoB, 'src', 'y.ts') }, tool_response: 'ok' });
     expect(again.ctx).toBe('');
   });
+  it('Grep 처럼 path 로 다른 저장소를 찾아도 그 프로젝트 룰을 넣는다', () => {
+    const s = 'switch-sess-grep';
+    hook('session-recovery', { session_id: s, cwd: home, source: 'startup', hook_event_name: 'SessionStart' });
+    const r = hook('post-tool-use', { session_id: s, cwd: home, tool_name: 'Grep', tool_input: { pattern: 'x', path: repoB }, tool_response: 'ok', hook_event_name: 'PostToolUse' });
+    expect(r.ctx).toContain('repo-b 전용 룰');
+  });
   it('압축 뒤 세션 재시작이면 기록을 새로 시작해 다시 넣는다', () => {
     hook('session-recovery', { session_id: sid, cwd: home, source: 'compact', hook_event_name: 'SessionStart' });
     expect(hook('context-guard', { session_id: sid, cwd: repoA, prompt: 'p', hook_event_name: 'UserPromptSubmit' }).ctx).toContain('repo-a 전용 룰');

@@ -29,6 +29,8 @@ import { getCursor, setCursor, markRun, enqueue, claimDue, completeEntry, acquir
 import { releaseAutoCompoundInflight } from './spawn.js';
 import { dominantProject } from './session-context.js';
 import { reopenIfReExtracted } from '../engine/compound-lifecycle.js';
+import { nearestSolutionNames } from '../engine/solution-names.js';
+import { quoteInSummary } from '../engine/quote-grounding.js';
 import { callHaiku, probeClaudeAvailability, writeHaikuStatus, appendExtractionEvent } from './extraction-haiku.js';
 import { loadProfile } from '../store/profile-store.js';
 import { FORGEN_HOME, ME_DIR } from './paths.js';
@@ -278,26 +280,30 @@ function solutionContext(condition: string): string {
 interface PhaseResult { ok: boolean; retriable: boolean; reason?: string; outcome?: string }
 
 const SOLUTION_PROMPT_HEAD = `다음은 Claude Code 세션 대화 요약입니다 (사용자 발화와 어시스턴트 발화만, 시간순. 긴 세션은 교정 지점과 끝부분 위주로 중간이 생략됨).
-다음 세션에서 **다른 작업에도 다시 쓸 수 있는** 교훈을 최대 3개 뽑아주세요.
+다음 세션에서 **다른 작업에도 다시 쓸 수 있는** 교훈이 있으면 뽑아주세요. 없는 세션이 보통이니 억지로 채우지 마세요(최대 3개).
 
 각 항목을 정확히 아래 한 줄 형식으로만 출력하세요 (다른 설명·코드블록 없이):
-forgen compound --solution "제목" "본문" "적용 조건" ["범위"]
+forgen compound --solution "제목" "본문" "적용 조건" "범위" "근거 종류" "근거 인용"
 
 작성 규칙:
 - 제목: 상황을 일반화한 검색 가능한 이름 (예: "react-high-frequency-event-raf-throttle"). 특정 파일·컴포넌트·함수 이름을 제목에 쓰지 말 것.
 - 본문: "이런 상황에서는 이렇게 한다" 형식, 150~400자. 행동(무엇을 한다) + 근거(왜) + 주의(깨지는 경우·함정)를 모두 넣을 것.
 - 적용 조건: 이 교훈이 해당하는 상황을 한 문장으로.
-- 범위(선택): 이 교훈이 이 프로젝트의 구조·관례·도메인에 묶여 있어 다른 프로젝트에서는 맞지 않으면 "이 프로젝트", 어디서나 쓸 수 있으면 생략.
+- 범위: 이 교훈이 이 프로젝트의 구조·관례·도메인에 묶여 있어 다른 프로젝트에서는 맞지 않으면 "이 프로젝트", 어디서나 쓸 수 있으면 "" (빈 칸).
+- 근거 종류: 사용자가 말한 대목이면 "user", 어시스턴트가 작업 중 원인·해결을 적은 대목이면 "assistant".
+- 근거 인용: 위 대화 요약에 **실제로 있는 문장을 그대로** 20~200자 복사. 바꿔 쓰지 말 것. 인용할 대목이 없으면 그 교훈은 뽑지 말 것.
 - 근거는 사용자가 교정한 지점, 실패 후 해결한 지점, 판단 기준이 드러난 지점에서 찾을 것.
-- 제외: 사용자의 첫 지시나 작업 목표를 그대로 옮겨 적은 것, 이번 세션에서만 의미 있는 진행 상황·일정·파일 목록, 피상적 관찰(예: "TypeScript를 사용함"), 이미 있는 솔루션과 중복.
+- 아래 "이미 축적된 솔루션"과 **같은 교훈**이면 그 이름을 제목으로 그대로 쓸 것(새 이름을 만들지 말 것) — 다른 세션에서 다시 나왔다는 기록이 된다.
+- 제외: 사용자의 첫 지시나 작업 목표를 그대로 옮겨 적은 것, 이번 세션에서만 의미 있는 진행 상황·일정·파일 목록, 피상적 관찰(예: "TypeScript를 사용함").
 추출할 것이 없으면 "추출할 패턴 없음"이라고만 답하세요.`;
 
 function phaseSolution(summary: string, attempt: number, sessId: string = sid): PhaseResult {
   let existingList = '';
   const solDir = path.join(FORGEN_HOME, 'me', 'solutions');
   if (fs.existsSync(solDir)) {
-    const names = fs.readdirSync(solDir).filter(f => f.endsWith('.md')).map(f => f.replace('.md', '')).slice(-30);
-    if (names.length > 0) existingList = `\n\n이미 축적된 솔루션 (중복 추출 금지):\n${names.join(', ')}`;
+    // 0.8.0 K2: 폴더 정렬 뒤쪽 30개가 아니라 이 요약과 어휘가 가까운 30개(같은 교훈을 같은 이름으로 다시 쓰게).
+    const names = nearestSolutionNames(solDir, summary, 30);
+    if (names.length > 0) existingList = `\n\n이미 축적된 솔루션 (같은 교훈이면 이 이름을 그대로 쓸 것):\n${names.join(', ')}`;
   }
   const solutionsBefore = snapshotSolutions();
   const r = callHaiku('solution', `${SOLUTION_PROMPT_HEAD}${existingList}\n\n---\n${summary}\n---`, { cwd, attempt, sessionId: sessId });
@@ -308,7 +314,9 @@ function phaseSolution(summary: string, attempt: number, sessId: string = sid): 
   // forgen 은 이 러너와 같은 패키지의 cli.js 를 같은 node 로 직접 호출 — sparse PATH·다른 버전의 전역 forgen 의존 제거.
   const nodeBinDir = path.dirname(process.execPath);
   const cliJs = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'cli.js');
-  const solutionArgRe = /--solution\s+"((?:[^"\\]|\\.)+)"\s+"((?:[^"\\]|\\.)+)"(?:\s+"((?:[^"\\]|\\.)*)")?(?:\s+"((?:[^"\\]|\\.)*)")?/g;
+  const solutionArgRe = /--solution\s+"((?:[^"\\]|\\.)+)"\s+"((?:[^"\\]|\\.)+)"(?:\s+"((?:[^"\\]|\\.)*)")?(?:\s+"((?:[^"\\]|\\.)*)")?(?:\s+"((?:[^"\\]|\\.)*)")?(?:\s+"((?:[^"\\]|\\.)*)")?(?:\s+"((?:[^"\\]|\\.)*)")?/g;
+  let ungrounded = 0;
+  const ungroundedSamples: string[] = [];
   let match: RegExpExecArray | null;
   let extractedCount = 0;
   // biome-ignore lint/suspicious/noAssignInExpressions: regex exec 루프 관용구
@@ -316,7 +324,18 @@ function phaseSolution(summary: string, attempt: number, sessId: string = sid): 
     const title = match[1].replace(/\\"/g, '"').trim();
     const rawContent = match[2].replace(/\\"/g, '"').trim();
     const condition = (match[3] ?? '').replace(/\\"/g, '"').trim();
-    const projectOnly = (match[4] ?? '').trim() === '이 프로젝트';
+    // 뒤쪽 칸(범위·근거 종류·인용)은 모델이 빈 칸을 생략해 밀릴 수 있다 — 위치가 아니라 값으로 찾는다.
+    const tail = [match[4], match[5], match[6], match[7]].map((x) => (x ?? '').replace(/\\"/g, '"').trim());
+    const projectOnly = tail.includes('이 프로젝트');
+    const kindIdx = tail.findIndex((x) => x === 'user' || x === 'assistant');
+    const quoteKind = kindIdx >= 0 ? tail[kindIdx] : '';
+    const quote = kindIdx >= 0 ? (tail[kindIdx + 1] ?? '') : '';
+    // 0.8.0 K1: 근거 인용이 요약에 실제로 있어야 저장한다(지어낸 교훈 방지). 정확성까지 보장하지는 않는다.
+    if ((quoteKind !== 'user' && quoteKind !== 'assistant') || !quoteInSummary(quote, summary)) {
+      ungrounded++;
+      if (ungroundedSamples.length < 3) ungroundedSamples.push(`${quoteKind || '?'}:${quote.slice(0, 80)}`);
+      continue;
+    }
     let projectKey: string | null = null;
     if (projectOnly) {
       const w = dominantProject(sid, cwd);
@@ -340,7 +359,8 @@ function phaseSolution(summary: string, attempt: number, sessId: string = sid): 
       continue;
     }
     try {
-      execFileSync(process.execPath, [cliJs, 'compound', '--solution', title, contentScan.sanitized, '--context', solutionContext(filterSolutionContent(condition).sanitized), ...(projectKey ? ['--project', projectKey] : [])], {
+      const quoteSafe = filterSolutionContent(quote).sanitized.replace(/^-+/, '');
+      execFileSync(process.execPath, [cliJs, 'compound', '--solution', title, contentScan.sanitized, '--context', solutionContext(filterSolutionContent(condition).sanitized), ...(projectKey ? ['--project', projectKey] : []), '--source', 'auto', '--session', sessId, '--quote-kind', quoteKind, '--quote', quoteSafe], {
         cwd,
         timeout: 20_000,
         stdio: ['ignore', 'ignore', 'pipe'],
@@ -352,6 +372,9 @@ function phaseSolution(summary: string, attempt: number, sessId: string = sid): 
     }
   }
 
+  if (ungrounded > 0) {
+    try { appendExtractionEvent({ ok: true, sessionId: sessId, phase: 'solution', ungroundedDropped: ungrounded, ungroundedSamples }); } catch { /* 기록 실패 무시 */ }
+  }
   // Post-extraction quality validation: remove files that fail lightweight gates
   const removedCount = validateSolutionFiles(solutionsBefore);
   if (removedCount > 0) {

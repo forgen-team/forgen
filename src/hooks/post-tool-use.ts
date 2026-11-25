@@ -451,10 +451,17 @@ async function main(): Promise<void> {
       const { projectSwitchContext } = await import('../core/project-switch.js');
       const { recordWorkContext } = await import('../core/session-context.js');
       if (data.cwd) recordWorkContext(data.session_id, data.cwd);
-      const touched = typeof toolInput.file_path === 'string' ? toolInput.file_path
+      // 만진 곳: 파일 도구는 file_path·notebook_path(그 폴더), Grep·Glob 은 path(파일이면 그 폴더, 폴더면 그대로).
+      const fileArg = typeof toolInput.file_path === 'string' ? toolInput.file_path
         : typeof toolInput.notebook_path === 'string' ? toolInput.notebook_path : undefined;
+      const searchArg = typeof toolInput.path === 'string' ? toolInput.path : undefined;
+      let touchedDir: string | undefined;
+      if (fileArg && path.isAbsolute(fileArg)) touchedDir = path.dirname(fileArg);
+      else if (searchArg && path.isAbsolute(searchArg)) {
+        try { touchedDir = fs.statSync(searchArg).isDirectory() ? searchArg : path.dirname(searchArg); } catch { touchedDir = searchArg; }
+      }
       switchContext = projectSwitchContext(data.session_id, data.cwd)
-        ?? (touched && path.isAbsolute(touched) ? projectSwitchContext(data.session_id, path.dirname(touched)) : null);
+        ?? (touchedDir ? projectSwitchContext(data.session_id, touchedDir) : null);
     } catch (e) { log.debug('project switch 실패', e); }
   }
 
