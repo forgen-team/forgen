@@ -252,6 +252,38 @@ describe('forgen audit — 합성 픽스처', () => {
   });
 });
 
+describe('스킬 목록 층 · manifest 입력 지문 (C1 비평 반영)', () => {
+  it('사용자 스킬과 켜진 플러그인의 스킬·에이전트 앞머리를 세고, 꺼진 플러그인은 세지 않는다', async () => {
+    const { readSkillCatalog, SourceReader } = await import('../src/audit/sources.js');
+    const cd = fs.mkdtempSync(path.join(os.tmpdir(), 'fg-skills-'));
+    const w = (p: string, s: string) => { fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, s); };
+    w(path.join(cd, 'skills', 'alpha', 'SKILL.md'), '---\nname: alpha\ndescription: does alpha things for tests\n---\nbody not counted '.repeat(1) + 'x'.repeat(5000));
+    const on = path.join(cd, 'plugins', 'cache', 'on'); const off = path.join(cd, 'plugins', 'cache', 'off');
+    w(path.join(on, 'skills', 'beta', 'SKILL.md'), '---\nname: beta\ndescription: beta\n---\n');
+    w(path.join(on, 'agents', 'gamma.md'), '---\nname: gamma\ndescription: gamma agent\n---\n');
+    w(path.join(off, 'skills', 'delta', 'SKILL.md'), '---\nname: delta\ndescription: delta\n---\n');
+    w(path.join(cd, 'settings.json'), JSON.stringify({ enabledPlugins: { 'on@m': true, 'off@m': false } }));
+    w(path.join(cd, 'plugins', 'installed_plugins.json'), JSON.stringify({ plugins: { 'on@m': [{ installPath: on }], 'off@m': [{ installPath: off }] } }));
+    const s = readSkillCatalog(new SourceReader(), { claudeDir: cd, home: cd, managedPaths: [] });
+    expect(s.map((e) => `${e.source}:${e.kind}:${e.name}`)).toEqual(['plugin:on:skill:beta', 'plugin:on:agent:gamma', 'user:skill:alpha']);
+    expect(s.find((e) => e.name === 'alpha')!.tokens).toBeLessThan(30); // 본문은 세지 않는다
+    fs.rmSync(cd, { recursive: true, force: true });
+  });
+  it('manifest 에 대화 기록·근거 파일 지문이 들어가고, 대화 기록이 바뀌면 inputsDigest 가 바뀐다', () => {
+    const a = runAudit({ folders: FOLDERS, claudeDir: CLAUDE });
+    const extra = path.join(CLAUDE, 'projects', 'p-digest', 's.jsonl');
+    fs.mkdirSync(path.dirname(extra), { recursive: true });
+    fs.writeFileSync(extra, '{}\n');
+    try {
+      const b = runAudit({ folders: FOLDERS, claudeDir: CLAUDE });
+      expect(a.manifest.inputsDigest).not.toBe('none');
+      expect(b.manifest.inputsDigest).not.toBe(a.manifest.inputsDigest);
+      expect(b.manifest.sourcesDigest).toBe(a.manifest.sourcesDigest);
+    } finally { fs.rmSync(path.dirname(extra), { recursive: true, force: true }); }
+    expect(runAudit({ folders: FOLDERS, claudeDir: CLAUDE, sessionEvidence: false }).manifest.inputsDigest).toBe('none');
+  });
+});
+
 describe('forgen audit CLI', () => {
   it('audit tokens 는 아무것도 쓰지 않고 폴더별 토큰을 낸다', async () => {
     const before = hashTree(ROOT);

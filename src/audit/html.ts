@@ -24,7 +24,8 @@ export function topLines(r: AuditResult): string[] {
   return [
     `다시 말한 교정: 재생은 곧 (다음 버전 — 대화 기록에서 "적혀 있는데도 또 말한 교정"을 센다)`,
     `세션마다 실리는 기억 약 ${range(t.min, t.max, '')} 토큰 (폴더 ${t.folders}곳, 중앙값 ${t.median}) · 결정적으로 줄일 수 있는 몫 ${range(t.reduciblePctMin, t.reduciblePctMax, '%')} (같은 문장 사본·낡은 줄)`,
-    `같은 문장 ${f.sameSentence}묶음 · 다른 프로젝트 섞임 후보 ${f.mixCandidates}개 · 낡은 참조 ${f.stale}개 · paths: 없는 룰 ${f.unscopedRules}개 (부딪힘·같은 뜻 중복·섞임 확정은 모델 판정, 다음 버전)`,
+    // 첫 화면에는 확정된 지적만 센다. 섞임 "후보"는 일반 원칙도 섞여 나오므로(근거 위치만 본 신호) 모델 판정 전에는 탭에만 둔다.
+    `같은 문장 ${f.sameSentence}묶음 · 낡은 참조 ${f.stale}개 · paths: 없는 룰 ${f.unscopedRules}개 (부딪힘·같은 뜻 중복·다른 프로젝트 섞임은 모델 판정 뒤에 센다)`,
     `MEMORY.md 잘림 ${tr.truncated}곳 / 메모 폴더 ${tr.memoryDirs}곳 · ${tight}`,
   ];
 }

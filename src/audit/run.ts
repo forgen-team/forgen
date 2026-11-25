@@ -6,7 +6,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { createHash } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
-import { FORGEN_HOME, ME_RULES } from '../core/paths.js';
+import { FORGEN_HOME, ME_BEHAVIOR, ME_RULES } from '../core/paths.js';
 import { renderSessionStartReadOnly } from '../core/v1-bootstrap.js';
 import { planSessionScopes } from '../engine/rule-project-cli.js';
 import { ruleToText } from '../renderer/rule-renderer.js';
@@ -24,6 +24,7 @@ import {
 import {
   defaultEnv, defaultFolders, gitRootOf, hostLoadFor, listMemoryDirs, readMemoryDir, SourceReader,
   type AuditEnv, type FolderLoad, type Layer, type MemoryDir,
+  readSkillCatalog, type SkillEntry,
 } from './sources.js';
 import { estimateTokens } from './tokens.js';
 
@@ -51,6 +52,8 @@ export interface FolderSummary {
   reducible: { duplicate: number; stale: number; total: number; pct: number };
   /** 다른 프로젝트 섞임 후보가 이 폴더에서 차지하는 토큰(모델 판정 전). */
   mixCandidateTokens: number;
+  /** 스킬·에이전트 목록 몫(앞머리 name·description 근사). */
+  skills?: { tokens: number; count: number; bySource: Record<string, number> };
 }
 
 export interface AuditResult {
@@ -90,6 +93,13 @@ export interface AuditManifest {
   sources: ManifestSource[];
   /** 원천 목록(경로·크기·해시) 전체의 해시. 같으면 같은 원천. */
   sourcesDigest: string;
+  /**
+   * 원천 밖에서 결과에 영향을 주는 입력(근거 교정 위치를 찾느라 읽는 대화 기록·근거 파일)의 지문.
+   * 대화 기록은 크기가 커서 내용 해시 대신 (경로·크기·수정 시각)으로 센다. 없으면 그 신호를 쓰지 않은 회차.
+   * "같은 manifest 면 같은 숫자"는 sourcesDigest + inputsDigest 가 같을 때다.
+   */
+  inputs?: { transcripts: { files: number; bytes: number }; evidence: { files: number }; digest: string };
+  inputsDigest: string;
   /** 결과(생성 시각 제외)의 해시. 같은 원천이면 같아야 한다. */
   resultDigest: string;
   model: { used: false };
@@ -99,6 +109,30 @@ export interface AuditRun { result: AuditResult; manifest: Omit<AuditManifest, '
 
 export function forgenVersion(): string {
   try { return (JSON.parse(fs.readFileSync(new URL('../../package.json', import.meta.url), 'utf-8')) as { version?: string }).version ?? ''; } catch { return ''; }
+}
+
+/** 대화 기록(최상위 세션 jsonl)·근거 파일의 (경로·크기·수정 시각) 지문. 읽지 않고 stat 만 한다. */
+function statInputs(projectsDir: string, evidenceDir: string): NonNullable<AuditManifest['inputs']> {
+  const rows: string[] = [];
+  let tFiles = 0, tBytes = 0, eFiles = 0;
+  const list = (d: string) => { try { return fs.readdirSync(d).sort(); } catch { return []; } };
+  for (const proj of list(projectsDir)) {
+    for (const f of list(path.join(projectsDir, proj))) {
+      if (!f.endsWith('.jsonl')) continue;
+      try { const st = fs.statSync(path.join(projectsDir, proj, f)); rows.push(`t:${proj}/${f}:${st.size}:${Math.floor(st.mtimeMs)}`); tFiles++; tBytes += st.size; } catch { /* 사라짐 */ }
+    }
+  }
+  for (const f of list(evidenceDir)) {
+    if (!f.endsWith('.json')) continue;
+    try { const st = fs.statSync(path.join(evidenceDir, f)); rows.push(`e:${f}:${st.size}:${Math.floor(st.mtimeMs)}`); eFiles++; } catch { /* 사라짐 */ }
+  }
+  return { transcripts: { files: tFiles, bytes: tBytes }, evidence: { files: eFiles }, digest: sha(rows.join('\n')) };
+}
+
+function skillsBySource(s: SkillEntry[]): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const e of s) out[e.source] = (out[e.source] ?? 0) + e.tokens;
+  return out;
 }
 
 const sha = (s: string) => createHash('sha256').update(s).digest('hex');
@@ -139,7 +173,9 @@ export function runAudit(opts: AuditOptions = {}): AuditRun {
     const hostTokens = h.entries.filter((e) => e.always).reduce((n, e) => n + e.tokens, 0);
     let projectKey: string | null = null;
     try { projectKey = projectKeyFor(h.folder); } catch { /* 없음 */ }
-    return { ...h, projectKey, forgen, totalTokens: hostTokens + forgen.tokens };
+    const skills = readSkillCatalog(reader, env, h.gitRoot ?? null);
+    const skillTokens = skills.reduce((n, s) => n + s.tokens, 0);
+    return { ...h, projectKey, forgen, skills: { tokens: skillTokens, count: skills.length, bySource: skillsBySource(skills) }, totalTokens: hostTokens + forgen.tokens + skillTokens };
   });
   lap('forgenRender');
 
@@ -211,6 +247,8 @@ export function runAudit(opts: AuditOptions = {}): AuditRun {
     const u = unitByRule.get(s.id);
     if (u && !s.why.startsWith('프로젝트')) mixOf(u, null, s.why);
   }
+  lap('checksBase');
+  // 근거 교정 위치(대화 기록·근거 파일을 읽는다) — 무거워서 시간을 따로 잰다. 읽은 입력은 manifest 의 inputs 에 남긴다.
   if (opts.sessionEvidence !== false) {
     try {
       for (const p of planSessionScopes({ projectsDir: path.join(env.claudeDir, 'projects') })) {
@@ -219,6 +257,8 @@ export function runAudit(opts: AuditOptions = {}): AuditRun {
       }
     } catch { /* 대화 기록 문제는 이 신호만 빠진다 */ }
   }
+  const inputs = opts.sessionEvidence !== false ? statInputs(path.join(env.claudeDir, 'projects'), ME_BEHAVIOR) : undefined;
+  lap('sessionEvidence');
   const mix = mergeMixCandidates(mixRaw);
 
   // paths: 없는 룰, 200줄 넘는 CLAUDE.md
@@ -257,12 +297,14 @@ export function runAudit(opts: AuditOptions = {}): AuditRun {
     const byLayer: Partial<Record<Layer, number>> = {};
     for (const e of l.entries) if (e.always) byLayer[e.layer] = (byLayer[e.layer] ?? 0) + e.tokens;
     if (l.forgen.tokens) byLayer['forgen-render'] = l.forgen.tokens;
+    if (l.skills?.tokens) (byLayer as Record<string, number>).skills = l.skills.tokens;
     const total = duplicate + staleTok;
     return {
       folder: l.folder, projectKey: l.projectKey, memoryDir: l.memoryDir, totalTokens: l.totalTokens, byLayer, entries: l.entries,
       forgenRules: l.forgen.ruleIds.length,
       reducible: { duplicate, stale: staleTok, total, pct: l.totalTokens ? Math.round((total / l.totalTokens) * 1000) / 10 : 0 },
       mixCandidateTokens: mixTok,
+      ...(l.skills ? { skills: l.skills } : {}),
     };
   });
   lap('checks');
@@ -307,7 +349,8 @@ export function runAudit(opts: AuditOptions = {}): AuditRun {
   const manifest = {
     schema: MANIFEST_SCHEMA, forgenVersion: result.forgenVersion, generatedAt: result.generatedAt,
     claudeDir: env.claudeDir, forgenHome: FORGEN_HOME, folders: uniqFolders, sources,
-    sourcesDigest: sha(JSON.stringify(sources)), resultDigest: resultDigest(result), model: { used: false as const },
+    sourcesDigest: sha(JSON.stringify(sources)), ...(inputs ? { inputs } : {}), inputsDigest: inputs?.digest ?? 'none',
+    resultDigest: resultDigest(result), model: { used: false as const },
   };
   return { result, manifest, timing };
 }
