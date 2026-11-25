@@ -22,6 +22,8 @@ import { checkLegacyProfile, runLegacyCutover } from './legacy-detector.js';
 import { detectRuntimeCapability } from './runtime-detector.js';
 import { backupCorruptProfile, loadProfile, profileExists, recomputeIfNeverReclassified } from '../store/profile-store.js';
 import { loadContextRules, cleanupStaleSessionRules, markRulesInjected } from '../store/rule-store.js';
+import { projectKeyFor } from '../store/rule-scope.js';
+import { projectRuleIndex } from './project-switch.js';
 import { composeSession } from '../preset/preset-manager.js';
 import { renderRulesDetailed, DEFAULT_CONTEXT  } from '../renderer/rule-renderer.js';
 import { recordRenderReport } from '../renderer/render-report.js';
@@ -72,6 +74,15 @@ export interface V1BootstrapResult {
  * 프로필이 없어도(온보딩 전, 손상) 쌓아 둔 룰은 주입한다. 프로필은 4축 표시용이고 룰 본문과 무관하다.
  * 프로필이 없다고 교정이 전부 무시되면 환경에 따라 규칙이 사라지는 셈이다.
  */
+/** 0.8.0 S5: 프로젝트 밖에서 시작한 세션이면 프로젝트별 룰 수 색인을 덧붙인다(본문은 그 프로젝트로 들어갈 때). */
+function withProjectIndex(text: string, cwd?: string): string {
+  try {
+    if (projectKeyFor(cwd ?? process.env.FORGEN_CWD ?? process.cwd()) !== null) return text;
+    const index = projectRuleIndex();
+    return index ? `${text}\n\n${index}` : text;
+  } catch { return text; }
+}
+
 function renderWithoutProfile(cwd?: string): string | null {
   try {
     const rules = loadContextRules(cwd);
@@ -79,7 +90,7 @@ function renderWithoutProfile(cwd?: string): string | null {
     const state = { warnings: [] } as unknown as SessionEffectiveState;
     const result = renderRulesDetailed(rules, state, null as unknown as Profile, DEFAULT_CONTEXT);
     recordRenderReport(result);
-    return result.text;
+    return withProjectIndex(result.text, cwd);
   } catch {
     return null;
   }
@@ -167,7 +178,7 @@ export function bootstrapV1Session(cwd?: string, opts: { trackInjection?: boolea
   // 6. Rule 렌더링
   const allRules = [...personalRules];
   const rendered = renderRulesDetailed(allRules, session, profile, DEFAULT_CONTEXT);
-  const renderedRules = rendered.text;
+  const renderedRules = withProjectIndex(rendered.text, cwd);
 
   // 6b. Inject tracking (ADR-002 Meta signal) — rendered rules count as injected.
   // Fail-open: tracking failure must not block bootstrap.

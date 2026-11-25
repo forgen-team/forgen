@@ -117,6 +117,28 @@ export function dominantProject(sessionId: string | undefined, fallbackCwd?: str
   return fallbackCwd ? fromCwd(fallbackCwd, 'process-cwd') : { kind: 'none' };
 }
 
+/**
+ * 이 세션에서 룰을 넣어 준 프로젝트 목록을 바꾼다(잠금 안에서). reset 이면 목록을 새로 시작한다(세션 시작·압축 뒤).
+ * 이미 들어 있던 키는 false 를 돌려준다 — "한 번만 넣기"의 판정.
+ */
+export function markProjectInjected(sessionId: string, key: string, opts: { reset?: boolean; cwd?: string } = {}): boolean {
+  const p = workContextPath(sessionId);
+  if (!p) return false;
+  const run = (): boolean => {
+    const prev = readWorkContext(sessionId);
+    const injected = opts.reset ? [] : [...(prev?.injected ?? [])];
+    if (injected.includes(key)) return false;
+    injected.push(key);
+    const base: WorkContextFile = prev ?? {
+      version: 1, session_id: sessionId, cwd: opts.cwd ?? '', project: opts.cwd ? projectKeyFor(opts.cwd) : null, updated_at: '', turns: {},
+    };
+    atomicWriteJSON(p, { ...base, ...(opts.cwd ? { cwd: opts.cwd, project: projectKeyFor(opts.cwd) } : {}), updated_at: new Date().toISOString(), injected }, { mode: 0o600 });
+    return true;
+  };
+  // 잠금을 못 잡으면 "넣지 않음"이 아니라 "넣음"으로 본다 — 같은 룰이 한 번 더 들어가는 편이 영영 빠지는 것보다 낫다.
+  try { return withFileLockSync(p, run); } catch { return true; }
+}
+
 /** 테스트·정리용 */
 export function removeWorkContext(sessionId: string): void {
   const p = workContextPath(sessionId);

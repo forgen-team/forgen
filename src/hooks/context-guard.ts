@@ -19,7 +19,7 @@ import { readStdinJSON } from './shared/read-stdin.js';
 import { atomicWriteJSON } from './shared/atomic-write.js';
 import { isHookEnabled } from './hook-config.js';
 import { buildContextNotice, readContextUsage, shouldNoticeContext } from './context-usage.js';
-import { approve, approveWithWarning, failOpenWithTracking } from './shared/hook-response.js';
+import { approve, approveWithContext, approveWithWarning, failOpenWithTracking } from './shared/hook-response.js';
 import { HANDOFFS_DIR, STATE_DIR } from '../core/paths.js';
 import { recordHookTiming } from './shared/hook-timing.js';
 import { sanitizeId } from './shared/sanitize-id.js';
@@ -324,8 +324,11 @@ export async function main(): Promise<void> {
     const state = loadContextState(sessionId);
     state.promptCount++;
     // 0.8.0 S1: 프로젝트별 사용자 턴 수 — 러너가 이 세션의 주 프로젝트를 정할 때 쓴다.
+    let switchContext: string | null = null;
     if (process.env.FORGEN_NESTED_RUN !== '1') {
       try { (await import('../core/session-context.js')).recordWorkContext(input.session_id, input.cwd, { countTurn: true }); } catch { /* fail-open */ }
+      // 0.8.0 S5: 이 세션에서 처음 들어온 프로젝트면 그 프로젝트 룰을 한 번 넣는다.
+      try { switchContext = (await import('../core/project-switch.js')).projectSwitchContext(input.session_id, input.cwd); } catch { /* fail-open */ }
     }
 
     // ADR-008 / docs/codex-integration.md — prompt-history writer 활성화
@@ -337,11 +340,17 @@ export async function main(): Promise<void> {
     if (usage && shouldNoticeContext(usage, state.lastWarningAt)) {
       state.lastWarningAt = Date.now();
       saveContextState(state);
-      console.log(approveWithWarning(buildContextNotice(usage)));
+      console.log(switchContext
+        ? approveWithContext(switchContext, 'UserPromptSubmit', buildContextNotice(usage))
+        : approveWithWarning(buildContextNotice(usage)));
       return;
     }
 
     saveContextState(state);
+    if (switchContext) {
+      console.log(approveWithContext(switchContext, 'UserPromptSubmit'));
+      return;
+    }
   }
 
   console.log(approve());

@@ -42,11 +42,11 @@ describe('projectKeyFor', () => {
 });
 
 describe('범위 규칙', () => {
-  it('프로젝트 룰: 그 프로젝트는 주입·차단, 다른 프로젝트는 둘 다 아님, 프로젝트 밖은 주입만', () => {
+  it('프로젝트 룰: 그 프로젝트는 주입·차단, 다른 프로젝트·프로젝트 밖은 둘 다 아님 (0.8.0 S5: 밖에서는 들어갈 때 주입)', () => {
     const r = rule(['deadeye']);
     expect([appliesForContext(r, 'deadeye'), appliesForEnforcement(r, 'deadeye')]).toEqual([true, true]);
     expect([appliesForContext(r, 'forgen'), appliesForEnforcement(r, 'forgen')]).toEqual([false, false]);
-    expect([appliesForContext(r, null), appliesForEnforcement(r, null)]).toEqual([true, false]);
+    expect([appliesForContext(r, null), appliesForEnforcement(r, null)]).toEqual([false, false]);
   });
   it('전역 룰은 어디서나 주입·차단', () => {
     for (const key of ['forgen', null]) expect([appliesForContext(rule(), key), appliesForEnforcement(rule(), key)]).toEqual([true, true]);

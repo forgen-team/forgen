@@ -85,7 +85,7 @@ function dedupeByRenderKey(rules: Rule[]): Rule[] {
 
 // ── Template ──
 
-function ruleToText(rule: Rule): string {
+export function ruleToText(rule: Rule): string {
   // AI-optimized: [category|strength] 태그로 축약하여 토큰 절감
   // hard 강도는 태그 생략 (Must Not 섹션이 이미 의미를 전달)
   // ADR-017 D0: explicit 교정 룰엔 출처 날짜 꼬리표 — 사용자가 "내가 언제 말한 것" 을 식별.
@@ -210,7 +210,7 @@ export interface RenderResult {
 }
 
 /** 예산이 모자랄 때 먼저 지키는 순서: hard → strong → 사용자 교정 → 최신. */
-function byPriority(a: Rule, b: Rule): number {
+export function byPriority(a: Rule, b: Rule): number {
   // 0.8.0 S2: 범위 미정 룰은 hard 가 아니면 다른 룰 뒤 — 예산이 모자라면 먼저 빠진다.
   const ua = a.strength !== 'hard' && a.scope_state === 'unresolved' && !a.projects?.length ? 1 : 0;
   const ub = b.strength !== 'hard' && b.scope_state === 'unresolved' && !b.projects?.length ? 1 : 0;

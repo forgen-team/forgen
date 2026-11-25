@@ -2,7 +2,9 @@
  * 룰의 프로젝트 범위.
  *
  * 프로젝트 안: 전역 룰 + 그 프로젝트 룰만 주입·강제한다. 다른 프로젝트 룰이 무관한 응답을 막던 오탐의 원인이다.
- * 프로젝트 밖(홈 디렉터리 등): 어떤 작업인지 알 수 없으니 전부 컨텍스트로 주되, 프로젝트 룰로 차단하지는 않는다.
+ * 프로젝트 밖(홈 디렉터리 등): 전역 룰과 범위 미정 룰만 준다. 프로젝트 룰은 작업이 그 프로젝트로 들어갈 때
+ * 한 번 넣는다(project-switch.ts). 0.8.0 S5 에서 바뀜 — 예전에는 "전부 준다"였는데 활성 룰이 예산을 넘겨
+ * 관련성과 무관하게 순위로 잘리는 것이 실측됐다(93개 중 53개 탈락).
  */
 import * as fs from 'node:fs';
 import * as os from 'node:os';
@@ -55,7 +57,8 @@ export function isScopeUnresolved(rule: Pick<Rule, 'scope_state' | 'projects'>):
 
 /** 컨텍스트로 넣을 룰인가. */
 export function appliesForContext(rule: Rule, projectKey: string | null): boolean {
-  if (!rule.projects?.length || projectKey === null) return true;
+  if (!rule.projects?.length) return true;
+  if (projectKey === null) return false;
   return inProjects(rule.projects, projectKey);
 }
 

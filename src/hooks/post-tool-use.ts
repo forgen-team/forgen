@@ -19,7 +19,7 @@ import { saveCheckpoint } from './session-recovery.js';
 // v1: recordWriteContent (regex 선호 감지) 제거
 import { incrementFailureCounter, checkCompoundNegative, getCompoundSuccessHint } from './post-tool-handlers.js';
 import { isHookEnabled } from './hook-config.js';
-import { approve, approveWithWarning, failOpenWithTracking } from './shared/hook-response.js';
+import { approve, approveWithPostToolContext, approveWithWarning, failOpenWithTracking } from './shared/hook-response.js';
 import { STATE_DIR } from '../core/paths.js';
 import { recordHookTiming } from './shared/hook-timing.js';
 import { type DriftState, createDriftState, evaluateDrift } from '../core/drift-score.js';
@@ -443,7 +443,24 @@ async function main(): Promise<void> {
 
   saveModifiedFiles(modState);
 
-  if (messages.length > 0) {
+  // 0.8.0 S5: 이 도구가 다른 프로젝트 폴더에서 돌았거나(cd) 그 프로젝트 파일을 만졌으면 그 프로젝트 룰을 한 번 넣는다.
+  // 서브에이전트 호출과 추출용 중첩 실행은 제외(메인 세션의 "넣음" 기록을 흐리지 않게).
+  let switchContext: string | null = null;
+  if (!agentId && process.env.FORGEN_NESTED_RUN !== '1' && data.session_id) {
+    try {
+      const { projectSwitchContext } = await import('../core/project-switch.js');
+      const { recordWorkContext } = await import('../core/session-context.js');
+      if (data.cwd) recordWorkContext(data.session_id, data.cwd);
+      const touched = typeof toolInput.file_path === 'string' ? toolInput.file_path
+        : typeof toolInput.notebook_path === 'string' ? toolInput.notebook_path : undefined;
+      switchContext = projectSwitchContext(data.session_id, data.cwd)
+        ?? (touched && path.isAbsolute(touched) ? projectSwitchContext(data.session_id, path.dirname(touched)) : null);
+    } catch (e) { log.debug('project switch 실패', e); }
+  }
+
+  if (switchContext) {
+    console.log(approveWithPostToolContext(switchContext, messages.length > 0 ? messages.join('\n') : undefined));
+  } else if (messages.length > 0) {
     console.log(approveWithWarning(messages.join('\n')));
   } else {
     console.log(approve());

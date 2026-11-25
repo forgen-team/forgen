@@ -74,9 +74,11 @@ describe('SessionStart 컨텍스트', () => {
     expect(context(other)).not.toContain('농구 화면 룰');
   });
 
-  it('프로젝트 밖(홈)에서는 프로젝트 태그와 함께 들어간다', () => {
+  it('프로젝트 밖(홈)에서는 프로젝트 룰 본문 대신 색인만 들어간다 (0.8.0 S5)', () => {
     const out = context(home);
-    expect(out).toContain('basketball-shot-analyzer] 농구 화면 룰');
+    expect(out).not.toContain('농구 화면 룰');
+    expect(out).toContain('## Project Rules');
+    expect(out).toMatch(/basketball-shot-analyzer \d+/);
   });
 
   it('교정이 다음 세션 컨텍스트에 바로 반영된다', () => {

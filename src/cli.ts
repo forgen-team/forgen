@@ -427,7 +427,7 @@ async function handleRuleNamespace(args: string[]): Promise<void> {
     forgen rule restore [<name> --yes]     List snapshots or restore one
     forgen rule set-project <id> <key>|--global         Limit a rule to one project
     forgen rule classify-projects --project <key> --keywords a,b [--apply]
-    forgen rule classify-projects --from-sessions [--apply [id...]]  Suggest scopes from the sessions' folders
+    forgen rule classify-projects --from-sessions [--apply [id...]] [--no-llm]  Suggest scopes from where each correction happened (+ Haiku content check)
     forgen rule import-pack <pack> [--project <key>] [--apply]
     forgen rule merge-mined [--apply]      ADR-017 D3: merge mined (auto:) rules among themselves,
                                            link same-concept ones to explicit rules (dry-run by default)
@@ -502,7 +502,7 @@ async function handleRuleNamespace(args: string[]): Promise<void> {
     case 'import-pack': {
       const { handleSetProject, handleClassifyProjects, handleImportPack } = await import('./engine/rule-project-cli.js');
       if (sub === 'set-project') handleSetProject(rest);
-      else if (sub === 'classify-projects') handleClassifyProjects(rest);
+      else if (sub === 'classify-projects') await handleClassifyProjects(rest);
       else handleImportPack(rest);
       return;
     }

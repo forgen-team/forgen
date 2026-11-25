@@ -533,7 +533,17 @@ async function main(): Promise<void> {
     try {
       const { relevantRules, writeTurnRules } = await import('../engine/rule-relevance.js');
       const { loadContextRules } = await import('../store/rule-store.js');
-      writeTurnRules(input.session_id, input.prompt, relevantRules(input.prompt, loadContextRules(input.cwd)));
+      // 0.8.0 S5: 이 세션에 위치 전환으로 이미 넣은 프로젝트 룰도 "보이는 룰"에 넣는다.
+      const visible = loadContextRules(input.cwd);
+      try {
+        const { readWorkContext } = await import('../core/session-context.js');
+        const { loadActiveRules } = await import('../store/rule-store.js');
+        const { appliesForContext } = await import('../store/rule-scope.js');
+        const injected = (readWorkContext(input.session_id)?.injected ?? []).filter((k) => k !== '-');
+        const seen = new Set(visible.map((r) => r.rule_id));
+        for (const r of loadActiveRules()) if (!seen.has(r.rule_id) && r.projects?.length && injected.some((k) => appliesForContext(r, k))) visible.push(r);
+      } catch { /* fail-open */ }
+      writeTurnRules(input.session_id, input.prompt, relevantRules(input.prompt, visible));
     } catch (e) { log.debug('turn-rules 기록 실패', e); }
   }
 
