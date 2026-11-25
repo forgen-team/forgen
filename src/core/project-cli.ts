@@ -26,10 +26,13 @@ export function handleProject(args: string[]): void {
     const pos: string[] = [];
     for (let i = 0; i < rest.length; i++) {
       const a = rest[i];
+      if (a === '--') { pos.push(...rest.slice(i + 1)); break; } // 그 뒤는 모두 폴더(-로 시작하는 폴더 이름용)
       if (a === '--alias' || a.startsWith('--alias=')) {
         const v = a === '--alias' ? rest[++i] : a.slice('--alias='.length);
         if (!v || v.startsWith('--')) { console.error('[forgen] --alias 뒤에 별칭이 필요합니다'); usage(); process.exitCode = 1; return; }
-        aliases.push(...v.split(',').map((s) => s.trim()).filter(Boolean));
+        const vs = v.split(',').map((s) => s.trim()).filter(Boolean);
+        if (vs.length === 0) { console.error('[forgen] --alias 뒤에 별칭이 필요합니다'); usage(); process.exitCode = 1; return; }
+        aliases.push(...vs);
       } else if (a.startsWith('--')) {
         console.error(`[forgen] 알 수 없는 옵션: ${a}`); usage(); process.exitCode = 1; return;
       } else pos.push(a);

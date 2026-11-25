@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -16,6 +16,7 @@ const quiet = <T>(f: () => T): T => { const l = console.log, e = console.error; 
 
 describe('forgen project add --alias', () => {
   beforeEach(() => { try { fs.unlinkSync(PROJECT_REGISTRY_PATH); } catch { /* 없음 */ } process.exitCode = 0; });
+  afterEach(() => { process.exitCode = 0; }); // 중간 실패에도 exitCode 가 vitest 로 새지 않게
 
   it('여러 번 준 --alias 를 모두 받고, 값을 폴더로 오인하지 않는다', () => {
     quiet(() => handleProject(['add', 'p', a, '--alias', 'old-a', '--alias', 'old-b']));
@@ -37,9 +38,19 @@ describe('forgen project add --alias', () => {
     quiet(() => handleProject(['add', 'p', a, '--alias', '--x']));
     expect(process.exitCode).toBe(1);
     process.exitCode = 0;
+    quiet(() => handleProject(['add', 'p', a, '--alias=,,']));
+    expect(process.exitCode).toBe(1);
+    process.exitCode = 0;
     quiet(() => handleProject(['add', 'p', a, '--path', b]));
     expect(process.exitCode).toBe(1);
     expect(fs.existsSync(PROJECT_REGISTRY_PATH)).toBe(false);
     process.exitCode = 0;
+  });
+  it('-- 뒤는 -로 시작해도 폴더로 받는다', () => {
+    const d = path.join(TMP, '-weird'); fs.mkdirSync(d, { recursive: true });
+    const cwd = process.cwd(); process.chdir(TMP);
+    try { quiet(() => handleProject(['add', 'p', '--alias', 'o', '--', '-weird'])); } finally { process.chdir(cwd); }
+    expect(process.exitCode).toBe(0);
+    expect(readProjectRegistry().projects.p.paths).toEqual([d]);
   });
 });
