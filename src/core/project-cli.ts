@@ -1,6 +1,6 @@
 /**
  * forgen project — 프로젝트 키 등록부 (0.8.0 S3)
- *   forgen project add <키> <폴더...> [--alias a,b]   폴더를 키로 묶는다(git 아닌 폴더도 됨)
+ *   forgen project add <키> <폴더...> [--alias a,b | --alias a --alias b]   폴더를 키로 묶는다(git 아닌 폴더도 됨)
  *   forgen project list                              등록된 키, 폴더, 별칭, 없는 폴더
  *   forgen project remove <키>
  *   forgen project which [폴더]                      그 폴더가 어느 키로 풀리는지
@@ -20,9 +20,23 @@ function usage(): void {
 export function handleProject(args: string[]): void {
   const [sub, ...rest] = args;
   if (sub === 'add') {
-    const ai = rest.indexOf('--alias');
-    const aliases = ai >= 0 ? (rest[ai + 1] ?? '').split(',').map((s) => s.trim()).filter(Boolean) : [];
-    const pos = rest.filter((a, i) => a !== '--alias' && (ai < 0 || i !== ai + 1));
+    // --alias 는 여러 번(--alias a --alias b) 또는 쉼표(--alias a,b)로. 값이 빠진 --alias 는 오류 —
+    // 예전에는 두 번째 --alias 의 값이 조용히 폴더 인자로 들어갔다.
+    const aliases: string[] = [];
+    const pos: string[] = [];
+    for (let i = 0; i < rest.length; i++) {
+      const a = rest[i];
+      if (a === '--') { pos.push(...rest.slice(i + 1)); break; } // 그 뒤는 모두 폴더(-로 시작하는 폴더 이름용)
+      if (a === '--alias' || a.startsWith('--alias=')) {
+        const v = a === '--alias' ? rest[++i] : a.slice('--alias='.length);
+        if (!v || v.startsWith('--')) { console.error('[forgen] --alias 뒤에 별칭이 필요합니다'); usage(); process.exitCode = 1; return; }
+        const vs = v.split(',').map((s) => s.trim()).filter(Boolean);
+        if (vs.length === 0) { console.error('[forgen] --alias 뒤에 별칭이 필요합니다'); usage(); process.exitCode = 1; return; }
+        aliases.push(...vs);
+      } else if (a.startsWith('--')) {
+        console.error(`[forgen] 알 수 없는 옵션: ${a}`); usage(); process.exitCode = 1; return;
+      } else pos.push(a);
+    }
     const [key, ...dirs] = pos;
     if (!key || dirs.length === 0) { usage(); process.exitCode = 1; return; }
     try {

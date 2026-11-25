@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.2] — 2026-11-25 — `forgen project add` 옵션 파싱
+
+### Fixed
+- `--alias` 를 여러 번 주면 두 번째 값이 조용히 폴더 인자로 들어가던 것. 이제 반복·쉼표·`--alias=` 를 모두 받는다.
+- 값 없는(쉼표만 있는) `--alias` 와 모르는 옵션은 아무것도 쓰지 않고 오류로 멈춘다. `--` 뒤는 `-` 로 시작해도 폴더로 받는다.
+
 ## [0.8.1] — 2026-11-25 — 업그레이드 검증에 판정 추가 · 렌더 보고 빈칸
 
 ### Fixed
