@@ -117,7 +117,11 @@ export async function handleAudit(args: string[]): Promise<void> {
   console.log(`읽은 원천 ${r.sources.files}개 · 회차 ${out.runId}`);
   if (fp) console.log(`첫 감사 — 기억 지문을 남김: ${fp}`);
   console.log(`✓ [forgen] ${out.htmlPath}`);
-  if (rest.includes('--timing')) console.log(`시간(ms): 원천 ${run.timing.sources} · forgen 렌더 ${run.timing.forgenRender} · 검사 ${run.timing.checks} · 페이지 ${run.timing.page} · 합계 ${run.timing.total}`);
+  if (rest.includes('--timing')) {
+    const tm = run.timing;
+    const checks = (tm.checksBase ?? 0) + (tm.checks ?? 0);
+    console.log(`시간(ms): 원천 ${tm.sources} · forgen 렌더·스킬 ${tm.forgenRender} · 검사 ${checks} · 근거 교정 위치(대화 기록 읽기) ${tm.sessionEvidence ?? 0} · 페이지 ${tm.page} · 합계 ${tm.total}`);
+  }
   if (!rest.includes('--no-open')) {
     const { openInBrowser } = await import('../core/status-html.js');
     if (!openInBrowser(out.htmlPath)) console.log('  브라우저를 열 수 없는 환경입니다. 위 파일을 직접 여세요.');

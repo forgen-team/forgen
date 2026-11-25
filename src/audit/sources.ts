@@ -70,6 +70,8 @@ export interface FolderLoad {
   memoryDir: string | null;
   entries: LoadEntry[];
   forgen: { tokens: number; ruleIds: string[] };
+  /** 세션 시작에 실리는 스킬·에이전트 목록 몫(readSkillCatalog). */
+  skills?: { tokens: number; count: number; bySource: Record<string, number> };
   totalTokens: number;
 }
 
@@ -339,4 +341,58 @@ export function defaultFolders(env: AuditEnv, cwd: string): string[] {
     out.add(r);
   }
   return [...out].sort();
+}
+
+/**
+ * 세션 시작에 실리는 스킬·에이전트 목록(이름 + 설명 한 줄) — N3 의 "스킬 설명" 층.
+ * 원천: 사용자 스킬(<claudeDir>/skills/<이름>/SKILL.md), 켜진 플러그인(settings.json enabledPlugins →
+ * installed_plugins.json installPath)의 skills/<이름>/SKILL.md 와 agents/*.md, 프로젝트 <root>/.claude/skills.
+ * 본문은 세션 시작에 실리지 않으므로 앞머리의 name·description 만 센다(호스트가 목록으로 보여 주는 몫의 근사).
+ */
+export interface SkillEntry { source: string; kind: 'skill' | 'agent'; name: string; path: string; tokens: number }
+
+function frontmatter(text: string): Record<string, string> {
+  const m = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text);
+  const out: Record<string, string> = {};
+  if (!m) return out;
+  for (const line of m[1].split(/\r?\n/)) {
+    const kv = /^([A-Za-z_-]+):\s*(.*)$/.exec(line);
+    if (kv) out[kv[1]] = kv[2].replace(/^["']|["']$/g, '');
+  }
+  return out;
+}
+
+function listDir(p: string): string[] {
+  try { return fs.readdirSync(p).sort(); } catch { return []; }
+}
+
+export function readSkillCatalog(reader: SourceReader, env: AuditEnv, projectRoot?: string | null): SkillEntry[] {
+  const out: SkillEntry[] = [];
+  const add = (source: string, kind: SkillEntry['kind'], file: string, fallbackName: string) => {
+    const sf = reader.read(file);
+    if (!sf || sf.error) return;
+    const fm = frontmatter(sf.text);
+    const name = fm.name || fallbackName;
+    const desc = fm.description ?? '';
+    out.push({ source, kind, name, path: sf.path, tokens: estimateTokens(`- ${name}: ${desc}`) });
+  };
+  const skillsIn = (source: string, dir: string) => { for (const n of listDir(dir)) add(source, 'skill', path.join(dir, n, 'SKILL.md'), n); };
+  skillsIn('user', path.join(env.claudeDir, 'skills'));
+  if (projectRoot) skillsIn('project', path.join(projectRoot, '.claude', 'skills'));
+  let enabled: Record<string, unknown> = {};
+  try { enabled = (JSON.parse(fs.readFileSync(path.join(env.claudeDir, 'settings.json'), 'utf-8')) as { enabledPlugins?: Record<string, unknown> }).enabledPlugins ?? {}; } catch { /* 없음 */ }
+  let installed: Record<string, Array<{ installPath?: string }>> = {};
+  try {
+    const j = JSON.parse(fs.readFileSync(path.join(env.claudeDir, 'plugins', 'installed_plugins.json'), 'utf-8')) as { plugins?: typeof installed };
+    installed = j.plugins ?? (j as unknown as typeof installed);
+  } catch { /* 없음 */ }
+  for (const id of Object.keys(enabled).sort()) {
+    if (enabled[id] !== true) continue;
+    const ip = installed[id]?.[0]?.installPath;
+    if (!ip) continue;
+    const plugin = id.split('@')[0];
+    skillsIn(`plugin:${plugin}`, path.join(ip, 'skills'));
+    for (const n of listDir(path.join(ip, 'agents'))) if (n.endsWith('.md')) add(`plugin:${plugin}`, 'agent', path.join(ip, 'agents', n), n.replace(/\.md$/, ''));
+  }
+  return out.sort((a, b) => (a.source === b.source ? (a.name < b.name ? -1 : 1) : a.source < b.source ? -1 : 1));
 }

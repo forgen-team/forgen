@@ -112,6 +112,8 @@ function renderWithoutProfile(cwd?: string): string | null {
  * bootstrapV1Session 은 trackInjection:false 여도 디렉터리 생성·후보 승급·세션 상태·렌더 보고·raw log 를 쓴다.
  * 여기서는 그 렌더 경로(룰 고르기 → 합성 → renderRulesDetailed → 프로젝트 색인)만 따른다.
  * 차이: 세션 임시 룰 정리(cleanupStaleSessionRules)를 하지 않으므로 지난 세션의 임시 룰이 남아 있으면 같이 센다.
+ * 차이 2: 세션 후보 승급(promoteSessionCandidates)을 하지 않으므로, 승급 대기 후보가 있으면 실제 다음 세션보다
+ *   룰이 적게 셀 수 있다(감사는 "지금 저장된 그대로"를 본다).
  */
 export function renderSessionStartReadOnly(cwd: string, opts: { asOf?: string } = {}): { text: string; includedRuleIds: string[] } {
   // 프로젝트 로컬 룰(<cwd>/.forgen/rules)은 FORGEN_CWD 기준으로 읽힌다 — 이 폴더로 잠시 맞춘다.
