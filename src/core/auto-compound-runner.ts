@@ -31,6 +31,8 @@ import { dominantProject } from './session-context.js';
 import { reopenIfReExtracted } from '../engine/compound-lifecycle.js';
 import { nearestSolutionNames } from '../engine/solution-names.js';
 import { quoteInSummary } from '../engine/quote-grounding.js';
+import { judgmentPromptSection, recordJudgments } from '../engine/solution-judgment.js';
+import { querySurfacedWithin } from './observability-store.js';
 import { callHaiku, probeClaudeAvailability, writeHaikuStatus, appendExtractionEvent } from './extraction-haiku.js';
 import { loadProfile } from '../store/profile-store.js';
 import { FORGEN_HOME, ME_DIR } from './paths.js';
@@ -306,7 +308,11 @@ function phaseSolution(summary: string, attempt: number, sessId: string = sid): 
     if (names.length > 0) existingList = `\n\n이미 축적된 솔루션 (같은 교훈이면 이 이름을 그대로 쓸 것):\n${names.join(', ')}`;
   }
   const solutionsBefore = snapshotSolutions();
-  const r = callHaiku('solution', `${SOLUTION_PROMPT_HEAD}${existingList}\n\n---\n${summary}\n---`, { cwd, attempt, sessionId: sessId });
+  // 0.8.0 M3: 이 세션에 실제로 노출된 솔루션의 사용 판정을 같은 호출에 붙인다(추가 호출 없음, 기록만).
+  let surfacedNames: string[] = [];
+  try { surfacedNames = querySurfacedWithin(sessId, 7 * 24 * 60).map((e) => e.solutionId); } catch { /* DB 없음 */ }
+  const judgeSection = judgmentPromptSection(surfacedNames);
+  const r = callHaiku('solution', `${SOLUTION_PROMPT_HEAD}${existingList}${judgeSection}\n\n---\n${summary}\n---`, { cwd, attempt, sessionId: sessId });
   if (!r.ok) return { ok: false, retriable: r.retriable, reason: r.reason, outcome: r.outcome };
   const solutionOutput = r.output;
 
@@ -372,6 +378,12 @@ function phaseSolution(summary: string, attempt: number, sessId: string = sid): 
     }
   }
 
+  if (judgeSection) {
+    try {
+      const j = recordJudgments(solutionOutput, summary, sessId, [...new Set(surfacedNames)]);
+      if (j.recorded || j.dropped) appendExtractionEvent({ ok: true, sessionId: sessId, phase: 'solution-judgment', recorded: j.recorded, dropped: j.dropped });
+    } catch { /* 기록 실패 무시 */ }
+  }
   if (ungrounded > 0) {
     try { appendExtractionEvent({ ok: true, sessionId: sessId, phase: 'solution', ungroundedDropped: ungrounded, ungroundedSamples }); } catch { /* 기록 실패 무시 */ }
   }

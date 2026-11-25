@@ -15,6 +15,7 @@ import { computeFixFeatRatio, formatFixRatio } from './git-stats.js';
 import { pendingReview, reobservedCount } from '../engine/solution-review.js';
 import { summarizeLedger } from './correction-ledger.js';
 import { summarizeDecisions } from './decision-ledger.js';
+import { summarizeJudgments } from '../engine/solution-judgment.js';
 
 // v0.4.1 격리 fix: 이전에는 os.homedir() 직접 사용해서 FORGEN_HOME env 로
 // 홈 격리해도 이 파일의 경로는 여전히 실 홈 가리켰음. paths.ts 상수 import.
@@ -443,6 +444,8 @@ export function renderStats(s: StatsSnapshot): string {
     // 0.8.0 M1: 검증으로 가는 경로가 실제로 움직이는지 — 재관측(다른 세션에서 다시 나옴)과 승인 대기.
     try {
       lines.push(`    검증 경로          재관측 ${reobservedCount()} · 승인 대기 ${pendingReview().length}    — 검증은 forgen compound review --approve 로만`);
+      const jg = summarizeJudgments(Date.now() - 30 * 86_400_000);
+      if (jg.used + jg.ignored + jg.wrong > 0) lines.push(`    사용 판정 (30d)     썼다 ${jg.used} · 무시 ${jg.ignored} · 틀림 ${jg.wrong}    — 기록만(표본 검수 전까지 반영 안 함)`);
     } catch { /* 표시 실패는 무시 */ }
     lines.push('');
   }

@@ -151,11 +151,17 @@ export function backfillDecisionsOnce(projectsDir = path.join(os.homedir(), '.cl
   let total = 0;
   let dirs: string[] = [];
   try { dirs = fs.readdirSync(projectsDir); } catch { dirs = []; }
+  const all: Array<{ file: string; sid: string }> = [];
   for (const d of dirs) {
     let files: string[] = [];
     try { files = fs.readdirSync(path.join(projectsDir, d)).filter((f) => f.endsWith('.jsonl')); } catch { continue; }
-    for (const f of files) {
-      try { total += collectDecisions(path.join(projectsDir, d, f), f.replace(/\.jsonl$/, ''), { final: true }); } catch { /* 한 파일 실패는 건너뜀 */ }
+    for (const f of files) all.push({ file: path.join(projectsDir, d, f), sid: f.replace(/\.jsonl$/, '') });
+  }
+  // 두 번 돈다: 먼저 답이 있는 것만 모으고(이어하기·포크로 같은 질문이 여러 파일에 있어도 답 있는 사본이 이긴다),
+  // 그다음 끝내 답이 없는 것을 unanswered 로 닫는다.
+  for (const pass of [false, true]) {
+    for (const { file, sid } of all) {
+      try { total += collectDecisions(file, sid, { final: pass }); } catch { /* 한 파일 실패는 건너뜀 */ }
     }
   }
   fs.mkdirSync(STATE_DIR, { recursive: true });
@@ -163,9 +169,10 @@ export function backfillDecisionsOnce(projectsDir = path.join(os.homedir(), '.cl
   return total;
 }
 
-export function readDecisions(): DecisionRecord[] {
+/** fromMonth('YYYY-MM') 이전 달 파일은 읽지 않는다. */
+export function readDecisions(fromMonth = ''): DecisionRecord[] {
   let files: string[] = [];
-  try { files = fs.readdirSync(DECISIONS_DIR).filter((f) => f.endsWith('.jsonl')).sort(); } catch { return []; }
+  try { files = fs.readdirSync(DECISIONS_DIR).filter((f) => f.endsWith('.jsonl') && f.slice(0, 7) >= fromMonth).sort(); } catch { return []; }
   const out: DecisionRecord[] = [];
   for (const f of files) for (const l of fs.readFileSync(path.join(DECISIONS_DIR, f), 'utf-8').split('\n')) { if (!l) continue; try { out.push(JSON.parse(l)); } catch { /* */ } }
   return out;
@@ -173,6 +180,7 @@ export function readDecisions(): DecisionRecord[] {
 
 export function summarizeDecisions(sinceMs = 0): Record<DecisionKind, number> {
   const out: Record<DecisionKind, number> = { accept: 0, override: 0, free: 0, multi: 0, 'no-recommendation': 0, unanswered: 0 };
-  for (const d of readDecisions()) if (Date.parse(d.at) >= sinceMs) out[d.kind]++;
+  const fromMonth = sinceMs > 0 ? new Date(sinceMs).toISOString().slice(0, 7) : '';
+  for (const d of readDecisions(fromMonth)) if (Date.parse(d.at) >= sinceMs) out[d.kind]++;
   return out;
 }

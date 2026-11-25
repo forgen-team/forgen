@@ -420,7 +420,7 @@ export function registerTools(server: McpServer): void {
         ];
         if (!this_project_only && work.kind === 'project') {
           // 0.8.0 §12: 표시 없이 프로젝트 안에서 온 교정 — 전역으로 두되 위치를 남겨 범위 제안 목록에 올린다.
-          lines.push(`Location: inside project "${work.key}" — saved as global. If it applies only to this project, pass this_project_only: true next time; until then it is offered for scoping in \`forgen rule classify-projects --from-sessions\`.`);
+          lines.push(`Location: inside project "${work.key}" — saved as global (no project-only flag). Do not change the scope yourself; it will be offered to the user for scoping in \`forgen rule classify-projects --from-sessions\`.`);
         }
         if (this_project_only) {
           lines.push(projectKey

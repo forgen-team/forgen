@@ -232,6 +232,17 @@ export function recordGateVerdict(opts: { sessionId?: string; solutionId: string
   }
 }
 
+/** 0.8.0 M4: 한 시각 근처(±windowMs)의 게이트 판정. 회수 정답 표본에서 "그때 게이트가 무엇을 통과시켰나"를 되찾는다. */
+export function gateVerdictsNear(ts: number, windowMs = 5000): Array<{ solutionId: string; gate: string }> {
+  let db: SqliteDb | null = null;
+  try {
+    db = openObsDb();
+    if (!db) return [];
+    ensureObservabilitySchema(db);
+    return db.prepare(`SELECT solution_id AS solutionId, gate FROM gate_verdicts WHERE ts BETWEEN ? AND ?`).all(ts - windowMs, ts + windowMs) as Array<{ solutionId: string; gate: string }>;
+  } catch { return []; } finally { try { db?.close(); } catch { /* ignore */ } }
+}
+
 /**
  * 최근 N일 게이트 판정 분포 (D5). gate_verdicts(중복 제거 없음)를 센다.
  * gate_verdicts 가 생기기 전의 구기록은 matched 이벤트의 meta.gate 로 보충한다 (없으면 'unrecorded').

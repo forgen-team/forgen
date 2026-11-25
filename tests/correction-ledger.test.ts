@@ -63,8 +63,19 @@ describe.skipIf(!have)('M2 교정 3분류', () => {
     m.p.kill();
     expect(ledger().pop().class).toBe('recurrence');
   });
+  it('같은 세션에서 같은 교정을 되풀이하면(임시 룰이 이미 있음) 재발', async () => {
+    hook('session-recovery', { session_id: 'L3', cwd: home, source: 'startup', hook_event_name: 'SessionStart' });
+    const m = new Mcp();
+    await m.send('initialize', { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 't', version: '1' } });
+    const fix = (msg: string) => m.send('tools/call', { name: 'correction-record', arguments: { session_id: 'L3', kind: 'fix-now', message: msg, target: 'same target twice', axis_hint: null, origin: { cwd: home } } });
+    await fix('도커 볼륨 마운트 경로는 절대 경로만 허용 반복 확인용 문장');
+    await fix('도커 볼륨 마운트 경로는 절대 경로만 허용 반복 확인용 문장');
+    m.p.kill();
+    const rows = ledger().filter((r) => r.session === "L3");
+    expect(rows.map((r) => r.class)).toEqual(['new', 'recurrence']);
+  });
   it('status 가 분류를 보여 준다', () => {
     const r = spawnSync(process.execPath, [path.join(DIST, 'cli.js'), 'status'], { encoding: 'utf-8', cwd: home, env: env() });
-    expect(r.stdout).toMatch(/재발 2 · 전달 실패 1 · 신규 1 · 판정 불가 1/);
+    expect(r.stdout).toMatch(/재발 3 · 전달 실패 1 · 신규 2 · 판정 불가 1/);
   });
 });

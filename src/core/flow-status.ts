@@ -309,7 +309,7 @@ export function computeFlow(days: number = FLOW_WINDOW_DAYS, now = Date.now()): 
     stage('저장', '새 솔루션(created) + 새 룰(created_at)', saved,
       { note: saved.undated > 0 ? `created 없는 솔루션 ${saved.undated}개는 집계 제외` : undefined }),
     // 0.8.0 M1: "주입"은 게이트를 통과해 실제로 모델에게 보인 솔루션(surfaced). 예전 값(후보가 나온 프롬프트)은 note 로.
-    stage('주입', '게이트를 통과해 실제로 보인 솔루션 (surfaced)', surfaced, {
+    stage('주입', surfaced.error ? '실제 노출 기록을 읽을 수 없음 — 후보가 나온 프롬프트로 대신 표시' : '게이트를 통과해 실제로 보인 솔루션 (surfaced)', surfaced.error ? { times: matchLog.times } : surfaced, {
       note: [
         `후보가 나온 프롬프트 ${countSince(matchLog.times, days, now)}건`,
         render ? `룰 렌더 마지막 ${formatWhen(Date.parse(render.at), now)}: 포함 ${render.included} · 누락 ${render.omitted}${render.omitted ? ` (${Object.entries(render.omittedByStrength).map(([k, v]) => `${k} ${v}`).join(', ')})` : ''}` : '룰 렌더 기록 없음',

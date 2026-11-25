@@ -64,6 +64,8 @@ export interface V1BootstrapResult {
   corruptProfileBackupPath: string | null;
   session: SessionEffectiveState | null;
   renderedRules: string | null;
+  /** 0.8.0 M2: 이번 렌더에 실제로 들어간 룰 ID. 전역 render-report 는 동시 세션이 덮어쓰므로 이 값을 쓴다. */
+  includedRuleIds?: string[];
   profile: Profile | null;
   mismatch: MismatchResult | null;
 }
@@ -83,12 +85,15 @@ function withProjectIndex(text: string, cwd?: string): string {
   } catch { return text; }
 }
 
+let lastIncluded: string[] = [];
 function renderWithoutProfile(cwd?: string): string | null {
+  lastIncluded = [];
   try {
     const rules = loadContextRules(cwd);
     if (rules.length === 0) return null;
     const state = { warnings: [] } as unknown as SessionEffectiveState;
     const result = renderRulesDetailed(rules, state, null as unknown as Profile, DEFAULT_CONTEXT);
+    lastIncluded = result.included.map((r) => r.rule_id);
     recordRenderReport(result);
     return withProjectIndex(result.text, cwd);
   } catch {
@@ -122,6 +127,7 @@ export function bootstrapV1Session(cwd?: string, opts: { trackInjection?: boolea
       corruptProfileBackupPath: null,
       session: null,
       renderedRules: renderWithoutProfile(cwd),
+      includedRuleIds: lastIncluded,
       profile: null,
       mismatch: null,
     };
@@ -144,6 +150,7 @@ export function bootstrapV1Session(cwd?: string, opts: { trackInjection?: boolea
       corruptProfileBackupPath,
       session: null,
       renderedRules: renderWithoutProfile(cwd),
+      includedRuleIds: lastIncluded,
       profile: null,
       mismatch: null,
     };
@@ -280,6 +287,7 @@ export function bootstrapV1Session(cwd?: string, opts: { trackInjection?: boolea
     corruptProfileBackupPath: null,
     session,
     renderedRules,
+    includedRuleIds: rendered.included.map((r) => r.rule_id),
     profile,
     mismatch: mismatchResult,
   };

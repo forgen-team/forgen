@@ -55,6 +55,16 @@ describe('결정 원장', () => {
     expect(m.readDecisions().some((d) => d.question === 'SUB')).toBe(false);
     expect(m.summarizeDecisions()).toMatchObject({ accept: 2, override: 2, free: 1, multi: 1, 'no-recommendation': 1, unanswered: 1 });
   });
+  it('소급: 같은 질문이 이어하기·포크로 두 파일에 있으면, 답 없는 사본 파일이 먼저여도 답 있는 사본이 이긴다', () => {
+    const P2 = path.join(HOME, 'projects2', 'p');
+    fs.mkdirSync(P2, { recursive: true });
+    fs.writeFileSync(path.join(P2, 'A-first.jsonl'), ask('tf', '2026-11-25T00:00:00Z', [q('FORK', ['A (추천)', 'B'])]) + '\n' + res('tf', null) + '\n');
+    fs.writeFileSync(path.join(P2, 'B-second.jsonl'), ask('tf', '2026-11-25T00:00:00Z', [q('FORK', ['A (추천)', 'B'])]) + '\n' + res('tf', { FORK: 'B' }) + '\n');
+    fs.rmSync(path.join(HOME, '.forgen', 'state', 'decisions-backfill-done'), { force: true });
+    m.backfillDecisionsOnce(path.join(HOME, 'projects2'));
+    const fork = m.readDecisions().filter((d) => d.question === 'FORK');
+    expect(fork.map((d) => d.kind)).toEqual(['override']);
+  });
   it('결정 파일은 내보내기 대상(solutions·rules·behavior)이 아니다', async () => {
     const src = fs.readFileSync(path.resolve(import.meta.dirname, '..', 'src', 'engine', 'compound-export.ts'), 'utf-8');
     expect(src).toMatch(/KNOWLEDGE_DIRS = \['solutions', 'rules', 'behavior'\]/);

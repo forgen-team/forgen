@@ -133,6 +133,8 @@ export function markProjectInjected(sessionId: string, key: string, opts: { rese
     const injected = opts.reset ? [] : [...(prev?.injected ?? [])];
     if (injected.includes(key)) return false;
     injected.push(key);
+    // reset(세션 시작·압축 뒤): 그 전에 넣었던 룰은 압축으로 컨텍스트에서 사라졌으므로 "들어가 있음"에서 뺀다.
+    // 그 뒤 같은 프로젝트에서 교정이 오면 위치 전환 주입이 다시 일어나 들어간 것으로 기록된다.
     const rules = [...new Set([...(opts.reset ? [] : prev?.rules ?? []), ...(opts.ruleIds ?? [])])];
     const base: WorkContextFile = prev ?? {
       version: 1, session_id: sessionId, cwd: opts.cwd ?? '', project: opts.cwd ? projectKeyFor(opts.cwd) : null, updated_at: '', turns: {},

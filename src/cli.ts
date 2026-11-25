@@ -122,6 +122,14 @@ const commands: Command[] = [
     },
   },
   {
+    name: 'eval',
+    description: 'Measure recall on your own prompts: forgen eval recall-sample|recall-label|recall-score (data stays in ~/.forgen/eval)',
+    handler: async (args) => {
+      const { handleEval } = await import('./core/recall-eval.js');
+      await handleEval(args);
+    },
+  },
+  {
     name: 'way',
     description: 'Your way of working: summary, export to other models, import, collect host memory',
     handler: async (args) => {
@@ -770,6 +778,7 @@ function printHelp() {
     forgen mcp                      MCP server management
     forgen skill promote|list       Skill management (promote writes a standard SKILL.md; --install → ~/.claude/skills)
     forgen project add <key> <folder...> [--alias old]   Group folders (repos or not) under one project key
+    forgen eval recall-sample [--n 100] | recall-label | recall-score   Gold sample of your own prompts for the solution gate (local only)
     forgen project list|remove <key>|which [folder]      Show / drop keys, or which key a folder resolves to
     forgen way [--all|--json]       Your way of working in one screen: rules you said vs inferred, enforced vs advisory
     forgen way export --target <agents-md|claude-rules|skill|system-prompt|gemini|cursor|workflow|json>

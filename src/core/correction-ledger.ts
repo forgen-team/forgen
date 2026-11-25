@@ -34,7 +34,9 @@ export interface LedgerEntry {
 }
 
 export function classifyCorrection(input: { sessionId: string; evidenceId: string; policy: string; renderKey: string; project: string | null; rules?: Rule[] }): LedgerEntry {
-  const pool = (input.rules ?? loadActiveRules()).filter((r) => r.scope === 'me' && !r.evidence_refs.includes(input.evidenceId));
+  // 같은 세션의 임시 룰(scope 'session')도 "이미 있는 룰"이다 — 같은 세션에서 같은 교정을 되풀이하면 재발.
+  const pool = (input.rules ?? loadActiveRules()).filter((r) => (r.scope === 'me' || (r.scope === 'session' && r.session_id === input.sessionId))
+    && !r.evidence_refs.includes(input.evidenceId));
   const norm = normalizePolicy(input.policy);
   // 같은 뜻의 룰은 여럿일 수 있다(같은 교정이 승급돼 생긴 룰 등). 모두 모은 뒤 이 세션에 들어간 것을 먼저 본다.
   const matches: NonNullable<LedgerEntry['match']>[] = [];
@@ -49,7 +51,8 @@ export function classifyCorrection(input: { sessionId: string; evidenceId: strin
   if (matches.length === 0) return { ...base, class: 'new' };
   const wc = readWorkContext(input.sessionId);
   if (!wc?.rules) return { ...base, class: 'unknown-delivery', match: matches[0] };
-  const delivered = matches.find((m) => wc.rules?.includes(m.rule_id));
+  const sessionRule = (id: string) => pool.some((r) => r.rule_id === id && r.scope === 'session');
+  const delivered = matches.find((m) => wc.rules?.includes(m.rule_id) || sessionRule(m.rule_id));
   if (delivered) return { ...base, class: 'recurrence', match: delivered };
   const match = matches[0];
   const rule = pool.find((r) => r.rule_id === match?.rule_id);
