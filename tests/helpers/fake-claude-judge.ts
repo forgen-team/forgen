@@ -3,7 +3,10 @@
  * 판정기·캐시·재생 코드는 전부 실물이고, 이 대역은 모델 응답만 결정적으로 흉내 낸다.
  *   교정 판정: USER 줄에 [[C:tqNN]] 이 있으면 교정(요지에 tqNN), [[T]] 가 더 있으면 이 작업 전용. 그 밖은 교정 아님.
  *   쌍 판정(비대칭 1회): 교정·기억이 같은 tqNN 을 가지면 yes, 어느 쪽이든 UNK 가 있으면 unknown, 그 밖은 no.
- *   FAKE_STATE/calls.log 에 호출마다 "correction <항목 수>" / "pair <항목 수>" 한 줄. FAKE_DOWN=1 이면 로그인 오류로 실패.
+ *   같은 뜻 중복: A·B 가 같은 dqNN 을 가지면 yes · 부딪힘: 같은 cqNN 이면 yes (둘 다 UNK 가 있으면 unknown, 그 밖은 no).
+ *   섞임: 지시에 [[MIX]] 면 project(짐작한 프로젝트), [[UNK]] 면 unknown, 그 밖은 general.
+ *   처방 문안: merge = 원문1 + " (합침)", rewrite = 원문1 앞 150자, index = 원문1 의 링크 뒤 "짧게", memo = 원문1 로 name·description·text.
+ *   FAKE_STATE/calls.log 에 호출마다 "<종류> <항목 수> <모델>" 한 줄. FAKE_DOWN=1 이면 로그인 오류로 실패.
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -18,9 +21,30 @@ process.stdin.on('end', () => {
   const model = process.argv[process.argv.indexOf('--model') + 1];
   const blocks = input.split(/^### /m).slice(1).map((b) => { const nl = b.indexOf('\\n'); return { id: b.slice(0, nl).trim(), body: b.slice(nl + 1) }; });
   const isPair = input.includes('이미 지시하고 있었나');
+  const kind = input.includes('기억 파일을 정리하는 편집자') ? 'fix' : input.includes('한 프로젝트에서만 뜻이 있는가') ? 'mix' : input.includes('하나만 남겨도 AI 가 받는') ? 'dup' : input.includes('동시에 지킬 수 없는가') ? 'conflict' : isPair ? 'pair' : 'correction';
   const out = [];
   for (const b of blocks) {
-    if (isPair) {
+    if (kind === 'dup' || kind === 'conflict') {
+      const a = (/^A: (.*)$/m.exec(b.body) || [])[1] || '';
+      const bb = (/^B: (.*)$/m.exec(b.body) || [])[1] || '';
+      const re = kind === 'dup' ? /dq\\d\\d/ : /cq\\d\\d/;
+      const ta = (a.match(re) || [])[0];
+      const tb = (bb.match(re) || [])[0];
+      const answer = a.includes('UNK') && bb.includes('UNK') ? 'unknown' : ta && ta === tb ? 'yes' : 'no';
+      out.push(JSON.stringify({ id: b.id, answer, reason: 'fake ' + kind }));
+    } else if (kind === 'mix') {
+      const t = (/^지시: (.*)$/m.exec(b.body) || [])[1] || '';
+      const g = (/^짐작: (.*)$/m.exec(b.body) || [])[1] || '';
+      const answer = t.includes('[[MIX]]') ? 'project' : t.includes('[[UNK]]') ? 'unknown' : 'general';
+      out.push(JSON.stringify({ id: b.id, answer, project: answer === 'project' && g !== '(없음)' ? g : null, reason: 'fake mix' }));
+    } else if (kind === 'fix') {
+      const task = (/^task: (.*)$/m.exec(b.body) || [])[1] || '';
+      const t1 = (/^원문1: (.*)$/m.exec(b.body) || [])[1] || '';
+      if (task === 'merge') out.push(JSON.stringify({ id: b.id, text: t1 + ' (합침)' }));
+      else if (task === 'rewrite') out.push(JSON.stringify({ id: b.id, text: t1.slice(0, 150) }));
+      else if (task === 'index') out.push(JSON.stringify({ id: b.id, text: '짧게' }));
+      else out.push(JSON.stringify({ id: b.id, text: t1, name: 'memo ' + t1.slice(0, 12), description: t1.slice(0, 60) }));
+    } else if (isPair) {
       const a = (/^교정: (.*)$/m.exec(b.body) || [])[1] || '';
       const bb = (/^기억: (.*)$/m.exec(b.body) || [])[1] || '';
       const ta = (a.match(/tq\\d\\d/) || [])[0];
@@ -33,7 +57,7 @@ process.stdin.on('end', () => {
       out.push(JSON.stringify({ id: b.id, correction: !!m, gist: m ? '고칠 것 ' + m[1] + (u.includes('UNK') ? ' UNK' : '') + ' 방향 지시' : '', task_specific: u.includes('[[T]]') }));
     }
   }
-  if (S) fs.appendFileSync(S + '/calls.log', (isPair ? 'pair ' : 'correction ') + blocks.length + ' ' + model + '\\n');
+  if (S) fs.appendFileSync(S + '/calls.log', kind + ' ' + blocks.length + ' ' + model + '\\n');
   process.stdout.write('\`\`\`\\n' + out.join('\\n') + '\\n\`\`\`\\n');
 });
 `;

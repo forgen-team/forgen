@@ -1,7 +1,7 @@
 /**
  * 결정적 검사 (docs/plans/2026-11-25-v1.0-plan.md §4.1 중 모델이 필요 없는 것).
  *   잘림 · 크기·토큰 · 같은 문장 · 낡음(가리키는 파일·링크·npm 스크립트가 지금 없음) · 다른 프로젝트 섞임 후보 · paths: 없는 룰
- * 같은 뜻 중복·부딪힘·섞임 확정은 모델 판정이라 다음 덩어리다. 여기서는 후보만 낸다.
+ * 같은 뜻 중복·부딪힘·섞임 확정은 모델 판정이라 model-checks.ts 가 한다. 여기서는 후보만 낸다.
  * 입력은 sources.ts 가 읽은 것뿐이고, 결과는 경로·줄 순으로 정렬해 같은 원천이면 같은 결과가 나온다.
  */
 import * as fs from 'node:fs';
@@ -20,6 +20,8 @@ export interface Unit {
   layer: UnitLayer;
   ruleId?: string;
   tokens: number;
+  /** 메모 주제 파일이면 앞머리 type(feedback 등). */
+  memoryType?: string;
 }
 
 const byLoc = (a: { path: string; line: number }, b: { path: string; line: number }) => (a.path < b.path ? -1 : a.path > b.path ? 1 : a.line - b.line);

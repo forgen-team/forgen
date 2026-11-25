@@ -25,7 +25,9 @@ export function topLines(r: AuditResult): string[] {
     r.summary.recurrence.line,
     `세션마다 실리는 기억 약 ${range(t.min, t.max, '')} 토큰 (폴더 ${t.folders}곳, 중앙값 ${t.median}) · 결정적으로 줄일 수 있는 몫 ${range(t.reduciblePctMin, t.reduciblePctMax, '%')} (같은 문장 사본·낡은 줄)`,
     // 첫 화면에는 확정된 지적만 센다. 섞임 "후보"는 일반 원칙도 섞여 나오므로(근거 위치만 본 신호) 모델 판정 전에는 탭에만 둔다.
-    `같은 문장 ${f.sameSentence}묶음 · 낡은 참조 ${f.stale}개 · paths: 없는 룰 ${f.unscopedRules}개 (부딪힘·같은 뜻 중복·다른 프로젝트 섞임은 모델 판정 뒤에 센다)`,
+    f.conflicts === 'pending' || f.dupGroups === null || f.mixConfirmed === null
+      ? `같은 문장 ${f.sameSentence}묶음 · 낡은 참조 ${f.stale}개 · paths: 없는 룰 ${f.unscopedRules}개 (부딪힘·같은 뜻 중복·다른 프로젝트 섞임은 모델 판정이 꺼져 세지 않음)`
+      : `부딪힘 ${f.conflicts}쌍 · 같은 뜻 중복 ${f.dupGroups}묶음 · 다른 프로젝트 섞임 ${f.mixConfirmed}개 (모델 판정${r.checks.model?.status === 'incomplete' ? ', 판정 불완전' : ''}) · 같은 문장 ${f.sameSentence}묶음 · 낡은 참조 ${f.stale}개 · paths: 없는 룰 ${f.unscopedRules}개`,
     `MEMORY.md 잘림 ${tr.truncated}곳 / 메모 폴더 ${tr.memoryDirs}곳 · ${tight}`,
   ];
 }
@@ -53,15 +55,19 @@ function clip(s,n){ s=String(s||''); return s.length>n ? s.slice(0,n-1)+'…' : 
 var LAYER={managed:'관리형 정책',user:'사용자 CLAUDE.md','user-rules':'사용자 .claude/rules',project:'프로젝트 CLAUDE.md','project-local':'CLAUDE.local.md','project-rules':'프로젝트 .claude/rules',agents:'AGENTS.md','import':'@import','memory-index':'MEMORY.md','memory-topic':'메모 주제 파일','forgen-render':'forgen 주입','forgen-rule':'forgen 룰'};
 function lay(l){ return LAYER[l]||l; }
 
-document.getElementById('meta').textContent = 'forgen ' + (D.forgenVersion||'') + ' · ' + (D.generatedAt||'').replace('T',' ').slice(0,16) + ' UTC · 회차 ' + (D.runId||'') + ' · ' + (D.summary && D.summary.recurrence && D.summary.recurrence.status !== 'none' ? '첫 줄은 모델 판정(저장된 audit recurrence 결과), 나머지는 결정적 검사' : '결정적 검사만(모델 판정 없음)') + ' · 이 파일은 내 컴퓨터에서만 열리며 밖으로 아무것도 보내지 않습니다';
+document.getElementById('meta').textContent = 'forgen ' + (D.forgenVersion||'') + ' · ' + (D.generatedAt||'').replace('T',' ').slice(0,16) + ' UTC · 회차 ' + (D.runId||'') + ' · ' + (D.model && D.model.used ? '셋째 줄(부딪힘·중복·섞임)은 모델 판정' : '셋째 줄은 결정적 검사만(모델 판정 꺼짐)') + (D.summary && D.summary.recurrence && D.summary.recurrence.status !== 'none' ? ' · 첫 줄은 저장된 audit recurrence 결과(모델 판정)' : '') + ' · 이 파일은 내 컴퓨터에서만 열리며 밖으로 아무것도 보내지 않습니다';
 var top = el('ul',{id:'top'}); (D.top||[]).forEach(function(t){ top.appendChild(el('li',{text:t})); });
 var header = document.querySelector('header'); header.insertBefore(top, document.getElementById('tabs'));
 
 var C = D.checks || {};
-var tabs = [['tokens','폴더별 토큰 ('+(D.folders||[]).length+')'],['same','같은 문장 ('+(C.sameSentence||[]).length+')'],['mix','섞임 후보 ('+(C.mix||[]).length+')'],['stale','낡음 ('+(C.stale||[]).length+')'],['trunc','잘림 ('+(C.truncation||[]).length+')'],['rules','paths: 없는 룰 ('+(C.unscopedRules||[]).length+')'],['sources','원천']];
+var M = C.model || null;
+function yesN(xs){ return (xs||[]).filter(function(p){return p.verdict==='yes';}).length; }
+var tabs = [['tokens','폴더별 토큰 ('+(D.folders||[]).length+')']];
+if (M) { tabs.push(['conflict','부딪힘 ('+yesN(M.conflict)+')']); tabs.push(['dup','같은 뜻 중복 ('+M.counts.dupGroups+'묶음)']); }
+tabs = tabs.concat([['same','같은 문장 ('+(C.sameSentence||[]).length+')'],['mix',(M?'섞임 ('+M.counts.mixConfirmed+' 확정 / 후보 '+(C.mix||[]).length+')':'섞임 후보 ('+(C.mix||[]).length+')')],['stale','낡음 ('+(C.stale||[]).length+')'],['trunc','잘림 ('+(C.truncation||[]).length+')'],['rules','paths: 없는 룰 ('+(C.unscopedRules||[]).length+')'],['sources','원천']];
 var nav = document.getElementById('tabs');
 tabs.forEach(function(t){ var b=el('button',{role:'tab','data-tab':t[0],text:t[1]}); b.onclick=function(){ show(t[0]); }; nav.appendChild(b); });
-var R = {tokens:renderTokens,same:renderSame,mix:renderMix,stale:renderStale,trunc:renderTrunc,rules:renderRules,sources:renderSources};
+var R = {tokens:renderTokens,conflict:function(){renderPairs('conflict');},dup:function(){renderPairs('dup');},same:renderSame,mix:renderMix,stale:renderStale,trunc:renderTrunc,rules:renderRules,sources:renderSources};
 function show(name){ Array.prototype.forEach.call(nav.children,function(b){ b.setAttribute('aria-selected', b.getAttribute('data-tab')===name?'true':'false'); }); view.textContent=''; R[name](); try{ location.hash=name; }catch(e){} }
 function note(t){ view.appendChild(el('p',{cls:'note',text:t})); }
 
@@ -99,15 +105,37 @@ function renderSame(){
     {key:'where',label:'위치',cls:'loc',sort:false,render:function(g){ var d=el('div'); g.occurrences.forEach(function(o){ d.appendChild(el('div',{text:lay(o.layer)+' · '+loc(o)})); }); return d; }}
   ], function(){return C.sameSentence||[];}));
 }
-function renderMix(){
-  note('전역 층(사용자 CLAUDE.md·사용자 룰·홈 메모 색인·forgen 전역 룰)의 지시 중 한 프로젝트에만 묶여 보이는 것. 결정적 신호만으로 고른 후보이고, 일반 원칙도 섞여 나옵니다 — 내용 판정은 다음 버전.');
+var VL={yes:'예',no:'아니오',unknown:'모름',project:'섞임(프로젝트 전용)',general:'일반 원칙',null:'판정 못 함'};
+function vl(v){ return VL[v===null||v===undefined?'null':v]||v; }
+function renderPairs(kind){
+  var xs=(M&&M[kind])||[];
+  note(kind==='dup'
+    ? '모델 판정(Haiku): 같은 세션에 함께 실리는 두 지시가 같은 뜻인가(하나만 남겨도 잃는 것이 없는가). 후보는 글자 2-gram 상위 5 · 점수 ≥ '+M.judge.dup.min+'. "예"만 셉니다(묶음 = 예 쌍을 이은 것). 모델 판정 표시가 붙은 줄은 오너 검수(forgen audit review --kind dup) 대상입니다.'
+    : '모델 판정(Haiku): 같은 세션에 함께 실리는 두 지시를 동시에 지킬 수 없는가. 후보는 같은 주제(2-gram 상위 5 · 점수 ≥ '+M.judge.conflict.min+')이면서 부정 표지 극성이 다른 쌍. "예"만 셉니다. 검수: forgen audit review --kind conflict');
+  var rows=xs.slice().sort(function(a,b){ var o={yes:0,unknown:1,no:2}; var x=(a.verdict in o)?o[a.verdict]:3, y=(b.verdict in o)?o[b.verdict]:3; return (x-y) || b.score-a.score; });
   view.appendChild(table([
+    {key:'verdict',label:'판정',value:function(p){return vl(p.verdict);}},
+    {key:'a',label:'지시 A',cls:'stmt',value:function(p){return clip(p.a.text,140);}},
+    {key:'b',label:'지시 B',cls:'stmt',value:function(p){return clip(p.b.text,140);}},
+    {key:'reason',label:'근거(모델 판정)',cls:'stmt',value:function(p){return p.reason||'';}},
+    {key:'score',label:'후보 점수',num:true},
+    {key:'where',label:'위치',cls:'loc',sort:false,render:function(p){ var d=el('div'); d.appendChild(el('div',{text:lay(p.a.layer)+' · '+loc(p.a)})); d.appendChild(el('div',{text:lay(p.b.layer)+' · '+loc(p.b)})); return d; }}
+  ], function(){return rows;}));
+}
+function renderMix(){
+  if(M){
+    note('전역 층(사용자 CLAUDE.md·사용자 룰·forgen 전역 룰)의 섞임 후보를 모델(Haiku)이 내용으로 판정했습니다: 한 프로젝트에서만 뜻이 있으면 섞임, 말투·언어·검증 같은 일반 원칙이면 섞임 아님. 홈 메모 색인은 홈에서 연 세션에만 실려 판정에 보내지 않았습니다. 검수: forgen audit review --kind mix');
+  } else note('전역 층(사용자 CLAUDE.md·사용자 룰·홈 메모 색인·forgen 전역 룰)의 지시 중 한 프로젝트에만 묶여 보이는 것. 결정적 신호만으로 고른 후보이고, 일반 원칙도 섞여 나옵니다 — 모델 판정이 꺼져 내용 판정을 하지 않았습니다.');
+  var rows=M?M.mix:(C.mix||[]);
+  var cols=[];
+  if(M) cols.push({key:'verdict',label:'판정',value:function(c){return c.skipped?'판정 안 함(홈 메모)':vl(c.verdict);}});
+  cols=cols.concat([
     {key:'text',label:'지시',cls:'stmt',value:function(c){return clip(c.text,160);}},
-    {key:'project',label:'프로젝트',value:function(c){return c.project||'—';}},
-    {key:'why',label:'신호',value:function(c){return c.why.join(' · ');}},
-    {key:'tokens',label:'토큰',num:true},
-    {key:'loc',label:'위치',cls:'loc',value:function(c){return lay(c.layer)+' · '+loc(c);}}
-  ], function(){return C.mix||[];}));
+    {key:'project',label:'프로젝트',value:function(c){return (M?(c.judgedProject||c.project):c.project)||'—';}},
+    {key:'why',label:'신호',value:function(c){return c.why.join(' · ');}}]);
+  if(M) cols.push({key:'reason',label:'근거(모델 판정)',cls:'stmt',value:function(c){return c.reason||'';}});
+  cols=cols.concat([{key:'tokens',label:'토큰',num:true},{key:'loc',label:'위치',cls:'loc',value:function(c){return lay(c.layer)+' · '+loc(c);}}]);
+  view.appendChild(table(cols, function(){return rows;}));
 }
 function renderStale(){
   note('지금 없는 파일·링크·npm 스크립트를 가리키는 줄(결정적인 것만). 자리 표시 경로(<…>, *, /path/to)는 보지 않습니다. 메모 주제 파일 본문은 지난 기록이라 제외합니다.');

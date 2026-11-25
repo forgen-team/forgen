@@ -24,12 +24,13 @@ import {
 import {
   defaultEnv, defaultFolders, gitRootOf, hostLoadFor, listMemoryDirs, readMemoryDir, SourceReader,
   type AuditEnv, type FolderLoad, type Layer, type MemoryDir,
-  readSkillCatalog, type SkillEntry,
+  readSkillCatalog, type SkillEntry, frontmatterField, splitFrontmatter,
 } from './sources.js';
 import { estimateTokens } from './tokens.js';
 import { latestRecurrence, recurrenceLine } from './recurrence.js';
+import type { ModelChecks } from './model-checks.js';
 
-export const AUDIT_SCHEMA = 'forgen-audit/1' as const;
+export const AUDIT_SCHEMA = 'forgen-audit/2' as const;
 export const MANIFEST_SCHEMA = 'forgen-audit-manifest/1' as const;
 
 export interface AuditOptions {
@@ -63,12 +64,13 @@ export interface AuditResult {
   generatedAt: string;
   claudeDir: string;
   forgenHome: string;
-  model: { used: false; note: string };
+  model: { used: boolean; note: string };
   summary: {
     /** 첫 화면 첫 줄 — 가장 최근 `audit recurrence` 결과(§4.4 작을 때 규칙 적용). 없으면 status 'none'. */
     recurrence: { status: 'none' | 'ok' | 'insufficient' | 'incomplete' | 'no-data'; line: string; generatedAt?: string; window?: { since: string; until: string }; per1000?: { total: number; written: number }; per30d?: { total: number; written: number; corrections: number }; sampled?: boolean };
     tokens: { folders: number; min: number; max: number; median: number; reduciblePctMin: number; reduciblePctMax: number; reduciblePctMedian: number };
-    findings: { sameSentence: number; mixCandidates: number; stale: number; unscopedRules: number; claudeMdOver200: number; conflicts: 'pending' };
+    /** conflicts·dupGroups·mixConfirmed 는 모델 판정 뒤의 확정 지적 수. 모델을 쓰지 않은 회차는 'pending'·null. */
+    findings: { sameSentence: number; mixCandidates: number; stale: number; unscopedRules: number; claudeMdOver200: number; conflicts: number | 'pending'; dupGroups: number | null; mixConfirmed: number | null };
     truncation: { memoryDirs: number; truncated: number; tightest: { dir: string; folder: string | null; spareLines: number; spareBytes: number; spareItems: number; firstLimit: 'lines' | 'bytes' } | null };
   };
   folders: FolderSummary[];
@@ -79,6 +81,8 @@ export interface AuditResult {
     stale: StaleRef[];
     mix: MixCandidate[];
     unscopedRules: UnscopedRule[];
+    /** 모델 판정 검사(같은 뜻 중복·부딪힘·섞임 확정). --no-model 이면 없음. */
+    model?: ModelChecks;
   };
   sources: { files: number; bytes: number; unreadable: Array<{ path: string; error: string }>; brokenRules: Array<{ file: string; error: string }> };
 }
@@ -104,10 +108,18 @@ export interface AuditManifest {
   inputsDigest: string;
   /** 결과(생성 시각 제외)의 해시. 같은 원천이면 같아야 한다. */
   resultDigest: string;
-  model: { used: false };
+  model: { used: false } | { used: true; judges: Array<{ model: string; version: string }>; candidates: Record<string, number> };
 }
 
-export interface AuditRun { result: AuditResult; manifest: Omit<AuditManifest, 'runId'>; timing: Record<string, number> }
+/**
+ * 모델 판정·처방이 쓰는 비교 단위(결과 JSON 에는 넣지 않는다).
+ *   units: 지시 줄·forgen 룰(세션 시작에 실리는 것과 잘린 색인 줄), topics: 감사한 메모 폴더의 주제 파일(파일 하나 = 한 단위)
+ *   loadedIn: 단위 키(unitKey) → 그 단위가 세션 시작에 실리는 폴더들
+ */
+export interface AuditContext { units: Unit[]; topics: Unit[]; loadedIn: Map<string, string[]>; rules: Map<string, Rule>; projectKeys: string[]; homeMemoryIndex: Set<string>; memory: Map<string, MemoryDir> }
+export interface AuditRun { result: AuditResult; manifest: Omit<AuditManifest, 'runId'>; timing: Record<string, number>; ctx: AuditContext }
+
+export const unitKey = (u: { path: string; line: number; ruleId?: string }) => `${u.ruleId ?? u.path}:${u.line}`;
 
 export function forgenVersion(): string {
   try { return (JSON.parse(fs.readFileSync(new URL('../../package.json', import.meta.url), 'utf-8')) as { version?: string }).version ?? ''; } catch { return ''; }
@@ -200,7 +212,15 @@ export function runAudit(opts: AuditOptions = {}): AuditRun {
   const ruleUnits: Unit[] = active.map((r) => ({ text: r.policy, norm: normalizeSentence(r.policy), path: path.join(ME_RULES, `${r.rule_id}.json`), line: 0, layer: 'forgen-rule' as const, ruleId: r.rule_id, tokens: estimateTokens(ruleToText(r)) }));
   const auditedMemory = new Set(loads.map((l) => l.memoryDir).filter(Boolean));
   const topicUnits: Unit[] = [];
-  for (const m of memory.values()) if (auditedMemory.has(m.dir)) for (const t of m.topics) topicUnits.push(...markdownUnits(t, 'memory-topic'));
+  const topicFiles: Unit[] = [];
+  for (const m of memory.values()) if (auditedMemory.has(m.dir)) for (const t of m.topics) {
+    topicUnits.push(...markdownUnits(t, 'memory-topic'));
+    if (t.error) continue;
+    const body = splitFrontmatter(t.text).body.replace(/\s+/g, ' ').trim();
+    const desc = frontmatterField(t.text, 'description') ?? '';
+    const text = `${desc}${desc && body ? ' / ' : ''}${body}`.slice(0, 500);
+    if (text) topicFiles.push({ text, norm: normalizeSentence(text), path: t.path, line: 0, layer: 'memory-topic', tokens: estimateTokens(t.text), ...(t.memoryType ? { memoryType: t.memoryType } : {}) });
+  }
 
   // 4. 검사
   const truncation = [...memory.values()].map(checkTruncation).filter((x): x is TruncationResult => !!x).sort((a, b) => (a.dir < b.dir ? -1 : 1));
@@ -276,6 +296,7 @@ export function runAudit(opts: AuditOptions = {}): AuditRun {
 
   // 5. 폴더별 토큰과 결정적으로 줄일 몫
   const staleKeys = new Set(stale.map((s) => `${s.ruleId ?? s.path}:${s.line}`));
+  const loadedIn = new Map<string, string[]>();
   const folderSummaries: FolderSummary[] = loads.map((l) => {
     const always = new Set(l.entries.filter((e) => e.always).map((e) => e.path));
     const memIdx = l.memoryDir ? memory.get(l.memoryDir) : undefined;
@@ -283,6 +304,7 @@ export function runAudit(opts: AuditOptions = {}): AuditRun {
     const loaded = (u: { path: string; line: number; ruleId?: string; layer: string }) =>
       u.ruleId ? included.has(u.ruleId) : always.has(u.path) && (u.layer !== 'memory-index' || !memIdx || u.line <= memIdx.loadedLines);
     const unitsHere = [...instructionUnits, ...ruleUnits].filter(loaded);
+    for (const u of unitsHere) { const k = unitKey(u); const arr = loadedIn.get(k) ?? []; if (!arr.includes(l.folder)) arr.push(l.folder); loadedIn.set(k, arr); }
     const byNorm = new Map<string, Unit[]>();
     for (const u of unitsHere) if (u.norm.length >= 20) { const g = byNorm.get(u.norm); if (g) g.push(u); else byNorm.set(u.norm, [u]); }
     const counted = new Set<string>();
@@ -321,7 +343,7 @@ export function runAudit(opts: AuditOptions = {}): AuditRun {
     generatedAt: (opts.now ?? new Date()).toISOString(),
     claudeDir: env.claudeDir,
     forgenHome: FORGEN_HOME,
-    model: { used: false, note: '이 명령은 결정적 검사만 하고 아무것도 기기 밖으로 보내지 않는다. 같은 말 다시 하기(첫 줄)는 `forgen audit recurrence` 의 저장된 결과를 읽는다. 같은 뜻 중복·부딪힘·섞임 확정은 다음 버전.' },
+    model: { used: false, note: '결정적 검사만 했고 아무것도 기기 밖으로 보내지 않았다(--no-model). 같은 말 다시 하기(첫 줄)는 `forgen audit recurrence` 의 저장된 결과를 읽는다.' },
     summary: {
       recurrence: (() => {
         const rec = latestRecurrence();
@@ -332,7 +354,7 @@ export function runAudit(opts: AuditOptions = {}): AuditRun {
         };
       })(),
       tokens: { folders: tokens.length, min: tokens.length ? Math.min(...tokens) : 0, max: tokens.length ? Math.max(...tokens) : 0, median: median(tokens), reduciblePctMin: pcts.length ? Math.min(...pcts) : 0, reduciblePctMax: pcts.length ? Math.max(...pcts) : 0, reduciblePctMedian: pcts.length ? [...pcts].sort((a, b) => a - b)[pcts.length >> 1] : 0 },
-      findings: { sameSentence: sameSentence.length, mixCandidates: mix.length, stale: stale.length, unscopedRules: unscopedRules.length, claudeMdOver200: claudeMdOver200.length, conflicts: 'pending' },
+      findings: { sameSentence: sameSentence.length, mixCandidates: mix.length, stale: stale.length, unscopedRules: unscopedRules.length, claudeMdOver200: claudeMdOver200.length, conflicts: 'pending', dupGroups: null, mixConfirmed: null },
       truncation: { memoryDirs: truncation.length, truncated: truncation.filter((t) => t.overLines || t.overBytes).length, tightest: tight ? { dir: tight.dir, folder: tight.folder, spareLines: tight.spareLines, spareBytes: tight.spareBytes, spareItems: tight.spareItems, firstLimit: tight.firstLimit } : null },
     },
     folders: folderSummaries,
@@ -361,7 +383,10 @@ export function runAudit(opts: AuditOptions = {}): AuditRun {
     sourcesDigest: sha(JSON.stringify(sources)), ...(inputs ? { inputs } : {}), inputsDigest: inputs?.digest ?? 'none',
     resultDigest: resultDigest(result), model: { used: false as const },
   };
-  return { result, manifest, timing };
+  const homeMemoryIndex = new Set(homeMemory.map((m) => m.index?.path).filter((p): p is string => !!p));
+  const seenUnit = new Set<string>();
+  const units = [...instructionUnits, ...ruleUnits].filter((u) => { const k = unitKey(u); if (seenUnit.has(k)) return false; seenUnit.add(k); return true; });
+  return { result, manifest, timing, ctx: { units, topics: topicFiles, loadedIn, rules: ruleById, projectKeys: sortedKeys, homeMemoryIndex, memory } };
 }
 
 /** 생성 시각을 뺀 결과의 해시 — 같은 원천이면 같은 값. */
@@ -384,6 +409,8 @@ export function writeRun(run: AuditRun, html: (r: AuditResult, runId: string) =>
   const htmlPath = path.join(dir, 'audit.html');
   fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o600 });
   fs.writeFileSync(htmlPath, html(run.result, runId), { mode: 0o600 });
+  // 검수(audit review --kind)가 이 회차의 판정을 읽는다.
+  fs.writeFileSync(path.join(dir, 'result.json'), `${JSON.stringify(run.result)}\n`, { mode: 0o600 });
   try { fs.chmodSync(manifestPath, 0o600); fs.chmodSync(htmlPath, 0o600); } catch { /* 윈도우 등 */ }
   return { dir, runId, manifestPath, htmlPath };
 }

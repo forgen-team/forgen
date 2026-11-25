@@ -137,7 +137,8 @@ export function parseRulePaths(text: string): string[] | null {
 
 export function frontmatterField(text: string, field: string): string | undefined {
   const { fm } = splitFrontmatter(text);
-  const m = new RegExp(`^${field}\\s*:\\s*(.+)$`, 'm').exec(fm);
+  // 호스트 메모는 type 을 metadata: 아래에 들여 쓰기도 한다(metadata:\n  type: feedback) — 들여 쓴 줄도 읽는다.
+  const m = new RegExp(`^${field}\\s*:\\s*(.+)$`, 'm').exec(fm) ?? new RegExp(`^\\s+${field}\\s*:\\s*(.+)$`, 'm').exec(fm);
   return m ? m[1].trim().replace(/^["']|["']$/g, '') : undefined;
 }
 

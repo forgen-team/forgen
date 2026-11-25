@@ -193,7 +193,7 @@ describe('forgen audit — 합성 픽스처', () => {
     expect(hashTree(ROOT, [audit])).toBe(before);
     expect(hashTree(path.join(FH, 'me'))).toBe(meBefore);
     expect(hashTree(path.join(FH, 'state'))).toBe(stBefore);
-    expect(fs.readdirSync(out.dir).sort()).toEqual(['audit.html', 'manifest.json']);
+    expect(fs.readdirSync(out.dir).sort()).toEqual(['audit.html', 'manifest.json', 'result.json']);
     if (process.platform !== 'win32') {
       expect(fs.statSync(out.htmlPath).mode & 0o777).toBe(0o600);
       expect(fs.statSync(out.manifestPath).mode & 0o777).toBe(0o600);

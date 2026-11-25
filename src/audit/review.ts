@@ -14,6 +14,8 @@ import { FORGEN_HOME } from '../core/paths.js';
 import { DOM_HELPERS_JS, htmlPage } from '../core/status-html.js';
 import type { PairVerdict } from './judge.js';
 import { latestRecurrenceRun, type RecurrenceResult } from './recurrence.js';
+import type { AuditResult } from './run.js';
+import type { ModelChecks } from './model-checks.js';
 
 export const REVIEW_SAMPLE_SCHEMA = 'forgen-audit-review-sample/1' as const;
 export const REVIEW_ANSWERS_SCHEMA = 'forgen-audit-review-answers/1' as const;
@@ -37,9 +39,14 @@ export interface ReviewPair {
   memoryKind: string;
   tier: string;
   score: number;
+  /** 지시 검사(--kind) 표본만: 지시 A 의 위치(지시 B 는 memoryWhere) */
+  whereA?: string;
 }
 
-export interface ReviewSample { schema: typeof REVIEW_SAMPLE_SCHEMA; runId: string; createdAt: string; judge: RecurrenceResult['judge']; digest: string; pairs: ReviewPair[] }
+export type ReviewKind = 'dup' | 'conflict' | 'mix';
+/** 지시 검사 표본의 판정자(N4 표본은 recurrence 의 JudgeInfo). */
+export interface CheckJudgeInfo { check: { kind: ReviewKind; model: string; version: string } }
+export interface ReviewSample { schema: typeof REVIEW_SAMPLE_SCHEMA; runId: string; createdAt: string; judge: RecurrenceResult['judge'] | CheckJudgeInfo; digest: string; pairs: ReviewPair[]; kind?: ReviewKind }
 
 const sha = (s: string) => createHash('sha256').update(s).digest('hex');
 export const reviewDir = () => path.join(FORGEN_HOME, 'audit', 'review');
@@ -147,6 +154,115 @@ upd();
 })();
 `;
 
+
+/** 가장 최근 `forgen audit` 회차 중 모델 판정 검사가 붙은 것. */
+export function latestAuditRun(): { runId: string; result: AuditResult } | null {
+  const base = path.join(FORGEN_HOME, 'audit');
+  let names: string[] = [];
+  try { names = fs.readdirSync(base).filter((n) => /^\d{8}T\d{6}Z-/.test(n)).sort().reverse(); } catch { return null; }
+  for (const n of names) {
+    try {
+      const r = JSON.parse(fs.readFileSync(path.join(base, n, 'result.json'), 'utf-8')) as AuditResult;
+      if (r.checks?.model) return { runId: n, result: r };
+    } catch { /* result.json 이 없는 회차(0.9.0 C1)·깨진 회차 */ }
+  }
+  return null;
+}
+
+const KIND_VERDICT = (kind: ReviewKind, v: string | null): PairVerdict | null => {
+  if (kind !== 'mix') return v === 'yes' || v === 'no' || v === 'unknown' ? v : null;
+  return v === 'project' ? 'yes' : v === 'general' ? 'no' : v === 'unknown' ? 'unknown' : null;
+};
+
+/**
+ * 지시 검사 표본(N2): 같은 칸 구성(예 무작위 10 · 아니오 중 후보 점수 높은 10 · 모름 5, 시드 고정)·같은 답 파일 형식.
+ * 회차 이름을 "<종류>-<감사 회차>" 로 해서 N4 표본·답(sample-<회차>.json)과 섞이지 않고, import·score 는 그대로 쓴다.
+ */
+export function buildKindSample(kind: ReviewKind, mc: ModelChecks, auditRunId: string, home = os.homedir(), now = new Date()): ReviewSample {
+  const where = (x: { ruleId?: string; path: string; line: number }) => shortWhere(x.path, x.line, x.ruleId ? `rule:${x.ruleId}` : 'md', home);
+  const all: Array<Omit<ReviewPair, 'bucket'>> = [];
+  if (kind === 'mix') {
+    for (const m of mc.mix) {
+      const judge = KIND_VERDICT(kind, m.verdict);
+      if (!judge) continue;
+      all.push({ pairId: m.id, judge, ts: '', gist: m.text, utterance: '', memory: m.judgedProject ?? m.project ?? '', memoryWhere: where(m), memoryKind: m.layer, tier: 'mix', score: m.why.length });
+    }
+  } else {
+    for (const p of kind === 'dup' ? mc.dup : mc.conflict) {
+      const judge = KIND_VERDICT(kind, p.verdict);
+      if (!judge) continue;
+      all.push({ pairId: p.id, judge, ts: '', gist: p.a.text, utterance: '', memory: p.b.text, memoryWhere: where(p.b), whereA: where(p.a), memoryKind: p.b.layer, tier: kind, score: p.score });
+    }
+  }
+  const rnd = (x: { pairId: string }) => sha(`${SEED}:${kind}:${x.pairId}`);
+  const byRnd = (a: { pairId: string }, b: { pairId: string }) => (rnd(a) < rnd(b) ? -1 : 1);
+  const yes = all.filter((x) => x.judge === 'yes').sort(byRnd).slice(0, REVIEW_QUOTA.yes).map((x) => ({ ...x, bucket: 'yes-random' as const }));
+  const no = all.filter((x) => x.judge === 'no').sort((a, b) => b.score - a.score || byRnd(a, b)).slice(0, REVIEW_QUOTA.no).map((x) => ({ ...x, bucket: 'no-top-score' as const }));
+  const unk = all.filter((x) => x.judge === 'unknown').sort(byRnd).slice(0, REVIEW_QUOTA.unknown).map((x) => ({ ...x, bucket: 'unknown' as const }));
+  const pairs = [...yes, ...no, ...unk].sort(byRnd);
+  const version = mc.judge.versions[kind];
+  return { schema: REVIEW_SAMPLE_SCHEMA, runId: `${kind}-${auditRunId}`, createdAt: now.toISOString(), judge: { check: { kind, model: mc.judge.model, version } }, digest: sha(JSON.stringify(pairs.map((p) => [p.pairId, p.judge]))), pairs, kind };
+}
+
+export function writeKindReview(kind: ReviewKind): { htmlPath: string; samplePath: string; sample: ReviewSample } | { error: string } {
+  const run = latestAuditRun();
+  if (!run?.result.checks.model) return { error: '모델 판정 검사가 붙은 감사 회차가 없다 — 먼저 forgen audit (--no-model 없이)' };
+  const sample = buildKindSample(kind, run.result.checks.model, run.runId);
+  if (!sample.pairs.length) return { error: `판정한 ${kind} 후보가 없다` };
+  const samplePath = path.join(reviewDir(), `sample-${sample.runId}.json`);
+  const htmlPath = path.join(reviewDir(), `review-${sample.runId}.html`);
+  write600(samplePath, `${JSON.stringify(sample, null, 2)}\n`);
+  const shown = { runId: sample.runId, digest: sample.digest, schema: REVIEW_ANSWERS_SCHEMA, kind, pairs: sample.pairs.map(({ judge: _j, bucket: _b, ...rest }) => rest) };
+  write600(htmlPath, htmlPage({ title: `forgen 판정 검수 — ${KIND_TITLE[kind]}`, data: shown, js: KIND_JS, css: CSS }));
+  return { htmlPath, samplePath, sample };
+}
+
+const KIND_TITLE: Record<ReviewKind, string> = { dup: '같은 뜻 중복', conflict: '부딪힘', mix: '다른 프로젝트 섞임' };
+
+const KIND_JS = `
+(function(){
+var D = JSON.parse(document.getElementById('forgen-data').textContent);
+var view = document.getElementById('view');
+${DOM_HELPERS_JS}
+var A = {};
+var Q = {
+  dup: ['두 지시가 같은 뜻인가 — 하나만 남겨도 잃는 지시가 없나?', [['same','같은 뜻(하나만 남겨도 됨)'],['different','다름(둘 다 필요)'],['unsure','모르겠음']]],
+  conflict: ['두 지시를 동시에 지킬 수 없나 — 하나를 지키면 다른 하나를 어기게 되나?', [['same','부딪힘(동시에 못 지킴)'],['different','둘 다 지킬 수 있음'],['unsure','모르겠음']]],
+  mix: ['모든 프로젝트에 실리는 이 지시는 아래 프로젝트에서만 뜻이 있나?', [['same','그 프로젝트 전용(섞임)'],['different','어디서나 통하는 일반 원칙'],['unsure','모르겠음']]]
+}[D.kind];
+document.getElementById('meta').textContent = '회차 ' + D.runId + ' · ' + D.pairs.length + '개 · 판정자의 답은 숨겼습니다 · 이 파일은 내 컴퓨터에서만 열리며 밖으로 아무것도 보내지 않습니다';
+var count = el('span',{text:''});
+var dl = el('button',{text:'답 저장(JSON 내려받기)'});
+view.appendChild(el('div',{id:'bar'},[count, dl, el('span',{cls:'where',text:'저장한 파일: forgen audit review --import <파일>'})]));
+function upd(){ count.textContent = Object.keys(A).length + ' / ' + D.pairs.length + ' 답함'; }
+D.pairs.forEach(function(p, i){
+  var card = el('div',{cls:'card'});
+  card.appendChild(el('p',{cls:'q',text:(i+1)+'. '+Q[0]}));
+  if (D.kind === 'mix') {
+    card.appendChild(el('p',{cls:'mem',text:p.gist}));
+    card.appendChild(el('p',{cls:'gist',text:'프로젝트: '+(p.memory||'(짐작 없음)')}));
+    card.appendChild(el('p',{cls:'where',text:p.memoryWhere}));
+  } else {
+    card.appendChild(el('p',{cls:'mem',text:'A: '+p.gist}));
+    card.appendChild(el('p',{cls:'where',text:p.whereA||''}));
+    card.appendChild(el('p',{cls:'mem',text:'B: '+p.memory}));
+    card.appendChild(el('p',{cls:'where',text:p.memoryWhere}));
+  }
+  var btns = el('div',{cls:'btns'});
+  Q[1].forEach(function(l){ var b=el('button',{text:l[1]}); b.onclick=function(){ A[p.pairId]=l[0]; Array.prototype.forEach.call(btns.children,function(x){x.classList.remove('on');}); b.classList.add('on'); card.classList.add('done'); upd(); }; btns.appendChild(b); });
+  card.appendChild(btns);
+  view.appendChild(card);
+});
+dl.onclick = function(){
+  var body = JSON.stringify({ schema: D.schema, runId: D.runId, digest: D.digest, answeredAt: new Date().toISOString(), answers: A }, null, 2);
+  var url = URL.createObjectURL(new Blob([body], {type:'application/json'}));
+  var a = el('a',{href:url, download:'forgen-review-'+D.runId+'.json'}); document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(function(){ URL.revokeObjectURL(url); }, 1000);
+};
+upd();
+})();
+`;
+
 export interface ReviewAnswers { schema: typeof REVIEW_ANSWERS_SCHEMA; runId: string; digest: string; answeredAt: string; answers: Record<string, OwnerAnswer> }
 
 function readSample(runId: string): ReviewSample | null {
@@ -184,7 +300,7 @@ export interface ReviewScore {
   unknown: Record<OwnerAnswer, number>;
   ownerUnsure: number;
   pass: boolean | null;
-  judge: RecurrenceResult['judge'];
+  judge: ReviewSample['judge'];
 }
 
 /** 회차마다 가장 최근에 넣은 답으로 판정자-오너 일치율. */
