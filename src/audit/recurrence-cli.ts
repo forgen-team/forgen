@@ -9,6 +9,7 @@ import * as path from 'node:path';
 import { FORGEN_HOME } from '../core/paths.js';
 import { writeFingerprintIfFirst } from './fingerprint.js';
 import { takeModelDisclosure } from './judge.js';
+import { resolvePendingCorrections } from '../core/correction-ledger-judge.js';
 import { recurrenceLine, runRecurrence, writeRecurrenceRun, type RecurrenceResult, type RecurrenceRun } from './recurrence.js';
 
 const DAY = 86_400_000;
@@ -38,7 +39,7 @@ const LABEL: Record<string, string> = { ignored: '실렸는데 무시', notLoade
 const REASON: Record<string, string> = { scope: '다른 폴더 전용', 'budget-or-other': 'forgen 예산 탈락 등', 'topic-only': '주제 파일에만', truncated: '잘림 뒤', 'other-folder': '다른 폴더', conditional: 'paths: 조건부', 'cwd-missing': '폴더 없음', 'replay-unknown': '지금은 보관된 룰이라 재생으로 확인 못 함' };
 
 export function summaryLines(r: RecurrenceResult): string[] {
-  const out = [`같은 말 다시 하기 (N4) ${r.window.since.slice(0, 10)} ~ ${r.window.until.slice(0, 10)} (${r.window.days}일, 앞 ${r.window.lookbackDays}일 조회 전용) · 판정자 ${r.judge.model ?? '없음'} (${r.judge.versions.correction}, ${r.judge.versions.pair})`];
+  const out = [`같은 말 다시 하기 (N4) ${r.window.since.slice(0, 10)} ~ ${r.window.until.slice(0, 10)} (${r.window.days}일, 앞 ${r.window.lookbackDays}일 조회 전용) · 판정자 ${r.judge ? `교정 ${r.judge.correction.model}(${r.judge.correction.version}) · 쌍 ${r.judge.pair.model}(${r.judge.pair.version}, 1회 비대칭, 사전 필터 ≥ ${r.judge.prefilterMin})` : '없음'}`];
   out.push(`  ${recurrenceLine(r)}`);
   if (r.statusNote) out.push(`  ${r.statusNote}`);
   if (r.status === 'model-off' || r.status === 'no-data') return out;
@@ -49,7 +50,7 @@ export function summaryLines(r: RecurrenceResult): string[] {
   for (const k of ['ignored', 'notLoaded', 'unwrittenRepeat', 'deletedRepeat', 'written', 'total'] as const) {
     out.push(`    ${LABEL[k].padEnd(24)} ${String(r.counts[k]).padStart(5)}   ${String(r.per1000[k]).padStart(8)}   ${String(r.per30d[k]).padStart(8)}`);
   }
-  out.push(`  95% 구간(1,000개당): 반복 전체 ${r.ci95per1000.total[0]}~${r.ci95per1000.total[1]} · 적혀 있던 것 ${r.ci95per1000.written[0]}~${r.ci95per1000.written[1]} · 순서 바꿔 갈린 쌍 ${r.splits}(세지 않음, 검수 대상)`);
+  out.push(`  95% 구간(1,000개당): 반복 전체 ${r.ci95per1000.total[0]}~${r.ci95per1000.total[1]} · 적혀 있던 것 ${r.ci95per1000.written[0]}~${r.ci95per1000.written[1]} · 쌍 판정 ${r.pairsJudged}개 중 "모름" ${r.unknown}(세지 않음, 검수 대상)`);
   const reasons = new Map<string, number>();
   for (const it of r.items) if (it.branch === 'not-loaded' && it.match?.reason) reasons.set(it.match.reason, (reasons.get(it.match.reason) ?? 0) + 1);
   if (reasons.size) out.push(`  안 실린 까닭: ${[...reasons].map(([k, n]) => `${REASON[k] ?? k} ${n}`).join(' · ')}`);
@@ -64,7 +65,8 @@ export function summaryLines(r: RecurrenceResult): string[] {
 function statsLine(run: RecurrenceRun, ms: number): string {
   const s = run.judgeStats;
   const t = run.timing;
-  return `시간 ${Math.round(ms / 1000)}초 (기록 ${t.transcripts ?? 0}ms · 기억 ${t.memory ?? 0}ms · 교정 판정 ${t.correctionJudge ?? 0}ms · 쌍 판정 ${t.pairJudge ?? 0}ms) · 모델 호출 ${s?.calls ?? 0}회(실패 ${s?.failedCalls ?? 0}) · 캐시 적중 ${s?.cacheHits ?? 0}`;
+  const by = s ? Object.entries(s.byModel).map(([m, n]) => `${m} ${n}`).join(' · ') : '';
+  return `시간 ${Math.round(ms / 1000)}초 (기록 ${t.transcripts ?? 0}ms · 기억 ${t.memory ?? 0}ms · 교정 판정 ${t.correctionJudge ?? 0}ms · 쌍 판정 ${t.pairJudge ?? 0}ms) · 모델 호출 ${s?.calls ?? 0}회${by ? `(${by})` : ''} 실패 ${s?.failedCalls ?? 0} · 캐시 적중 ${s?.cacheHits ?? 0}`;
 }
 
 function disclose(json: boolean): void {
@@ -86,21 +88,26 @@ export async function handleRecurrence(args: string[], claudeDir: string | undef
   const out = writeRecurrenceRun(run);
   const fp = writeFingerprintIfFirst(run.memoryFiles, new Date(), run.result.forgenVersion);
   const ms = Date.now() - started;
+  // 교정 원장의 판정 대기도 같은 판정기로 푼다 — 세션 학습(Haiku 동의)이 꺼진 사용자도 여기서 풀린다.
+  let ledger: Awaited<ReturnType<typeof resolvePendingCorrections>> | null = null;
+  if (model) { try { ledger = await resolvePendingCorrections({ max: 500 }); } catch { /* 원장 문제는 재생 결과를 막지 않는다 */ } }
   if (json) {
-    console.log(JSON.stringify({ ...run.result, runId: out.runId, dir: out.dir, sourcesDigest: run.manifest.sourcesDigest, resultDigest: run.manifest.resultDigest, judgeStats: run.judgeStats, timing: run.timing }, null, 2));
+    console.log(JSON.stringify({ ...run.result, runId: out.runId, dir: out.dir, sourcesDigest: run.manifest.sourcesDigest, resultDigest: run.manifest.resultDigest, judgeStats: run.judgeStats, timing: run.timing, ledger }, null, 2));
     return;
   }
   for (const l of summaryLines(run.result)) console.log(l);
   console.log(`\n${statsLine(run, ms)}`);
+  if (ledger && (ledger.resolved || ledger.left)) console.log(`교정 원장: 판정 대기 ${ledger.resolved}건 판정${ledger.left ? ` · 남음 ${ledger.left}${ledger.stopped ? ` (${ledger.stopped})` : ''}` : ''}`);
+  if (run.result.pairsJudged) console.log('검수: forgen audit review  (판정 쌍 25개를 페이지로 — 기기 밖으로 아무것도 보내지 않음)');
   if (fp) console.log(`첫 감사 — 기억 지문을 남김: ${fp}`);
   console.log(`✓ [forgen] ${path.join(out.dir, 'result.json')}`);
 }
 
-interface BaselinePart { runId: string; window: RecurrenceResult['window']; status: RecurrenceResult['status']; statusNote: string; prompts: RecurrenceResult['prompts']; corrections: RecurrenceResult['corrections']; counts: RecurrenceResult['counts']; per1000: RecurrenceResult['per1000']; per30d: RecurrenceResult['per30d']; ci95per1000: RecurrenceResult['ci95per1000']; splits: number; sourcesDigest: string; resultDigest: string }
+interface BaselinePart { runId: string; window: RecurrenceResult['window']; status: RecurrenceResult['status']; statusNote: string; prompts: RecurrenceResult['prompts']; corrections: RecurrenceResult['corrections']; counts: RecurrenceResult['counts']; per1000: RecurrenceResult['per1000']; per30d: RecurrenceResult['per30d']; ci95per1000: RecurrenceResult['ci95per1000']; unknown: number; memory: RecurrenceResult['memory']; sourcesDigest: string; resultDigest: string }
 
 const part = (run: RecurrenceRun, runId: string): BaselinePart => {
   const r = run.result;
-  return { runId, window: r.window, status: r.status, statusNote: r.statusNote, prompts: r.prompts, corrections: r.corrections, counts: r.counts, per1000: r.per1000, per30d: r.per30d, ci95per1000: r.ci95per1000, splits: r.splits, sourcesDigest: run.manifest.sourcesDigest, resultDigest: run.manifest.resultDigest };
+  return { runId, window: r.window, status: r.status, statusNote: r.statusNote, prompts: r.prompts, corrections: r.corrections, counts: r.counts, per1000: r.per1000, per30d: r.per30d, ci95per1000: r.ci95per1000, unknown: r.unknown, memory: r.memory, sourcesDigest: run.manifest.sourcesDigest, resultDigest: run.manifest.resultDigest };
 };
 
 /** 기준값: 배포 직전 6주(앞 30일 조회 전용) + 12주 전체(§4.2-5). --freeze 면 baseline.json 에 고정(덮어쓰기는 --force). */
@@ -124,7 +131,7 @@ export async function handleBaseline(args: string[], claudeDir: string | undefin
   writeFingerprintIfFirst([...new Set([...six.memoryFiles, ...twelve.memoryFiles])], new Date(), six.result.forgenVersion);
   const body = {
     schema: BASELINE_SCHEMA, frozenAt: new Date().toISOString(), forgenVersion: six.result.forgenVersion, claudeDir: six.result.claudeDir,
-    judge: { model: six.manifest.judge.model, versions: six.manifest.judge.versions },
+    judge: six.manifest.judge,
     sixWeeks: part(six, o6.runId), twelveWeeks: part(twelve, o12.runId),
   };
   const bad = [six.result, twelve.result].find((r) => r.status === 'incomplete' || r.status === 'no-data' || r.status === 'model-off');

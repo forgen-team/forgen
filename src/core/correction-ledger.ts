@@ -10,7 +10,7 @@
  *
  * "같은 뜻"(0.9.0): render_key 일치·정규화 문장 일치는 그 자리에서 확정한다. 그 밖에는 예전처럼 유사도 0.3 으로
  * 정하지 않는다(거짓 재발의 원인이었다, 0.8.0 Known limits). 어휘가 비슷한 룰을 후보로만 적고(pending, 전달 여부도 같이),
- * 백그라운드 러너가 감사관의 쌍 판정기(src/audit/judge.ts — 순서 바꿔 두 번, 캐시)로 판정해 해결 줄을 덧붙인다
+ * 백그라운드 러너 또는 `forgen audit recurrence` 가 감사관의 쌍 판정기(src/audit/judge.ts — Sonnet 1회 비대칭, 캐시)로 판정해 해결 줄을 덧붙인다
  * (correction-ledger-judge.ts). 훅·MCP 경로에서는 모델을 부르지 않는다.
  * 판정 품질은 오너 표본 검수 전까지 "참고"다(계획 §6.3-4).
  */
@@ -47,8 +47,8 @@ export interface LedgerEntry {
   candidates?: LedgerCandidate[];
   /** pending: 이 세션에 무엇이 들어갔는지 기록이 있었나 */
   deliveryKnown?: boolean;
-  /** 해결된 줄: 판정자·판본, 순서를 바꾸면 갈린 후보 */
-  judge?: { model: string; version: string; splits?: string[] };
+  /** 해결된 줄: 판정자·판본, 판정자가 "모름"이라 한 후보 */
+  judge?: { model: string; version: string; unknown?: string[] };
 }
 
 /** 러너가 덧붙이는 해결 줄 — 같은 evidence 의 pending 을 이 분류로 바꾼다. */
@@ -59,7 +59,7 @@ export interface LedgerResolution {
   class: Exclude<CorrectionClass, 'pending'>;
   match?: LedgerEntry['match'];
   reason?: LedgerEntry['reason'];
-  judge: { model: string; version: string; splits?: string[] };
+  judge: { model: string; version: string; unknown?: string[] };
 }
 
 export function classifyCorrection(input: { sessionId: string; evidenceId: string; policy: string; renderKey: string; project: string | null; rules?: Rule[] }): LedgerEntry {

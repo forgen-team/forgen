@@ -16,20 +16,31 @@ import { renderSessionStartReadOnly } from '../core/v1-bootstrap.js';
 import { loadAllEvidence } from '../store/evidence-store.js';
 import { appliesForContext, projectKeyFor } from '../store/rule-scope.js';
 import type { Rule } from '../store/types.js';
-import { CORRECTION_PROMPT_VERSION, Judge, JUDGE_MODEL, PAIR_PROMPT_VERSION, type CorrectionVerdict, type PairVerdict } from './judge.js';
+import { CORRECTION_MODEL, CORRECTION_PROMPT_VERSION, Judge, PAIR_MODEL, PAIR_PROMPT_VERSION, type CorrectionVerdict, type PairVerdict } from './judge.js';
 import { bigrams, topK } from './lexical.js';
 import { deletedItems, forgenRuleItems, hostFileItems, memoryItems, type MemoryItem } from './memory-items.js';
 import { forgenVersion } from './run.js';
 import { defaultEnv, defaultFolders, hostLoadFor, listMemoryDirs, readMemoryDir, SourceReader, type Layer, type MemoryDir } from './sources.js';
 import { scanTranscripts, type Prompt } from './transcripts.js';
 
-export const RECURRENCE_SCHEMA = 'forgen-audit-recurrence/1' as const;
+export const RECURRENCE_SCHEMA = 'forgen-audit-recurrence/2' as const;
 const DAY = 86_400_000;
 const SAMPLE_SEED = 'forgen-n4-20261125';
-export const TOP_MEMORY = 6;
-export const TOP_EARLIER = 5;
+/**
+ * 교정당 후보 수(속도, N1 ≤ 5분). 계획 §4.2-3 의 6·5 에서 줄였다 — 근거는 PREFILTER_MIN 주석(실데이터 표본의 "예" 순위).
+ */
+export const TOP_MEMORY = 4;
+export const TOP_EARLIER = 3;
 const TOP_DELETED = 2;
-const TOP_LATER = 2;
+const TOP_LATER = 1;
+/**
+ * 결정적 사전 필터(쌍 판정 전): 글자 2-gram 코사인이 이 값보다 낮은 후보는 모델에 보내지 않는다.
+ * 하한 근거(2026-11-25): 합성 픽스처(tests/audit-recurrence)의 같은 뜻 쌍 최저 점수 0.32. 실데이터 복사본 표본 200발화를
+ * 필터 없이(하한 0) 돌려 Sonnet(n4-pair/3) 이 "예"라 한 쌍 27개의 점수는 0.054~0.327(중앙값 약 0.11)로 낮았다 — 2-gram 은
+ * 같은 뜻을 다른 말로 쓴 쌍을 잘 못 잡는다. 하한 0.05 는 "예" 27/27 을 남기고 쌍 408개 중 28개(7%)만 걸렀다(0.1 이면 16/27).
+ * 그래서 사전 필터는 무관한 쌍만 거르는 낮은 하한이고, 후보 수(TOP_*)가 속도를 맡는다. 같은 표본에서 "예"는 기억 순위 4위·앞선 교정 3위 안이었다.
+ */
+export const PREFILTER_MIN = Number(process.env.FORGEN_AUDIT_PREFILTER_MIN ?? '') || 0.05;
 /** 표본 하한(§1.2 공통 규칙): 교정 30개, 30일 환산 교정 10건. */
 export const MIN_CORRECTIONS = 30;
 export const MIN_CORRECTIONS_30D = 10;
@@ -67,10 +78,15 @@ export interface CorrectionItem {
   earlier?: { session: string; ts: string; text: string; source: 'replay' | 'forgen-evidence' };
   /** 그 뒤 같은 뜻의 기억이 생겼나(§4.4 "기억이 된 것") */
   becameMemory: boolean;
-  /** 순서를 바꾸면 판정이 달라진 쌍(세지 않음, 검수 대상) */
-  splits: Array<{ key: string; text: string }>;
-  candidates: number;
+  /** 판정한 쌍 전부(검수 표본의 원천). verdict null = 판정 못 함 */
+  pairs: PairRecord[];
+  /** "모름"으로 판정된 쌍 수(세지 않음) */
+  unknown: number;
+  /** 쌍 판정에 보내지 않은 까닭(이 작업 전용 교정) */
+  skipped?: 'task-specific';
 }
+
+export interface PairRecord { tier: 'memory' | 'later' | 'deleted' | 'earlier'; key: string; kind: string; text: string; score: number; verdict: PairVerdict | null; path?: string; line?: number }
 
 export interface Counts { ignored: number; notLoaded: number; written: number; unwrittenRepeat: number; deletedRepeat: number; total: number }
 
@@ -80,7 +96,7 @@ export interface RecurrenceResult {
   generatedAt: string;
   claudeDir: string;
   window: { since: string; until: string; lookbackDays: number; days: number };
-  judge: { model: string | null; versions: { correction: string; pair: string } };
+  judge: JudgeInfo | null;
   status: RecurrenceStatus;
   statusNote: string;
   prompts: { window: number; lookback: number; sampled: number; judged: number; unjudged: number; limit: number | null; per30d: number };
@@ -89,7 +105,10 @@ export interface RecurrenceResult {
   per1000: Counts;
   per30d: Counts;
   ci95per1000: { total: [number, number]; written: [number, number] };
-  splits: number;
+  /** "모름"으로 판정된 쌍(세지 않음, 검수 대상) */
+  unknown: number;
+  pairsJudged: number;
+  /** 기억 풀 — 풀(forgen 룰 수 등)이 다르면 숫자가 다르다 */
   memory: { items: number; byKind: Record<string, number>; unknownTime: number; deleted: number };
   loadedVia: { renderLog: number; replay: number };
   notes: string[];
@@ -103,11 +122,26 @@ export interface RecurrenceManifest {
   claudeDir: string;
   forgenHome: string;
   options: { since: string; until: string; lookbackDays: number; limit: number | null; model: boolean };
-  judge: { model: string; versions: { correction: string; pair: string } };
+  judge: JudgeInfo;
   transcripts: Array<{ path: string; bytes: number; sha256: string }>;
   memory: Array<{ path: string; sha256: string }>;
   sourcesDigest: string;
   resultDigest: string;
+}
+
+export interface JudgeInfo {
+  correction: { model: string; version: string };
+  pair: { model: string; version: string; mode: 'single-asymmetric' };
+  prefilterMin: number;
+  top: { memory: number; earlier: number; later: number; deleted: number };
+}
+
+export function judgeInfo(): JudgeInfo {
+  return {
+    correction: { model: CORRECTION_MODEL, version: CORRECTION_PROMPT_VERSION },
+    pair: { model: PAIR_MODEL, version: PAIR_PROMPT_VERSION, mode: 'single-asymmetric' },
+    prefilterMin: PREFILTER_MIN, top: { memory: TOP_MEMORY, earlier: TOP_EARLIER, later: TOP_LATER, deleted: TOP_DELETED },
+  };
 }
 
 export interface RecurrenceRun { result: RecurrenceResult; manifest: RecurrenceManifest; timing: Record<string, number>; judgeStats: Judge['stats'] | null; memoryFiles: string[] }
@@ -188,7 +222,7 @@ export async function runRecurrence(opts: RecurrenceOptions = {}): Promise<Recur
   const base = {
     schema: RECURRENCE_SCHEMA, forgenVersion: forgenVersion(), generatedAt: now.toISOString(), claudeDir: env.claudeDir,
     window: { since: sinceIso, until: untilIso, lookbackDays, days: r1(days) },
-    judge: { model: useModel ? JUDGE_MODEL : null, versions: { correction: CORRECTION_PROMPT_VERSION, pair: PAIR_PROMPT_VERSION } },
+    judge: useModel ? judgeInfo() : null,
     memory: { items: memory.length, byKind, unknownTime, deleted: deleted.length },
   };
   const manifestFor = (result: RecurrenceResult): RecurrenceManifest => {
@@ -197,7 +231,7 @@ export async function runRecurrence(opts: RecurrenceOptions = {}): Promise<Recur
     return {
       schema: 'forgen-audit-recurrence-manifest/1', forgenVersion: result.forgenVersion, generatedAt: result.generatedAt, claudeDir: env.claudeDir, forgenHome: FORGEN_HOME,
       options: { since: sinceIso, until: untilIso, lookbackDays, limit, model: useModel },
-      judge: { model: JUDGE_MODEL, versions: base.judge.versions },
+      judge: judgeInfo(),
       transcripts, memory: mem,
       sourcesDigest: sha(JSON.stringify({ transcripts, mem, options: { sinceIso, untilIso, lookbackDays, limit } })),
       resultDigest: recurrenceDigest(result),
@@ -207,7 +241,7 @@ export async function runRecurrence(opts: RecurrenceOptions = {}): Promise<Recur
     ...base, status, statusNote,
     prompts: { window: windowAll.length, lookback: lookAll.length, sampled: windowSample.length, judged, unjudged: 0, limit, per30d: r1(per30dPrompts) },
     corrections: { total: 0, taskSpecific: 0, lookback: 0, per1000: 0, per30d: 0, becameMemory: 0 },
-    counts: zero(), per1000: zero(), per30d: zero(), ci95per1000: { total: [0, 0], written: [0, 0] }, splits: 0,
+    counts: zero(), per1000: zero(), per30d: zero(), ci95per1000: { total: [0, 0], written: [0, 0] }, unknown: 0, pairsJudged: 0,
     loadedVia: { renderLog: 0, replay: 0 }, notes, items: [],
   });
   if (!useModel) {
@@ -249,25 +283,28 @@ export async function runRecurrence(opts: RecurrenceOptions = {}): Promise<Recur
   // 5. 후보 고르기 → 쌍 판정
   const sessionStart = new Map<string, string>();
   for (const p of scan.prompts) if (p.ts && (!sessionStart.has(p.session) || p.ts < (sessionStart.get(p.session) as string))) sessionStart.set(p.session, p.ts);
-  type Cand = { tier: 'memory' | 'later' | 'deleted' | 'earlier'; key: string; text: string; mem?: MemoryItem; earlier?: EarlierItem };
-  const plan = new Map<string, { p: Prompt; gist: string; cands: Cand[] }>();
-  const pairs: Array<{ id: string; a: string; b: string }> = [];
+  type Cand = { tier: PairRecord['tier']; key: string; text: string; score: number; mem?: MemoryItem; earlier?: EarlierItem };
+  const plan = new Map<string, { p: Prompt; gist: string; cands: Cand[]; skipped: boolean }>();
+  const pairs: Array<{ id: string; gist: string; memory: string }> = [];
+  const pick = <T extends { grams: Set<string> }>(q: Set<string>, xs: T[], k: number, key: (x: T) => string) => topK(q, xs, k, (x) => x.grams, key).filter((x) => x.score >= PREFILTER_MIN);
   for (const p of windowCorr) {
     const gist = (v(p) as CorrectionVerdict).gist || p.text.slice(0, 200);
+    // 이 작업에만 해당하는 교정은 기억감이 아니다 — 쌍 판정에 보내지 않는다(속도). 교정 수에는 들어간다.
+    if (v(p)?.task_specific) { plan.set(promptId(p), { p, gist, cands: [], skipped: true }); continue; }
     const q = bigrams(`${gist} ${p.text.slice(0, 200)}`);
     const before = memory.filter((m) => m.since && m.since < p.ts && (!m.until || m.until > p.ts));
     const later = memory.filter((m) => m.since && m.since > p.ts);
     const del = deleted.filter((m) => m.until && m.until < p.ts);
     const earlier = earlierPool.filter((e) => e.ts < p.ts && e.session !== p.session);
     const cands: Cand[] = [
-      ...topK(q, before, TOP_MEMORY, (m) => m.grams, (m) => m.key).map(({ item }) => ({ tier: 'memory' as const, key: item.key, text: item.text, mem: item })),
-      ...topK(q, later, TOP_LATER, (m) => m.grams, (m) => m.key).map(({ item }) => ({ tier: 'later' as const, key: item.key, text: item.text, mem: item })),
-      ...topK(q, del, TOP_DELETED, (m) => m.grams, (m) => m.key).map(({ item }) => ({ tier: 'deleted' as const, key: item.key, text: item.text, mem: item })),
-      ...topK(q, earlier, TOP_EARLIER, (e) => e.grams, (e) => e.key).map(({ item }) => ({ tier: 'earlier' as const, key: item.key, text: item.text, earlier: item })),
+      ...pick(q, before, TOP_MEMORY, (m) => m.key).map(({ item, score }) => ({ tier: 'memory' as const, key: item.key, text: item.text, score, mem: item })),
+      ...pick(q, later, TOP_LATER, (m) => m.key).map(({ item, score }) => ({ tier: 'later' as const, key: item.key, text: item.text, score, mem: item })),
+      ...pick(q, del, TOP_DELETED, (m) => m.key).map(({ item, score }) => ({ tier: 'deleted' as const, key: item.key, text: item.text, score, mem: item })),
+      ...pick(q, earlier, TOP_EARLIER, (e) => e.key).map(({ item, score }) => ({ tier: 'earlier' as const, key: item.key, text: item.text, score, earlier: item })),
     ];
     const id = promptId(p);
-    plan.set(id, { p, gist, cands });
-    for (const c of cands) pairs.push({ id: `${id}|${c.tier}|${c.key}`, a: gist, b: c.text });
+    plan.set(id, { p, gist, cands, skipped: false });
+    for (const c of cands) pairs.push({ id: `${id}|${c.tier}|${c.key}`, gist, memory: c.text });
   }
   const pairVerdicts = await judge.pairs(pairs);
   lap('pairJudge');
@@ -313,17 +350,23 @@ export async function runRecurrence(opts: RecurrenceOptions = {}): Promise<Recur
 
   const items: CorrectionItem[] = [];
   const counts = zero();
-  let splits = 0;
+  let unknown = 0;
+  let pairsJudged = 0;
   let becameMemory = 0;
-  for (const [id, { p, gist, cands }] of plan) {
+  for (const [id, { p, gist, cands, skipped }] of plan) {
     const verdict = (c: Cand): PairVerdict | null => pairVerdicts.get(`${id}|${c.tier}|${c.key}`) ?? null;
-    const same = (tier: Cand['tier']) => cands.filter((c) => c.tier === tier && verdict(c) === 'same');
-    const itemSplits = cands.filter((c) => verdict(c) === 'split').map((c) => ({ key: c.key, text: c.text.slice(0, 200) }));
-    splits += itemSplits.length;
+    const same = (tier: Cand['tier']) => cands.filter((c) => c.tier === tier && verdict(c) === 'yes');
+    const recs: PairRecord[] = cands.map((c) => ({
+      tier: c.tier, key: c.key, kind: c.mem?.kind ?? (c.earlier ? `earlier:${c.earlier.source}` : ''), text: c.text.slice(0, 400), score: c.score, verdict: verdict(c),
+      ...(c.mem?.path ? { path: c.mem.path } : {}), ...(c.mem?.line ? { line: c.mem.line } : {}),
+    }));
+    const itemUnknown = recs.filter((r) => r.verdict === 'unknown').length;
+    unknown += itemUnknown;
+    pairsJudged += recs.filter((r) => r.verdict).length;
     const mem = same('memory').map((c) => ({ c, l: loadedOf(c.mem as MemoryItem, p) }));
     const it: CorrectionItem = {
       id, session: p.session, ts: p.ts, cwd: p.cwd, gist, utterance: p.text.slice(0, 500), taskSpecific: !!v(p)?.task_specific,
-      branch: 'new', becameMemory: same('later').length > 0, splits: itemSplits, candidates: cands.length,
+      branch: 'new', becameMemory: same('later').length > 0, pairs: recs, unknown: itemUnknown, ...(skipped ? { skipped: 'task-specific' as const } : {}),
     };
     const hit = mem.find((x) => x.l.loaded) ?? mem[0];
     if (hit) {
@@ -362,13 +405,19 @@ export async function runRecurrence(opts: RecurrenceOptions = {}): Promise<Recur
 
   let status: RecurrenceStatus = 'ok';
   let statusNote = '';
-  if (judge.stats.stopped || unjudged > windowSample.length * MAX_UNJUDGED_RATIO) {
+  const pairUnjudged = [...pairVerdicts.values()].filter((x) => x === null).length;
+  if (judge.stats.stopped || unjudged > windowSample.length * MAX_UNJUDGED_RATIO || pairUnjudged > pairs.length * MAX_UNJUDGED_RATIO) {
     status = 'incomplete';
-    statusNote = `판정 불완전 — 후보 ${windowSample.length}개 중 ${unjudged}개를 판정하지 못함${judge.stats.stopped ? ` (${judge.stats.stopped})` : judge.stats.lastError ? ` (${judge.stats.lastError})` : ''}. 다시 돌리면 캐시 뒤 나머지만 묻는다`;
+    statusNote = `판정 불완전 — 후보 ${windowSample.length}개 중 ${unjudged}개, 쌍 ${pairs.length}개 중 ${pairUnjudged}개를 판정하지 못함${judge.stats.stopped ? ` (${judge.stats.stopped})` : judge.stats.lastError ? ` (${judge.stats.lastError})` : ''}. 다시 돌리면 캐시 뒤 나머지만 묻는다`;
   } else if (windowCorr.length < MIN_CORRECTIONS || corr30 < MIN_CORRECTIONS_30D) {
     status = 'insufficient';
     statusNote = `판정 불가 — 교정 ${windowCorr.length}개(하한 ${MIN_CORRECTIONS}) · 30일 환산 ${corr30}건(하한 ${MIN_CORRECTIONS_30D}). 숫자는 크기 참고용, 기간을 늘려 다시 잰다(최대 2배)`;
   }
+  const pool = `forgen 룰 ${byKind['forgen-rule'] ?? 0} · 메모 주제 ${byKind['memory-topic'] ?? 0} · 메모 색인 줄 ${byKind['memory-index'] ?? 0} · 지침 줄 ${byKind['host-md'] ?? 0}`;
+  notes.push(`기억 풀: ${pool} — 풀(forgen 룰 수 등)이 다르면 같은 대화 기록이라도 숫자가 다르다`);
+  const ts = windowCorr.filter((p) => v(p)?.task_specific).length;
+  if (ts) notes.push(`이 작업에만 해당하는 교정 ${ts}개는 쌍 판정에 보내지 않았다(기억감이 아님, 속도)`);
+  if (unknown) notes.push(`판정자가 "모름"이라 한 쌍 ${unknown}개는 세지 않았다(forgen audit review 로 검수)`);
   if (unknownTime) notes.push(`시점을 모르는 기억 ${unknownTime}개는 "적혀 있던 것"으로 세지 않았다(보수적, §2.2)`);
   if (loadedVia.replay) notes.push(`"실렸는가" ${loadedVia.replay}건은 세션별 렌더 기록이 없어 그 세션 시작 시각의 룰로 다시 렌더해 추정(그 뒤 보관된 룰·바뀐 강도는 반영 못 함)`);
   notes.push('호스트 기억(CLAUDE.md·메모 색인)이 그 세션에 실렸는지는 지금 파일 구성으로 판정한다');
@@ -377,7 +426,7 @@ export async function runRecurrence(opts: RecurrenceOptions = {}): Promise<Recur
     ...base, status, statusNote,
     prompts: { window: windowAll.length, lookback: lookAll.length, sampled: windowSample.length, judged: n, unjudged, limit, per30d: r1(per30dPrompts) },
     corrections: { total: windowCorr.length, taskSpecific: windowCorr.filter((p) => v(p)?.task_specific).length, lookback: lookCorr.length, per1000: r1(corrPer1000), per30d: corr30, becameMemory },
-    counts, per1000, per30d, ci95per1000: { total: ci(counts.total), written: ci(counts.written) }, splits,
+    counts, per1000, per30d, ci95per1000: { total: ci(counts.total), written: ci(counts.written) }, unknown, pairsJudged,
     loadedVia, notes, items,
   };
   lap('classify');
@@ -409,20 +458,24 @@ export function writeRecurrenceRun(run: RecurrenceRun): { dir: string; runId: st
 }
 
 /** 가장 최근 재생 결과(첫 화면용). 표본(--limit) 결과보다 전체 결과를, 그다음 최신을 고른다. 없으면 null. */
-export function latestRecurrence(): RecurrenceResult | null {
+export function latestRecurrenceRun(): { runId: string; result: RecurrenceResult } | null {
   const base = path.join(FORGEN_HOME, 'audit', 'recurrence');
   let names: string[] = [];
   try { names = fs.readdirSync(base).sort().reverse(); } catch { return null; }
-  let sampled: RecurrenceResult | null = null;
+  let sampled: { runId: string; result: RecurrenceResult } | null = null;
   for (const n of names) {
     try {
       const r = JSON.parse(fs.readFileSync(path.join(base, n, 'result.json'), 'utf-8')) as RecurrenceResult;
       if (r.schema !== RECURRENCE_SCHEMA || r.status === 'model-off') continue;
-      if (r.prompts.limit === null) return r;
-      sampled ??= r;
+      if (r.prompts.limit === null) return { runId: n, result: r };
+      sampled ??= { runId: n, result: r };
     } catch { /* 깨진 회차 */ }
   }
   return sampled;
+}
+
+export function latestRecurrence(): RecurrenceResult | null {
+  return latestRecurrenceRun()?.result ?? null;
 }
 
 /**
@@ -436,7 +489,7 @@ export function recurrenceLine(r: RecurrenceResult | null): string {
   const c = r.per30d;
   const f = (x: number) => (x >= 10 ? String(Math.round(x)) : String(r1(x)));
   const tag = r.status === 'ok' ? '' : r.status === 'insufficient' ? ' [판정 불가: 표본 하한 미달 — 크기 참고]' : ' [판정 불완전]';
-  const sample = r.prompts.limit ? ` · 표본 ${r.prompts.judged}/${r.prompts.window}` : '';
+  const sample = `${r.prompts.limit ? ` · 표본 ${r.prompts.judged}/${r.prompts.window}` : ''} · 기억 풀 forgen 룰 ${r.memory.byKind['forgen-rule'] ?? 0}개 기준(풀이 다르면 숫자가 다름)`;
   const head = `지난 30일(환산) 교정 약 ${f(r.corrections.per30d)}번`;
   if (c.written >= MIN_CORRECTIONS_30D) {
     return `${head}, 그중 적혀 있는데도 또 말함 약 ${f(c.written)}번 (실렸는데 무시 ${f(c.ignored)} · 적혀는 있는데 안 실림 ${f(c.notLoaded)}) · 적히지 않은 채 반복 약 ${f(c.unwrittenRepeat)}${c.deletedRepeat ? ` · 지운 뒤 다시 말함 ${f(c.deletedRepeat)}` : ''} — 프롬프트 1,000개당 반복 ${r.per1000.total}${sample}${tag}`;

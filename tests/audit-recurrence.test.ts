@@ -28,7 +28,10 @@ process.env.PATH = `${BIN}${path.delimiter}${process.env.PATH}`;
 delete process.env.FORGEN_CWD;
 
 const { runRecurrence, recurrenceLine, poissonCi, latestRecurrence } = await import('../src/audit/recurrence.js');
-const { Judge, JUDGE_MODEL, prepareText, parseJsonLines } = await import('../src/audit/judge.js');
+const { Judge, CORRECTION_MODEL, PAIR_MODEL, PAIR_PROMPT_VERSION, prepareText, parseJsonLines } = await import('../src/audit/judge.js');
+const { PREFILTER_MIN } = await import('../src/audit/recurrence.js');
+const { buildReviewSample, importReview, scoreReviews, writeReview, shortWhere } = await import('../src/audit/review.js');
+const { classifyCorrection, recordCorrectionClass, summarizeLedger } = await import('../src/core/correction-ledger.js');
 const { handleAudit } = await import('../src/audit/cli.js');
 const { runAudit } = await import('../src/audit/run.js');
 const { topLines } = await import('../src/audit/html.js');
@@ -120,7 +123,7 @@ beforeAll(() => {
   for (let n = 16; n <= 20; n++) { say(`look-${n}`, PROJ, `2026-09-2${n - 15}T10:00:00.000Z`, corr(n)); say(`rep-${n}`, PROJ, day(25), corr(n)); }
   for (let n = 21; n <= 25; n++) { say(`first-${n}`, PROJ, day(3), corr(n)); say(`rep-${n}`, PROJ, day(26), corr(n)); }
   // 새 교정 10 더(tq26~35; tq30 은 시점 모르는 메모와 짝, tq31 은 이 작업 전용, tq33 은 순서 바꾸면 갈리는 쌍)
-  for (let n = 26; n <= 35; n++) say(`new-${n}`, PROJ, day(10), corr(n, n === 31 ? '[[T]]' : n === 33 ? 'ASYM' : ''));
+  for (let n = 26; n <= 35; n++) say(`new-${n}`, PROJ, day(10), corr(n, n === 31 ? '[[T]]' : n === 33 ? 'UNK' : ''));
   say('new-40', PROJ, day(12), corr(40));
   // 합계: 15 + 10 + 5(tq21~25 첫 교정) + 10 + 1 = 41 → tq35 하나를 빼서 40 으로 맞춘다
   sessions.get('new-35')?.lines.splice(-2, 2);
@@ -206,19 +209,30 @@ describe('forgen audit recurrence — 합성 D 축소판', () => {
     const reasons = r.items.filter((i) => i.branch === 'not-loaded').map((i) => i.match?.reason).sort();
     expect(reasons).toEqual(['scope', 'scope', 'topic-only', 'topic-only', 'topic-only', 'topic-only']);
     expect(r.items.find((i) => i.session === renderedSession)?.match?.loadedVia).toBe('render-log');
-    // 시점 모르는 메모는 세지 않음, 그 뒤 생긴 룰은 "기억이 된 것", 순서 바꿔 갈린 쌍은 세지 않고 남김
+    // 시점 모르는 메모는 세지 않음, 그 뒤 생긴 룰은 "기억이 된 것", 판정자 "모름"은 세지 않고 남김
     expect(r.items.find((i) => i.gist.includes(tq(30)))?.branch).toBe('new');
     expect(r.memory.unknownTime).toBeGreaterThanOrEqual(1);
     expect(r.corrections.becameMemory).toBe(1);
-    const asym = r.items.find((i) => i.gist.includes(tq(33)));
-    expect(asym?.branch).toBe('new');
-    expect(asym?.splits.length).toBeGreaterThan(0);
-    expect(r.splits).toBeGreaterThan(0);
-    // 모델: 고정 ID, 묶음 호출
+    const unk = r.items.find((i) => i.gist.includes(tq(33)));
+    expect(unk?.branch).toBe('new');
+    expect(unk?.unknown).toBeGreaterThan(0);
+    expect(r.unknown).toBe(unk?.unknown);
+    // 이 작업 전용 교정은 쌍 판정에 보내지 않는다
+    const ts = r.items.find((i) => i.gist.includes(tq(31)));
+    expect(ts).toMatchObject({ skipped: 'task-specific', branch: 'new', pairs: [] });
+    // 사전 필터: 보낸 쌍은 모두 하한 이상, 같은 뜻 쌍(합성)은 모두 하한을 넘는다(재현율)
+    const all = r.items.flatMap((i) => i.pairs);
+    expect(all.every((x) => x.score >= PREFILTER_MIN)).toBe(true);
+    expect(Math.min(...all.filter((x) => x.verdict === 'yes').map((x) => x.score))).toBeGreaterThan(PREFILTER_MIN);
+    // 모델: 교정 = Haiku, 쌍 = Sonnet(고정 ID), 묶음 호출, 쌍은 1회(순서 바꾸기 없음)
     const calls = readJudgeCalls(FAKE);
-    expect(calls.length).toBeGreaterThan(0);
-    expect(calls.every((c) => c.endsWith(JUDGE_MODEL))).toBe(true);
+    expect(calls.filter((c) => c.startsWith('correction ')).every((c) => c.endsWith(CORRECTION_MODEL))).toBe(true);
+    expect(calls.filter((c) => c.startsWith('pair ')).every((c) => c.endsWith(PAIR_MODEL))).toBe(true);
+    const sent = calls.filter((c) => c.startsWith('pair ')).reduce((n, c) => n + Number(c.split(' ')[1]), 0);
+    expect(sent).toBe(new Set(r.items.flatMap((i) => i.pairs.map((x) => `${i.gist}|${x.text}`))).size);
     expect(first.judgeStats?.calls).toBe(calls.length);
+    expect(first.manifest.judge).toMatchObject({ correction: { model: CORRECTION_MODEL }, pair: { model: PAIR_MODEL, version: PAIR_PROMPT_VERSION, mode: 'single-asymmetric' }, prefilterMin: PREFILTER_MIN });
+    expect(r.notes.join(' ')).toContain('풀(forgen 룰 수 등)이 다르면');
   });
 
   it('결정성: 캐시가 있으면 같은 입력 두 번 → 같은 숫자, 모델 호출 0', async () => {
@@ -271,11 +285,19 @@ describe('forgen audit recurrence — 합성 D 축소판', () => {
 });
 
 describe('CLI · 첫 화면 · 기준값', () => {
-  it('audit recurrence: 첫 실행 공개 1회, 회차 폴더·지문, 첫 화면 첫 줄이 그 결과로 채워진다', async () => {
+  it('audit recurrence: 첫 실행 공개 1회, 회차 폴더·지문, 원장 판정 대기도 풀고, 첫 화면 첫 줄이 그 결과로 채워진다', async () => {
+    // 세션 학습 동의와 무관하게 audit recurrence 가 원장 pending 을 같은 판정기로 푼다
+    const pend = classifyCorrection({ sessionId: 'P1', evidenceId: 'ev-p1', policy: `합성 룰 ${tq(2)} 방식으로 처리하라는 지시를 지켜라`, renderKey: 'x.p1', project: null });
+    expect(pend.class).toBe('pending');
+    recordCorrectionClass(pend);
+    expect(summarizeLedger().pending).toBe(1);
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
     try {
       await handleAudit(['recurrence', '--claude-dir', CLAUDE, '--since', '2026-10-01', '--until', '2026-11-01', '--lookback', '30d']);
       const text = log.mock.calls.map((c) => String(c[0])).join('\n');
+      expect(summarizeLedger().pending).toBe(0);
+      expect(text).toContain('교정 원장: 판정 대기 1건 판정');
+      expect(text).toContain('claude-sonnet');
       expect(text).toContain('처음 한 번만 보이는 안내');
       expect(text).toContain('적혀 있는데도 또 말함');
       expect(text).toMatch(/모델 호출 \d+회/);
@@ -289,6 +311,54 @@ describe('CLI · 첫 화면 · 기준값', () => {
     const { result } = runAudit({ folders: [PROJ], claudeDir: CLAUDE });
     expect(result.summary.recurrence.status).toBe('ok');
     expect(topLines(result)[0]).toContain('적혀 있는데도 또 말함');
+  });
+
+  it('audit review → --import → score: 표본 25(예 10·아니오 10·모름 ≤5), 판정자 답은 숨김, 경로는 줄임, 일치율', async () => {
+    const out = writeReview();
+    if ('error' in out) throw new Error(out.error);
+    const html = fs.readFileSync(out.htmlPath, 'utf-8');
+    expect((fs.statSync(out.htmlPath).mode & 0o777).toString(8)).toBe('600');
+    expect(html).toContain("default-src 'none'");
+    expect(html).not.toMatch(/"judge"|"bucket"/);
+    expect(html).not.toContain(ROOT); // 경로는 줄여 보인다
+    const b = (k: string) => out.sample.pairs.filter((x) => x.bucket === k).length;
+    expect(b('yes-random')).toBe(10);
+    expect(b('no-top-score')).toBe(10);
+    expect(b('unknown')).toBeGreaterThan(0);
+    expect(b('unknown')).toBeLessThanOrEqual(5);
+    // 같은 결과면 같은 표본
+    const again = writeReview();
+    expect('error' in again ? '' : again.sample.digest).toBe(out.sample.digest);
+    // 오너 답: 판정자와 같게, 하나만 뒤집고, 모름 쌍은 같은 뜻
+    const answers: Record<string, string> = {};
+    let flipped = false;
+    for (const x of out.sample.pairs) {
+      if (x.judge === 'unknown') { answers[x.pairId] = 'same'; continue; }
+      const agree = x.judge === 'yes' ? 'same' : 'different';
+      answers[x.pairId] = !flipped ? (agree === 'same' ? 'different' : 'same') : agree;
+      flipped = true;
+    }
+    const file = path.join(ROOT, 'downloaded-answers.json');
+    fs.writeFileSync(file, JSON.stringify({ schema: 'forgen-audit-review-answers/1', runId: out.sample.runId, digest: out.sample.digest, answeredAt: '2026-11-25T00:00:00Z', answers: { ...answers, bogus: 'same' } }));
+    const imp = importReview(file);
+    expect(imp.answered).toBe(out.sample.pairs.length);
+    expect((fs.statSync(imp.path).mode & 0o777).toString(8)).toBe('600');
+    const [sc] = scoreReviews();
+    expect(sc.compared).toBe(20);
+    expect(sc.agree).toBe(19);
+    expect(sc.agreement).toBe(0.95);
+    expect(sc.pass).toBe(true);
+    expect(sc.unknown.same).toBe(b('unknown'));
+    // 다른 표본의 답은 받지 않는다
+    fs.writeFileSync(file, JSON.stringify({ schema: 'forgen-audit-review-answers/1', runId: out.sample.runId, digest: 'x', answeredAt: '', answers }));
+    expect(() => importReview(file)).toThrow(/표본이 바뀌었다/);
+    expect(shortWhere('/x/.claude/projects/-a-b/memory/feedback_x.md', 3, 'topic:x')).toBe('…/memory/feedback_x.md:3');
+    expect(shortWhere(undefined, undefined, 'rule:12345678abcdef')).toBe('forgen 룰 12345678');
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      await handleAudit(['score']);
+      expect(log.mock.calls.map((c) => String(c[0])).join('\n')).toMatch(/판정자-오너 일치 95% \(19\/20\).*통과/);
+    } finally { log.mockRestore(); }
   });
 
   it('§4.4 작을 때: 적힘 < 10 → 반복 전체, 그것도 < 10 → "기억이 된 것 a, 다시 나온 것 b"', () => {
@@ -308,7 +378,7 @@ describe('CLI · 첫 화면 · 기준값', () => {
       const bp = path.join(FH, 'audit', 'baseline.json');
       const b = JSON.parse(fs.readFileSync(bp, 'utf-8'));
       expect(b.schema).toBe('forgen-audit-baseline/1');
-      expect(b.judge.model).toBe(JUDGE_MODEL);
+      expect(b.judge.pair.model).toBe(PAIR_MODEL);
       expect(b.sixWeeks.window.days).toBe(42);
       expect(b.twelveWeeks.window.days).toBe(84);
       expect(b.sixWeeks.counts.total).toBe(25);

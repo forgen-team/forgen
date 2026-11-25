@@ -5,6 +5,7 @@
  *
  *   forgen audit recurrence [--since] [--until] [--lookback 30d] [--limit N] [--no-model] [--json]   (recurrence-cli.ts)
  *   forgen audit baseline [--freeze [--force]] [--until] [--json]
+ *   forgen audit review [--import <파일>] [--no-open] · forgen audit score [--json]   (review.ts)
  *
  * 원천은 읽기만 한다. 쓰는 곳은 <FORGEN_HOME>/audit/ 아래뿐이고 `audit tokens` 는 아무것도 쓰지 않는다.
  * `forgen audit` 의 첫 줄(다시 말한 교정)은 가장 최근 `audit recurrence` 결과를 읽어 채운다(모델을 새로 부르지 않음).
@@ -13,6 +14,7 @@ import { performance } from 'node:perf_hooks';
 import { renderAuditHtml, shortPath, topLines } from './html.js';
 import { writeFingerprintIfFirst } from './fingerprint.js';
 import { handleBaseline, handleRecurrence } from './recurrence-cli.js';
+import { AGREEMENT_TARGET, importReview, scoreReviews, writeReview } from './review.js';
 import { runAudit, writeRun, type AuditResult } from './run.js';
 
 const HELP = `  forgen audit [--folder <경로>]... [--claude-dir <경로>] [--json] [--timing] [--no-model] [--no-open]
@@ -21,10 +23,15 @@ const HELP = `  forgen audit [--folder <경로>]... [--claude-dir <경로>] [--j
   forgen audit tokens [--folder <경로>]... [--claude-dir <경로>] [--json]
       폴더별 세션 시작 상시 로드 토큰(층별). 아무것도 쓰지 않는다
   forgen audit recurrence [--since <날짜>] [--until <날짜>] [--lookback 30d] [--limit N] [--no-model] [--json] [--claude-dir <경로>]
-      대화 기록을 재생해 "같은 말 다시 하기"(N4)를 센다 — 교정 판정·같은 뜻 쌍 판정은 로컬 claude CLI(Haiku, 캐시)
+      대화 기록을 재생해 "같은 말 다시 하기"(N4)를 센다 — 로컬 claude CLI 판정(교정 Haiku · 쌍 Sonnet 1회, 캐시).
+      교정 원장의 판정 대기도 같이 푼다
       갈래: 실렸는데 무시 · 적혀는 있는데 안 실림 · 적히지 않은 채 반복 · 지운 뒤 다시 말함 (프롬프트 1,000개당)
   forgen audit baseline [--freeze [--force]] [--until <날짜>] [--json] [--claude-dir <경로>]
       기준값: 직전 6주(앞 30일 조회 전용) + 12주 전체. --freeze 면 ~/.forgen/audit/baseline.json 에 고정
+  forgen audit review [--import <파일>] [--no-open]
+      판정 쌍 25개(예 무작위 10 · 아니오 중 점수 높은 10 · 모름 5)를 검수 페이지로 → 답 JSON 을 내려받아 --import
+  forgen audit score [--json]
+      검수 답과 판정자의 일치율(기준 ≥ 90%)
   모델 판정 검사(같은 뜻 중복·부딪힘·섞임 확정)는 다음 버전.`;
 
 function values(args: string[], name: string): string[] {
@@ -38,8 +45,44 @@ const KNOWN_BY_SUB: Record<string, Set<string>> = {
   tokens: new Set(['--folder', '--claude-dir', '--json', '--help', '-h']),
   recurrence: new Set(['--claude-dir', '--since', '--until', '--lookback', '--limit', '--no-model', '--json', '--help', '-h']),
   baseline: new Set(['--claude-dir', '--until', '--freeze', '--force', '--json', '--help', '-h']),
+  review: new Set(['--import', '--no-open', '--json', '--help', '-h']),
+  score: new Set(['--json', '--help', '-h']),
 };
-const WITH_VALUE = new Set(['--folder', '--claude-dir', '--since', '--until', '--lookback', '--limit']);
+const WITH_VALUE = new Set(['--folder', '--claude-dir', '--since', '--until', '--lookback', '--limit', '--import']);
+
+async function handleReview(rest: string[]): Promise<void> {
+  const file = values(rest, '--import')[0];
+  if (rest.includes('--import') && !file) throw new Error('--import 뒤에 답 파일 경로');
+  if (file) {
+    const r = importReview(file);
+    console.log(`✓ [forgen] 검수 답 ${r.answered}개를 넣음: ${r.path}\n  일치율: forgen audit score`);
+    return;
+  }
+  const out = writeReview();
+  if ('error' in out) throw new Error(out.error);
+  const n = (b: string) => out.sample.pairs.filter((p) => p.bucket === b).length;
+  if (rest.includes('--json')) { console.log(JSON.stringify({ htmlPath: out.htmlPath, samplePath: out.samplePath, runId: out.sample.runId, pairs: out.sample.pairs.length }, null, 2)); return; }
+  console.log(`검수 쌍 ${out.sample.pairs.length}개 (예 무작위 ${n('yes-random')} · 아니오 중 점수 높은 ${n('no-top-score')} · 모름 ${n('unknown')}) — 판정자의 답은 페이지에서 숨김`);
+  console.log(`✓ [forgen] ${out.htmlPath}`);
+  console.log('  다 고른 뒤 "답 저장"으로 JSON 을 내려받아: forgen audit review --import <파일>');
+  if (!rest.includes('--no-open')) {
+    const { openInBrowser } = await import('../core/status-html.js');
+    if (!openInBrowser(out.htmlPath)) console.log('  브라우저를 열 수 없는 환경입니다. 위 파일을 직접 여세요.');
+  }
+}
+
+function handleScore(rest: string[]): void {
+  const s = scoreReviews();
+  if (rest.includes('--json')) { console.log(JSON.stringify({ schema: 'forgen-audit-score/1', target: AGREEMENT_TARGET, runs: s }, null, 2)); return; }
+  if (!s.length) { console.log('검수 답이 없다 — forgen audit review 로 페이지를 만들고 답을 --import'); return; }
+  for (const r of s) {
+    const pct = (a: number, b: number) => (b ? `${Math.round((a / b) * 100)}% (${a}/${b})` : '—');
+    console.log(`회차 ${r.runId} · 판정자 쌍 ${r.judge?.pair.model ?? '?'}(${r.judge?.pair.version ?? '?'})`);
+    console.log(`  판정자-오너 일치 ${pct(r.agree, r.compared)} — 기준 ≥ ${AGREEMENT_TARGET * 100}% (§12.1-2): ${r.pass === null ? '판정 불가' : r.pass ? '통과' : '미달'}`);
+    console.log(`  판정자 "예" 중 오너도 같은 뜻 ${pct(r.yes.agree, r.yes.compared)} · 판정자 "아니오" 중 오너도 다름 ${pct(r.no.agree, r.no.compared)} · 오너 모르겠음 ${r.ownerUnsure}`);
+    console.log(`  판정자 "모름" 쌍에 오너: 같은 뜻 ${r.unknown.same} · 다름 ${r.unknown.different} · 모르겠음 ${r.unknown.unsure}`);
+  }
+}
 
 function unknownFlags(args: string[], sub: string): string[] {
   const known = KNOWN_BY_SUB[sub] ?? KNOWN_BY_SUB[''];
@@ -78,10 +121,12 @@ export async function handleAudit(args: string[]): Promise<void> {
   }
   const started = performance.now();
   const claudeDir = values(rest, '--claude-dir')[0];
-  if (sub === 'recurrence' || sub === 'baseline') {
+  if (sub === 'recurrence' || sub === 'baseline' || sub === 'review' || sub === 'score') {
     try {
       if (sub === 'recurrence') await handleRecurrence(rest, claudeDir);
-      else await handleBaseline(rest, claudeDir);
+      else if (sub === 'baseline') await handleBaseline(rest, claudeDir);
+      else if (sub === 'review') await handleReview(rest);
+      else handleScore(rest);
     } catch (e) {
       console.error(`[forgen] ${e instanceof Error ? e.message : String(e)}`);
       process.exitCode = 1;
