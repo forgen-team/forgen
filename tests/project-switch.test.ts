@@ -114,3 +114,53 @@ describe.skipIf(!have)('새 설치(state 폴더 없음)에서도 한 번만 넣�
     expect(hook('context-guard', { session_id: s, cwd: repoA, prompt: 'p2', hook_event_name: 'UserPromptSubmit' }).ctx).toBe('');
   });
 });
+
+describe.skipIf(!have)('G8 고장 주입 — 세션이 막히지 않는다', () => {
+  it('세션 위치 파일이 깨져도 훅은 정상 응답하고 다시 쓴다', () => {
+    const s = 'broken-wc';
+    fs.mkdirSync(path.join(fhome, 'state'), { recursive: true });
+    fs.writeFileSync(path.join(fhome, 'state', `work-context-${s}.json`), '{not json');
+    const r = hook('context-guard', { session_id: s, cwd: repoA, prompt: 'p', hook_event_name: 'UserPromptSubmit' });
+    expect(r.json.continue).toBe(true);
+    expect(JSON.parse(fs.readFileSync(path.join(fhome, 'state', `work-context-${s}.json`), 'utf-8')).project).toBe('repo-a');
+  });
+  it('등록부가 깨져도 훅은 정상 응답(git 판정으로)', () => {
+    fs.writeFileSync(path.join(fhome, 'projects.json'), '{broken');
+    try {
+      const r = hook('post-tool-use', { session_id: 'broken-reg', cwd: repoB, tool_name: 'Read', tool_input: { file_path: path.join(repoB, 'x') }, tool_response: 'ok' });
+      expect(r.json.continue).toBe(true);
+      expect(r.ctx).toContain('repo-b 전용 룰');
+    } finally { fs.unlinkSync(path.join(fhome, 'projects.json')); }
+  });
+  it('state 폴더에 쓸 수 없어도 훅은 정상 응답한다', () => {
+    if (process.getuid?.() === 0) return; // root 는 권한을 무시한다
+    const st = path.join(fhome, 'state');
+    fs.chmodSync(st, 0o500);
+    try {
+      for (const [name, payload] of [
+        ['context-guard', { session_id: 'ro-1', cwd: repoA, prompt: 'p', hook_event_name: 'UserPromptSubmit' }],
+        ['post-tool-use', { session_id: 'ro-1', cwd: repoA, tool_name: 'Read', tool_input: { file_path: path.join(repoA, 'x') }, tool_response: 'ok' }],
+        ['pre-tool-use', { session_id: 'ro-1', cwd: repoA, tool_name: 'mcp__forgen-compound__correction-record', tool_input: {} }],
+      ] as const) {
+        const r = spawnSync(process.execPath, [path.join(DIST, 'hooks', `${name}.js`)], { input: JSON.stringify(payload), encoding: 'utf-8', timeout: 20000, cwd: home, env: env() });
+        expect(r.status, `${name}: ${r.stderr}`).toBe(0);
+        expect(() => JSON.parse(r.stdout.trim().split('\n').pop() ?? ''), name).not.toThrow();
+      }
+    } finally { fs.chmodSync(st, 0o755); }
+  });
+});
+
+describe.skipIf(!have)('전역 룰이 하나도 없어도 색인은 나온다', () => {
+  it('프로젝트 룰만 있는 홈 세션', () => {
+    const h2 = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'forgen-noglobal-')));
+    const f2 = path.join(h2, '.forgen'); const r2 = path.join(h2, 'r2');
+    fs.mkdirSync(path.join(r2, '.git'), { recursive: true }); fs.mkdirSync(path.join(f2, 'me', 'rules'), { recursive: true });
+    const now = new Date().toISOString();
+    fs.writeFileSync(path.join(f2, 'me', 'rules', 'p.json'), JSON.stringify({ rule_id: 'p', category: 'workflow', scope: 'me', trigger: 't', policy: 'r2 전용', strength: 'default', source: 'explicit_correction', status: 'active', evidence_refs: [], render_key: 'k.p', created_at: now, updated_at: now, projects: ['r2'] }));
+    const r = spawnSync(process.execPath, [path.join(DIST, 'hooks', 'session-recovery.js')], { input: JSON.stringify({ session_id: 'ng', cwd: h2, source: 'startup', hook_event_name: 'SessionStart' }), encoding: 'utf-8', cwd: h2, env: { ...env(), HOME: h2, FORGEN_HOME: f2 } });
+    const ctx = String(JSON.parse(r.stdout.trim().split('\n').pop() ?? '{}').hookSpecificOutput?.additionalContext ?? '');
+    fs.rmSync(h2, { recursive: true, force: true });
+    expect(ctx).toContain('## Project Rules');
+    expect(ctx).toMatch(/r2 1/);
+  });
+});

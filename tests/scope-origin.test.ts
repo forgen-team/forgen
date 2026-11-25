@@ -91,6 +91,10 @@ describe.skipIf(!have)('S1 훅이 correction-record 호출을 보강한다', () 
     const r = hook('pre-tool-use', { session_id: 's2', cwd: repoA, tool_name: 'mcp__plugin_forgen_forgen-compound__correction-record', tool_input: { session_id: 'x' } });
     expect(JSON.parse(r.out).hookSpecificOutput?.updatedInput?.session_id).toBe('s2');
   });
+  it('Codex 의 밑줄 이름(mcp__forgen_compound__correction_record)도 잡는다', () => {
+    const r = hook('pre-tool-use', { session_id: 'cx1', cwd: repoA, tool_name: 'mcp__forgen_compound__correction_record', tool_input: { session_id: 'unknown' } });
+    expect(JSON.parse(r.out).hookSpecificOutput?.updatedInput).toMatchObject({ session_id: 'cx1', origin: { cwd: repoA } });
+  });
   it('다른 MCP 도구는 건드리지 않는다', () => {
     const r = hook('pre-tool-use', { session_id: 's3', cwd: repoA, tool_name: 'mcp__other__correction-record', tool_input: { a: 1 } });
     expect(JSON.parse(r.out).hookSpecificOutput?.updatedInput).toBeUndefined();

@@ -90,7 +90,11 @@ function renderWithoutProfile(cwd?: string): string | null {
   lastIncluded = [];
   try {
     const rules = loadContextRules(cwd);
-    if (rules.length === 0) return null;
+    if (rules.length === 0) {
+      // 전역 룰이 없어도 프로젝트 룰이 있으면 색인은 보여 준다(그 프로젝트로 들어가면 들어온다는 안내).
+      const idx = projectKeyFor(cwd ?? process.env.FORGEN_CWD ?? process.cwd()) === null ? projectRuleIndex() : null;
+      return idx;
+    }
     const state = { warnings: [] } as unknown as SessionEffectiveState;
     const result = renderRulesDetailed(rules, state, null as unknown as Profile, DEFAULT_CONTEXT);
     lastIncluded = result.included.map((r) => r.rule_id);
