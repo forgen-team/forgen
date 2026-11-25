@@ -445,7 +445,7 @@ An auto-extracted lesson is saved only with a verbatim quote from the conversati
 | **Behavioral patterns** | Auto-detected at 3+ observations | Applied to `forge-behavioral.md` |
 | **Evidence** | Corrections + observations | Drives facet adjustments + rule creation |
 
-*Solutions and behavioral patterns come from the **opt-in** transcript-extraction pass (`forgen compound consent on`, off by default). Corrections → rules and facet adjustments are always-on and never leave your machine.*
+*Solutions and behavioral patterns come from the transcript-extraction pass (on by default; turn off with `forgen compound consent off`). Corrections → rules and facet adjustments are always-on and never leave your machine.*
 
 ### Keeping things out of the corpus (`<private>`)
 

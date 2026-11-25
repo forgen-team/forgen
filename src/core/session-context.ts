@@ -25,6 +25,8 @@ export interface WorkContextFile {
   turns: Record<string, number>;
   /** 이 세션에서 룰을 이미 넣어 준 프로젝트 (S5 위치 전환 주입). */
   injected?: string[];
+  /** 0.8.0 M2: 이 세션에 실제로 들어간 룰 ID(세션 시작 블록 + 위치 전환 주입). 교정 3분류의 "주입됐다" 판정. */
+  rules?: string[];
 }
 
 export type WorkVia = 'hook-input' | 'session-file' | 'process-cwd';
@@ -37,6 +39,8 @@ const SID_RE = /^[A-Za-z0-9._-]{1,128}$/;
 
 export function workContextPath(sessionId: string): string | null {
   if (!SID_RE.test(sessionId)) return null;
+  // 새 설치에는 state 폴더가 없을 수 있다 — 잠금 파일을 만들 자리가 없으면 "한 번만 넣기" 기록이 안 남는다.
+  try { fs.mkdirSync(STATE_DIR, { recursive: true }); } catch { /* 쓰기 불가는 호출부가 fail-open */ }
   return path.join(STATE_DIR, `work-context-${sessionId}.json`);
 }
 
@@ -121,7 +125,7 @@ export function dominantProject(sessionId: string | undefined, fallbackCwd?: str
  * 이 세션에서 룰을 넣어 준 프로젝트 목록을 바꾼다(잠금 안에서). reset 이면 목록을 새로 시작한다(세션 시작·압축 뒤).
  * 이미 들어 있던 키는 false 를 돌려준다 — "한 번만 넣기"의 판정.
  */
-export function markProjectInjected(sessionId: string, key: string, opts: { reset?: boolean; cwd?: string } = {}): boolean {
+export function markProjectInjected(sessionId: string, key: string, opts: { reset?: boolean; cwd?: string; ruleIds?: string[] } = {}): boolean {
   const p = workContextPath(sessionId);
   if (!p) return false;
   const run = (): boolean => {
@@ -129,14 +133,28 @@ export function markProjectInjected(sessionId: string, key: string, opts: { rese
     const injected = opts.reset ? [] : [...(prev?.injected ?? [])];
     if (injected.includes(key)) return false;
     injected.push(key);
+    const rules = [...new Set([...(opts.reset ? [] : prev?.rules ?? []), ...(opts.ruleIds ?? [])])];
     const base: WorkContextFile = prev ?? {
       version: 1, session_id: sessionId, cwd: opts.cwd ?? '', project: opts.cwd ? projectKeyFor(opts.cwd) : null, updated_at: '', turns: {},
     };
-    atomicWriteJSON(p, { ...base, ...(opts.cwd ? { cwd: opts.cwd, project: projectKeyFor(opts.cwd) } : {}), updated_at: new Date().toISOString(), injected }, { mode: 0o600 });
+    atomicWriteJSON(p, { ...base, ...(opts.cwd ? { cwd: opts.cwd, project: projectKeyFor(opts.cwd) } : {}), updated_at: new Date().toISOString(), injected, rules }, { mode: 0o600 });
     return true;
   };
   // 잠금을 못 잡으면 "넣지 않음"이 아니라 "넣음"으로 본다 — 같은 룰이 한 번 더 들어가는 편이 영영 빠지는 것보다 낫다.
   try { return withFileLockSync(p, run); } catch { return true; }
+}
+
+/** 위치 전환 주입으로 넣은 룰 ID 를 이 세션 기록에 더한다(키 표시는 이미 markProjectInjected 가 했다). */
+export function addSessionRules(sessionId: string, ruleIds: string[]): void {
+  const p = workContextPath(sessionId);
+  if (!p || ruleIds.length === 0) return;
+  try {
+    withFileLockSync(p, () => {
+      const prev = readWorkContext(sessionId);
+      if (!prev) return;
+      atomicWriteJSON(p, { ...prev, rules: [...new Set([...(prev.rules ?? []), ...ruleIds])] }, { mode: 0o600 });
+    });
+  } catch { /* 기록 실패는 분류 정확도만 낮춘다 */ }
 }
 
 /** 테스트·정리용 */

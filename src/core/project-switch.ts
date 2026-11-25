@@ -11,7 +11,7 @@ import { loadActiveRules } from '../store/rule-store.js';
 import { projectKeyFor, appliesForContext } from '../store/rule-scope.js';
 import { canonicalProjectKey } from '../store/project-registry.js';
 import { byPriority, ruleToText } from '../renderer/rule-renderer.js';
-import { markProjectInjected } from './session-context.js';
+import { addSessionRules, markProjectInjected } from './session-context.js';
 
 const SWITCH_BUDGET_CHARS = 4000;
 const NO_PROJECT = '-';
@@ -33,9 +33,9 @@ export function projectRuleIndex(): string | null {
 }
 
 /** 세션 시작(또는 압축 뒤 재시작) 때 이번 블록이 어느 프로젝트 기준인지 기록한다. */
-export function markSessionStartScope(sessionId: string | undefined, cwd: string | undefined): void {
+export function markSessionStartScope(sessionId: string | undefined, cwd: string | undefined, ruleIds: string[] = []): void {
   if (!sessionId || !cwd || !path.isAbsolute(cwd)) return;
-  markProjectInjected(sessionId, projectKeyFor(cwd) ?? NO_PROJECT, { reset: true, cwd });
+  markProjectInjected(sessionId, projectKeyFor(cwd) ?? NO_PROJECT, { reset: true, cwd, ruleIds });
 }
 
 /**
@@ -50,12 +50,14 @@ export function projectSwitchContext(sessionId: string | undefined, where: strin
   const rules = projectRulesFor(key);
   if (rules.length === 0) return null;
   const lines: string[] = [];
+  const ids: string[] = [];
   let used = 0; let omitted = 0;
   for (const r of rules) {
     const line = `- ${ruleToText(r)}`;
     if (used + line.length + 1 > SWITCH_BUDGET_CHARS) { omitted++; continue; }
-    lines.push(line); used += line.length + 1;
+    lines.push(line); ids.push(r.rule_id); used += line.length + 1;
   }
+  addSessionRules(sessionId, ids);
   const tail = omitted ? `\n- ${omitted} more omitted (budget). List: forgen rule list` : '';
   return `<forgen-rules project="${key}">\nYou are now working in project "${key}". These are this user's rules for it, in addition to the rules given at session start:\n${lines.join('\n')}${tail}\n</forgen-rules>`;
 }

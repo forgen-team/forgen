@@ -182,7 +182,12 @@ async function main(): Promise<void> {
     const { consumeHarnessBootstrap } = await import('../core/harness-inject-marker.js');
     v1RenderedRules = bootstrapV1Session(sessionContext.cwd, { trackInjection: !consumeHarnessBootstrap() }).renderedRules;
     // 0.8.0 S5: 이번 블록이 어느 프로젝트 기준인지 기록(압축 뒤 재시작이면 새로 시작) — 위치 전환 주입의 기준.
-    try { (await import('../core/project-switch.js')).markSessionStartScope(sessionContext.sessionId, sessionContext.cwd); } catch { /* fail-open */ }
+    try {
+      // 0.8.0 M2: 이 세션 시작 블록에 실제로 들어간 룰 ID 도 남긴다(교정 3분류의 "주입됐다" 판정).
+      const { loadRenderReport } = await import('../renderer/render-report.js');
+      const included = loadRenderReport()?.included ?? [];
+      (await import('../core/project-switch.js')).markSessionStartScope(sessionContext.sessionId, sessionContext.cwd, included);
+    } catch { /* fail-open */ }
   } catch (e) { log.debug('v1-bootstrap SessionStart 호출 실패 (fail-open)', e); }
 
   // 모든 호스트가 같은 경로로 룰을 받는다(ADR-014 D1 확장). 래퍼 없이 실행해도 매 세션 최신 룰이 들어간다.

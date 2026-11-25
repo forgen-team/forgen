@@ -664,6 +664,18 @@ try {
       process.stderr.write(`[forgen-auto-compound] rule promotion: ${e instanceof Error ? e.message : String(e)}\n`);
     }
 
+    // ── 0.8.0: 결정 원장 수집(선택형 질문과 답). 결정론·로컬 전용 — Haiku 동의와 무관하게 돈다.
+    //    처음 한 번은 남아 있는 대화 기록 전부를 소급한다(대화 기록은 호스트가 지우므로 미루면 잃는다).
+    try {
+      const { collectDecisions, backfillDecisionsOnce } = await import('./decision-ledger.js');
+      const back = backfillDecisionsOnce();
+      if (back !== null) process.stderr.write(`[forgen-auto-compound] decisions backfill: ${back}\n`);
+      const n = collectDecisions(transcriptPath, sid, { final: isFinal });
+      if (n > 0) process.stderr.write(`[forgen-auto-compound] collected ${n} decision(s)\n`);
+    } catch (e) {
+      process.stderr.write(`[forgen-auto-compound] decisions: ${e instanceof Error ? e.message : String(e)}\n`);
+    }
+
     // ── D9: sessions.db 인덱싱 (증분·멱등). `claude`/`codex` 직접 실행도 여기서 기록된다.
     try {
       const { indexTranscript } = await import('./session-store.js');

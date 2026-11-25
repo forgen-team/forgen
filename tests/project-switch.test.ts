@@ -105,3 +105,12 @@ describe.skipIf(!have)('S5 위치 전환 주입', () => {
     expect(hook('context-guard', { session_id: s3, cwd: repoB, prompt: 'p', hook_event_name: 'UserPromptSubmit' }).ctx).toContain('repo-b 전용 룰');
   });
 });
+
+describe.skipIf(!have)('새 설치(state 폴더 없음)에서도 한 번만 넣는다', () => {
+  it('state 가 없어도 두 번째 프롬프트에는 다시 넣지 않는다', () => {
+    fs.rmSync(path.join(fhome, 'state'), { recursive: true, force: true });
+    const s = 'fresh-install-1';
+    expect(hook('context-guard', { session_id: s, cwd: repoA, prompt: 'p', hook_event_name: 'UserPromptSubmit' }).ctx).toContain('repo-a 전용 룰');
+    expect(hook('context-guard', { session_id: s, cwd: repoA, prompt: 'p2', hook_event_name: 'UserPromptSubmit' }).ctx).toBe('');
+  });
+});

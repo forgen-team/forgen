@@ -28,6 +28,7 @@ import { CURRENT_RULE_SCHEMA_VERSION } from '../store/types.js';
 import { isConfirmedBypass, isRealBlock, isSyntheticEntry, readJsonlWindow } from '../engine/lifecycle/signals.js';
 import { planT5Unflag } from '../engine/lifecycle/t5-hygiene.js';
 import { planDedupe } from '../engine/rule-dedupe.js';
+import { summarizeLedger } from './correction-ledger.js';
 
 const DAY = 86_400_000;
 const ENF = path.join(STATE_DIR, 'enforcement');
@@ -63,6 +64,8 @@ export interface RuleHealth {
     duplicateGroups: Array<{ policy: string; ruleIds: string[] }>;
   };
   flow: {
+    /** 0.8.0 M2: 기간 안 직접 교정의 3분류(필드 추가만 — forgen-health 계약 호환). */
+    correctionClasses?: { recurrence: number; deliveryFailure: number; new: number; unknownDelivery: number };
     correctionsUser: number;
     correctionsMined: number;
     rulesCreatedExplicit: number;
@@ -281,6 +284,7 @@ export function computeRuleHealth(opts: { days?: number; now?: number; onBlocks?
       duplicateGroups,
     },
     flow: {
+      correctionClasses: (() => { const c = summarizeLedger(since); return { recurrence: c.recurrence, deliveryFailure: c['delivery-failure'], new: c.new, unknownDelivery: c['unknown-delivery'] }; })(),
       correctionsUser: ev.user.filter((t) => t >= since).length,
       correctionsMined: ev.mined.filter((t) => t >= since).length,
       rulesCreatedExplicit: created.filter((c) => c.r.source === 'explicit_correction').length,
@@ -312,6 +316,10 @@ export function renderRuleHealth(h: RuleHealth): string[] {
   L.push('', `  forgen 룰 건강 — 최근 ${h.windowDays}일`, '');
   L.push('  흐름');
   L.push(`    교정        직접 ${f.correctionsUser} · 추론 ${f.correctionsMined}`);
+  if (f.correctionClasses && (f.correctionClasses.recurrence + f.correctionClasses.deliveryFailure + f.correctionClasses.new + f.correctionClasses.unknownDelivery) > 0) {
+    const c = f.correctionClasses;
+    L.push(`    교정 분류   재발 ${c.recurrence} · 전달 실패 ${c.deliveryFailure} · 신규 ${c.new}${c.unknownDelivery ? ` · 판정 불가 ${c.unknownDelivery}` : ''}   (재발 = 룰이 있는데도 같은 교정, 전달 실패 = 룰이 이 세션에 안 들어감)`);
+  }
   L.push(`    룰 생성     직접 ${f.rulesCreatedExplicit} · 추론 ${f.rulesCreatedMined}   은퇴 ${f.retired}   승급 ${f.promotions}`);
   L.push(`    활성 룰     ${a.total}개 (직접 ${a.explicit} · 추론 ${a.mined} · 기본 ${a.onboarding}${a.other ? ` · 기타 ${a.other}` : ''})   주입 누적 ${f.injections}회`);
   L.push(`    평가        통과 ${f.checksPass} · 위반 ${f.checksViolation}   차단 ${f.blocks} · 고쳐서 통과 ${f.acknowledgments} · 자문 ${f.advisories} · 우회 ${f.bypasses}`);

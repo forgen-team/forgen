@@ -44,6 +44,11 @@ export function pendingReview(dir = ME_SOLUTIONS): Item[] {
     .sort((a, b) => (b.fm.evidenceSessions?.length ?? 0) - (a.fm.evidenceSessions?.length ?? 0) || a.name.localeCompare(b.name));
 }
 
+/** 서로 다른 근거 세션이 2곳 이상인 솔루션 수(상태 무관, 은퇴 제외). */
+export function reobservedCount(dir = ME_SOLUTIONS): number {
+  return readAll(dir).filter((i) => i.fm.status !== 'retired' && new Set(i.fm.evidenceSessions ?? []).size >= REVIEW_MIN_SESSIONS).length;
+}
+
 export function relabelPlan(dir = ME_SOLUTIONS): Item[] {
   return readAll(dir).filter((i) => i.fm.extractedBy === 'manual' && RUNNER_MARK.test(i.context));
 }

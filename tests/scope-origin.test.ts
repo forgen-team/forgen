@@ -139,11 +139,20 @@ describe.skipIf(!have)('S1·S2 MCP 는 호출 시점 위치로 범위를 정한�
     const r = await mcp.record({ session_id: 'sess-p', this_project_only: true, origin: { cwd: plain } });
     expect(r.payload.scope_state).toBe('unresolved');
   });
-  it('this_project_only 를 주지 않으면 지금처럼 전역 (위치는 사실로만 기록)', async () => {
+  it('this_project_only 를 주지 않으면 전역으로 두고 위치를 남기며, 범위 제안 대상임을 알린다 (§12)', async () => {
     const r = await mcp.record({ session_id: 'sess-g', origin: { cwd: repoA } });
     expect(r.payload.projects).toBeUndefined();
     expect(r.payload.scope_state).toBeUndefined();
     expect(r.payload.origin.project).toBe('repo-a');
+    expect(r.text).toContain('Location: inside project "repo-a"');
+    expect(r.text).toContain('classify-projects --from-sessions');
+  });
+  it('위치 기록만으로(대화 기록 없이) 범위 제안 목록에 오른다', async () => {
+    await mcp.record({ session_id: 'sess-g2', origin: { cwd: repoA }, message: '표시 없이 온 프로젝트 교정 문장입니다', target: '표시 누락 실험' });
+    const promote = spawnSync(process.execPath, ['-e', `import(${JSON.stringify(path.join(DIST, 'store', 'evidence-store.js'))}).then(m=>m.promoteSessionCandidates('sess-g2'))`], { encoding: 'utf-8', env: baseEnv(), cwd: home });
+    expect(promote.status).toBe(0);
+    const out = forgen(['rule', 'classify-projects', '--from-sessions', '--no-llm']).stdout;
+    expect(out).toMatch(/→ repo-a .*표시 없이 온 프로젝트 교정/);
   });
 
   it('S3 등록부: git 아닌 폴더와 저장소를 한 키로 묶고, 옛 키는 별칭으로', async () => {

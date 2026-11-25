@@ -390,6 +390,16 @@ export function registerTools(server: McpServer): void {
           },
         });
 
+        // 0.8.0 M2: 교정 3분류(재발/전달 실패/신규) — 기록만. 실패해도 교정 기록은 그대로.
+        try {
+          const { classifyCorrection, recordCorrectionClass } = await import('../core/correction-ledger.js');
+          recordCorrectionClass(classifyCorrection({
+            sessionId: effectiveSessionId, evidenceId: result.evidence_event_id, policy: cleanMessage,
+            renderKey: `${axis_hint ?? 'workflow'}.${cleanTarget.toLowerCase().replace(/\s+/g, '-').slice(0, 30)}`,
+            project: work.kind === 'project' ? work.key : null,
+          }));
+        } catch { /* fail-open */ }
+
         // Outcome tracking (Phase 1): attribute this correction to any
         // pending injections in the session. Fail-open — attribution is a
         // best-effort signal, never block the correction record itself.
@@ -408,6 +418,10 @@ export function registerTools(server: McpServer): void {
           `${userVisibleConfirm}${axis} — kind: ${kindLabel}`,
           `Evidence: ${result.evidence_event_id}`,
         ];
+        if (!this_project_only && work.kind === 'project') {
+          // 0.8.0 §12: 표시 없이 프로젝트 안에서 온 교정 — 전역으로 두되 위치를 남겨 범위 제안 목록에 올린다.
+          lines.push(`Location: inside project "${work.key}" — saved as global. If it applies only to this project, pass this_project_only: true next time; until then it is offered for scoping in \`forgen rule classify-projects --from-sessions\`.`);
+        }
         if (this_project_only) {
           lines.push(projectKey
             ? `Project: ${projectKey} only`

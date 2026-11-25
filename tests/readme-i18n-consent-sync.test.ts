@@ -25,8 +25,8 @@ const LOCALES = ['README.md', 'README.ko.md', 'README.ja.md', 'README.zh.md'];
 // consent 모델을 정직하게 서술하려면 반드시 등장해야 하는 토큰들.
 // 하나라도 빠지면 그 로케일은 EN 원본과 동기화가 깨진 것.
 const REQUIRED_TOKENS = [
-  'forgen compound consent on', // opt-in 게이트 (transcript 추출의 유일한 활성 경로)
-  'opt-in', // 추출은 opt-in 임을 명시
+  // ADR-019(2026-11-04 오너 결정): Haiku 추출은 기본 ON. 끄는 길을 명시해야 한다(예전 opt-in 토큰은 은퇴).
+  'forgen compound consent off',
   'egress 0', // corrections→rules 는 egress 0 (always-on)
   'advisory-only', // 채굴 룰은 advisory-only (ADR-013)
   'compound sweep', // 시간 기반 backstop (ADR-011)
