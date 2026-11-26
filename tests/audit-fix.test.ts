@@ -312,7 +312,7 @@ describe('전부 적용 → 측정 → 전부 되돌리기 (§9.1 0.9.0 확인 �
 
   it('CLI: --list · <id>(diff) · 모르는 옵션은 실패', async () => {
     const list = await quiet(() => handleFix(['--list', ...ARGS()]));
-    expect(list.out).toMatch(/처방 \d+개 · 알리기만 하는 것 \d+개/);
+    expect(list.out).toMatch(/처방 \d+개 · 고치지 않고 알려만 주는 것 \d+개/);
     const id = /\n {2}(remove-[0-9a-f]{8})/.exec(list.out)?.[1];
     expect(id).toBeTruthy();
     const shown = await quiet(() => handleFix([id as string, ...ARGS()]));

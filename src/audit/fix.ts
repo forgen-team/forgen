@@ -381,7 +381,7 @@ export async function planFixes(opts: PlanOptions = {}): Promise<FixPlan> {
       const topicType = topic ? frontmatterField(readText(topic) ?? '', 'type') : undefined;
       if (kinds.includes('link') && topic && !fs.existsSync(topic) && link && refs.includes(link)) {
         add({ ...base, title: `MEMORY.md 의 ${q(u.text)} → 지움. 가리키는 메모 파일이 없기 때문 — 안 하면 없는 메모를 가리키는 줄이 세션마다 실린다`, change: { before: q(u.text, 80), after: '(지움)' }, why: 'MEMORY.md 줄이 없는 메모 파일을 가리킨다. 지우고 지운 기록을 남긴다.', ops: [{ op: 'delete-line', path: u.path, text: u.text }], marks: [delMark(u)] }, ident(u));
-      } else add({ ...base, title: `MEMORY.md 의 ${q(u.text)} 에 적힌 ${refs.join(', ')} 가 지금 없음 — 메모 파일을 가리키는 줄이라 지우지 않음, 경로만 고치세요`, why: `이 줄은 메모 파일${topicType === 'feedback' ? '(교정 메모)' : ''}을 가리키므로 지우지 않는다. 줄 안의 경로만 직접 고치세요.`, ops: [], blocked: '메모 파일을 가리키는 줄이라 지우지 않음' }, ident(u));
+      } else add({ ...base, title: `MEMORY.md 의 ${q(u.text)} 에 적힌 ${refs.join(', ')} 가 지금 없음 → 그 줄의 경로를 직접 고치세요`, why: `이 줄은 메모 파일${topicType === 'feedback' ? '(교정 메모)' : ''}을 가리키는 줄이라 forgen 이 통째로 지우면 그 메모로 가는 길이 끊긴다. 줄 안의 경로만 직접 고치세요.`, ops: [], blocked: '통째로 지우면 메모 파일로 가는 길이 끊김 — 경로만 직접 고치세요' }, ident(u));
       continue;
     }
     if (!isMdLayer(u.layer)) continue;
@@ -552,6 +552,8 @@ export async function planFixes(opts: PlanOptions = {}): Promise<FixPlan> {
         why: `어디에도 적히지 않은 채 되풀이한 교정이다. Claude 자동 메모 형식(메모 파일 + MEMORY.md 한 줄)으로 초안을 쓴다. 어느 폴더 메모에 쓸지: ${scope ? `${scope.scope === 'general' ? '어디서나 통함' : '프로젝트 전용'} — ${scope.reason || '이유 없음'}` : '판정 못 함 — 교정한 폴더'}.`,
         evidence: its.map((i) => `${i.ts.slice(0, 10)} ${shortText(i.gist, 80)}`),
         ops: [{ op: 'create', path: file, content }, { op: 'append', path: path.join(memDir, 'MEMORY.md'), text: `- [${name}](${slug}.md) — ${shortText(desc, INDEX_HOOK_MAX)}` }],
+        // A3: 전역(홈 메모)으로 보내는 것은 한꺼번에 적용하지 않고 판정 근거를 보고 하나씩
+        ...(scope?.scope === 'general' && homeFolder && folder === homeFolder ? { manual: `어디서나 통하는 교정이라 홈 메모로 보냄(판정: ${maskQuote(scope.reason || '이유 없음', 60)}) — 한꺼번에 적용하지 않음, 보고 나서 forgen fix <id> --apply` } : {}),
         quote: `${its[0].ts.slice(0, 10)} 내가 한 말 "${maskQuote(its[0].utterance || its[0].gist, 80)}"`,
         model: true, tokens: -estimateTokens(`- [${name}](${slug}.md) — ${shortText(desc, INDEX_HOOK_MAX)}`),
         addsTo: { folder, tokens: estimateTokens(`- [${name}](${slug}.md) — ${shortText(desc, INDEX_HOOK_MAX)}\n`) },

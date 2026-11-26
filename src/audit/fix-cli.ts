@@ -12,6 +12,8 @@
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { createHash } from 'node:crypto';
+import { FORGEN_HOME, ME_RULES } from '../core/paths.js';
 import { Judge, takeModelDisclosure } from './judge.js';
 import {
   appliedFixes, applyFix, ensureBaseline, FIX_KINDS, KIND_CLI, KIND_LABEL, kindFromCli, lossCheck, measure, newBackupRoot, planFixes, previewFix,
@@ -94,10 +96,25 @@ const modelUse = { calls: 0, failed: 0, cacheHits: 0, ms: 0 };
 
 // ── 가장 최근 처방 목록 저장(0.9.1 #9) ──
 const planPath = () => path.join(fixDir(), 'plan-latest.json');
-interface SavedPlan { schema: 'forgen-fix-plan/1'; generatedAt: string; fixes: Array<Fix & { hashes: Record<string, string> }> }
+interface SavedPlan { schema: 'forgen-fix-plan/1'; generatedAt: string; rulesStamp?: string; fixes: Array<Fix & { hashes: Record<string, string>; dirs?: Record<string, string> }> }
+/** 폴더 한 단계의 지문(이름·크기·수정 시각) — 그 폴더에 파일이 새로 생기거나 바뀌면 달라진다. 하위 폴더는 보지 않는다. */
+function dirStamp(dir: string): string {
+  try {
+    const items = fs.readdirSync(dir).sort().map((n) => { try { const st = fs.statSync(path.join(dir, n)); return `${n}|${st.size}|${Math.round(st.mtimeMs)}`; } catch { return `${n}|?`; } });
+    return createHash('sha256').update(items.join('\n')).digest('hex').slice(0, 16);
+  } catch { return 'absent'; }
+}
+/** 가장 최근 감사 회차 시각(ISO). 회차 폴더 이름 20261126T070736Z-… 에서 읽는다. */
+function latestAuditAt(): string | null {
+  try {
+    const names = fs.readdirSync(path.join(FORGEN_HOME, 'audit')).filter((n) => /^\d{8}T\d{6}Z-/.test(n)).sort();
+    const n = names[names.length - 1];
+    return n ? `${n.slice(0, 4)}-${n.slice(4, 6)}-${n.slice(6, 8)}T${n.slice(9, 11)}:${n.slice(11, 13)}:${n.slice(13, 15)}Z` : null;
+  } catch { return null; }
+}
 function savePlan(p: FixPlan): void {
   try {
-    const body: SavedPlan = { schema: 'forgen-fix-plan/1', generatedAt: p.generatedAt, fixes: p.fixes.map((f) => ({ ...f, hashes: Object.fromEntries(fixPaths(f).map((x) => [x, stateHash(x)])) })) };
+    const body: SavedPlan = { schema: 'forgen-fix-plan/1', generatedAt: p.generatedAt, rulesStamp: dirStamp(ME_RULES), fixes: p.fixes.map((f) => ({ ...f, hashes: Object.fromEntries(fixPaths(f).map((x) => [x, stateHash(x)])), dirs: Object.fromEntries([...new Set(fixPaths(f).map((x) => path.dirname(x)))].map((d) => [d, dirStamp(d)])) })) };
     fs.mkdirSync(fixDir(), { recursive: true, mode: 0o700 });
     fs.writeFileSync(planPath(), JSON.stringify(body), { mode: 0o600 });
   } catch { /* 저장 실패 = 다음 적용은 다시 계획 */ }
@@ -107,11 +124,16 @@ export function savedFix(idOrPrefix: string): Fix | null {
   let saved: SavedPlan;
   try { saved = JSON.parse(fs.readFileSync(planPath(), 'utf-8')) as SavedPlan; } catch { return null; }
   if (saved.schema !== 'forgen-fix-plan/1') return null;
+  // A2: 처방이 가장 최근 감사 회차보다 오래됐거나, 그 뒤 룰 저장소·대상 폴더가 바뀌었으면 다시 계산한다(대상 파일 해시만 보지 않는다).
+  const audited = latestAuditAt();
+  if (audited && saved.generatedAt.slice(0, 19) < audited.slice(0, 19)) return null;
+  if (saved.rulesStamp !== undefined && saved.rulesStamp !== dirStamp(ME_RULES)) return null;
   const hits = saved.fixes.filter((x) => x.id === idOrPrefix || x.id.startsWith(idOrPrefix));
   const f = hits.find((x) => x.id === idOrPrefix) ?? (hits.length === 1 ? hits[0] : undefined);
   if (!f) return null;
   for (const [p, h] of Object.entries(f.hashes)) if (stateHash(p) !== h) return null;
-  const { hashes: _h, ...fix } = f;
+  for (const [d, h] of Object.entries(f.dirs ?? {})) if (dirStamp(d) !== h) return null;
+  const { hashes: _h, dirs: _d, ...fix } = f;
   return fix;
 }
 
@@ -131,7 +153,7 @@ export function line(f: Fix, skipped = false): string {
   const out = [`  ${f.id}  ${skipped ? '[빼 둠] ' : ''}${f.title}${tokenTag(f)}${f.model ? '  [문장은 모델이 씀]' : ''}`];
   if (f.change && !f.blocked) out.push(`      전: ${f.change.before}`, `      후: ${f.change.after}`);
   if (!f.blocked) out.push(`      근거: ${f.quote ?? '파일 비교'}`);
-  if (f.blocked) out.push(`      고치지 않음: ${f.blocked}`);
+  if (f.blocked) out.push(`      (고치지 않고 알려만 줌) ${f.blocked}`);
   if (f.manual) out.push(`      하나씩만: ${f.manual}`);
   return out.join('\n');
 }
@@ -142,7 +164,7 @@ function show(f: Fix): void {
   console.log(`  근거: ${f.quote ?? '파일 비교'}`);
   console.log(`\n왜: ${f.why}`);
   if (f.evidence.length) { console.log('근거:'); for (const e of f.evidence) console.log(`  · ${e}`); }
-  if (f.blocked) { console.log(`\n고치지 않음 — ${f.blocked}`); return; }
+  if (f.blocked) { console.log(`\n(고치지 않고 알려만 줌) ${f.blocked}`); return; }
   if (f.manual) console.log(`\n하나씩만 — ${f.manual}`);
   console.log(`\n적용: forgen fix ${f.id} --apply   · 되돌리기: forgen fix --undo ${f.id}`);
   console.log('\n── 상세: 바뀌는 파일 ──');
@@ -254,7 +276,7 @@ async function report(c: Ctx): Promise<void> {
     importantMissing: missing.filter((m) => m.rules.length), lostMemos, tier2Missed, tier2, mixConfirmed: mix, applied: appliedFixes().length, baselineAt: before.at,
   };
   if (c.json) { console.log(JSON.stringify(out, null, 2)); return; }
-  console.log(`처방 기록: 제안 ${r.proposed}개 중 ${r.applied}개 적용 · ${r.undone}개 되돌림`);
+  console.log(`처방 기록: 지금까지 낸 처방 ${r.proposed}개(이미 적용·끈 것 포함 — 지금 목록에는 남은 것만 나옴) 중 ${r.applied}개 적용 · ${r.undone}개 되돌림`);
   console.log(`  종류별(적용/제안): ${Object.entries(r.byKind).map(([k, v]) => `${KIND_LABEL[k as FixKind] ?? k} ${v.applied}/${v.proposed}${v.undone ? `(되돌림 ${v.undone})` : ''}`).join(' · ')}`);
   console.log(`\n세션 시작에 실리는 기억 — 처방 전(${before.at.slice(0, 16).replace('T', ' ')}) → 지금, 스킬 설명 제외`);
   if (repPct) {
@@ -288,6 +310,10 @@ async function report(c: Ctx): Promise<void> {
   }
   console.log(`다른 프로젝트 지시가 섞인 것(모델 판정): ${mix === null ? '— (--no-model 이라 안 셈)' : `${mix}개`}`);
   console.log('자세히(룰 ID·폴더별 전체 숫자): forgen fix --report --json');
+  console.log('\n다음에 할 일');
+  console.log(`  1. forgen fix --list — 남은 처방을 추천 순서로 봅니다`);
+  if (nMissing) console.log('  2. forgen rule list — 안 실린 중요 지침이 그 폴더에 맞는 룰인지 봅니다');
+  else console.log('  2. forgen audit — 처방 뒤 첫 화면을 다시 봅니다');
 }
 
 /** 목록 머리: 추천 순서(되돌리기 쉬운 것 → 판단이 필요한 것). 있는 종류만. */
@@ -379,19 +405,28 @@ export async function handleFix(args: string[]): Promise<void> {
     if (c.json) { console.log(JSON.stringify({ schema: 'forgen-fix-list/1', generatedAt: p.generatedAt, model: !!p.model, notProposedConditions: p.notProposedConditions ?? 0, fixes: list.map(({ ops: _o, ...f }) => f) }, null, 2)); return; }
     const excluded = excludedFixes();
     const ready = list.filter((f) => !f.blocked);
-    console.log(`처방 ${ready.length}개 · 알리기만 하는 것 ${list.length - ready.length}개${p.model ? '' : ' (--no-model: 모델 없이 만드는 처방만)'}`);
+    console.log(`처방 ${ready.length}개 · 고치지 않고 알려만 주는 것 ${list.length - ready.length}개${p.model ? '' : ' (--no-model: 모델 없이 만드는 처방만)'}`);
+    // B8: 처방 줄의 "세션마다 −N토큰" 기준
+    {
+      const fs0 = p.run.result.folders;
+      const act = fs0.filter((x) => (x.sessions30d ?? 0) >= 3);
+      const use = act.length ? act : fs0;
+      const w = use.reduce((n, x) => n + (act.length ? (x.sessions30d ?? 0) : 1), 0);
+      const avg = w ? Math.round(use.reduce((n, x) => n + x.totalTokens * (act.length ? (x.sessions30d ?? 0) : 1), 0) / w) : 0;
+      if (avg) console.log(`토큰 기준: 자주 쓰는 폴더의 세션 시작 기억은 평균 약 ${avg}토큰 — 처방 줄의 "세션마다 −N토큰"은 그 처방이 걸린 폴더에서 세션마다 줄어드는 양(−${Math.round(avg / 100)}토큰 ≈ 1%)`);
+    }
     const order = recommendedOrder(ready);
     if (order.length) { console.log('\n추천 순서'); order.forEach((l, i) => { console.log(`  ${i + 1}. ${l}`); }); }
     for (const k of FIX_KINDS) {
       const xs = list.filter((f) => f.kind === k);
       if (!xs.length) continue;
-      console.log(`\n${KIND_LABEL[k]} (${xs.filter((f) => !f.blocked).length}${xs.some((f) => f.blocked) ? ` · 알리기만 ${xs.filter((f) => f.blocked).length}` : ''}) — ${KIND_HELP[k]}`);
+      console.log(`\n${KIND_LABEL[k]} (${xs.filter((f) => !f.blocked).length}${xs.some((f) => f.blocked) ? ` · 알려만 주는 것 ${xs.filter((f) => f.blocked).length}` : ''}) — ${KIND_HELP[k]}`);
       // 같은 까닭으로 고치지 않는 것이 3개 이상이면 한 줄로 묶는다(예 하나 + 수)
       const blockedBy = new Map<string, Fix[]>();
       for (const f of xs.filter((x) => x.blocked)) blockedBy.set(f.blocked as string, [...(blockedBy.get(f.blocked as string) ?? []), f]);
       for (const f of xs) {
         const same = f.blocked ? blockedBy.get(f.blocked) ?? [] : [];
-        if (same.length >= 3) { if (same[0] === f) console.log(`  알리기만 ${same.length}개 — ${f.blocked}. 예: ${f.title} (각각: forgen fix --list --json)`); continue; }
+        if (same.length >= 3) { if (same[0] === f) console.log(`  (고치지 않고 알려만 줌) ${same.length}개 — ${f.blocked}. 예: ${f.title} (각각: forgen fix --list --json)`); continue; }
         console.log(line(f, excluded.has(f.id)));
       }
       if (k === 'tier2-condition') console.log('  ↳ 빼기: forgen fix <id> --skip · 한꺼번에 승인: forgen fix --kind condition --apply --yes(경고 붙은 것은 빠짐) · 되돌리기: forgen fix --undo <id>');
