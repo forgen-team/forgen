@@ -4,6 +4,9 @@
  * 순서(근거 있는 것 먼저): 부딪힘 확정 > 적혀 있는데도 또 말한 교정 > 다른 프로젝트 섞임 확정 > 빠진 중요 지침 > 없는 것을 가리킴 > 같은 뜻 중복. 종류마다 하나, 최대 3개.
  */
 import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import type { Rule } from '../store/types.js';
 import { fixId, ident, importantMissing, baselinePath } from './fix.js';
 import { shortPath } from './html.js';
 import { maskQuote } from './quote.js';
@@ -24,6 +27,23 @@ export function renderFinding(f: Finding): string {
 }
 
 const where = (x: { ruleId?: string; path: string; line: number }) => (x.ruleId ? 'forgen 룰' : `${shortPath(x.path)}:${x.line}`);
+/** 이름(짧게): 파일은 이름:줄, forgen 룰은 앞 8자 id. */
+const nameOf = (x: { ruleId?: string; path: string; line: number }) => (x.ruleId ? `forgen 룰 ${x.ruleId.slice(0, 8)}` : `${path.basename(x.path)}:${x.line}`);
+/** 그 지시가 마지막으로 쓰인 날: 파일은 git 마지막 커밋 날(git 밖이면 수정 시각), forgen 룰은 만든 날. */
+function dateOf(x: { ruleId?: string; path: string }, rules: Map<string, Rule>): { at: string; verb: string } | null {
+  if (x.ruleId) { const r = rules.get(x.ruleId); return r?.created_at ? { at: r.created_at, verb: '만듦' } : null; }
+  try {
+    const out = spawnSync('git', ['log', '-1', '--format=%cI', '--', path.basename(x.path)], { cwd: path.dirname(x.path), encoding: 'utf-8', timeout: 5000 });
+    const iso = out.status === 0 ? out.stdout.trim() : '';
+    if (iso) {
+      // 커밋 뒤 손으로 고쳤으면 수정 시각이 더 최근이다
+      const m = fs.statSync(x.path).mtime.toISOString();
+      const c = new Date(iso).toISOString();
+      return { at: m > c ? m : c, verb: '고침' };
+    }
+    return { at: fs.statSync(x.path).mtime.toISOString(), verb: '고침' };
+  } catch { return null; }
+}
 const qq = (t: string, n = 50) => `"${maskQuote(t.replace(/^\s*[-*]\s+/, ''), n)}"`;
 
 export function findings(run: AuditRun): Finding[] {
@@ -38,12 +58,23 @@ export function findings(run: AuditRun): Finding[] {
   if (conflict) {
     const md = [conflict.a, conflict.b].find((x) => !x.ruleId);
     const rule = [conflict.a, conflict.b].find((x) => x.ruleId);
+    const [na, nb] = [nameOf(conflict.a), nameOf(conflict.b)];
+    // 모델 설명의 라벨 A·B(판정기가 호출 순서로 맞춤)를 이름으로 바꾼다
+    const why = conflict.reason ? maskQuote(conflict.reason.replace(/(^|[^A-Za-z])([AB])(?![A-Za-z])/g, (_m, pre: string, l: string) => `${pre}${l === 'A' ? na : nb}`), 90) : '';
+    // 어느 쪽이 낡았나: 파일은 git 마지막 수정일(없으면 수정 시각), forgen 룰은 만든 날 — 더 최근 쪽을 지금 사실로 본다
+    const da = dateOf(conflict.a, ctx.rules);
+    const db = dateOf(conflict.b, ctx.rules);
+    let fix = `낡은 쪽만 고치세요 — ${[md ? `파일이면 ${where(md)} 를 직접 고치고` : '', rule ? `forgen 룰이면 forgen rule suppress ${(rule.ruleId as string).slice(0, 8)} 로 끕니다` : ''].filter(Boolean).join(', ')}(forgen 이 자동으로 고치지 않음)`;
+    if (da && db && da.at.slice(0, 10) !== db.at.slice(0, 10)) {
+      const [old, cur] = da.at < db.at ? [{ x: conflict.a, d: da, n: na }, { x: conflict.b, d: db, n: nb }] : [{ x: conflict.b, d: db, n: nb }, { x: conflict.a, d: da, n: na }];
+      fix = `${old.n}(${old.d.at.slice(0, 10)} ${old.d.verb})이 ${cur.n}(${cur.d.at.slice(0, 10)} ${cur.d.verb})보다 오래돼 낡았을 가능성이 큽니다 → ${old.x.ruleId ? `forgen rule suppress ${old.x.ruleId.slice(0, 8)}` : `${where(old.x)} 를 직접 고치세요`}`;
+    }
     out.push({
       kind: 'conflict',
-      scene: `${where(conflict.a)} ${qq(conflict.a.text)} 와 ${where(conflict.b)} ${qq(conflict.b.text)} 가 서로 맞지 않습니다${conflict.reason ? `(${maskQuote(conflict.reason, 60)})` : ''}`,
+      scene: `${na} 은 ${qq(conflict.a.text)}, ${nb} 은 ${qq(conflict.b.text)} — 서로 맞지 않습니다${why ? `(${why})` : ''}`,
       effect: 'AI 가 둘 중 아무거나 따르거나 낡은 쪽을 사실로 믿습니다',
-      fix: `낡은 쪽만 고치세요 — ${[md ? `파일이면 ${where(md)} 를 직접 고치고` : '', rule ? `forgen 룰이면 forgen rule suppress ${(rule.ruleId as string).slice(0, 8)} 로 끕니다` : ''].filter(Boolean).join(', ')}(forgen 이 자동으로 고치지 않음)`,
-      evidence: '파일 비교(모델 판정)',
+      fix,
+      evidence: da && db ? `파일 비교(모델 판정) · 날짜: ${na} ${da.at.slice(0, 10)} ${da.verb}, ${nb} ${db.at.slice(0, 10)} ${db.verb}` : '파일 비교(모델 판정)',
     });
   }
   // 2. 적혀 있는데도 또 말한 교정(가장 최근)

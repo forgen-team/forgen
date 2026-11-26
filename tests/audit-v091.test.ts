@@ -130,6 +130,14 @@ describe('A1 사실 진술 · A2 저장 처방 나이 · B9 홈 줄이기', () =
   });
 });
 
+describe('판정 설명의 A·B 라벨', () => {
+  it('글자순으로 보낸 쌍의 설명 라벨을 호출 순서로 되돌린다(영문 낱말 속 A·B 는 그대로)', async () => {
+    const { swapAB } = await import('../src/audit/judge.js');
+    expect(swapAB('A는 서버가 있다고, B는 제거됐다고 함')).toBe('B는 서버가 있다고, A는 제거됐다고 함');
+    expect(swapAB('API 와 BFF 는 그대로, A/B 만')).toBe('API 와 BFF 는 그대로, B/A 만');
+  });
+});
+
 describe('#10 도움말 언어', () => {
   it('locale ko 면 audit·fix 도움말이 한국어, en 이면 영어', async () => {
     fs.mkdirSync(process.env.FORGEN_HOME as string, { recursive: true });
