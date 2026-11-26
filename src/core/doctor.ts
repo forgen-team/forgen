@@ -218,6 +218,16 @@ export async function runDoctor(opts: DoctorOptions = {}): Promise<number> {
     console.log();
   }
 
+  // 0.9.1 #15 작동 증명: 무해한 시험 입력을 실제 훅에 통과시켜 "작동함 / 몇 ms"(격리 홈 — 실제 상태는 바꾸지 않는다).
+  if (!opts.quick) {
+    section('작동 증명 (격리 홈에서 실제 훅 실행, 내 기억·설정은 건드리지 않음)');
+    try {
+      const { runProofs } = await import('./doctor-proof.js');
+      for (const p of runProofs(currentPkgRoot())) check(`${p.name}: ${p.ok ? '작동함' : '작동 안 함'} (${p.ms}ms) — ${p.detail}`, p.ok, '다시 설치: forgen doctor --repair');
+    } catch (e) { check('작동 증명 실행', false, e instanceof Error ? e.message : String(e)); }
+    console.log();
+  }
+
   section('Directories');
   // Claude 설치(shim·데이터가 여기에 있음)가 있는데 없으면 고장. 아직 어느 호스트에도 안 썼거나 Codex 전용이면 첫 실행 때 만들어진다.
   if (hosts.claude) check('~/.forgen/', exists(FORGEN_HOME));
