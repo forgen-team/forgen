@@ -37,6 +37,126 @@ export interface MemoryItem {
   ruleId?: string;
   /** 메모 항목의 메모 폴더 */
   memoryDir?: string;
+  /**
+   * 그때 모습(비평 반영): 지금 내용과 다른 시점의 내용을 복원하는 재료. 없으면 since 이후로는 지금 내용과 같다고 본다.
+   *   메모 주제 파일 — 대화 기록의 Write/Edit 이력(raw: 지금 파일 전문)
+   *   forgen 룰 — forgen fix 백업의 처방 전 policy(그 처방 시각 앞에는 그 문장)
+   */
+  history?: { raw?: string; writes?: MemoryWrite[]; policies?: Array<{ at: string; before: string }> };
+}
+
+/** 주제 파일 항목의 비교 문장(설명 + 본문 앞부분). */
+const topicText = (raw: string) => `${frontmatterField(raw, 'description') ?? ''} / ${splitFrontmatter(raw).body.trim()}`.slice(0, ITEM_TEXT_MAX);
+
+const replaceOnce = (s: string, a: string, b: string, all = false): string | null => {
+  if (!a || !s.includes(a)) return null;
+  return all ? s.split(a).join(b) : s.replace(a, () => b);
+};
+
+/** 메모 파일의 ts 직전 전문을 대화 기록 쓰기 이력으로 복원한다. 복원 못 하면 null(시점 모름). */
+/** 알려진 쓰기 이력을 앞으로 끝까지 풀어 본 전문(Write 가 하나도 없으면 null). */
+function forwardAll(writes: MemoryWrite[], until?: string): string | null {
+  let s: string | null = null;
+  for (const w of writes) {
+    if (until && w.at >= until) break;
+    if (w.full !== undefined) { s = w.full; continue; }
+    if (s === null) continue;
+    if (!w.edits) return null;
+    for (const e of w.edits) { s = s === null ? null : replaceOnce(s, e.old, e.new, e.all); }
+    if (s === null) return null;
+  }
+  return s;
+}
+
+/** 두 전문에 다 있는 줄만(앞 전문의 순서) — 기록 밖에서 바뀐 파일의 보수적인 그때 모습. */
+function commonLines(a: string, b: string): string {
+  const keep = new Set(b.split('\n').map((l) => l.trim()).filter(Boolean));
+  return a.split('\n').filter((l) => !l.trim() || keep.has(l.trim())).join('\n');
+}
+
+export function reconstructAt(current: string, writes: MemoryWrite[], ts: string): string | null {
+  const ws = [...writes].sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
+  // 대화 기록 밖에서 바뀐 흔적(알려진 이력을 끝까지 풀어도 지금 전문과 다름 — 그 기록이 지워졌거나 손으로 고침): 언제 바뀌었는지 모르므로
+  // 그때 모습 = (ts 앞 알려진 전문) ∩ (지금 전문) 의 줄만. 교정 뒤에 덧붙인 줄은 앞 전문에 없어서 빠진다.
+  const end = forwardAll(ws);
+  if (end !== null && end !== current) {
+    const atTs = forwardAll(ws, ts);
+    return atTs === null ? null : commonLines(atTs, current);
+  }
+  const after = ws.filter((w) => w.at >= ts);
+  if (!after.length) return current;
+  const before = ws.filter((w) => w.at < ts);
+  // 1) 앞으로: ts 앞 마지막 Write 전문에 그 뒤 ts 앞 Edit 들을 차례로
+  const lastWrite = [...before].reverse().findIndex((w) => w.full !== undefined);
+  if (lastWrite >= 0) {
+    const i = before.length - 1 - lastWrite;
+    let s: string | null = before[i].full as string;
+    for (const w of before.slice(i + 1)) {
+      if (w.full !== undefined) { s = w.full; continue; }
+      for (const e of w.edits ?? []) { s = s === null ? null : replaceOnce(s, e.old, e.new, e.all); }
+      if (!w.edits) s = null;
+      if (s === null) break;
+    }
+    if (s !== null) return s;
+  }
+  // 2) 뒤로: 지금 전문에서 ts 뒤 Edit 들을 거꾸로 되돌린다(ts 뒤에 통째 Write 가 있으면 되돌릴 수 없음)
+  let s: string | null = current;
+  for (const w of [...after].reverse()) {
+    if (w.full !== undefined || !w.edits) return null;
+    for (const e of [...w.edits].reverse()) { s = s === null ? null : replaceOnce(s, e.new, e.old, e.all); }
+    if (s === null) return null;
+  }
+  return s;
+}
+
+/**
+ * 그 시점(ts)의 기억 항목: 시점 모습을 복원할 수 있으면 그 문장으로, 그 시점에 있었는지 모르거나 복원 못 하면 null(세지 않음 — 보수적).
+ * 메모 파일은 대화 기록 쓰기 이력, forgen 룰은 forgen fix 백업의 처방 전 문장. CLAUDE.md 류는 git blame 줄 시각이 이미 그 줄의 시점이다.
+ */
+export function itemAt(m: MemoryItem, ts: string): MemoryItem | null {
+  if (!m.since || m.since >= ts || (m.until && m.until <= ts)) return null;
+  const h = m.history;
+  if (!h) return m;
+  if (h.writes && h.raw !== undefined) {
+    const raw = reconstructAt(h.raw, h.writes, ts);
+    if (raw === null) return null;
+    if (raw === h.raw) return m;
+    const text = topicText(raw);
+    return { ...m, text, grams: bigrams(text) };
+  }
+  if (h.policies?.length) {
+    const next = [...h.policies].sort((a, b) => (a.at < b.at ? -1 : 1)).find((p) => p.at >= ts);
+    if (!next) return m;
+    const text = next.before.slice(0, ITEM_TEXT_MAX);
+    return { ...m, text, grams: bigrams(text) };
+  }
+  return m;
+}
+
+/** forgen fix 백업에서 룰마다 처방 전 policy 와 그 시각(policy 가 바뀐 처방만). */
+export function rulePolicyHistory(): Map<string, Array<{ at: string; before: string }>> {
+  const out = new Map<string, Array<{ at: string; before: string }>>();
+  const base = path.join(FORGEN_HOME, 'backups');
+  let roots: string[] = [];
+  try { roots = fs.readdirSync(base).filter((n) => n.startsWith('fix-')); } catch { return out; }
+  for (const r of roots) {
+    let ids: string[] = [];
+    try { ids = fs.readdirSync(path.join(base, r)); } catch { continue; }
+    for (const id of ids) {
+      try {
+        const rec = JSON.parse(fs.readFileSync(path.join(base, r, id, 'backup.json'), 'utf-8')) as { at: string; entries: Array<{ path: string; slot: string; existed: boolean }> };
+        for (const e of rec.entries) {
+          if (!e.existed || !/[\\/]me[\\/]rules[\\/][^\\/]+\.json$/.test(e.path)) continue;
+          const before = JSON.parse(fs.readFileSync(path.join(base, r, id, 'before', e.slot), 'utf-8')) as Rule;
+          let after: Rule | null = null;
+          try { after = JSON.parse(fs.readFileSync(path.join(base, r, id, 'after', e.slot), 'utf-8')) as Rule; } catch { /* 없음 */ }
+          if (!before?.rule_id || (after && after.policy === before.policy)) continue;
+          out.set(before.rule_id, [...(out.get(before.rule_id) ?? []), { at: rec.at, before: before.policy }]);
+        }
+      } catch { /* 깨진 백업 */ }
+    }
+  }
+  return out;
 }
 
 const ITEM_TEXT_MAX = 500;
@@ -60,6 +180,7 @@ export function forgenRuleItems(): { items: MemoryItem[]; rules: Map<string, Rul
   const rules = new Map<string, Rule>();
   for (const r of [...readRuleDir(ME_RULES), ...readRuleDir(ME_RULES_ARCHIVE)]) if (!rules.has(r.rule_id)) rules.set(r.rule_id, r);
   const items: MemoryItem[] = [];
+  const policies = rulePolicyHistory();
   for (const r of [...rules.values()].sort((a, b) => (a.rule_id < b.rule_id ? -1 : 1))) {
     if (r.scope === 'session' || r.status === 'candidate') continue;
     const text = r.policy.slice(0, ITEM_TEXT_MAX);
@@ -67,6 +188,7 @@ export function forgenRuleItems(): { items: MemoryItem[]; rules: Map<string, Rul
     items.push({
       key: `rule:${r.rule_id}`, kind: 'forgen-rule', text, grams: bigrams(text), ruleId: r.rule_id, path: path.join(ME_RULES, `${r.rule_id}.json`),
       since: r.created_at || null, sinceVia: r.created_at ? 'created_at' : null, ...(gone && r.updated_at ? { until: r.updated_at } : {}),
+      ...(policies.get(r.rule_id)?.length ? { history: { policies: policies.get(r.rule_id) } } : {}),
     });
   }
   return { items, rules };
@@ -92,10 +214,10 @@ export function memoryItems(claudeDir: string, dirs: MemoryDir[], writes: Memory
     for (const t of m.topics) {
       if (t.error) continue;
       const rel = memoryRel(claudeDir, t.path);
-      const desc = frontmatterField(t.text, 'description') ?? '';
-      const text = `${desc} / ${splitFrontmatter(t.text).body.trim()}`.slice(0, ITEM_TEXT_MAX);
+      const text = topicText(t.text);
       const since = firstWrite.get(rel) ?? null;
-      out.push({ key: `topic:${rel}`, kind: 'memory-topic', text, grams: bigrams(text), path: t.path, memoryDir: m.dir, since, sinceVia: since ? 'transcript-write' : null });
+      const ws = byRel.get(rel) ?? [];
+      out.push({ key: `topic:${rel}`, kind: 'memory-topic', text, grams: bigrams(text), path: t.path, memoryDir: m.dir, since, sinceVia: since ? 'transcript-write' : null, ...(ws.length ? { history: { raw: t.text, writes: ws } } : {}) });
     }
     if (!m.index || m.index.error) continue;
     const rel = memoryRel(claudeDir, m.index.path);

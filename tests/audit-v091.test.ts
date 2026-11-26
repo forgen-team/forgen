@@ -130,6 +130,42 @@ describe('A1 사실 진술 · A2 저장 처방 나이 · B9 홈 줄이기', () =
   });
 });
 
+describe('그때 모습 — 교정 뒤에 덧붙인 메모로 "이미 적혀 있었다"고 세지 않는다', () => {
+  it('교정 뒤 Edit 으로 교정 인용을 덧붙인 메모: 교정 시점 내용에는 그 문장이 없다', async () => {
+    const { itemAt, reconstructAt } = await import('../src/audit/memory-items.js');
+    const { bigrams } = await import('../src/audit/lexical.js');
+    const orig = '---\nname: lean\ndescription: 화면 문구는 필요한 말만\n---\n부가 텍스트를 화면 본문에 늘어놓지 말 것.\n';
+    const added = '\n2026-10-29 추가: 프로세스가 너무 길고 눌러야 할 것도 많다 — 핵심 과제는 1~3탭.\n';
+    const now = orig + added;
+    const writes = [
+      { rel: 'x/memory/lean.md', at: '2026-10-26T00:00:00.000Z', tool: 'Write', content: orig, full: orig },
+      { rel: 'x/memory/lean.md', at: '2026-10-29T10:00:00.000Z', tool: 'Edit', content: `부가 텍스트를 화면 본문에 늘어놓지 말 것.\n${added}`, edits: [{ old: '부가 텍스트를 화면 본문에 늘어놓지 말 것.\n', new: `부가 텍스트를 화면 본문에 늘어놓지 말 것.\n${added}` }] },
+    ];
+    // 교정은 10-29 09:00(덧붙이기 전)
+    expect(reconstructAt(now, writes, '2026-10-29T09:00:00.000Z')).toBe(orig);
+    const item = { key: 'topic:x/memory/lean.md', kind: 'memory-topic' as const, text: now, grams: bigrams(now), since: '2026-10-26T00:00:00.000Z', sinceVia: 'transcript-write' as const, history: { raw: now, writes } };
+    const at = itemAt(item, '2026-10-29T09:00:00.000Z');
+    expect(at?.text).not.toContain('눌러야 할 것');
+    expect(at?.text).toContain('부가 텍스트');
+    // 되돌릴 수 없는 이력(교정 뒤 통째 Write, 그 앞 전문 없음)은 시점 모름 — 세지 않음
+    const w2 = [{ rel: 'x/memory/lean.md', at: '2026-10-30T00:00:00.000Z', tool: 'Write', content: now, full: now }];
+    expect(itemAt({ ...item, history: { raw: now, writes: w2 } }, '2026-10-29T09:00:00.000Z')).toBeNull();
+    // 덧붙인 Edit 의 대화 기록이 없는 경우(기록이 지워짐): 알려진 전문과 지금 전문에 다 있는 줄만
+    const only = [writes[0]];
+    expect(reconstructAt(now, only, '2026-10-29T09:00:00.000Z')).not.toContain('눌러야 할 것');
+    expect(reconstructAt(now, only, '2026-10-29T09:00:00.000Z')).toContain('부가 텍스트');
+    // 이력이 교정보다 앞뿐이면 지금 내용 그대로
+    expect(itemAt(item, '2026-11-01T00:00:00.000Z')?.text).toBe(now);
+  });
+  it('forgen 룰: 처방으로 policy 가 바뀐 경우 그 앞 시점에는 처방 전 문장', async () => {
+    const { itemAt } = await import('../src/audit/memory-items.js');
+    const { bigrams } = await import('../src/audit/lexical.js');
+    const item = { key: 'rule:r', kind: 'forgen-rule' as const, text: '새 문장', grams: bigrams('새 문장'), since: '2026-10-01T00:00:00.000Z', sinceVia: 'created_at' as const, history: { policies: [{ at: '2026-11-01T00:00:00.000Z', before: '옛 문장' }] } };
+    expect(itemAt(item, '2026-10-15T00:00:00.000Z')?.text).toBe('옛 문장');
+    expect(itemAt(item, '2026-11-15T00:00:00.000Z')?.text).toBe('새 문장');
+  });
+});
+
 describe('판정 설명의 A·B 라벨', () => {
   it('글자순으로 보낸 쌍의 설명 라벨을 호출 순서로 되돌린다(영문 낱말 속 A·B 는 그대로)', async () => {
     const { swapAB } = await import('../src/audit/judge.js');

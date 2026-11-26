@@ -18,7 +18,7 @@ import { appliesForContext, projectKeyFor } from '../store/rule-scope.js';
 import type { Rule } from '../store/types.js';
 import { CORRECTION_MODEL, CORRECTION_PROMPT_VERSION, Judge, PAIR_MODEL, PAIR_PROMPT_VERSION, type CorrectionVerdict, type PairVerdict } from './judge.js';
 import { bigrams, topK } from './lexical.js';
-import { deletedItems, forgenRuleItems, hostFileItems, memoryItems, type MemoryItem } from './memory-items.js';
+import { deletedItems, forgenRuleItems, hostFileItems, itemAt, memoryItems, type MemoryItem } from './memory-items.js';
 import { forgenVersion } from './run.js';
 import { defaultEnv, defaultFolders, hostLoadFor, listMemoryDirs, readMemoryDir, SourceReader, type Layer, type MemoryDir } from './sources.js';
 import { scanTranscripts, type Prompt } from './transcripts.js';
@@ -301,7 +301,8 @@ export async function runRecurrence(opts: RecurrenceOptions = {}): Promise<Recur
     // 이 작업에만 해당하는 교정은 기억감이 아니다 — 쌍 판정에 보내지 않는다(속도). 교정 수에는 들어간다.
     if (v(p)?.task_specific) { plan.set(promptId(p), { p, gist, cands: [], skipped: true }); continue; }
     const q = bigrams(`${gist} ${p.text.slice(0, 200)}`);
-    const before = memory.filter((m) => m.since && m.since < p.ts && (!m.until || m.until > p.ts));
+    // 그때 모습: 그 교정 시각에 적혀 있던 내용으로 비교한다(교정 뒤에 덧붙인 문장으로 '이미 적혀 있었다'고 세지 않게). 복원 못 하면 세지 않음.
+    const before = memory.map((m) => itemAt(m, p.ts)).filter((m): m is MemoryItem => !!m);
     const later = memory.filter((m) => m.since && m.since > p.ts);
     const del = deleted.filter((m) => m.until && m.until < p.ts);
     const earlier = earlierPool.filter((e) => e.ts < p.ts && e.session !== p.session);
