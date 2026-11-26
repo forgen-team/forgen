@@ -83,7 +83,8 @@ export interface AuditResult {
      * N3 같은 집합 비교(오너 결정 2026-11-26) — 처방 기준값(forgen fix 를 처음 적용할 때 남김)이 있을 때만. 처방 전에 실리던 룰·기억을
      * 그대로 실을 때의 토큰끼리 비교하고, 빈자리로 새로 실린 룰은 되살린 룰로 따로. allNow* 는 이전 정의(지금 실리는 전부).
      */
-    n3?: { baselineAt: string; medianPct: number; allNowMedianPct: number; revived: number; revivedImportant: number; folders: Array<{ folder: string; before: number; sameSet: number; allNow: number; pct: number; allNowPct: number; revived: number; revivedImportant: number }> };
+    /** formatPct = 압축(형식) 몫(처방 전 집합을 압축 전/후 형식으로), fixPct = 처방·두 층 몫(같은 형식에서 처방 전/후). 합 = pct. */
+    n3?: { baselineAt: string; medianPct: number; allNowMedianPct: number; formatMedianPct: number; fixMedianPct: number; revived: number; revivedImportant: number; folders: Array<{ folder: string; before: number; sameSet: number; allNow: number; pct: number; allNowPct: number; formatPct: number; fixPct: number; revived: number; revivedImportant: number }> };
     truncation: { memoryDirs: number; truncated: number; tightest: { dir: string; folder: string | null; spareLines: number; spareBytes: number; spareItems: number; firstLimit: 'lines' | 'bytes' } | null };
   };
   folders: FolderSummary[];

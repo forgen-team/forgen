@@ -51,7 +51,17 @@ describe('N3 기준값 = 0.9.0 이전 형식(압축 전)', () => {
     expect(f.before).toBe(base.folders[0].legacyTokens);
     expect(f.after).toBe(base.folders[0].tokens);
     expect(f.pct).toBeLessThan(-5); // 처방 0개 — 줄어든 몫은 전부 압축
+    // 몫 나누기: 압축(형식) 몫 + 처방·두 층 몫 = N3. 처방 0개라 처방 몫은 0
+    const g = f as unknown as { formatPct: number; fixPct: number };
+    expect(g.formatPct).toBe(f.pct);
+    expect(g.fixPct).toBe(0);
     const text = await capture(() => handleFix(['--report', '--folder', FOLDER, '--claude-dir', CLAUDE, '--no-model']));
     expect(text).toContain('0.9.0 이전 형식(압축 전)으로 센 값');
+    expect(text).toMatch(/압축 -\d+(\.\d)?% · 처방·두 층 0%/);
+    const { n3EdgeWarning } = await import('../src/audit/fix-cli.js');
+    expect(n3EdgeWarning(-15.4)).toContain('목표 경계');
+    expect(n3EdgeWarning(-16)).toContain('목표 경계');
+    expect(n3EdgeWarning(-14.9)).toBeNull();
+    expect(n3EdgeWarning(-16.1)).toBeNull();
   });
 });

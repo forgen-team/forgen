@@ -89,6 +89,7 @@ export type TierReason = 'hard' | 'strong' | 'safety' | 'session' | 'recent' | '
 export const SAFETY_RE = new RegExp([
   'rm\\s+-[a-z]*[rf]', 'force[\\s-]*push', 'push\\s+(--force|-f\\b)', '--force', 'reset\\s+--hard', 'drop\\s+(table|database|schema)', 'truncate\\s+table', 'delete\\s+from',
   'secret', 'credential', 'password', 'passwd', 'api[\\s_-]?key', 'private[\\s_-]?key', 'token', '\\.env\\b', 'ssh[\\s_-]?key', 'byok',
+  'git\\s+clean', 'git\\s+checkout\\s+--\\s', 'git\\s+branch\\s+-D', 'kubectl\\s+delete', 'docker\\s+(rm|rmi)\\s+-f', 'docker\\s+(system|volume)\\s+prune', 'truncate\\b', 'chmod\\s+-R\\s+777', 'mkfs', 'dd\\s+if=', 'shred\\b', 'terraform\\s+destroy', 'dropdb\\b',
   'destructive', 'irreversible', 'production\\s+(data|db|database)', 'sudo\\b', 'chmod\\s+777',
   '비밀', '시크릿', '자격\\s*증명', '인증\\s*정보', '암호', '토큰', '키\\s*(노출|유출|커밋)', '강제\\s*푸시', '강제\\s*push', '위험\\s*명령', '파괴', '되돌릴\\s*수\\s*없', '복구\\s*불가',
   '(데이터|파일|폴더|디렉터리|디렉토리|db|테이블)\\s*(를|을)?\\s*(삭제|지우|날리)', '프로덕션\\s*(데이터|db|배포)', '실\\s*데이터',

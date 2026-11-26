@@ -1014,10 +1014,12 @@ export function n3Summary(run: AuditRun): NonNullable<import('./run.js').AuditRe
     const allNow = x?.tokens ?? 0;
     const sameSet = x?.sameSet ?? 0;
     const base = b.legacyTokens ?? b.tokens;
-    return { folder: b.folder, before: base, sameSet, allNow, pct: pct(sameSet, base), allNowPct: pct(allNow, base), revived: x?.revived.length ?? 0, revivedImportant: x?.revivedImportant.length ?? 0 };
+    const formatPct = b.legacyTokens !== undefined ? pct(b.tokens, base) : 0;
+    return { folder: b.folder, before: base, sameSet, allNow, pct: pct(sameSet, base), allNowPct: pct(allNow, base), formatPct, fixPct: Math.round((pct(sameSet, base) - formatPct) * 10) / 10, revived: x?.revived.length ?? 0, revivedImportant: x?.revivedImportant.length ?? 0 };
   });
   return {
     baselineAt: before.at, medianPct: med(folders.map((f) => f.pct)), allNowMedianPct: med(folders.map((f) => f.allNowPct)),
+    formatMedianPct: med(folders.map((f) => f.formatPct)), fixMedianPct: med(folders.map((f) => f.fixPct)),
     revived: new Set(ss.flatMap((x) => x.revived)).size, revivedImportant: new Set(ss.flatMap((x) => x.revivedImportant)).size, folders,
   };
 }

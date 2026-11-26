@@ -30,7 +30,7 @@ export function topLines(r: AuditResult): string[] {
       : `부딪힘 ${f.conflicts}쌍 · 같은 뜻 중복 ${f.dupGroups}묶음 · 다른 프로젝트 섞임 ${f.mixConfirmed}개 (모델 판정${r.checks.model?.status === 'incomplete' ? ', 판정 불완전' : ''}) · 같은 문장 ${f.sameSentence}묶음 · 낡은 참조 ${f.stale}개 · paths: 없는 룰 ${f.unscopedRules}개`,
     `MEMORY.md 잘림 ${tr.truncated}곳 / 메모 폴더 ${tr.memoryDirs}곳 · ${tight}`,
     ...tier2Line(r),
-    ...(r.summary.n3 ? [`N3(같은 집합 기준, 처방 ${r.summary.n3.baselineAt.slice(0, 10)} 전 대비) 중앙값 ${r.summary.n3.medianPct}% · 되살린 룰 ${r.summary.n3.revived}개(중요 지침 ${r.summary.n3.revivedImportant}) · 이전 정의(지금 실리는 전부) ${r.summary.n3.allNowMedianPct}%`] : []),
+    ...(r.summary.n3 ? [`N3(같은 집합 기준, 처방 ${r.summary.n3.baselineAt.slice(0, 10)} 전 대비) 중앙값 ${r.summary.n3.medianPct}% (압축 몫 ${r.summary.n3.formatMedianPct}% · 처방·두 층 몫 ${r.summary.n3.fixMedianPct}%)${r.summary.n3.medianPct <= -15 && r.summary.n3.medianPct >= -16 ? ' ⚠ 목표 경계 — 룰이 몇 개 늘면 깨질 수 있음' : ''} · 되살린 룰 ${r.summary.n3.revived}개(중요 지침 ${r.summary.n3.revivedImportant}) · 이전 정의(지금 실리는 전부) ${r.summary.n3.allNowMedianPct}%`] : []),
   ];
 }
 

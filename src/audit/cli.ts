@@ -11,6 +11,7 @@
  * `forgen audit` 의 첫 줄(다시 말한 교정)은 가장 최근 `audit recurrence` 결과를 읽어 채운다(모델을 새로 부르지 않음).
  */
 import { performance } from 'node:perf_hooks';
+import { n3EdgeWarning } from './fix-cli.js';
 import { renderAuditHtml, shortPath, topLines } from './html.js';
 import { writeFingerprintIfFirst } from './fingerprint.js';
 import { handleBaseline, handleRecurrence } from './recurrence-cli.js';
@@ -141,8 +142,10 @@ export function n3Lines(r: AuditResult): string[] {
   const sg = (x: number) => `${x > 0 ? '+' : ''}${x}%`;
   return [
     `N3(같은 집합 — 처방 전에 실리던 룰·기억을 그대로 실을 때, 스킬 설명 제외) 기준 ${n.baselineAt.slice(0, 16)}: 중앙값 ${sg(n.medianPct)} (목표 −15% 이상)`,
-    ...n.folders.map((f) => `  ${String(f.before).padStart(6)} → ${String(f.sameSet).padStart(6)}  ${sg(f.pct)}  ${shortPath(f.folder)}${f.revived ? `  (되살린 룰 ${f.revived}, 중요 지침 ${f.revivedImportant})` : ''}`),
+    ...n.folders.map((f) => `  ${String(f.before).padStart(6)} → ${String(f.sameSet).padStart(6)}  ${sg(f.pct)} (압축 ${sg(f.formatPct)} · 처방·두 층 ${sg(f.fixPct)})  ${shortPath(f.folder)}${f.revived ? `  (되살린 룰 ${f.revived}, 중요 지침 ${f.revivedImportant})` : ''}`),
+    `  몫: 압축(형식) 중앙값 ${sg(n.formatMedianPct)} — 처방 전 집합을 압축 전/후 형식으로 렌더한 차이 · 처방·두 층 중앙값 ${sg(n.fixMedianPct)} — 같은 형식에서 처방 전/후 차이`,
     `  되살린 룰 ${n.revived}개(그중 중요 지침 ${n.revivedImportant}개) · 이전 정의(지금 실리는 전부) 중앙값 ${sg(n.allNowMedianPct)}`,
+    ...(n3EdgeWarning(n.medianPct) ? [`  ⚠ ${n3EdgeWarning(n.medianPct)}`] : []),
   ];
 }
 

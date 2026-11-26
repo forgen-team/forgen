@@ -16,6 +16,11 @@ import {
 } from './fix.js';
 import { shortPath } from './html.js';
 
+/** 목표(−15%) 경계: 중앙값이 −16% ~ −15% 면 룰이 몇 개만 늘어도 깨질 수 있다. 목표 숫자는 오너 결정이라 바꾸지 않는다. */
+export function n3EdgeWarning(medianPct: number): string | null {
+  return medianPct <= -15 && medianPct >= -16 ? `목표 경계(중앙값 ${medianPct}%, 목표 −15%) — 룰이 몇 개 늘면 깨질 수 있음` : null;
+}
+
 const HELP = `  forgen fix --list [--kind <종류>] [--json]
       감사 결과(결정적 검사 + 모델 판정, 캐시)로 처방 목록을 낸다. 종류: ${FIX_KINDS.join(' · ')}
   forgen fix <id> [--apply]
@@ -156,6 +161,9 @@ async function report(c: Ctx): Promise<void> {
     return {
       folder: b.folder, before: base, after: diet, expected: diet + exp, addedMemory: mem, withMemory: total, delta: diet - base, pct: p1(diet, base), expectedPct: p1(diet + exp, base), pctWithMemory: p1(total, base),
       revived: ss?.revived.length ?? 0, revivedImportant: ss?.revivedImportant.length ?? 0, revivedTokens, allNow, allNowPct: p1(allNow, base), legacyBase: b.legacyTokens !== undefined,
+      // 몫 나누기(합 = N3): 압축(형식) = 처방 전 집합을 압축 전 형식 → 지금 형식으로(기준값의 tokens vs legacyTokens),
+      // 처방·두 층 = 같은 형식에서 처방 전 → 지금(기준값의 tokens → 지금 같은 집합 토큰). 옛 기준값은 압축 몫 0.
+      formatPct: b.legacyTokens !== undefined ? p1(b.tokens, base) : 0, fixPct: Math.round((p1(diet, base) - (b.legacyTokens !== undefined ? p1(b.tokens, base) : 0)) * 10) / 10,
     };
   });
   const r = rates(events);
@@ -166,7 +174,7 @@ async function report(c: Ctx): Promise<void> {
   const tier2 = { rules: run.ctx.tier2In?.size ?? 0, tokensUpper: run.result.folders.map((f) => ({ folder: f.folder, rules: f.forgenTier2?.rules ?? 0, tokens: f.forgenTier2?.tokens ?? 0 })) };
   const out = {
     schema: 'forgen-fix-report/1', n3Definition: 'same-set/2026-11-26', rates: r, folders: rows, medianPct: median(rows.map((x) => x.pct)), expectedMedianPct: median(rows.map((x) => x.expectedPct)),
-    allNowMedianPct: median(rows.map((x) => x.allNowPct)),
+    allNowMedianPct: median(rows.map((x) => x.allNowPct)), formatMedianPct: median(rows.map((x) => x.formatPct)), fixMedianPct: median(rows.map((x) => x.fixPct)),
     revived: new Set([...same.values()].flatMap((x) => x.revived)).size, revivedImportant: new Set([...same.values()].flatMap((x) => x.revivedImportant)).size, increased: rows.filter((x) => x.delta > 0).map((x) => x.folder),
     loss, tier2Missed, tier2, mixConfirmed: mix, applied: appliedFixes().length, baselineAt: before.at,
   };
@@ -176,11 +184,14 @@ async function report(c: Ctx): Promise<void> {
   console.log(`\n폴더별 상시 로드 토큰(N3, 스킬 설명 제외) — 처방 전(${before.at.slice(0, 16)}, ${rows.every((x) => x.legacyBase) ? '0.9.0 이전 형식(압축 전)으로 센 값' : '옛 기준값 — 압축 전 토큰이 없어 그때 렌더 그대로'}) → 지금`);
   const sg = (n: number) => `${n > 0 ? '+' : ''}${n}%`;
   console.log('  같은 집합 기준(처방 전에 실리던 룰·기억을 그대로 실을 때) — 빈자리를 채워 새로 실린 룰은 "되살린 룰"로 따로 센다');
-  for (const x of rows) console.log(`  ${String(x.before).padStart(6)} → ${String(x.after).padStart(6)}  ${sg(x.pct)}  ${shortPath(x.folder)}${x.revived ? `   (되살린 룰 ${x.revived}개, 그중 중요 지침 ${x.revivedImportant}개 · ${x.revivedTokens}토큰)` : ''}${x.addedMemory ? `   (+ 기억 추가 ${x.addedMemory}토큰 → 합 ${sg(x.pctWithMemory)})` : ''}`);
+  for (const x of rows) console.log(`  ${String(x.before).padStart(6)} → ${String(x.after).padStart(6)}  ${sg(x.pct)} (압축 ${sg(x.formatPct)} · 처방·두 층 ${sg(x.fixPct)})  ${shortPath(x.folder)}${x.revived ? `   (되살린 룰 ${x.revived}개, 그중 중요 지침 ${x.revivedImportant}개 · ${x.revivedTokens}토큰)` : ''}${x.addedMemory ? `   (+ 기억 추가 ${x.addedMemory}토큰 → 합 ${sg(x.pctWithMemory)})` : ''}`);
   if (out.revived) console.log(`  되살린 룰 ${out.revived}개(그중 중요 지침 ${out.revivedImportant}개) — 처방 전에는 예산에서 빠지던 룰이 빈자리로 다시 실림(N3 에서 뺌)`);
   console.log(`  이전 정의(지금 실리는 전부): ${rows.map((x) => `${shortPath(x.folder)} ${sg(x.allNowPct)}`).join(' · ')} · 중앙값 ${sg(out.allNowMedianPct)}`);
   if (added.size) console.log('  기억 추가(적히지 않은 채 반복된 교정의 새 메모)는 N3 다이어트 비교에서 빼고 따로 적는다');
-  console.log(`  중앙값 ${out.medianPct > 0 ? '+' : ''}${out.medianPct}% (목표 −15% 이상) · 늘어난 폴더 ${out.increased.length}`);
+  console.log(`  중앙값 ${out.medianPct > 0 ? '+' : ''}${out.medianPct}% (목표 −15% 이상) · 늘어난 폴더 ${out.increased.length} — 몫: 압축(형식) 중앙값 ${sg(out.formatMedianPct)} · 처방·두 층 중앙값 ${sg(out.fixMedianPct)}`);
+  console.log('    압축 몫 = 처방 전 집합을 압축 전/후 형식으로 렌더한 차이, 처방·두 층 몫 = 같은 형식에서 처방 전/후 차이(폴더마다 두 몫의 합이 N3)');
+  const edge = n3EdgeWarning(out.medianPct);
+  if (edge) console.log(`  ⚠ ${edge}`);
   if (rows.some((x) => x.expected !== x.after)) {
     console.log('  두 층 기대치(2층 룰이 과거 발동률만큼 들어온다고 보고, 넓은 조건은 절감 0) — 선전에는 이 값을 쓴다:');
     for (const x of rows) console.log(`    ${String(x.before).padStart(6)} → ${String(x.expected).padStart(6)}  ${sg(x.expectedPct)}  ${shortPath(x.folder)}`);

@@ -100,7 +100,7 @@ describe('안전 룰은 어떤 경로로도 2층에 가지 않는다', () => {
     expect(T.isSafetyRule({ ...base, enforce_mode: 'advise' })).toBe(true);
     expect(T.isSafetyRule({ ...base, strength: 'hard' })).toBe(true);
     expect(T.isSafetyRule({ ...base, category: 'safety' })).toBe(true);
-    for (const p of ['git push --force 금지', 'force push 하지 말 것', 'DROP TABLE 전에 백업', '.env 파일은 커밋하지 않는다', 'API key 를 로그에 남기지 않는다', '비밀키 노출 주의', '강제 푸시 금지', '데이터를 삭제하기 전에 확인', '되돌릴 수 없는 작업은 묻는다', 'credential 파일', 'rm -rf 전에 확인'])
+    for (const p of ['git push --force 금지', 'force push 하지 말 것', 'DROP TABLE 전에 백업', '.env 파일은 커밋하지 않는다', 'API key 를 로그에 남기지 않는다', '비밀키 노출 주의', '강제 푸시 금지', '데이터를 삭제하기 전에 확인', '되돌릴 수 없는 작업은 묻는다', 'credential 파일', 'rm -rf 전에 확인', 'git clean -fdx 금지', 'kubectl delete ns 전에 확인', 'docker rm -f 로 지우지 말 것', '로그 파일 truncate 금지', 'chmod -R 777 금지', 'terraform destroy 는 묻는다'])
       expect(T.isSafetyRule({ ...base, policy: p }), p).toBe(true);
   });
   it('게이트 통과·승인 조건·재자격 모두 안전 룰은 1층(safety)', () => {
