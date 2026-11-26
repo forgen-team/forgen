@@ -176,6 +176,7 @@ async function main(): Promise<void> {
   const doctorProbe = process.env.FORGEN_DOCTOR_PROBE === '1';
   let v1RenderedRules: string | null = null;
   let bootIncluded: string[] = [];
+  let bootTier2: import('../store/types.js').Rule[] = [];
   try {
     if (doctorProbe) throw new Error('doctor probe — 세션 상태 기록 생략');
     const { bootstrapV1Session } = await import('../core/v1-bootstrap.js');
@@ -184,11 +185,12 @@ async function main(): Promise<void> {
     const boot = bootstrapV1Session(sessionContext.cwd, { trackInjection: !consumeHarnessBootstrap() });
     v1RenderedRules = boot.renderedRules;
     bootIncluded = boot.includedRuleIds ?? [];
+    bootTier2 = boot.tier2Rules ?? [];
     // 0.8.0 S5: 이번 블록이 어느 프로젝트 기준인지 기록(압축 뒤 재시작이면 새로 시작) — 위치 전환 주입의 기준.
     try {
       // 0.8.0 M2: 이 세션 시작 블록에 실제로 들어간 룰 ID 도 남긴다(교정 3분류의 "주입됐다" 판정).
       // 전역 render-report 를 다시 읽지 않는다 — 동시 세션이 그 사이 덮어쓸 수 있다.
-      (await import('../core/project-switch.js')).markSessionStartScope(sessionContext.sessionId, sessionContext.cwd, bootIncluded);
+      (await import('../core/project-switch.js')).markSessionStartScope(sessionContext.sessionId, sessionContext.cwd, bootIncluded, bootTier2);
     } catch { /* fail-open */ }
   } catch (e) { log.debug('v1-bootstrap SessionStart 호출 실패 (fail-open)', e); }
 

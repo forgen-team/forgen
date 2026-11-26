@@ -7,7 +7,7 @@ import type { Rule } from '../store/types.js';
 
 /** T5 의 부정 표지에 "말고·거부·없이" 같은 변형을 더한 극성 판정. 같은 극성이면 상반이 아니다(같은 입장의 다른 표현). */
 const EXT_NEG = /말고|거부|없이|막지|않고|않는|않음|아니|못하/;
-const isNeg = (t: string) => NEGATION_RE.test(t) || EXT_NEG.test(t);
+export const isNeg = (t: string) => NEGATION_RE.test(t) || EXT_NEG.test(t);
 
 export function conflictingRule(text: string, rules: Rule[]): Rule | null {
   for (const r of rules) {

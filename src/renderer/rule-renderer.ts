@@ -9,6 +9,7 @@
 
 import type { Rule, RuleStrength, RuleScope, RuleSource, SessionEffectiveState, Profile, TrustPolicy, JudgmentPack, CommunicationPack } from '../store/types.js';
 import { originTag } from '../store/rule-origin.js';
+import { appliesForContext } from '../store/rule-scope.js';
 import { initLocaleFromConfig, getLocale, RULE_RENDERER } from '../i18n/index.js';
 
 // ── Render Context ──
@@ -20,6 +21,18 @@ export interface RenderContext {
   max_rules: number;
   max_chars: number;
   include_pack_summary: boolean;
+  /**
+   * 0.9.0 압축(docs/plans/2026-11-25-v1.0-plan.md §8.1 ①): 분류 접두·default 강도·같은 프로젝트 태그·날짜 꼬리를 빼고
+   * Evidence 블록을 줄인다. 정책 문장 본문은 손대지 않는다. 없으면 예전 형식(전환 주입·내보내기와 같은 모양).
+   */
+  compact?: boolean;
+  /** 압축 형식에서 이 폴더 프로젝트와 같은 프로젝트 태그는 뺀다. */
+  projectKey?: string | null;
+  /**
+   * 0.9.0 두 층(§8.1 ②): 이 룰들은 본문에 넣지 않고 "상황이 맞으면 들어오는 룰" 색인 한 줄로만 보인다.
+   * 값은 룰 ID → 색인에 보일 주제 낱말.
+   */
+  tier2?: Map<string, string[]>;
 }
 
 export const DEFAULT_CONTEXT: RenderContext = {
@@ -27,6 +40,7 @@ export const DEFAULT_CONTEXT: RenderContext = {
   max_rules: 60,
   max_chars: 7000, // 룰 블록 상한 안쪽. 넘치면 우선순위로 고르고 빠진 룰을 표시한다.
   include_pack_summary: false,
+  compact: true,
 };
 
 // ── Output Sections ──
@@ -85,7 +99,35 @@ function dedupeByRenderKey(rules: Rule[]): Rule[] {
 
 // ── Template ──
 
-export function ruleToText(rule: Rule): string {
+export interface RuleTextFormat { compact?: boolean; projectKey?: string | null }
+
+/**
+ * 압축 형식 한 줄(§8.1 ①): hard 는 표시 없음(Must Not 절), strong 은 `! `, 그 밖은 표시 없음.
+ * 프로젝트 태그는 지금 폴더 프로젝트에 해당하지 않는 룰(별칭 묶음 등)·범위 미정 룰에만 남긴다.
+ * 날짜 꼬리는 넣지 않는다 — 차단·안내 메시지의 출처 안내(originLine)는 룰 저장소에서 따로 만든다.
+ */
+export function compactRuleText(rule: Rule, projectKey: string | null = null): string {
+  if (rule.strength === 'hard') return rule.policy;
+  const mark = rule.strength === 'strong' ? '! ' : '';
+  const project = rule.projects?.length
+    ? (appliesForContext(rule, projectKey) && projectKey !== null ? '' : `[${rule.projects.join(',')}] `)
+    : rule.scope_state === 'unresolved' ? '[project-unknown] ' : '';
+  return `${mark}${project}${rule.policy}`;
+}
+
+/**
+ * 예전 형식 한 줄의 길이(예산 셈용). 출처 꼬리는 근거를 읽지 않고 explicit 교정 룰이면 날짜 꼬리 길이로 본다
+ * (예전 렌더는 근거가 없으면 꼬리를 붙이지 않았다 — 그 경우 몇 자 차이로 경계 룰 하나가 갈릴 수 있다).
+ */
+function legacyTextLength(rule: Rule): number {
+  const tail = rule.source === 'explicit_correction' && rule.evidence_refs?.length ? ' (교정 YYYY-MM-DD)'.length : 0;
+  if (rule.strength === 'hard') return rule.policy.length + tail;
+  const project = rule.projects?.length ? `|${rule.projects.join(',')}` : rule.scope_state === 'unresolved' ? '|project-unknown' : '';
+  return `[${rule.category}|${rule.strength}${project}] `.length + rule.policy.length + tail;
+}
+
+export function ruleToText(rule: Rule, fmt: RuleTextFormat = {}): string {
+  if (fmt.compact) return compactRuleText(rule, fmt.projectKey ?? null);
   // AI-optimized: [category|strength] 태그로 축약하여 토큰 절감
   // hard 강도는 태그 생략 (Must Not 섹션이 이미 의미를 전달)
   // ADR-017 D0: explicit 교정 룰엔 출처 날짜 꼬리표 — 사용자가 "내가 언제 말한 것" 을 식별.
@@ -207,6 +249,8 @@ export interface RenderResult {
   included: Rule[];
   /** 예산 초과로 빠진 룰. 조용히 사라지지 않게 본문과 상태 파일에 표시한다. */
   omitted: Rule[];
+  /** 0.9.0 두 층: 본문 대신 색인 줄로만 보인 2층 룰(훅이 상황이 맞을 때 넣는다). */
+  tier2?: Rule[];
 }
 
 /** 예산이 모자랄 때 먼저 지키는 순서: hard → strong → 사용자 교정 → 최신. */
@@ -223,14 +267,19 @@ export function renderRulesDetailed(
   profile: Profile | null | undefined,
   ctx: RenderContext = DEFAULT_CONTEXT,
 ): RenderResult {
-  const deduped = dedupeByRenderKey(rules.filter((r) => r.status === 'active')).sort(byPriority);
+  // host_copy: 같은 교정이 호스트 기억에 실려 주입만 뺀 룰(0.9.0 처방 Q4) — 강제는 그대로.
+  const all = dedupeByRenderKey(rules.filter((r) => r.status === 'active' && !r.host_copy)).sort(byPriority);
+  // 두 층: 2층 룰은 본문 예산을 쓰지 않고 색인 줄로만 보인다(넣는 것은 훅이 상황이 맞을 때 한 번).
+  const tier2 = ctx.tier2?.size ? all.filter((r) => ctx.tier2?.has(r.rule_id)) : [];
+  const deduped = tier2.length ? all.filter((r) => !ctx.tier2?.has(r.rule_id)) : all;
+  const fmt: RuleTextFormat = { compact: ctx.compact, projectKey: ctx.projectKey ?? null };
 
   initLocaleFromConfig();
   const ecStrings = RULE_RENDERER[getLocale()];
   // 교정 기록 지시는 학습 루프의 입구다. 룰 예산과 무관하게 항상 앞쪽에 둔다.
   const evidenceBlock = [
     `## ${ecStrings.evidenceCollectionHeader}`,
-    ...ecStrings.evidenceCollectionRules.map((r) => `- ${r}`),
+    ...(ctx.compact ? ecStrings.evidenceCollectionRulesCompact : ecStrings.evidenceCollectionRules).map((r) => `- ${r}`),
   ].join('\n');
   const warningsBlock = state.warnings.length > 0
     ? `## Warnings\n${state.warnings.map((w) => `- ${w}`).join('\n')}`
@@ -246,21 +295,33 @@ export function renderRulesDetailed(
     for (const rule of communicationPackRules(state.communication_pack)) sections.get('How To Report')?.push(rule);
   }
 
-  const OMITTED_NOTE_RESERVE = 120;
+  const tier2Line = tier2.length ? tier2IndexLine(tier2, ctx.tier2 as Map<string, string[]>) : '';
+  // 압축 형식은 예산을 예전 형식 길이로 세고 실제 글은 그보다 훨씬 짧다 — 색인 줄 때문에 1층 룰이 빠지지 않게 압축에서는 예약하지 않는다.
+  const OMITTED_NOTE_RESERVE = 120 + (ctx.compact ? 0 : tier2Line.length);
   const headerChars = SECTION_ORDER.reduce((n, name) => n + name.length + 6, 0);
-  let used = evidenceBlock.length + warningsBlock.length + headerChars + OMITTED_NOTE_RESERVE;
+  // 압축 형식도 예산은 예전 형식 길이로 센다 — 압축은 "같은 룰을 더 짧게"이고, 줄어든 자리에 빠졌던 룰을 더 채우지 않는다
+  // (채우면 압축 전보다 블록이 커지는 폴더가 생긴다 — 복사본 실측 제품 A +16%). 빠진 룰은 두 층의 2층이 맡는다.
+  const legacyEvidenceLength = ctx.compact
+    ? [`## ${ecStrings.evidenceCollectionHeader}`, ...ecStrings.evidenceCollectionRules.map((r) => `- ${r}`)].join('\n').length
+    : evidenceBlock.length;
+  let used = legacyEvidenceLength + warningsBlock.length + headerChars + OMITTED_NOTE_RESERVE;
   for (const items of sections.values()) for (const item of items) used += item.length + 3;
 
   const included: Rule[] = [];
   const omitted: Rule[] = [];
+  let strongShown = false;
+  // 2층 룰은 예산을 쓰지 않는다 — 1층 선택은 2층 룰과 무관하게 정해진다(우선순위는 updated_at 을 보므로, 조건 승인처럼 룰 파일을
+  // 다시 쓰는 일이 1층 룰을 밀어내면 안 된다). 2층으로 빠진 자리는 예산에서 빠졌던 1층 룰이 채운다(§3.1 예산 탈락 결함).
   for (const rule of deduped) {
-    const text = ruleToText(rule);
-    if (used + text.length + 3 > ctx.max_chars || included.length >= ctx.max_rules) {
+    const text = ruleToText(rule, fmt);
+    const cost = fmt.compact ? legacyTextLength(rule) : text.length;
+    if (used + cost + 3 > ctx.max_chars || included.length >= ctx.max_rules) {
       omitted.push(rule);
       continue;
     }
-    used += text.length + 3;
+    used += cost + 3;
     included.push(rule);
+    if (fmt.compact && rule.strength === 'strong') strongShown = true;
     const section: SectionName = rule.strength === 'hard'
       ? 'Must Not'
       : (CATEGORY_TO_SECTION[rule.category] ?? 'Working Defaults');
@@ -287,13 +348,32 @@ export function renderRulesDetailed(
     const items = sections.get(name) ?? [];
     if (items.length > 0) parts.push(`## ${name}\n${items.map((i) => `- ${i}`).join('\n')}`);
   }
+  if (strongShown) parts.splice(parts.indexOf(evidenceBlock) + 1, 0, '(! = strong preference)');
+  if (tier2Line) parts.push(tier2Line);
   if (omitted.length > 0 || facetOmitted > 0) {
     parts.push(`## Omitted\n- ${omitted.length} lower-priority rules${facetOmitted ? ` and ${facetOmitted} profile rules` : ''} omitted (budget). List: forgen rule list`);
   }
   if (warningsBlock) parts.push(warningsBlock);
 
-  return { text: parts.join('\n\n'), included, omitted };
+  return { text: parts.join('\n\n'), included, omitted, tier2 };
 }
+
+/** 2층 색인 한 줄: 룰 수와 주제 낱말(겹치지 않게, 룰마다 앞의 몇 개). Q11 — 색인에 보이는 2층 룰은 누락으로 세지 않는다. */
+export function tier2IndexLine(rules: Rule[], words: Map<string, string[]>, maxWords = 24): string {
+  const seen = new Set<string>();
+  const topics: string[] = [];
+  for (let round = 0; round < 3 && topics.length < maxWords; round++) {
+    for (const r of rules) {
+      const w = (words.get(r.rule_id) ?? [])[round];
+      if (!w || seen.has(w)) continue;
+      seen.add(w);
+      topics.push(w);
+      if (topics.length >= maxWords) break;
+    }
+  }
+  return `## Situational Rules\n- ${rules.length} more load once when the prompt or tool matches${topics.length ? ` (topics: ${topics.join(', ')})` : ''}. See all: rule-list tool.`;
+}
+
 
 export function renderRules(
   rules: Rule[],

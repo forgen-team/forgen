@@ -156,6 +156,13 @@ export const MIN_INJECT_RELEVANCE_COLD_START = 0.2;
 /** cold-start 판정 임계 — fitness state 있는 솔루션이 이 수 미만이면 신규 사용자 간주. */
 export const COLD_START_FITNESS_THRESHOLD = 5;
 
+/** 판정이 난(draft 가 아닌) 적합도 기록이 THRESHOLD 미만이면 신규 사용자로 본다. */
+export function isColdStartFitness(states: Iterable<string>): boolean {
+  let judged = 0;
+  for (const s of states) if (s !== 'draft') judged++;
+  return judged < COLD_START_FITNESS_THRESHOLD;
+}
+
 /** 세션별 이미 주입된 솔루션 추적 (중복 방지) */
 function getSessionCachePath(sessionId: string): string {
   return path.join(STATE_DIR, `solution-cache-${sanitizeId(sessionId)}.json`);
@@ -646,7 +653,9 @@ async function main(): Promise<void> {
   // v0.4.1 cold-start boost: outcome 이벤트가 누적되지 않은 신규 사용자 (fitness
   // state 있는 솔루션 < THRESHOLD) 는 champion/active 로 승격될 기회가 없으므로
   // 보정된 낮은 threshold 적용. 누적되면 자동으로 표준 경로로 전환.
-  const isColdStart = fitnessStateMap.size < COLD_START_FITNESS_THRESHOLD;
+  // 0.9.0: draft 는 "아직 판정할 결과가 없음"이라 누적의 증거가 아니다. draft 기록 5개만으로
+  // 신규 사용자 판정이 풀려 0.2 대신 0.3 이 걸리던 것(실데이터: 기록 5개 전부 draft)을 막는다.
+  const isColdStart = isColdStartFitness(fitnessStateMap.values());
 
   function minRelevanceFor(name: string): number {
     const state = fitnessStateMap.get(name);

@@ -25,13 +25,14 @@ import { loadContextRules, cleanupStaleSessionRules, markRulesInjected } from '.
 import { projectKeyFor } from '../store/rule-scope.js';
 import { projectRuleIndex } from './project-switch.js';
 import { composeSession } from '../preset/preset-manager.js';
-import { renderRulesDetailed, DEFAULT_CONTEXT  } from '../renderer/rule-renderer.js';
+import { renderRulesDetailed, DEFAULT_CONTEXT, type RenderContext } from '../renderer/rule-renderer.js';
 import { recordRenderReport } from '../renderer/render-report.js';
 import { saveSessionState, loadRecentSessions } from '../store/session-state-store.js';
 import { loadEvidenceBySession } from '../store/evidence-store.js';
 import { computeSessionSignals, detectMismatch, type MismatchSignal, type MismatchResult } from '../forge/mismatch-detector.js';
 import { createRecommendation, saveRecommendation } from '../store/recommendation-store.js';
-import type { SessionEffectiveState, Profile } from '../store/types.js';
+import type { SessionEffectiveState, Profile, Rule } from '../store/types.js';
+import { tier2Assignment } from './tier2.js';
 
 // ── Directory Initialization ──
 
@@ -66,6 +67,8 @@ export interface V1BootstrapResult {
   renderedRules: string | null;
   /** 0.8.0 M2: 이번 렌더에 실제로 들어간 룰 ID. 전역 render-report 는 동시 세션이 덮어쓰므로 이 값을 쓴다. */
   includedRuleIds?: string[];
+  /** 0.9.0 두 층: 색인 줄로만 보인 2층 룰(세션 시작 훅이 세션 파일에 후보로 적는다). */
+  tier2Rules?: Rule[];
   profile: Profile | null;
   mismatch: MismatchResult | null;
 }
@@ -85,9 +88,30 @@ function withProjectIndex(text: string, cwd?: string): string {
   } catch { return text; }
 }
 
+/**
+ * 세션 시작 렌더 맥락: 압축 형식(§8.1 ①)에서 이 폴더 프로젝트와 같은 프로젝트 태그를 빼기 위해 키를 넘기고,
+ * 두 층(§8.1 ②)이면 2층 집합(자격 게이트를 지난 룰 중 1층 조건에 안 드는 것)을 넘긴다.
+ * 감사(renderSessionStartReadOnly)와 실제 세션 시작(bootstrapV1Session)이 이 함수 하나로 같은 결과를 낸다.
+ * tiers:false(과거 세션 재생 렌더) — 두 층 이전에는 전부 세션 시작에 실렸으므로 2층을 나누지 않는다.
+ */
+function sessionRenderContext(cwd: string | undefined, rules: Rule[], opts: { tiers?: boolean } = {}): RenderContext {
+  let projectKey: string | null = null;
+  try { projectKey = projectKeyFor(cwd ?? process.env.FORGEN_CWD ?? process.cwd()); } catch { /* 키 없음 = 태그 유지 */ }
+  let tier2: Map<string, string[]> | undefined;
+  if (opts.tiers !== false) { try { tier2 = tier2Assignment(rules); } catch { tier2 = undefined; /* 색인 문제 = 전부 1층 */ } }
+  return { ...DEFAULT_CONTEXT, projectKey, ...(tier2?.size ? { tier2 } : {}) };
+}
+
+function readOnlyContext(cwd: string, rules: Rule[], asOf: boolean, legacy: boolean): RenderContext {
+  const c = sessionRenderContext(cwd, rules, { tiers: !asOf && !legacy });
+  return legacy ? { ...c, compact: false } : c;
+}
+
 let lastIncluded: string[] = [];
+let lastTier2: Rule[] = [];
 function renderWithoutProfile(cwd?: string): string | null {
   lastIncluded = [];
+  lastTier2 = [];
   try {
     const rules = loadContextRules(cwd);
     if (rules.length === 0) {
@@ -98,13 +122,53 @@ function renderWithoutProfile(cwd?: string): string | null {
       return idx;
     }
     const state = { warnings: [] } as unknown as SessionEffectiveState;
-    const result = renderRulesDetailed(rules, state, null as unknown as Profile, DEFAULT_CONTEXT);
+    const result = renderRulesDetailed(rules, state, null as unknown as Profile, sessionRenderContext(cwd, rules));
     lastIncluded = result.included.map((r) => r.rule_id);
+    lastTier2 = result.tier2 ?? [];
     recordRenderReport(result);
     return withProjectIndex(result.text, cwd);
   } catch {
     return null;
   }
+}
+
+/**
+ * 세션 시작 룰 블록을 **아무것도 쓰지 않고** 다시 만든다(감사 `forgen audit` 용).
+ * bootstrapV1Session 은 trackInjection:false 여도 디렉터리 생성·후보 승급·세션 상태·렌더 보고·raw log 를 쓴다.
+ * 여기서는 그 렌더 경로(룰 고르기 → 합성 → renderRulesDetailed → 프로젝트 색인)만 따른다.
+ * 차이: 세션 임시 룰 정리(cleanupStaleSessionRules)를 하지 않으므로 지난 세션의 임시 룰이 남아 있으면 같이 센다.
+ * 차이 2: 세션 후보 승급(promoteSessionCandidates)을 하지 않으므로, 승급 대기 후보가 있으면 실제 다음 세션보다
+ *   룰이 적게 셀 수 있다(감사는 "지금 저장된 그대로"를 본다).
+ */
+/**
+ * legacy: 0.9.0 이전 형식(압축 전·두 층 없음) 렌더 — N3 기준값(처방 전 토큰)을 "압축 전"으로 고정할 때 쓴다(감사 fix·첫 실행 기준값).
+ */
+export function renderSessionStartReadOnly(cwd: string, opts: { asOf?: string; legacy?: boolean } = {}): { text: string; includedRuleIds: string[]; tier2RuleIds: string[] } {
+  // 프로젝트 로컬 룰(<cwd>/.forgen/rules)은 FORGEN_CWD 기준으로 읽힌다 — 이 폴더로 잠시 맞춘다.
+  const prev = process.env.FORGEN_CWD;
+  process.env.FORGEN_CWD = cwd;
+  try { return renderReadOnly(cwd, opts.asOf, opts.legacy); } finally { if (prev === undefined) delete process.env.FORGEN_CWD; else process.env.FORGEN_CWD = prev; }
+}
+
+/**
+ * asOf(ISO): 그 시각까지 만들어진 룰만으로 렌더한다 — 세션별 렌더 기록이 없는 과거 세션의 "재생 렌더" 추정(감사 recurrence).
+ * 다른 세션의 임시 룰(scope 'session')은 뺀다. 한계: 지금 활성인 룰만 보므로 그 뒤 보관·삭제된 룰과 그 사이 바뀐 강도·범위는 되살리지 못한다.
+ */
+function renderReadOnly(cwd: string, asOf?: string, legacy = false): { text: string; includedRuleIds: string[]; tier2RuleIds: string[] } {
+  const rules = asOf ? loadContextRules(cwd).filter((r) => r.scope !== 'session' && (!r.created_at || r.created_at <= asOf)) : loadContextRules(cwd);
+  const profile = profileExists() ? loadProfile() : null;
+  if (!profile) {
+    if (rules.length === 0) {
+      const idx = projectKeyFor(cwd) === null ? projectRuleIndex() : null;
+      return { text: idx ?? '', includedRuleIds: [], tier2RuleIds: [] };
+    }
+    const state = { warnings: [] } as unknown as SessionEffectiveState;
+    const result = renderRulesDetailed(rules, state, null as unknown as Profile, readOnlyContext(cwd, rules, !!asOf, legacy));
+    return { text: withProjectIndex(result.text, cwd), includedRuleIds: result.included.map((r) => r.rule_id), tier2RuleIds: (result.tier2 ?? []).map((r) => r.rule_id) };
+  }
+  const session = composeSession({ session_id: 'audit-read-only', profile, personalRules: rules, sessionOverlays: [], runtime: detectRuntimeCapability() });
+  const rendered = renderRulesDetailed([...rules], session, profile, readOnlyContext(cwd, rules, !!asOf, legacy));
+  return { text: withProjectIndex(rendered.text, cwd), includedRuleIds: rendered.included.map((r) => r.rule_id), tier2RuleIds: (rendered.tier2 ?? []).map((r) => r.rule_id) };
 }
 
 export function bootstrapV1Session(cwd?: string, opts: { trackInjection?: boolean } = {}): V1BootstrapResult {
@@ -134,6 +198,7 @@ export function bootstrapV1Session(cwd?: string, opts: { trackInjection?: boolea
       session: null,
       renderedRules: renderWithoutProfile(cwd),
       includedRuleIds: lastIncluded,
+      tier2Rules: lastTier2,
       profile: null,
       mismatch: null,
     };
@@ -157,6 +222,7 @@ export function bootstrapV1Session(cwd?: string, opts: { trackInjection?: boolea
       session: null,
       renderedRules: renderWithoutProfile(cwd),
       includedRuleIds: lastIncluded,
+      tier2Rules: lastTier2,
       profile: null,
       mismatch: null,
     };
@@ -190,7 +256,7 @@ export function bootstrapV1Session(cwd?: string, opts: { trackInjection?: boolea
 
   // 6. Rule 렌더링
   const allRules = [...personalRules];
-  const rendered = renderRulesDetailed(allRules, session, profile, DEFAULT_CONTEXT);
+  const rendered = renderRulesDetailed(allRules, session, profile, sessionRenderContext(cwd, allRules));
   const renderedRules = withProjectIndex(rendered.text, cwd);
 
   // 6b. Inject tracking (ADR-002 Meta signal) — rendered rules count as injected.
@@ -294,6 +360,7 @@ export function bootstrapV1Session(cwd?: string, opts: { trackInjection?: boolea
     session,
     renderedRules,
     includedRuleIds: rendered.included.map((r) => r.rule_id),
+    tier2Rules: rendered.tier2 ?? [],
     profile,
     mismatch: mismatchResult,
   };

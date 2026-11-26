@@ -337,7 +337,7 @@ export function registerTools(server: McpServer): void {
         target: z.string().describe('What is being corrected — the specific behavior, pattern, or output'),
         user_quote: z.string().optional().describe('The user\'s own words that prompted this correction, verbatim (not paraphrased). Shown back to the user as "what you said" when the rule later blocks or applies. Omit if you cannot quote verbatim.'),
         axis_hint: z.enum(['quality_safety', 'autonomy', 'judgment_philosophy', 'communication_style']).nullable()
-          .describe('Which personalization axis this correction relates to (null if unclear)'),
+          .describe('Which personalization axis this correction relates to: quality_safety (quality/verification), autonomy (acting alone vs asking), judgment_philosophy (how to approach changes), communication_style (how to explain). null if unclear'),
         this_project_only: z.boolean().optional().describe('true when the correction is specific to the current project (its domain, files, product). Omit for how-I-work preferences that apply everywhere.'),
         rule_id: z.string().optional().describe('Full rule_id (see rule-list) ONLY when the user explicitly retires, replaces or amends that existing rule. Omit otherwise: existing rules are never changed by guessing.'),
         origin: z.object({ cwd: z.string().optional(), tool_use_id: z.string().optional() }).optional()

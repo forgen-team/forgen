@@ -148,6 +148,13 @@ export interface RuleStatusChange {
   by: string;
 }
 
+/**
+ * 0.9.0 두 층 발동 조건(선택 필드). folders 는 프로젝트 키 또는 경로 조각(그 폴더에서만), commands 는 명령에 들어가는 글(대소문자 무시),
+ * paths 는 경로 글롭(* · **) 또는 조각, words 는 프롬프트 낱말. approved 가 있으면 사람이 검증한 조건 — 자격 게이트를 대신한다
+ * (`forgen fix --kind tier2-condition --apply`). 없으면 게이트 재생의 낱말에 더해질 뿐이다.
+ */
+export interface AppliesWhen { folders?: string[]; tools?: string[]; commands?: string[]; paths?: string[]; words?: string[]; approved?: { at: string; fix?: string }; estimate?: { sessions: number; turns: number; at: string } }
+
 export interface Rule {
   /** R5-B3: 미래 breaking schema change 를 위한 version 필드. 없으면 v0 (pre-0.4.0) 으로 취급. */
   schema_version?: number;
@@ -170,6 +177,16 @@ export interface Rule {
    * projects 가 비어 있을 때만 뜻이 있다. 주입은 하되 전역 룰보다 뒤 순위이고 차단에는 쓰지 않는다.
    */
   scope_state?: 'unresolved';
+  /**
+   * 0.9.0 처방 "겹치는 교정 한 곳만"(오너 결정 Q4): 같은 교정이 호스트 기억(CLAUDE.md·.claude/rules·메모 색인 줄)에 이미
+   * 세션 시작마다 실려서, forgen 은 세션 시작 주입에서만 뺀다. 룰은 강제·측정용으로 그대로 남는다(status 는 active).
+   */
+  host_copy?: { path: string; line?: number; at: string; fix?: string };
+  /**
+   * 0.9.0 두 층(선택 필드): 이 룰이 들어올 상황 — 도구 이름·명령·경로 조각·낱말. 두 층 자격 게이트가 룰 낱말 집합에 더한다.
+   * 옛 버전은 무시한다(전부 세션 시작에 실리던 대로).
+   */
+  applies_when?: AppliesWhen;
   /** source 'imported' 일 때 가져온 곳(파일 경로 등). 사용자 발화가 아니라는 표시이기도 하다. */
   imported_from?: string;
   /** 세션 임시 룰의 소유 세션. 다른 실행 중인 세션의 임시 룰을 정리하지 않기 위해 쓴다. */

@@ -109,3 +109,17 @@ describe('precision gate predicate (pure logic mirror)', () => {
     expect(shouldInject(0.27, ['refactor', 'safety'], [], 'draft')).toBe(false);
   });
 });
+
+describe('cold-start 판정 (0.9.0 — draft 기록은 세지 않는다)', async () => {
+  const { isColdStartFitness, MIN_INJECT_RELEVANCE_COLD_START } = await import('../src/hooks/solution-injector.js');
+  it('draft 만 5개면 여전히 신규 사용자(0.2)', () => {
+    expect(isColdStartFitness(['draft', 'draft', 'draft', 'draft', 'draft'])).toBe(true);
+    expect(MIN_INJECT_RELEVANCE_COLD_START).toBe(0.2);
+  });
+  it('판정이 난 기록이 5개면 표준 경로', () => {
+    expect(isColdStartFitness(['active', 'champion', 'underperform', 'active', 'champion', 'draft'])).toBe(false);
+  });
+  it('판정 4개 + draft 여럿은 신규 사용자', () => {
+    expect(isColdStartFitness(['active', 'active', 'champion', 'underperform', 'draft', 'draft', 'draft'])).toBe(true);
+  });
+});

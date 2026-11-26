@@ -19,7 +19,9 @@ export function embedJson(data: unknown): string {
     .replace(/\u2029/g, '\\u2029');
 }
 
-export function renderStatusHtml(data: unknown): string {
+/** 파일 하나짜리 화면의 틀: CSP(외부 리소스 0)·공용 CSS·이스케이프한 데이터·인라인 JS. 감사 페이지도 이 틀을 쓴다. */
+export function htmlPage(opts: { title: string; data: unknown; js: string; css?: string }): string {
+  const esc = (t: string) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   return `<!doctype html>
 <html lang="ko">
 <head>
@@ -27,21 +29,25 @@ export function renderStatusHtml(data: unknown): string {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:">
 <meta name="referrer" content="no-referrer">
-<title>forgen 상태</title>
-<style>${CSS}</style>
+<title>${esc(opts.title)}</title>
+<style>${CSS}${opts.css ?? ''}</style>
 </head>
 <body>
 <header>
-  <h1>forgen 상태</h1>
+  <h1>${esc(opts.title)}</h1>
   <p id="meta"></p>
   <nav id="tabs" role="tablist"></nav>
 </header>
 <main id="view"></main>
-<script type="application/json" id="forgen-data">${embedJson(data)}</script>
-<script>${JS}</script>
+<script type="application/json" id="forgen-data">${embedJson(opts.data)}</script>
+<script>${opts.js}</script>
 </body>
 </html>
 `;
+}
+
+export function renderStatusHtml(data: unknown): string {
+  return htmlPage({ title: 'forgen 상태', data, js: JS });
 }
 
 export function defaultHtmlPath(): string {
@@ -117,30 +123,9 @@ svg{display:block;width:100%;height:auto}
 @media (max-width:640px){header,main{padding-left:16px;padding-right:16px}.stmt{max-width:220px}}
 `;
 
-const JS = String.raw`
-(function(){
-var D = JSON.parse(document.getElementById('forgen-data').textContent);
-var rules = (D.ruleList && D.ruleList.rules) || [];
-var health = D.health || null;
-var history = D.history || null;
-var view = document.getElementById('view');
-
+/** 화면 공용 — 요소 만들기(textContent 로만)와 정렬 가능한 표. 감사 페이지(src/audit/html.ts)도 쓴다. */
+export const DOM_HELPERS_JS = String.raw`
 function el(tag, attrs, kids){ var e=document.createElement(tag); if(attrs) for(var k in attrs){ if(k==='text') e.textContent=attrs[k]; else if(k==='cls') e.className=attrs[k]; else e.setAttribute(k, attrs[k]); } (kids||[]).forEach(function(c){ if(c==null) return; e.appendChild(typeof c==='string'?document.createTextNode(c):c); }); return e; }
-function day(s){ return s ? String(s).slice(0,10) : '—'; }
-var L = {
-  status:{active:'사용 중',candidate:'후보',suppressed:'꺼짐',removed:'정리됨',superseded:'대체됨'},
-  origin:{user:'직접',mined:'추론',default:'기본',other:'기타'},
-  strength:{hard:'hard',strong:'strong',default:'default',soft:'soft'}
-};
-function lab(map, v){ return map[v] || v || '—'; }
-
-document.getElementById('meta').textContent = 'forgen ' + (D.forgenVersion||'') + ' · ' + (D.generatedAt||'').replace('T',' ').slice(0,16) + ' UTC · 이 파일은 내 컴퓨터에서만 열리며 밖으로 아무것도 보내지 않습니다';
-
-var tabs = [['rules','룰 ('+rules.length+')'],['health','건강'],['candidates','추론 후보 ('+rules.filter(function(r){return r.status==='candidate';}).length+')'],['history','이력']];
-var nav = document.getElementById('tabs');
-tabs.forEach(function(t){ var b=el('button',{role:'tab','data-tab':t[0],text:t[1]}); b.onclick=function(){ show(t[0]); }; nav.appendChild(b); });
-function show(name){ Array.prototype.forEach.call(nav.children,function(b){ b.setAttribute('aria-selected', b.getAttribute('data-tab')===name?'true':'false'); }); view.textContent=''; ({rules:renderRules,health:renderHealth,candidates:renderCandidates,history:renderHistory})[name](); try{ location.hash=name; }catch(e){} }
-
 // ── 정렬 가능한 표 ──
 function table(cols, rows, onRow){
   var state={key:null,dir:1};
@@ -157,6 +142,32 @@ function table(cols, rows, onRow){
   }
   wrap.redraw=draw; draw(); return wrap;
 }
+`;
+
+const JS = String.raw`
+(function(){
+var D = JSON.parse(document.getElementById('forgen-data').textContent);
+var rules = (D.ruleList && D.ruleList.rules) || [];
+var health = D.health || null;
+var history = D.history || null;
+var view = document.getElementById('view');
+
+${DOM_HELPERS_JS}
+function day(s){ return s ? String(s).slice(0,10) : '—'; }
+var L = {
+  status:{active:'사용 중',candidate:'후보',suppressed:'꺼짐',removed:'정리됨',superseded:'대체됨'},
+  origin:{user:'직접',mined:'추론',default:'기본',other:'기타'},
+  strength:{hard:'hard',strong:'strong',default:'default',soft:'soft'}
+};
+function lab(map, v){ return map[v] || v || '—'; }
+
+document.getElementById('meta').textContent = 'forgen ' + (D.forgenVersion||'') + ' · ' + (D.generatedAt||'').replace('T',' ').slice(0,16) + ' UTC · 이 파일은 내 컴퓨터에서만 열리며 밖으로 아무것도 보내지 않습니다';
+
+var tabs = [['rules','룰 ('+rules.length+')'],['health','건강'],['candidates','추론 후보 ('+rules.filter(function(r){return r.status==='candidate';}).length+')'],['history','이력']];
+var nav = document.getElementById('tabs');
+tabs.forEach(function(t){ var b=el('button',{role:'tab','data-tab':t[0],text:t[1]}); b.onclick=function(){ show(t[0]); }; nav.appendChild(b); });
+function show(name){ Array.prototype.forEach.call(nav.children,function(b){ b.setAttribute('aria-selected', b.getAttribute('data-tab')===name?'true':'false'); }); view.textContent=''; ({rules:renderRules,health:renderHealth,candidates:renderCandidates,history:renderHistory})[name](); try{ location.hash=name; }catch(e){} }
+
 
 function scope(r){ return r.projects && r.projects.length ? r.projects.join(', ') : '전역'; }
 function statusCell(r){ var s=el('span',{cls:'s-'+r.status,text:lab(L.status,r.status)}); if(r.phase==='flagged'){ return el('span',null,[s,' ',el('span',{cls:'flag',text:'⚑ 검토'})]); } return s; }

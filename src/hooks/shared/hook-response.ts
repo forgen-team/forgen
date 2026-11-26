@@ -55,6 +55,18 @@ export function approveWithPostToolContext(context: string, userNotice?: string)
 }
 
 /**
+ * PreToolUse 통과 + 모델에 컨텍스트 전달 (0.9.0 두 층). Claude Code 2.1.332 의 PreToolUse hookSpecificOutput 은
+ * additionalContext 를 받는다(바이너리 스키마 확인). 사용자 화면 경고(systemMessage)는 그대로 같이 보낼 수 있다.
+ */
+export function approveWithPreToolContext(context: string, userNotice?: string): string {
+  return JSON.stringify({
+    continue: true,
+    hookSpecificOutput: { hookEventName: 'PreToolUse', additionalContext: context },
+    ...(userNotice ? { systemMessage: userNotice } : {}),
+  });
+}
+
+/**
  * 통과 + UI 경고 표시 (모델에는 전달되지 않음).
  * PostToolUse, PreToolUse 경고 등 모델 도달이 불필요한 경우 사용.
  */

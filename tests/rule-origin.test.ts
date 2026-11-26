@@ -19,7 +19,7 @@ vi.mock('node:os', async (importOriginal) => {
 const { ruleOrigin, originLine, originTag, sanitizeQuote, MAX_QUOTE } = await import('../src/store/rule-origin.js');
 const { appendEvidence } = await import('../src/store/evidence-store.js');
 const { createRule, saveRule } = await import('../src/store/rule-store.js');
-const { renderRules } = await import('../src/renderer/rule-renderer.js');
+const { renderRules, DEFAULT_CONTEXT } = await import('../src/renderer/rule-renderer.js');
 const { ME_DIR, ME_BEHAVIOR } = await import('../src/core/paths.js');
 const { createProfile } = await import('../src/store/profile-store.js');
 import type { Evidence, Rule, SessionEffectiveState, RuntimeCapabilityState } from '../src/store/types.js';
@@ -101,14 +101,23 @@ describe('ruleOrigin — 정직한 인용', () => {
     expect(long.endsWith('…')).toBe(true);
   });
 
-  it('렌더 경로: renderRules 출력에 explicit 룰만 " (교정 YYYY-MM-DD)" 꼬리표', () => {
+  it('렌더 경로(예전 형식): renderRules 출력에 explicit 룰만 " (교정 YYYY-MM-DD)" 꼬리표', () => {
     appendEvidence(evidence('e1'));
     const withOrigin = explicitRule(['e1'], { render_key: 'w.origin' });
     const onboarding = createRule({ category: 'workflow', scope: 'me', trigger: 't2', policy: '온보딩 룰', strength: 'default', source: 'onboarding', evidence_refs: [], render_key: 'w.onboarding' }); // render_key 가 같으면 dedupe 됨
-    const out = renderRules([withOrigin, onboarding] as Rule[], makeState(), createProfile('u', '균형형', '균형형', '승인 완화', 'onboarding'));
+    const out = renderRules([withOrigin, onboarding] as Rule[], makeState(), createProfile('u', '균형형', '균형형', '승인 완화', 'onboarding'), { ...DEFAULT_CONTEXT, compact: false });
     expect(out).toContain(`${POLICY} (교정 2026-09-30)`);
     expect(out).toContain('온보딩 룰');
     expect(out).not.toContain('온보딩 룰 (교정');
+  });
+
+  it('0.9.0 압축(세션 시작 기본): 날짜 꼬리는 빼고, 출처 안내(originLine)는 룰 저장소에서 그대로 나온다', () => {
+    appendEvidence(evidence('e1'));
+    const withOrigin = explicitRule(['e1'], { render_key: 'w.origin' });
+    const out = renderRules([withOrigin] as Rule[], makeState(), createProfile('u', '균형형', '균형형', '승인 완화', 'onboarding'));
+    expect(out).toContain(POLICY);
+    expect(out).not.toContain('(교정 2026-09-30)');
+    expect(originLine(withOrigin)).toContain('2026-09-30');
   });
 });
 

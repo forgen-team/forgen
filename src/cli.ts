@@ -154,6 +154,22 @@ const commands: Command[] = [
     },
   },
   {
+    name: 'audit',
+    description: 'Audit host memory read-only: CLAUDE.md layers, .claude/rules, auto memory, AGENTS.md, forgen rules (forgen audit [tokens|recurrence|baseline|review|score] [--folder p] [--json] [--timing])',
+    handler: async (args) => {
+      const { handleAudit } = await import('./audit/cli.js');
+      await handleAudit(args);
+    },
+  },
+  {
+    name: 'fix',
+    description: 'Prescriptions from the audit: forgen fix --list | <id> [--apply] | --kind <kind|all> --apply | --undo <id|all> | --report (snapshot first, never commits)',
+    handler: async (args) => {
+      const { handleFix } = await import('./audit/fix-cli.js');
+      await handleFix(args);
+    },
+  },
+  {
     name: 'learn',
     description: 'Solution maintenance: fix-up | quarantine | fitness',
     handler: async (args) => {
@@ -775,6 +791,16 @@ function printHelp() {
                                       --live      real-time hook event stream
                                       --turn      this turn's relevant rules + their origin corrections
                                       --health    rule health: corrections→rules→injections→checks, review queues, daily table (--json)
+    forgen audit [--folder p] [--json] [--timing] [--no-model]
+                                    Read-only memory audit (truncation·tokens·same sentence·stale·cross-project·unscoped rules + model: same meaning·conflict·mix)
+                                    → ~/.forgen/audit/<run>/audit.html + manifest.json
+    forgen audit tokens [--folder p]  Always-loaded memory tokens per folder and layer (writes nothing)
+    forgen audit recurrence [--since d] [--until d] [--lookback 30d] [--limit N] [--no-model]
+                                    Replay transcripts: corrections you had to repeat (per 1,000 prompts; local claude CLI judge, cached)
+    forgen audit review [--kind dup|conflict|mix] [--import f] · forgen audit score   Owner check of 25 judged pairs (local page) → judge/owner agreement
+    forgen fix --list | <id> [--apply] | --kind <kind|all> --apply | --undo <id|all> | --report
+                                    Prescriptions (merge·remove·move·scope·rewrite·index·add-memory·overlap·plugin-off), snapshot → ~/.forgen/backups/fix-<time>/
+    forgen audit baseline [--freeze [--force]]  Fix the N4 baseline (last 6 weeks + 12 weeks) → ~/.forgen/audit/baseline.json
     forgen workflows install|list   Install forgen dynamic-workflow templates to .claude/workflows/
     forgen changelog                Auto-summarize commits since last release tag
     forgen compound                 Manage accumulated knowledge

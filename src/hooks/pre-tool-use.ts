@@ -22,7 +22,8 @@ import { incrementEvidence } from '../engine/solution-writer.js';
 import { isReflectionCandidate } from './compound-reflection.js';
 import { stripPrivate } from '../engine/private-filter.js';
 import { isHookEnabled } from './hook-config.js';
-import { approve, approveWithUpdatedInput, approveWithWarning, ask, denyOrObserve, failOpenWithTracking } from './shared/hook-response.js';
+import { hideRecommendations } from '../core/hidden-recommendation.js';
+import { approve, approveWithPreToolContext, approveWithUpdatedInput, approveWithWarning, ask, denyOrObserve, failOpenWithTracking } from './shared/hook-response.js';
 import { recordWorkContext } from '../core/session-context.js';
 import { FORGEN_HOME, STATE_DIR } from '../core/paths.js';
 import { recordHookTiming } from './shared/hook-timing.js';
@@ -467,6 +468,14 @@ async function main(): Promise<void> {
       console.log(approveWithUpdatedInput({ ...toolInput, session_id: data.session_id, ...(Object.keys(origin).length ? { origin } : {}) }));
       return;
     }
+    // 0.9.0 결정 학습: 되돌릴 수 있는 질문 5번에 1번은 추천을 숨기고 섞어 묻는다(hidden-recommendation.ts).
+    // permissionDecision 을 주면 질문 화면이 건너뛰어지므로 updatedInput 만 준다. 아래 판정은 질문 도구와 무관하다.
+    if (toolName === 'AskUserQuestion') {
+      try {
+        const r = hideRecommendations(toolInput, data.tool_use_id);
+        if (r) { console.log(JSON.stringify({ continue: true, hookSpecificOutput: { hookEventName: 'PreToolUse', updatedInput: r.input } })); return; }
+      } catch (e) { log.debug('추천 숨김 표본 실패 — 원래 질문 그대로', e); }
+    }
   }
 
   // ADR-001 Mech-A PreToolUse dispatcher — 사용자가 정의한 rule 이 빌트인 위험-명령 감지보다 먼저.
@@ -631,9 +640,20 @@ async function main(): Promise<void> {
 
   if (nested) { console.log(approve()); return; }
 
+  // 0.9.0 두 층: 이 도구 입력(도구 이름·명령·경로)이 2층 룰과 맞으면 그 룰을 이 세션에 한 번 넣는다.
+  // 차단·확인 응답에는 붙이지 않는다(그 경우 PostToolUse 가 다시 본다 — "한 번만"이라 겹치지 않는다).
+  let tier2Ctx: string | null = null;
+  if (data.session_id) {
+    try {
+      const { tier2Context, toolSignalText, toolDetail } = await import('../core/tier2.js');
+      tier2Ctx = await tier2Context(data.session_id, toolSignalText(toolName, toolInput as Record<string, unknown>), 'tool', toolDetail(toolName, toolInput as Record<string, unknown>));
+    } catch (e) { log.debug('tier2 판정 실패', e); }
+  }
+  const approveOut = (warning?: string): string => (tier2Ctx ? approveWithPreToolContext(tier2Ctx, warning || undefined) : warning ? approveWithWarning(warning) : approve());
+
   // Output size guard: warn when Grep is used without head_limit
   if (toolName === 'Grep' && !toolInput?.head_limit) {
-    console.log(approveWithWarning(withAdvisories(`<compound-tool-warning>\n[Forgen] Grep without head_limit may produce large output. Set head_limit or pipe through | head -n to limit output size.\n</compound-tool-warning>`)));
+    console.log(approveOut(withAdvisories(`<compound-tool-warning>\n[Forgen] Grep without head_limit may produce large output. Set head_limit or pipe through | head -n to limit output size.\n</compound-tool-warning>`)));
     return;
   }
 
@@ -648,13 +668,13 @@ async function main(): Promise<void> {
   if (shouldShowReminderIO()) {
     const reminders = getActiveReminders(sessionId);
     if (reminders.length > 0) {
-      console.log(approveWithWarning(withAdvisories(`<compound-reminder>\n${reminders.join('\n')}\n</compound-reminder>`)));
+      console.log(approveOut(withAdvisories(`<compound-reminder>\n${reminders.join('\n')}\n</compound-reminder>`)));
       return;
     }
   }
 
-  if (advisories.length) { console.log(approveWithWarning(withAdvisories(''))); return; }
-  console.log(approve());
+  if (advisories.length) { console.log(approveOut(withAdvisories(''))); return; }
+  console.log(approveOut());
   } finally {
     recordHookTiming('pre-tool-use', Date.now() - _hookStart, 'PreToolUse');
   }
