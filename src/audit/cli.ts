@@ -176,7 +176,7 @@ export function n3Lines(r: AuditResult): string[] {
   return [
     `처방 전(${n.baselineAt.slice(0, 16).replace('T', ' ')}) → 지금, 같은 룰·기억을 실을 때(스킬 설명 제외): ${rep ? `${rep.weighted ? '자주 쓰는 폴더 평균' : '폴더 평균'} ${sg(rep.pct)} (forgen 룰 표기를 짧게 해서 ${sg(rep.formatPct)} · 처방으로 ${sg(rep.fixPct)})` : sg(n.medianPct)} · 목표 −15%`,
     ...groupSame(n.folders, (f) => `${f.before}|${f.sameSet}|${f.revived}`).map((g) => `  ${String(g.first.before).padStart(6)} → ${String(g.first.sameSet).padStart(6)}  ${sg(g.first.pct)}  ${shortPath(g.first.folder)}${g.rows.length > 1 ? ` 외 ${g.rows.length - 1}곳` : ''}`),
-    ...(n.revived ? [`  전에는 자리가 없어 빠지던 forgen 룰 ${n.revived}개가 이제 실림(그중 중요 지침 ${n.revivedImportant}개) — 위 비교에서는 뺐고, 넣고 세면 ${sg(rep?.allNowPct ?? n.allNowMedianPct)}`] : []),
+    ...(n.revived ? [`  전에는 세션 시작 분량 상한을 넘어서 빠지던 forgen 룰 ${n.revived}개가 이제 실림(그중 중요 지침 ${n.revivedImportant}개) — 위 비교에서는 뺐고, 넣고 세면 ${sg(rep?.allNowPct ?? n.allNowMedianPct)}`] : []),
     ...(n3EdgeWarning(rep?.pct ?? n.medianPct) ? [`  ⚠ ${n3EdgeWarning(rep?.pct ?? n.medianPct)}`] : []),
   ];
 }

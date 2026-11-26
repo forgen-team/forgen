@@ -12,7 +12,8 @@ import { takeModelDisclosure } from './judge.js';
 import { resolvePendingCorrections } from '../core/correction-ledger-judge.js';
 import { maskQuote } from './quote.js';
 import { shortPath } from './html.js';
-import { recurrenceLine, runRecurrence, writeRecurrenceRun, type RecurrenceResult, type RecurrenceRun } from './recurrence.js';
+import { TERMS_LINE } from './html.js';
+import { latestRecurrenceRun, recurrenceLine, runRecurrence, writeRecurrenceRun, type RecurrenceResult, type RecurrenceRun } from './recurrence.js';
 
 const DAY = 86_400_000;
 export const BASELINE_SCHEMA = 'forgen-audit-baseline/1' as const;
@@ -118,7 +119,16 @@ export async function handleRecurrence(args: string[], claudeDir: string | undef
     console.log(JSON.stringify({ ...run.result, runId: out.runId, dir: out.dir, sourcesDigest: run.manifest.sourcesDigest, resultDigest: run.manifest.resultDigest, judgeStats: run.judgeStats, timing: run.timing, ledger, tier2 }, null, 2));
     return;
   }
+  console.log(`${TERMS_LINE}\n`);
   for (const l of summaryLines(run.result)) console.log(l);
+  // 숫자 일관성: 감사 첫 화면은 가장 최근의 "전부로 잰" 결과를 쓴다. 이번이 표본이면 어느 결과와 왜 다른지 바로 말한다.
+  if (run.result.prompts.limit) {
+    const full = latestRecurrenceRun();
+    if (full && full.result.prompts.limit === null) {
+      const fr = full.result;
+      console.log(`  ※ 감사 첫 화면(forgen audit)은 이 표본 결과가 아니라 ${fr.generatedAt.slice(0, 10)} 에 요청 ${fr.prompts.window}개 전부로 잰 결과(교정 약 ${Math.round(fr.corrections.per30d)}번 · 이미 적혀 있는데 또 말한 것 약 ${Math.round(fr.per30d.written)}번)를 씁니다 — 그래서 두 화면 숫자가 다릅니다. 같은 값을 보려면 --limit 없이 재세요`);
+    }
+  }
   if (tier2?.tier2Missed.length) console.log(`  상황 맞춤 룰 ${tier2.tier2Missed.length}개가 필요한 순간에 안 들어와, 다음 세션부터 세션마다 실리게 바꿈`);
   console.log(`\n${statsLine(run, ms)}`);
   if (ledger && (ledger.resolved || ledger.left)) console.log(`아직 판정 안 된 교정 기록 ${ledger.resolved}개를 판정함${ledger.left ? ` · 남은 것 ${ledger.left}${ledger.stopped ? ` (${ledger.stopped})` : ''}` : ''}`);

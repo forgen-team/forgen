@@ -102,6 +102,8 @@ export interface Fix {
   tokens: number;
   /** 0.9.1 #13 근거 인용: 사용자의 실제 교정 한 마디(날짜·앞 80자·비밀 가림). 없으면 화면에 '파일 비교' */
   quote?: string;
+  /** MEMORY.md 긴 줄 처방: 줄마다 전·후 전문과 빠지는 설명이 남는 곳(보기 화면용) */
+  lines?: Array<{ before: string; after: string; keptIn: string }>;
   /** 바뀌기 전/후 문장(목록·보기 화면용, 파일 diff 는 상세에만) */
   change?: { before: string; after: string };
   /** tier2-condition: 과거 세션 재생으로 잰 발동률(넓음 ≥ 50% 세션, 좁음 = 0%) */
@@ -463,6 +465,7 @@ export async function planFixes(opts: PlanOptions = {}): Promise<FixPlan> {
     let saved = 0;
     let model = false;
     let firstPair: [string, string] | null = null;
+    const pairs: Array<{ before: string; after: string; keptIn: string }> = [];
     for (const { l } of longLines) {
       const mm = /^(\s*[-*]\s+\[[^\]]*\]\([^)]+\))\s*(?:[—–-]+\s*)?(.*)$/.exec(l);
       if (!mm) continue;
@@ -482,6 +485,7 @@ export async function planFixes(opts: PlanOptions = {}): Promise<FixPlan> {
       const kept = normalizeSentence(splitFrontmatter(topicText).body + (frontmatterField(topicText, 'description') ?? '')).includes(normalizeSentence(desc));
       ops.push({ op: 'replace-line', path: idx.path, text: l, with: next });
       if (!kept) ops.push({ op: 'append', path: topic, text: `\n> MEMORY.md 원문(forgen fix ${now.toISOString().slice(0, 10)}): ${l.trim()}` });
+      pairs.push({ before: l.trim(), after: next.trim(), keptIn: kept ? `${shortPath(topic)} 본문에 이미 있음` : `${shortPath(topic)} 끝에 "MEMORY.md 원문" 으로 덧붙임` });
       saved += estimateTokens(l) - estimateTokens(next);
       if (!firstPair) firstPair = [l.trim(), next.trim()];
       evidence.push(`${shortText(l, 60)} → ${shortText(next, 60)}`);
@@ -498,6 +502,7 @@ export async function planFixes(opts: PlanOptions = {}): Promise<FixPlan> {
     add({
       kind: 'index', title: `${m.folder ? shortPath(m.folder) : shortPath(dir)} 의 MEMORY.md 긴 줄 ${longLines.length}개 → 링크와 한 구절만 남김(설명 원문은 그 메모 파일에 보관)${cut.length ? ` · 잘려서 안 실리던 ${cut.length}줄은 보관 파일로` : ''} — 안 하면 MEMORY.md 가 ${MEMORY_MAX_LINES}줄·${MEMORY_MAX_BYTES / 1024}KB 상한에 빨리 닿아 뒤쪽 메모가 안 실린다`,
       ...(firstPair ? { change: { before: shortText(firstPair[0], 120), after: shortText(firstPair[1], 120) } } : {}),
+      lines: pairs,
       why: `${LONG_INDEX}자 넘는 MEMORY.md 줄은 링크와 한 구절만 남기고, 자세한 설명은 그 메모 파일에 원문 그대로 남긴다. MEMORY.md 는 앞 ${MEMORY_MAX_LINES}줄·${MEMORY_MAX_BYTES / 1024}KB 만 세션 시작에 실린다.`,
       evidence, ops, model, tokens: saved,
     }, dir);
@@ -1092,7 +1097,12 @@ export function n3Summary(run: AuditRun): NonNullable<import('./run.js').AuditRe
   let before: Measure;
   try { before = JSON.parse(t) as Measure; } catch { return null; }
   const after = measure(run);
-  const ss = sameSetN3(before, after, run);
+  // fix --report 와 같은 셈: 기억 추가로 새로 실리는 메모 토큰은 줄인 양 비교에서 뺀다(두 화면이 같은 값을 내게)
+  const live = new Map<string, LedgerEvent>();
+  for (const e of readLedger()) { if (e.event === 'apply') live.set(e.id, e); if (e.event === 'undo') live.delete(e.id); }
+  const added = new Map<string, number>();
+  for (const e of live.values()) if (e.addsTo) added.set(e.addsTo.folder, (added.get(e.addsTo.folder) ?? 0) + e.addsTo.tokens);
+  const ss = sameSetN3(before, after, run).map((x) => ({ ...x, tokens: x.tokens - (added.get(x.folder) ?? 0), sameSet: x.sameSet - (added.get(x.folder) ?? 0) }));
   const pct = (a: number, b: number) => (b ? Math.round(((a - b) / b) * 1000) / 10 : 0);
   const med = (xs: number[]) => { if (!xs.length) return 0; const s2 = [...xs].sort((a, b) => a - b); const m = s2.length >> 1; return s2.length % 2 ? s2[m] : Math.round(((s2[m - 1] + s2[m]) / 2) * 10) / 10; };
   const folders = before.folders.map((b) => {

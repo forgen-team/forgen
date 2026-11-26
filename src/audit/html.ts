@@ -30,7 +30,7 @@ export function recurrenceShort(r: AuditResult): string {
   const rc = r.summary.recurrence;
   if (rc.status === 'none' || !rc.per30d) return rc.line;
   const f = (x: number) => String(Math.round(x));
-  const src = `지난 대화 기록 재생 ${rc.generatedAt?.slice(0, 10) ?? ''}, 요청 ${rc.prompts?.window ?? '?'}개 ${rc.sampled ? `중 ${rc.prompts?.judged ?? '?'}개 표본 — 참고값` : '전부'}`;
+  const src = `${rc.generatedAt?.slice(0, 10) ?? ''} 에 지난 대화 기록 요청 ${rc.prompts?.window ?? '?'}개 ${rc.sampled ? `중 ${rc.prompts?.judged ?? '?'}개 표본으로 잰 참고값` : '전부로 잰 값 — audit recurrence --limit 로 표본만 다시 재면 숫자가 다르게 나옴'}`;
   return `지난 30일 교정 약 ${f(rc.per30d.corrections)}번 중 이미 적혀 있는데 또 말한 것 약 ${f(rc.per30d.written)}번 · 어디에도 안 적혀 또 말한 것 약 ${f(Math.max(0, rc.per30d.total - rc.per30d.written))}번 (${src} — 자세히: forgen audit recurrence)`;
 }
 

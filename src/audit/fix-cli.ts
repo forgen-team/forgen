@@ -147,6 +147,8 @@ async function plan(c: Ctx): Promise<FixPlan> {
   return p;
 }
 
+/** 긴 줄은 100자마다 줄바꿈(들여쓰기 맞춤) — 전문을 자르지 않는다. */
+const wrap = (s: string, w = 100) => (s.match(new RegExp(`.{1,${w}}`, 'gu')) ?? ['']).join('\n        ');
 const tokenTag = (f: Fix) => (f.tokens > 0 ? `  (세션마다 −${f.tokens}토큰)` : f.tokens < 0 ? `  (세션마다 +${-f.tokens}토큰)` : '');
 
 export function line(f: Fix, skipped = false): string {
@@ -160,7 +162,10 @@ export function line(f: Fix, skipped = false): string {
 
 function show(f: Fix): void {
   console.log(`${f.id} · ${KIND_LABEL[f.kind]}${f.model ? ' · 문장은 모델이 씀' : ''}\n${f.title}${tokenTag(f)}`);
-  if (f.change && !f.blocked) console.log(`  전: ${f.change.before}\n  후: ${f.change.after}`);
+  if (f.lines?.length) {
+    // 줄마다 전·후 전문(잘라 내지 않음)과 빠지는 설명이 남는 곳
+    f.lines.forEach((x, i) => { console.log(`  [${i + 1}/${f.lines?.length}]\n    전: ${wrap(x.before)}\n    후: ${wrap(x.after)}\n    빠지는 설명: ${x.keptIn}`); });
+  } else if (f.change && !f.blocked) console.log(`  전: ${f.change.before}\n  후: ${f.change.after}`);
   console.log(`  근거: ${f.quote ?? '파일 비교'}`);
   console.log(`\n왜: ${f.why}`);
   if (f.evidence.length) { console.log('근거:'); for (const e of f.evidence) console.log(`  · ${e}`); }
@@ -294,7 +299,7 @@ async function report(c: Ctx): Promise<void> {
     const rare = g.rows.every((y) => y.sessions < 3);
     console.log(`    ${String(x.before).padStart(6)} → ${String(x.after).padStart(6)}  ${sg(x.pct).padStart(7)}  ${names}  (최근 30일 세션 ${g.rows.length > 1 ? '합 ' : ''}${sessions}개${rare ? ' · 거의 안 씀, 평균에서 뺌' : ''})${x.addedMemory ? `  + 새 메모 ${x.addedMemory}토큰` : ''}`);
   }
-  if (out.revived) console.log(`  전에는 자리가 없어 빠지던 forgen 룰 ${out.revived}개가 이제 실린다(그중 중요 지침 ${out.revivedImportant}개). 위 줄인 양에서는 뺐고, 넣고 세면 ${sg(out.allNowPct)}`);
+  if (out.revived) console.log(`  전에는 세션 시작 분량 상한을 넘어서 빠지던 forgen 룰 ${out.revived}개가 이제 실린다(그중 중요 지침 ${out.revivedImportant}개). 위 줄인 양에서는 뺐고, 넣고 세면 ${sg(out.allNowPct)}`);
   if (added.size) console.log('  기억 추가로 새로 실리는 메모는 위 줄인 양에서 뺐다(폴더 줄 끝 "+ 새 메모")');
   if (rows.some((x) => x.expected !== x.after)) console.log(`  상황 맞춤 룰이 지난 세션만큼 들어온다고 보면: ${sg(out.expectedPct)} (위 값은 하나도 안 들어올 때)`);
   const nMissing = out.importantMissing.reduce((n, m) => n + m.rules.length, 0);
@@ -405,7 +410,7 @@ export async function handleFix(args: string[]): Promise<void> {
     if (c.json) { console.log(JSON.stringify({ schema: 'forgen-fix-list/1', generatedAt: p.generatedAt, model: !!p.model, notProposedConditions: p.notProposedConditions ?? 0, fixes: list.map(({ ops: _o, ...f }) => f) }, null, 2)); return; }
     const excluded = excludedFixes();
     const ready = list.filter((f) => !f.blocked);
-    console.log(`처방 ${ready.length}개 · 고치지 않고 알려만 주는 것 ${list.length - ready.length}개${p.model ? '' : ' (--no-model: 모델 없이 만드는 처방만)'}`);
+    console.log(`처방 ${ready.length}개 · 고치지 않고 알려만 주는 것 ${list.length - ready.length}개 (이미 적용·끈 것은 빼고 남은 것만)${p.model ? '' : ' (--no-model: 모델 없이 만드는 처방만)'}`);
     // B8: 처방 줄의 "세션마다 −N토큰" 기준
     {
       const fs0 = p.run.result.folders;
