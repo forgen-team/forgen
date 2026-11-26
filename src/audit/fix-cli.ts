@@ -130,6 +130,7 @@ const tokenTag = (f: Fix) => (f.tokens > 0 ? `  (세션마다 −${f.tokens}토�
 export function line(f: Fix, skipped = false): string {
   const out = [`  ${f.id}  ${skipped ? '[빼 둠] ' : ''}${f.title}${tokenTag(f)}${f.model ? '  [문장은 모델이 씀]' : ''}`];
   if (f.change && !f.blocked) out.push(`      전: ${f.change.before}`, `      후: ${f.change.after}`);
+  if (!f.blocked) out.push(`      근거: ${f.quote ?? '파일 비교'}`);
   if (f.blocked) out.push(`      고치지 않음: ${f.blocked}`);
   if (f.manual) out.push(`      하나씩만: ${f.manual}`);
   return out.join('\n');
@@ -138,6 +139,7 @@ export function line(f: Fix, skipped = false): string {
 function show(f: Fix): void {
   console.log(`${f.id} · ${KIND_LABEL[f.kind]}${f.model ? ' · 문장은 모델이 씀' : ''}\n${f.title}${tokenTag(f)}`);
   if (f.change && !f.blocked) console.log(`  전: ${f.change.before}\n  후: ${f.change.after}`);
+  console.log(`  근거: ${f.quote ?? '파일 비교'}`);
   console.log(`\n왜: ${f.why}`);
   if (f.evidence.length) { console.log('근거:'); for (const e of f.evidence) console.log(`  · ${e}`); }
   if (f.blocked) { console.log(`\n고치지 않음 — ${f.blocked}`); return; }

@@ -29,6 +29,7 @@ import type { ModelChecks } from './model-checks.js';
 import { defaultEnv, encodeProjectDir, frontmatterField, gitRootOf, MEMORY_MAX_BYTES, MEMORY_MAX_LINES, splitFrontmatter, type AuditEnv } from './sources.js';
 import { estimateTokens } from './tokens.js';
 import { representative } from './activity.js';
+import { maskQuote } from './quote.js';
 import { shortPath } from './html.js';
 
 export type FixKind = 'plugin-off' | 'remove' | 'merge' | 'overlap' | 'scope' | 'move' | 'rewrite' | 'index' | 'add-memory' | 'tier2-condition';
@@ -99,6 +100,8 @@ export interface Fix {
   addsTo?: { folder: string; tokens: number };
   /** 이 처방으로 줄어드는 상시 로드 토큰(어림, 폴더마다 다를 수 있어 최대값) */
   tokens: number;
+  /** 0.9.1 #13 근거 인용: 사용자의 실제 교정 한 마디(날짜·앞 80자·비밀 가림). 없으면 화면에 '파일 비교' */
+  quote?: string;
   /** 바뀌기 전/후 문장(목록·보기 화면용, 파일 diff 는 상세에만) */
   change?: { before: string; after: string };
   /** tier2-condition: 과거 세션 재생으로 잰 발동률(넓음 ≥ 50% 세션, 좁음 = 0%) */
@@ -549,6 +552,7 @@ export async function planFixes(opts: PlanOptions = {}): Promise<FixPlan> {
         why: `어디에도 적히지 않은 채 되풀이한 교정이다. Claude 자동 메모 형식(메모 파일 + MEMORY.md 한 줄)으로 초안을 쓴다. 어느 폴더 메모에 쓸지: ${scope ? `${scope.scope === 'general' ? '어디서나 통함' : '프로젝트 전용'} — ${scope.reason || '이유 없음'}` : '판정 못 함 — 교정한 폴더'}.`,
         evidence: its.map((i) => `${i.ts.slice(0, 10)} ${shortText(i.gist, 80)}`),
         ops: [{ op: 'create', path: file, content }, { op: 'append', path: path.join(memDir, 'MEMORY.md'), text: `- [${name}](${slug}.md) — ${shortText(desc, INDEX_HOOK_MAX)}` }],
+        quote: `${its[0].ts.slice(0, 10)} 내가 한 말 "${maskQuote(its[0].utterance || its[0].gist, 80)}"`,
         model: true, tokens: -estimateTokens(`- [${name}](${slug}.md) — ${shortText(desc, INDEX_HOOK_MAX)}`),
         addsTo: { folder, tokens: estimateTokens(`- [${name}](${slug}.md) — ${shortText(desc, INDEX_HOOK_MAX)}\n`) },
       }, gid);
@@ -566,6 +570,18 @@ export async function planFixes(opts: PlanOptions = {}): Promise<FixPlan> {
   // 7. 플러그인·스킬 끄기 제안(끄기만)
   for (const { identity, ...f } of planPluginOff(env, now)) add(f, identity);
 
+  // 0.9.1 #13: forgen 룰을 다루는 처방은 그 룰의 근거 교정 기록 하나를 인용한다
+  try {
+    const { loadEvidence } = await import('../store/evidence-store.js');
+    for (const f of fixes) {
+      if (f.quote) continue;
+      const ids = f.ops.filter((o): o is Extract<Op, { op: 'rule' }> => o.op === 'rule').map((o) => o.ruleId);
+      for (const id of ids) {
+        const ev = (ctx.rules.get(id)?.evidence_refs ?? []).map((ref) => loadEvidence(ref)).find((e) => e && e.type === 'explicit_correction' && e.summary);
+        if (ev) { f.quote = `${ev.timestamp.slice(0, 10)} 교정 기록 "${maskQuote(ev.summary, 80)}"`; break; }
+      }
+    }
+  } catch { /* 근거를 못 읽으면 '파일 비교' */ }
   fixes.sort((a, b) => FIX_KINDS.indexOf(a.kind) - FIX_KINDS.indexOf(b.kind) || (a.id < b.id ? -1 : 1));
   return { fixes, run, model: mc, generatedAt: now.toISOString(), ...(notProposedConditions ? { notProposedConditions } : {}) };
 }
