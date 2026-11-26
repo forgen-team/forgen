@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 0.9.0 을 실데이터로 사용자처럼 처음부터 끝까지 써 보고 찾은 결함 12개와, claude-bulkhead 에서 가져온 다섯 가지를 고쳤다. 정본: `docs/plans/2026-11-26-v0.9.1-fixes.md`. 이번부터 완료 기준은 "실데이터로 돌린 화면을 처음 보는 사람이 읽을 수 있는가"다(fresh-context 읽기 비평 2회, 출력 전문 대조).
 
 ### Fixed
-- **프로젝트 폴더 세션에서 그 폴더의 직접 교정·hard·strong 룰이 분량 상한으로 빠지던 것**(실데이터: Deadeye 두 폴더 17개 → 0). 블록 상한(기존 +20%·4,000토큰)을 넘으면 다른 프로젝트·추론·온보딩 룰부터 빼고, 그래도 넘으면 중요 룰을 짧게 싣는다.
+- **프로젝트 폴더 세션에서 그 폴더의 직접 교정·hard·strong 룰이 분량 상한으로 빠지던 것**(실데이터: 제품 A 두 폴더 17개 → 0). 블록 상한(기존 +20%·4,000토큰)을 넘으면 다른 프로젝트·추론·온보딩 룰부터 빼고, 그래도 넘으면 중요 룰을 짧게 싣는다.
 - 화면의 내부 용어 제거(감사 첫 화면·`fix --list`·`fix <id>`·`fix --report`·`audit recurrence`). "실린다"·"부딪힘" 뜻을 첫 줄에, 처방은 "무엇을 → 어떻게, 안 하면 무슨 일" + 전/후 문장, 경로는 `~`.
 - 첫 화면 맨 위 "가장 중요한 발견" 3개(파일·줄, 어느 쪽이 낡았을 가능성이 큰지 날짜로, 고치는 명령, 내가 한 말 인용). 끝에 "다음에 할 일".
 - 대표 토큰 숫자는 최근 30일 세션 3개 이상 폴더의 세션 수 가중 평균(거의 안 쓰는 폴더가 중앙값을 부풀리던 것).
@@ -122,7 +122,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.7.1] — 2026-11-18 — forgen 지표 자체 관리: HTML 화면 · 룰 목록 JSON · 이력 보관
 
-설계: `docs/plans/2026-11-18-forgen-own-metrics.md`. witems 는 forgen 숫자를 더 받지 않고(수신·화면 삭제 완료), Handoff 는 forgen 이 내준 JSON 만 읽는다. 룰 파일 형식은 그대로.
+설계: `docs/plans/2026-11-18-forgen-own-metrics.md`. 저장소 W 는 forgen 숫자를 더 받지 않고(수신·화면 삭제 완료), Handoff 는 forgen 이 내준 JSON 만 읽는다. 룰 파일 형식은 그대로.
 
 ### Added
 - **`forgen status --html [--out <경로>] [--days N]`.** 룰 표(분류·강도·출처·상태·막는 방식·누적 적용/어김/우회·마지막 적용·범위, 정렬·필터·검색, 행을 누르면 정책 문구·근거 교정·상태 이력), 건강(흐름·대기열·많이 막은 룰·일별), 추론 후보, 이력(최대 365일)을 HTML 파일 하나로 만들어 브라우저로 연다. 외부 스크립트·폰트·이미지 없음(CSP 로 차단), 밖으로 아무것도 보내지 않는다. 기본 위치 `~/.forgen/state/report/forgen-status.html`(권한 600), `--out` 이면 저장만.
@@ -135,7 +135,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.7.0] — 2026-11-17 — 추론 룰 후보 단계
 
-설계: `docs/plans/2026-11-17-rule-quality-redesign.md` D5·D6-2/3. ADR-013·017·019 개정. **룰 status 에 새 값 `candidate` 가 생긴다** — 룰 파일을 직접 읽는 도구는 이 값을 알아야 한다(witems 는 수신 준비 완료, Handoff 는 모르는 값을 other 로 표시).
+설계: `docs/plans/2026-11-17-rule-quality-redesign.md` D5·D6-2/3. ADR-013·017·019 개정. **룰 status 에 새 값 `candidate` 가 생긴다** — 룰 파일을 직접 읽는 도구는 이 값을 알아야 한다(저장소 W 는 수신 준비 완료, Handoff 는 모르는 값을 other 로 표시).
 
 ### Changed
 - **추론(채굴) 룰은 후보로 시작한다.** Haiku 가 세션에서 뽑은 교정은 `candidate` 로 저장되고 주입되지 않는다. 다른 세션에서 같은 교정이 한 번 더 잡히면 그때 활성이 된다. 바로 쓰고 싶으면 `forgen activate-rule <id>`.
