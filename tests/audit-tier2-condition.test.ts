@@ -118,24 +118,21 @@ describe('forgen fix tier2-condition', () => {
     const p = await planFixes({ folders: [FOLDER], claudeDir: CLAUDE, judge: new Judge({ model: true }) });
     const fx = p.fixes.filter((f) => f.kind === 'tier2-condition');
     const rid = (f: (typeof fx)[number]) => (f.ops[0] as { ruleId: string }).ruleId;
-    expect(fx.map(rid).sort()).toEqual(['c-cmd', 'c-onb', 'c-wide']); // 안전 룰(rm -rf 패턴·enforce_via)은 후보가 아님
+    expect(fx.map(rid).sort()).toEqual(['c-cmd', 'c-wide']); // 안전 룰(rm -rf 패턴·enforce_via)은 후보가 아님, 0.9.1 #7: 한 번도 안 걸릴 조건(c-onb)은 제안하지 않음
+    expect(p.notProposedConditions).toBe(1);
     ids = Object.fromEntries(fx.map((f) => [rid(f), f.id]));
     const cmd = fx.find((f) => rid(f) === 'c-cmd');
     expect(cmd?.model).toBe(true);
-    expect(cmd?.title).toContain('← 어느 폴더나 · 도구 Bash · 명령 "eas build" · 낱말 cwdeploy·cwcanary');
-    expect(cmd?.title).not.toContain('NotATool');
-    expect(cmd?.evidence.join('\n')).toContain('결정적 후보: 낱말');
-    expect(fx.find((f) => rid(f) === 'c-onb')?.title).toContain('경로 docs/plans/**');
+    expect(cmd?.change?.after).toContain('어느 폴더나 · 도구 Bash · 명령 "eas build" · 낱말 cwdeploy·cwcanary');
+    expect(cmd?.change?.after).not.toContain('NotATool');
+    expect(cmd?.evidence.join('\n')).toContain('룰 낱말:');
     // 발동률 추정: 넓음(세션 100%, 2차 초안으로도 못 좁힘)·좁음(0%) 경고는 개별 승인만
-    expect(cmd?.title).toContain('[발동 추정 세션 20%');
+    expect(cmd?.title).toContain('최근 세션 20%에서 걸렸을 조건');
     expect(cmd?.manual).toBeUndefined();
     const wide = fx.find((f) => rid(f) === 'c-wide');
-    expect(wide?.title).toContain('⚠넓음');
+    expect(wide?.title).toContain('⚠거의 늘 걸림');
     expect(wide?.estimate).toMatchObject({ wide: true, sessions: 1 });
-    expect(wide?.manual).toContain('넓음 경고');
-    const onb = fx.find((f) => rid(f) === 'c-onb');
-    expect(onb?.title).toContain('세션 0%');
-    expect(onb?.manual).toContain('좁음 경고');
+    expect(wide?.manual).toContain('거의 늘 들어온다');
     expect(readJudgeCalls(FAKE).some((c) => c.startsWith('condition '))).toBe(true);
     // 계획은 아무것도 쓰지 않는다(색인·룰 그대로)
     expect(fs.readFileSync(path.join(FH, 'state', 'tier2-index.json'), 'utf-8')).toBe(idxBefore);
@@ -144,28 +141,31 @@ describe('forgen fix tier2-condition', () => {
 
   it('--no-model: 결정적 후보(룰 낱말·프로젝트)만', async () => {
     const p = await planFixes({ folders: [FOLDER], claudeDir: CLAUDE, judge: null });
-    const f = p.fixes.find((x) => x.kind === 'tier2-condition' && (x.ops[0] as { ruleId: string }).ruleId === 'c-cmd');
-    expect(f?.model).toBe(false);
-    expect(f?.title).toMatch(/← 어느 폴더나 · 낱말 /);
+    // 모델 없는 조건은 룰 낱말뿐이라 대부분 한 번도 안 걸려 제안되지 않는다(0.9.1 #7) — 제안된 것은 모두 모델 없이 만든 것
+    const fx = p.fixes.filter((x) => x.kind === 'tier2-condition');
+    expect(fx.length + (p.notProposedConditions ?? 0)).toBeGreaterThan(0);
+    for (const f of fx) { expect(f.model).toBe(false); expect(f.change?.after).toMatch(/낱말 /); }
   });
 
   it('목록 → 하나 빼 두기 → 일괄 승인: 빼 둔 것은 그대로, 승인된 룰은 "사람이 검증한 조건"으로 2층', async () => {
-    const list = await cli('--list', '--kind', 'tier2-condition');
-    expect(list).toContain('두 층 발동 조건(언제 쓰는지) 초안 (3)');
-    expect(list).toContain('forgen fix --kind tier2-condition --apply');
-    expect(await cli(ids['c-onb'], '--skip')).toContain('빼 둠');
-    expect(excludedFixes().has(ids['c-onb'])).toBe(true);
-    expect(await cli('--list', '--kind', 'tier2-condition')).toContain(`${ids['c-onb']}  [빼 둠]`);
+    const list = await cli('--list', '--kind', 'condition');
+    expect(list).toContain('상황 맞춤 조건(그 상황에만 넣기) (2)');
+    expect(list).toContain('forgen fix --kind condition --apply');
+    expect(list).toContain('상황 맞춤 조건 제안 안 함 1개(최근 세션에서 쓸 일이 없음)');
+    expect(ids['c-cmd'].startsWith('condition-')).toBe(true);
+    expect(await cli(ids['c-wide'], '--skip')).toContain('빼 둠');
+    expect(excludedFixes().has(ids['c-wide'])).toBe(true);
+    expect(await cli('--list', '--kind', 'tier2-condition')).toContain(`${ids['c-wide']}  [빼 둠]`);
     // all 에는 들어가지 않는다
     await cli('--kind', 'all', '--apply');
     expect(loadRule('c-cmd')?.applies_when).toBeUndefined();
     // --yes 없이는 요약만(넓음·좁음 경고 수), 아무것도 적용하지 않는다
     const summary = await cli('--kind', 'tier2-condition', '--apply');
-    expect(summary).toContain('두 층 발동 조건 3개 — 넓음 경고 1 · 좁음 경고 1 · 빼 둠 1');
-    expect(summary).toContain('일괄 승인하면 1개 적용');
+    expect(summary).toContain('상황 맞춤 조건 2개 — 거의 늘 걸리는 것 1 · 빼 둔 것 1 · 제안 안 함 1개');
+    expect(summary).toContain('한꺼번에 승인하면 1개 적용');
     expect(loadRule('c-cmd')?.applies_when).toBeUndefined();
     const out = await cli('--kind', 'tier2-condition', '--apply', '--yes');
-    expect(out).toContain('빼 둔 처방(--skip) 1개 제외');
+    expect(out).toContain('빼 둔 처방 1개 제외');
     expect(loadRule('c-wide')?.applies_when).toBeUndefined(); // 경고 붙은 것은 일괄에서 빠짐
     const r = loadRule('c-cmd') as Rule;
     expect(r.applies_when).toMatchObject({ tools: ['Bash'], commands: ['eas build'], approved: { fix: ids['c-cmd'] }, estimate: { sessions: 0.2 } });

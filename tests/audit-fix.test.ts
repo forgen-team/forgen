@@ -40,7 +40,8 @@ const ARGS = () => [...FX.folders.flatMap((f) => ['--folder', f]), '--claude-dir
 /** 원천 내용 해시(경로 + 내용). forgen 의 감사·처방 기록(audit/, backups/)과 판정 캐시는 결과물이라 뺀다. */
 function hashTree(dirs: string[]): Record<string, string> {
   const out: Record<string, string> = {};
-  const skip = [path.join(FX.forgenHome, 'audit'), path.join(FX.forgenHome, 'backups')];
+  // state/ 는 모델 호출 기록(extraction-events·haiku-status) — 기억 원천이 아니다
+  const skip = [path.join(FX.forgenHome, 'audit'), path.join(FX.forgenHome, 'backups'), path.join(FX.forgenHome, 'state')];
   const walk = (d: string) => {
     let names: string[] = [];
     try { names = fs.readdirSync(d).sort(); } catch { return; }
@@ -133,7 +134,7 @@ describe('처방 계획 — 합성 A·B·C', () => {
     expect(ready('rewrite').some((f) => f.ops.some((o) => o.op === 'rule' && o.ruleId === ids.rw01))).toBe(true);
     // 합성 C: 색인 줄 내리기(잘린 줄은 보관)
     const idx = ready('index').find((f) => f.title.includes(path.basename(FX.C)));
-    expect(idx?.title).toMatch(/잘린 \d+줄 보관/);
+    expect(idx?.title).toMatch(/잘려서 안 실리던 \d+줄은 보관 파일로/);
     // 기억 추가: 짝인 반복 교정 2개 → 메모 하나(A 의 메모 폴더, 호스트 형식)
     const am = ready('add-memory');
     expect(am.length).toBe(1);
@@ -164,7 +165,7 @@ describe('처방 계획 — 합성 A·B·C', () => {
 
   it('Q3 쓰기 범위: 관리형·git 밖 지침 파일은 막고, 메모·rules·git 안 CLAUDE.md 는 허용', () => {
     const env = { ...defaultEnv(FX.claude), managedPaths: ['/etc/claude-code/CLAUDE.md'] };
-    expect(writeBlock('/etc/claude-code/CLAUDE.md', env)).toMatch(/관리형/);
+    expect(writeBlock('/etc/claude-code/CLAUDE.md', env)).toMatch(/관리하는 정책 파일/);
     expect(writeBlock(path.join(FX.claude, 'CLAUDE.md'), env)).toMatch(/git 밖/);
     expect(writeBlock(path.join(FX.A, 'CLAUDE.md'), env)).toBeNull();
     expect(writeBlock(path.join(FX.B, 'AGENTS.md'), env)).toBeNull();
@@ -193,7 +194,7 @@ describe('전부 적용 → 측정 → 전부 되돌리기 (§9.1 0.9.0 확인 �
     expect(memo).toBeTruthy();
     expect(fs.readFileSync(path.join(amem, 'MEMORY.md'), 'utf-8')).toContain(`](${memo})`);
     const cmem = path.join(FX.claude, 'projects', encodeDir(FX.C), 'memory');
-    expect(fs.readFileSync(path.join(cmem, 'topic_3.md'), 'utf-8')).toContain('색인 원문');
+    expect(fs.readFileSync(path.join(cmem, 'topic_3.md'), 'utf-8')).toContain('MEMORY.md 원문');
     const cidx = fs.readFileSync(path.join(cmem, 'MEMORY.md'), 'utf-8');
     expect(cidx.split('\n').length).toBeLessThanOrEqual(200);
     expect(Buffer.byteLength(cidx)).toBeLessThanOrEqual(25 * 1024);
@@ -214,7 +215,8 @@ describe('전부 적용 → 측정 → 전부 되돌리기 (§9.1 0.9.0 확인 �
     expect(r.increased).toEqual([]);
     expect(r.folders.every((f: { delta: number }) => f.delta <= 0)).toBe(true);
     expect(r.medianPct).toBeLessThan(0);
-    expect(r.loss).toEqual([]);
+    expect(r.importantMissing).toEqual([]);
+    expect(r.lostMemos).toEqual([]);
     // 섞임: 남은 것은 쓸 수 없는 사용자 CLAUDE.md 한 줄(지적만)뿐
     // + 하나씩만 적용하는 중요 지침 섞임 1(묶음에서 뺌)
     expect(r.mixConfirmed).toBe(2);
@@ -243,7 +245,7 @@ describe('전부 적용 → 측정 → 전부 되돌리기 (§9.1 0.9.0 확인 �
     fs.appendFileSync(file, '- user edit after the fix\n');
     const edited = fs.readFileSync(file, 'utf-8');
     const res = await quiet(() => handleFix(['--undo', f.id]));
-    expect(res.out).toContain('3자 비교');
+    expect(res.out).toContain('세 가지 비교');
     expect(res.out).toContain('+- user edit after the fix');
     expect(fs.readFileSync(file, 'utf-8')).toBe(edited);
     expect(readLedger().at(-1)?.event).toBe('undo-conflict');
@@ -310,7 +312,7 @@ describe('전부 적용 → 측정 → 전부 되돌리기 (§9.1 0.9.0 확인 �
 
   it('CLI: --list · <id>(diff) · 모르는 옵션은 실패', async () => {
     const list = await quiet(() => handleFix(['--list', ...ARGS()]));
-    expect(list.out).toMatch(/처방 \d+개 · 지적만 \d+개/);
+    expect(list.out).toMatch(/처방 \d+개 · 알리기만 하는 것 \d+개/);
     const id = /\n {2}(remove-[0-9a-f]{8})/.exec(list.out)?.[1];
     expect(id).toBeTruthy();
     const shown = await quiet(() => handleFix([id as string, ...ARGS()]));
