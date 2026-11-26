@@ -36,7 +36,7 @@ export function recurrenceShort(r: AuditResult): string {
   const written = rg(rc.per30d.written, L?.written);
   const unwritten = rg(Math.max(0, rc.per30d.total - rc.per30d.written), L ? Math.max(0, L.total - L.written) : undefined);
   const pct = (x: number) => `${Math.round(x) / 10}%`;
-  const share = rc.per1000 ? (L && rc.lenient ? `${pct(Math.min(rc.per1000.total, rc.lenient.per1000.total))}~${pct(Math.max(rc.per1000.total, rc.lenient.per1000.total))}` : pct(rc.per1000.total)) : '';
+  const share = rc.per1000 ? (L && rc.lenient && pct(rc.per1000.total) !== pct(rc.lenient.per1000.total) ? `${pct(Math.min(rc.per1000.total, rc.lenient.per1000.total))}~${pct(Math.max(rc.per1000.total, rc.lenient.per1000.total))}` : pct(rc.per1000.total)) : '';
   return `지난 30일 교정 약 ${f(rc.per30d.corrections)}번 중 이미 적혀 있는데 또 말한 것 약 ${written}번 · 어디에도 안 적혀 또 말한 것 약 ${unwritten}번${share ? ` — 같은 말 다시 하기 ${share}` : ''}${L ? '(판정 기준에 따라 — 경계가 애매한 교정이 있어 범위로 보여 줍니다)' : ''} (${src} — 자세히: forgen audit recurrence)`;
 }
 
