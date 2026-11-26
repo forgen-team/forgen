@@ -167,6 +167,9 @@ async function runReclaimScan(): Promise<void> {
 
 export async function runDoctor(opts: DoctorOptions = {}): Promise<number> {
   failedChecks = [];
+  // node:sqlite 의 실험 기능 경고는 사용자에게 뜻이 없다 — 다른 경고는 그대로
+  process.removeAllListeners('warning');
+  process.on('warning', (w) => { if (w.name !== 'ExperimentalWarning') console.warn(w.message); });
   console.log('\n  Forgen — Diagnostics');
   // ADR-010 W2-1 경계 선언: 일반 환경 건강(컨텍스트 비용, unused skill/MCP,
   // CLAUDE.md 정리, slow hook)은 native /doctor 의 영역. 이 명령은 forgen
@@ -310,7 +313,7 @@ export async function runDoctor(opts: DoctorOptions = {}): Promise<number> {
 
   section('Environment');
   info(`tmux: ${process.env.TMUX ? '안에서 실행 중' : '밖에서 실행 중'}`, '정보 표시 (실패로 세지 않음)');
-  info(`FORGEN_HARNESS: ${(process.env.FORGEN_HARNESS ?? process.env.COMPOUND_HARNESS) === '1' ? '설정됨' : '미설정'}`, '`forgen` / `fgx` 런처가 설정하는 값. 이 진단 셸에서는 정상적으로 비어 있을 수 있음');
+  if (opts.verbose) info(`FORGEN_HARNESS: ${(process.env.FORGEN_HARNESS ?? process.env.COMPOUND_HARNESS) === '1' ? '설정됨' : '미설정'}`, '`forgen` / `fgx` 런처가 설정하는 값. 이 진단 셸에서는 정상적으로 비어 있을 수 있음');
   // ADR-012: auto-compound Haiku 추출 동의 상태 고지 (transcript 요약 API 전송 여부).
   try {
     const { getHaikuConsentState } = await import('./compound-consent.js');
@@ -355,6 +358,11 @@ export async function runDoctor(opts: DoctorOptions = {}): Promise<number> {
   }
   console.log();
 
+  // 0.9.1 B5: 아래(기록 위치·훅 기록·팩·상태 파일 정리·git·호스트 분포·ψ-long)는 개발자용 — 기본 화면에서는 빼고 --verbose 로.
+  // 실패 검사(check)는 숨겨도 맨 끝 요약에 그대로 남는다.
+  const realLog = console.log;
+  if (!opts.verbose && !opts.pruneState) console.log = () => {};
+  try {
   console.log('  [Log Locations]');
   console.log(`  Session logs:       ${SESSIONS_DIR}`);
   if (exists(SESSIONS_DIR)) {
@@ -580,6 +588,9 @@ export async function runDoctor(opts: DoctorOptions = {}): Promise<number> {
   }
   console.log();
 
+  } finally { console.log = realLog; }
+  if (!opts.verbose) console.log('  (기록 위치·훅 기록·상태 파일 정리·호스트 분포 같은 개발자용 항목: forgen doctor --verbose)\n');
+
   // [Effort] — ADR-009 §5 nudge-only. W2-1 (ADR-010): Sonnet 5 는 adaptive
   // thinking 으로 effort 를 자체 관리하므로, 권고가 실제로 의미 있는 상황
   // (forge-loop 활성 = long-running → xhigh 넛지)에서만 표시한다.
@@ -600,9 +611,9 @@ export async function runDoctor(opts: DoctorOptions = {}): Promise<number> {
   // [Summary] — 최종 상태 요약과 복구 액션을 한눈에 보이게
   console.log('  [Summary]');
   if (failedChecks.length === 0) {
-    console.log('  ✓ All diagnostics passed. Forgen is ready.');
+    console.log('  ✓ 모든 검사 통과 — forgen 이 준비됐습니다.');
   } else {
-    console.log(`  ✗ ${failedChecks.length} check(s) failed:\n`);
+    console.log(`  ✗ 실패한 검사 ${failedChecks.length}개:\n`);
     const bySection = new Map<string, FailedCheck[]>();
     for (const f of failedChecks) {
       if (!bySection.has(f.section)) bySection.set(f.section, []);
@@ -615,7 +626,7 @@ export async function runDoctor(opts: DoctorOptions = {}): Promise<number> {
         if (item.hint) console.log(`        → ${item.hint}`);
       }
     }
-    console.log('\n  Run `forgen doctor` again after applying the fixes above.');
+    console.log('\n  위 고치는 방법을 적용한 뒤 forgen doctor 를 다시 실행하세요.');
   }
   console.log();
   return failedChecks.length;
