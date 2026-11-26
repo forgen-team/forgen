@@ -288,7 +288,7 @@ export async function handleAudit(args: string[]): Promise<void> {
   const top = r.summary.top;
   if (top?.findings.length) {
     console.log('가장 중요한 발견');
-    top.findings.forEach((f, i) => console.log(`  ${i + 1}. ${f}`));
+    top.findings.forEach((f, i) => { console.log(`  ${i + 1}. ${f}`); });
     console.log('');
   }
   console.log('요약');
@@ -298,10 +298,10 @@ export async function handleAudit(args: string[]): Promise<void> {
   if (judgeStats) console.log(`\n모델 호출 ${judgeStats.calls}번(실패 ${judgeStats.failedCalls}, 저장된 판정 ${judgeStats.cacheHits}개 재사용) · ${Math.round((run.timing.model ?? 0) / 1000)}초${r.checks.model?.status === 'incomplete' ? ` · ${r.checks.model.statusNote}` : ''}`);
   if (r.sources.unreadable.length || r.sources.brokenRules.length) console.log(`읽지 못한 파일 ${r.sources.unreadable.length} · 깨진 forgen 룰 ${r.sources.brokenRules.length} (건너뛰고 계속함)`);
   console.log(`읽은 파일 ${r.sources.files}개${fp ? ` · 처음 감사라 지금 기억 상태를 적어 둠: ${shortPath(fp)}` : ''}`);
-  console.log(`✓ [forgen] 자세히(표·목록): ${shortPath(out.htmlPath)}  (결과 폴더 ${shortPath(out.dir)} 밖에는 아무것도 쓰지 않았음)`);
+  console.log(`✓ [forgen] 자세히(표·목록): ${shortPath(out.htmlPath)}  (~/.forgen/audit 밖에는 아무것도 쓰지 않았음)`);
   if (top?.next.length) {
     console.log('\n다음에 할 일');
-    top.next.forEach((l, i) => console.log(`  ${i + 1}. ${l}`));
+    top.next.forEach((l, i) => { console.log(`  ${i + 1}. ${l}`); });
   }
   if (rest.includes('--timing')) {
     const tm = run.timing;

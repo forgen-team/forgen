@@ -381,7 +381,7 @@ export async function handleFix(args: string[]): Promise<void> {
     const ready = list.filter((f) => !f.blocked);
     console.log(`처방 ${ready.length}개 · 알리기만 하는 것 ${list.length - ready.length}개${p.model ? '' : ' (--no-model: 모델 없이 만드는 처방만)'}`);
     const order = recommendedOrder(ready);
-    if (order.length) { console.log('\n추천 순서'); order.forEach((l, i) => console.log(`  ${i + 1}. ${l}`)); }
+    if (order.length) { console.log('\n추천 순서'); order.forEach((l, i) => { console.log(`  ${i + 1}. ${l}`); }); }
     for (const k of FIX_KINDS) {
       const xs = list.filter((f) => f.kind === k);
       if (!xs.length) continue;

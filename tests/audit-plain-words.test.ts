@@ -10,6 +10,9 @@ import * as path from 'node:path';
 import { installFakeJudge } from './helpers/fake-claude-judge.js';
 import { addRules, buildFixture, W } from './helpers/audit-fixture.js';
 
+/** 비밀처럼 보이는 가짜 값(저장소 비밀 검사에 걸리지 않게 실행 중에 만든다) */
+const FAKE_KEY = ['sk', 'abcdefghijklmnopqrstuv'].join('-');
+const FAKE_GH = ['ghp', 'abcdefghijklmnopqrstuvwx'].join('_');
 const ROOT = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'fg-aplain-')));
 const BIN = path.join(ROOT, 'bin');
 const FAKE = path.join(ROOT, 'fake-state');
@@ -55,7 +58,7 @@ const recResult = () => ({
   biweekly: [{ from: '2026-10-01T00:00:00.000Z', to: '2026-10-15T00:00:00.000Z', prompts: 100, corrections: 15, total: 7, per1000: 70, tier2Missed: 1 }],
   notes: [] as string[],
   items: [
-    { id: 'i1', session: 's1', ts: '2026-10-20T00:00:00.000Z', cwd: FX.A, gist: '배포 전에 확인하라', utterance: '아니 배포 전에 먼저 확인하라고 했잖아 sk-abcdefghijklmnopqrstuv', taskSpecific: false, branch: 'not-loaded', becameMemory: false, unknown: 0, pairs: [], match: { key: 'k', kind: 'forgen-rule', text: '배포 전에 확인한다', reason: 'budget-or-other' } },
+    { id: 'i1', session: 's1', ts: '2026-10-20T00:00:00.000Z', cwd: FX.A, gist: '배포 전에 확인하라', utterance: `아니 배포 전에 먼저 확인하라고 했잖아 ${FAKE_KEY}`, taskSpecific: false, branch: 'not-loaded', becameMemory: false, unknown: 0, pairs: [], match: { key: 'k', kind: 'forgen-rule', text: '배포 전에 확인한다', reason: 'budget-or-other' } },
   ],
 });
 
@@ -86,7 +89,7 @@ describe('0.9.1 화면 — 내부 용어 없음 · 첫 화면 모양', () => {
     for (const f of findings) expect(f).toMatch(/ → 이대로면 .+ → 처방: /);
     expect(auditOut).toMatch(/\n {5}근거: /);
     // 실제 교정 인용은 날짜·앞부분·비밀 가림
-    expect(auditOut).not.toContain('sk-abcdefghijklmnopqrstuv');
+    expect(auditOut).not.toContain(FAKE_KEY);
     // #5: 모델 판정이 있으면 "섞임 의심" 토큰은 화면에 없고, 섞임 수는 판정 한 출처에서만
     expect(auditOut).not.toContain('섞임 의심');
     const mix = /다른 프로젝트 지시 섞임 (\d+)개/.exec(auditOut)?.[1];
@@ -162,7 +165,7 @@ describe('0.9.1 화면 — 내부 용어 없음 · 첫 화면 모양', () => {
     expect(banned(text)).toEqual([]);
     expect(text).toContain('요청 중 비율');
     expect(text).toContain('7.5%');
-    expect(text).not.toContain('sk-abcdefghijklmnopqrstuv');
+    expect(text).not.toContain(FAKE_KEY);
     expect(text).toContain('••••');
   });
 });

@@ -17,10 +17,10 @@ const REASON: Record<string, string> = {
   'other-folder': '다른 폴더 기억에 있어서', conditional: '특정 파일을 다룰 때만 실리는 룰이라', 'tier2-missed': '상황 맞춤 룰인데 그때 안 들어와서',
 };
 
-export interface Finding { kind: 'conflict' | 'repeat' | 'mix' | 'missing' | 'stale' | 'dup'; scene: string; then: string; fix: string; evidence: string }
+export interface Finding { kind: 'conflict' | 'repeat' | 'mix' | 'missing' | 'stale' | 'dup'; scene: string; effect: string; fix: string; evidence: string }
 
 export function renderFinding(f: Finding): string {
-  return `${f.scene} → 이대로면 ${f.then} → 처방: ${f.fix}\n     근거: ${f.evidence}`;
+  return `${f.scene} → 이대로면 ${f.effect} → 처방: ${f.fix}\n     근거: ${f.evidence}`;
 }
 
 const where = (x: { ruleId?: string; path: string; line: number }) => (x.ruleId ? 'forgen 룰' : `${shortPath(x.path)}:${x.line}`);
@@ -40,7 +40,7 @@ export function findings(run: AuditRun): Finding[] {
     out.push({
       kind: 'conflict',
       scene: `${where(conflict.a)} 는 ${qq(conflict.a.text)} 라고 하고 ${where(conflict.b)} 는 ${qq(conflict.b.text)} 라고 합니다${conflict.reason ? `(${maskQuote(conflict.reason, 60)})` : ''}`,
-      then: 'AI 가 둘 중 아무거나 따르거나 오락가락합니다',
+      effect: 'AI 가 둘 중 아무거나 따르거나 오락가락합니다',
       fix: `맞는 쪽만 남기고 ${where(edit)} 를 직접 고치세요(forgen 이 자동으로 고치지 않음)`,
       evidence: '파일 비교(모델 판정)',
     });
@@ -54,7 +54,7 @@ export function findings(run: AuditRun): Finding[] {
     out.push({
       kind: 'repeat',
       scene: `${KIND[rep.match.kind] ?? '기억'}에 ${qq(rep.match.text)} 로 이미 적혀 있는데, ${why} 같은 교정을 다시 했습니다`,
-      then: '같은 말을 또 해야 합니다',
+      effect: '같은 말을 또 해야 합니다',
       fix: rep.branch === 'ignored'
         ? '룰 문장을 더 분명하게 고치세요(forgen rule list 에서 찾아 수정)'
         : nowLoaded ? '지금은 세션 시작에 실립니다(직접 교정은 자리 때문에 빠지지 않게 바뀜) — forgen audit recurrence 로 다시 재서 확인' : 'forgen fix --list 에서 이 기억을 다루는 처방을 보세요',
@@ -69,7 +69,7 @@ export function findings(run: AuditRun): Finding[] {
     out.push({
       kind: 'mix',
       scene: `${where(mix)} 의 ${qq(mix.text)} 는 ${mix.judgedProject} 에서만 뜻이 있는데 모든 프로젝트 세션에 실립니다`,
-      then: '다른 프로젝트 작업에서도 AI 가 이 지시를 따르려 듭니다',
+      effect: '다른 프로젝트 작업에서도 AI 가 이 지시를 따르려 듭니다',
       fix: id ? `forgen fix ${id} --apply (${mix.judgedProject} 에서만 실리게)` : 'forgen fix --list 에서 범위 옮기기',
       evidence: mix.reason ? `파일 비교(모델 판정: ${maskQuote(mix.reason, 60)})` : '파일 비교(모델 판정)',
     });
@@ -80,7 +80,7 @@ export function findings(run: AuditRun): Finding[] {
     out.push({
       kind: 'missing',
       scene: `${shortPath(miss.folder)} 세션에 직접 교정한 중요 지침 ${miss.rules.length}개가 안 실립니다(예 ${qq(miss.rules[0].policy)})`,
-      then: '이미 한 교정을 또 말해야 합니다',
+      effect: '이미 한 교정을 또 말해야 합니다',
       fix: 'forgen rule list 로 확인 — 그 폴더에 맞는 룰인지 보고 범위를 고치세요',
       evidence: '세션 시작 블록 비교',
     });
@@ -92,7 +92,7 @@ export function findings(run: AuditRun): Finding[] {
     out.push({
       kind: 'stale',
       scene: `${where(stale)} 의 ${qq(stale.text)} 가 지금 없는 ${stale.ref} 를 가리킵니다`,
-      then: 'AI 가 없는 파일·명령을 찾거나 고치려 듭니다',
+      effect: 'AI 가 없는 파일·명령을 찾거나 고치려 듭니다',
       fix: u && u.layer !== 'memory-index' ? `forgen fix ${fixId('remove', ident(u))} --apply (그 줄을 지움)` : '그 줄의 경로를 직접 고치세요',
       evidence: '파일 비교(가리키는 파일이 디스크에 없음)',
     });
@@ -103,7 +103,7 @@ export function findings(run: AuditRun): Finding[] {
     out.push({
       kind: 'dup',
       scene: `같은 뜻 지시가 ${m.counts.dupGroups}묶음 있습니다(예 ${where(dup.a)} ${qq(dup.a.text, 40)} ↔ ${where(dup.b)} ${qq(dup.b.text, 40)})`,
-      then: '같은 내용이 세션마다 여러 번 실려 자리를 차지합니다',
+      effect: '같은 내용이 세션마다 여러 번 실려 자리를 차지합니다',
       fix: 'forgen fix --list 의 "합치기"에서 골라 적용',
       evidence: '파일 비교(모델 판정)',
     });

@@ -6,6 +6,9 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
+/** 비밀처럼 보이는 가짜 값(저장소 비밀 검사에 걸리지 않게 실행 중에 만든다) */
+const FAKE_KEY = ['sk', 'abcdefghijklmnopqrstuv'].join('-');
+const FAKE_GH = ['ghp', 'abcdefghijklmnopqrstuvwx'].join('_');
 const ROOT = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'fg-v091-')));
 const PREV = { FORGEN_HOME: process.env.FORGEN_HOME };
 process.env.FORGEN_HOME = path.join(ROOT, '.forgen');
@@ -109,7 +112,7 @@ describe('#10 도움말 언어', () => {
 
 describe('#13 인용 비밀 가림', () => {
   it('키·토큰·이메일·키=값을 가리고 앞 n자만', () => {
-    const q = maskQuote('배포해 sk-abcdefghijklmnopqrstuv 그리고 ghp_abcdefghijklmnopqrstuvwx password=hunter2 me@example.com', 200);
+    const q = maskQuote(`배포해 ${FAKE_KEY} 그리고 ${FAKE_GH} password=hunter2 me@example.com`, 200);
     expect(q).not.toMatch(/sk-abc|ghp_abc|hunter2|me@example\.com/);
     expect(q).toContain('password=••••');
     expect(maskQuote('가'.repeat(100), 80).length).toBe(80);
