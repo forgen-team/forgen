@@ -102,6 +102,11 @@ function sessionRenderContext(cwd: string | undefined, rules: Rule[], opts: { ti
   return { ...DEFAULT_CONTEXT, projectKey, ...(tier2?.size ? { tier2 } : {}) };
 }
 
+function readOnlyContext(cwd: string, rules: Rule[], asOf: boolean, legacy: boolean): RenderContext {
+  const c = sessionRenderContext(cwd, rules, { tiers: !asOf && !legacy });
+  return legacy ? { ...c, compact: false } : c;
+}
+
 let lastIncluded: string[] = [];
 let lastTier2: Rule[] = [];
 function renderWithoutProfile(cwd?: string): string | null {
@@ -135,18 +140,21 @@ function renderWithoutProfile(cwd?: string): string | null {
  * 차이 2: 세션 후보 승급(promoteSessionCandidates)을 하지 않으므로, 승급 대기 후보가 있으면 실제 다음 세션보다
  *   룰이 적게 셀 수 있다(감사는 "지금 저장된 그대로"를 본다).
  */
-export function renderSessionStartReadOnly(cwd: string, opts: { asOf?: string } = {}): { text: string; includedRuleIds: string[]; tier2RuleIds: string[] } {
+/**
+ * legacy: 0.9.0 이전 형식(압축 전·두 층 없음) 렌더 — N3 기준값(처방 전 토큰)을 "압축 전"으로 고정할 때 쓴다(감사 fix·첫 실행 기준값).
+ */
+export function renderSessionStartReadOnly(cwd: string, opts: { asOf?: string; legacy?: boolean } = {}): { text: string; includedRuleIds: string[]; tier2RuleIds: string[] } {
   // 프로젝트 로컬 룰(<cwd>/.forgen/rules)은 FORGEN_CWD 기준으로 읽힌다 — 이 폴더로 잠시 맞춘다.
   const prev = process.env.FORGEN_CWD;
   process.env.FORGEN_CWD = cwd;
-  try { return renderReadOnly(cwd, opts.asOf); } finally { if (prev === undefined) delete process.env.FORGEN_CWD; else process.env.FORGEN_CWD = prev; }
+  try { return renderReadOnly(cwd, opts.asOf, opts.legacy); } finally { if (prev === undefined) delete process.env.FORGEN_CWD; else process.env.FORGEN_CWD = prev; }
 }
 
 /**
  * asOf(ISO): 그 시각까지 만들어진 룰만으로 렌더한다 — 세션별 렌더 기록이 없는 과거 세션의 "재생 렌더" 추정(감사 recurrence).
  * 다른 세션의 임시 룰(scope 'session')은 뺀다. 한계: 지금 활성인 룰만 보므로 그 뒤 보관·삭제된 룰과 그 사이 바뀐 강도·범위는 되살리지 못한다.
  */
-function renderReadOnly(cwd: string, asOf?: string): { text: string; includedRuleIds: string[]; tier2RuleIds: string[] } {
+function renderReadOnly(cwd: string, asOf?: string, legacy = false): { text: string; includedRuleIds: string[]; tier2RuleIds: string[] } {
   const rules = asOf ? loadContextRules(cwd).filter((r) => r.scope !== 'session' && (!r.created_at || r.created_at <= asOf)) : loadContextRules(cwd);
   const profile = profileExists() ? loadProfile() : null;
   if (!profile) {
@@ -155,11 +163,11 @@ function renderReadOnly(cwd: string, asOf?: string): { text: string; includedRul
       return { text: idx ?? '', includedRuleIds: [], tier2RuleIds: [] };
     }
     const state = { warnings: [] } as unknown as SessionEffectiveState;
-    const result = renderRulesDetailed(rules, state, null as unknown as Profile, sessionRenderContext(cwd, rules, { tiers: !asOf }));
+    const result = renderRulesDetailed(rules, state, null as unknown as Profile, readOnlyContext(cwd, rules, !!asOf, legacy));
     return { text: withProjectIndex(result.text, cwd), includedRuleIds: result.included.map((r) => r.rule_id), tier2RuleIds: (result.tier2 ?? []).map((r) => r.rule_id) };
   }
   const session = composeSession({ session_id: 'audit-read-only', profile, personalRules: rules, sessionOverlays: [], runtime: detectRuntimeCapability() });
-  const rendered = renderRulesDetailed([...rules], session, profile, sessionRenderContext(cwd, rules, { tiers: !asOf }));
+  const rendered = renderRulesDetailed([...rules], session, profile, readOnlyContext(cwd, rules, !!asOf, legacy));
   return { text: withProjectIndex(rendered.text, cwd), includedRuleIds: rendered.included.map((r) => r.rule_id), tier2RuleIds: (rendered.tier2 ?? []).map((r) => r.rule_id) };
 }
 

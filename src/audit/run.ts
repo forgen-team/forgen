@@ -62,6 +62,8 @@ export interface FolderSummary {
    * N3 의 "최대치" = 상시 로드(1층 + 색인), "기대치" = 최대치 + expected. 선전에는 기대치를 쓴다.
    */
   forgenTier2?: { rules: number; tokens: number; expected?: number };
+  /** 0.9.0 이전 형식(압축 전·두 층 없음) forgen 렌더 토큰 — N3 기준값을 압축 전으로 고정하는 데 쓴다. */
+  forgenLegacyTokens?: number;
 }
 
 export interface AuditResult {
@@ -201,11 +203,14 @@ export function runAudit(opts: AuditOptions = {}): AuditRun {
   const active = scan.rules.filter((r) => r.status === 'active');
   const ruleById = new Map(active.map((r) => [r.rule_id, r]));
   const loads: FolderLoad[] = hostLoads.map((h) => {
-    let forgen = { tokens: 0, ruleIds: [] as string[], tier2Ids: [] as string[] };
+    let forgen = { tokens: 0, ruleIds: [] as string[], tier2Ids: [] as string[], legacyTokens: 0 };
     try {
       // 세션 시작 몫 = 1층 + 2층 색인 줄(두 층). 감사와 실제 세션 시작은 같은 렌더 함수를 쓴다.
       const r = renderSessionStartReadOnly(h.folder);
-      forgen = { tokens: estimateTokens(r.text), ruleIds: [...r.includedRuleIds].sort(), tier2Ids: [...r.tier2RuleIds].sort() };
+      // N3 기준값은 0.9.0 이전 형식(압축 전·두 층 없음)으로 고정한다 — 0.9.0 설치 뒤 처음 처방해도 압축 몫이 보이게.
+      let legacyTokens = 0;
+      try { legacyTokens = estimateTokens(renderSessionStartReadOnly(h.folder, { legacy: true }).text); } catch { legacyTokens = 0; }
+      forgen = { tokens: estimateTokens(r.text), ruleIds: [...r.includedRuleIds].sort(), tier2Ids: [...r.tier2RuleIds].sort(), legacyTokens };
     } catch { /* 렌더 실패는 0 으로 */ }
     const hostTokens = h.entries.filter((e) => e.always).reduce((n, e) => n + e.tokens, 0);
     let projectKey: string | null = null;
@@ -352,6 +357,7 @@ export function runAudit(opts: AuditOptions = {}): AuditRun {
     return {
       folder: l.folder, projectKey: l.projectKey, memoryDir: l.memoryDir, totalTokens: l.totalTokens, byLayer, entries: l.entries,
       forgenRules: l.forgen.ruleIds.length,
+      ...(l.forgen.legacyTokens ? { forgenLegacyTokens: l.forgen.legacyTokens } : {}),
       reducible: { duplicate, stale: staleTok, total, pct: l.totalTokens ? Math.round((total / l.totalTokens) * 1000) / 10 : 0 },
       mixCandidateTokens: mixTok,
       ...(l.skills ? { skills: l.skills } : {}),

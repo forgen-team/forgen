@@ -936,7 +936,8 @@ export function undoFix(id: string, now = new Date()): { restored: number } | { 
 // ── 측정: N3(폴더별, 스킬 설명 제외) · 중요 지침 누락 · 적용률·되돌림률 ──
 
 /** sessionRules: 세션 시작 본문에 실린 forgen 룰 ID(2층 제외) — N3 같은 집합 비교(오너 결정 2026-11-26). 옛 기준값에는 없다. */
-export interface FolderMeasure { folder: string; projectKey: string | null; tokens: number; skills: number; important: string[]; loaded: string[]; sessionRules?: string[] }
+/** legacyTokens: 같은 폴더를 0.9.0 이전 형식(압축 전·두 층 없음)으로 실었을 때의 토큰 — N3 의 "전"은 이 값(없는 옛 기준값은 tokens). */
+export interface FolderMeasure { folder: string; projectKey: string | null; tokens: number; skills: number; important: string[]; loaded: string[]; sessionRules?: string[]; legacyTokens?: number }
 export interface Measure { at: string; folders: FolderMeasure[] }
 
 /** 감사 회차에서 폴더마다 상시 로드 토큰(§1.1 의 다섯 층 + forgen 주입, 스킬 설명 제외)과 실리는 지시의 신원. */
@@ -972,7 +973,9 @@ export function measure(run: AuditRun, now = new Date()): Measure {
       }
       const sessionRules = [...loaded].filter((k) => k.startsWith('rule:') && !(ctx.tier2In?.get(k.slice(5)) ?? []).includes(f.folder)).map((k) => k.slice(5)).sort();
       const skills = f.skills?.tokens ?? 0;
-      return { folder: f.folder, projectKey: f.projectKey, tokens: f.totalTokens - skills, skills, important: [...important].sort(), loaded: [...loaded].sort(), sessionRules };
+      const forgenNow = f.byLayer['forgen-render'] ?? 0;
+      const legacyTokens = f.forgenLegacyTokens ? f.totalTokens - skills - forgenNow + f.forgenLegacyTokens : undefined;
+      return { folder: f.folder, projectKey: f.projectKey, tokens: f.totalTokens - skills, skills, important: [...important].sort(), loaded: [...loaded].sort(), sessionRules, ...(legacyTokens ? { legacyTokens } : {}) };
     }),
   };
 }
@@ -1010,7 +1013,8 @@ export function n3Summary(run: AuditRun): NonNullable<import('./run.js').AuditRe
     const x = ss.find((y) => y.folder === b.folder);
     const allNow = x?.tokens ?? 0;
     const sameSet = x?.sameSet ?? 0;
-    return { folder: b.folder, before: b.tokens, sameSet, allNow, pct: pct(sameSet, b.tokens), allNowPct: pct(allNow, b.tokens), revived: x?.revived.length ?? 0, revivedImportant: x?.revivedImportant.length ?? 0 };
+    const base = b.legacyTokens ?? b.tokens;
+    return { folder: b.folder, before: base, sameSet, allNow, pct: pct(sameSet, base), allNowPct: pct(allNow, base), revived: x?.revived.length ?? 0, revivedImportant: x?.revivedImportant.length ?? 0 };
   });
   return {
     baselineAt: before.at, medianPct: med(folders.map((f) => f.pct)), allNowMedianPct: med(folders.map((f) => f.allNowPct)),

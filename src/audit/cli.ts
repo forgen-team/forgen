@@ -205,6 +205,8 @@ export async function handleAudit(args: string[]): Promise<void> {
   const t = performance.now();
   const out = writeRun(run, renderAuditHtml);
   const fp = writeFingerprintIfFirst(run.manifest.sources.map((x) => x.path), new Date(), run.result.forgenVersion);
+  // 첫 감사: N3 의 "처방 전" 기준값도 같이 남긴다(이미 있으면 그대로) — 0.9.0 이전 형식(압축 전) 토큰을 함께 적는다.
+  if (fp) { try { (await import('./fix.js')).ensureBaseline(run); } catch (e) { process.stderr.write(`[forgen] N3 기준값을 남기지 못함: ${e instanceof Error ? e.message : String(e)}\n`); } }
   run.timing.page = Math.round(performance.now() - t);
   run.timing.total = Math.round(performance.now() - started);
   if (json) {

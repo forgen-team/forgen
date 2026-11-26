@@ -70,7 +70,7 @@ export interface FolderLoad {
   memoryDir: string | null;
   entries: LoadEntry[];
   /** tier2Ids(0.9.0 두 층): 색인 줄로만 보인 2층 룰 — 세션 시작 토큰에는 색인 줄만 들어간다 */
-  forgen: { tokens: number; ruleIds: string[]; tier2Ids?: string[] };
+  forgen: { tokens: number; ruleIds: string[]; tier2Ids?: string[]; legacyTokens?: number };
   /** 세션 시작에 실리는 스킬·에이전트 목록 몫(readSkillCatalog). */
   skills?: { tokens: number; count: number; bySource: Record<string, number> };
   totalTokens: number;

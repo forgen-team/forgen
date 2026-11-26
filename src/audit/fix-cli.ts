@@ -151,9 +151,11 @@ async function report(c: Ctx): Promise<void> {
     const allNow = total - mem; // 이전 정의(지금 실리는 전부)
     // 기대치: 2층 룰이 발동률 추정만큼 들어온다고 보고 더한 값(넓은 조건은 절감 0). 최대치(diet)와 따로 낸다 — 선전에는 기대치.
     const exp = run.result.folders.find((x) => x.folder === b.folder)?.forgenTier2?.expected ?? 0;
+    // "전" = 처방 전 집합을 0.9.0 이전 형식(압축 전)으로 실었을 때 — 기준값이 압축 뒤에 찍혀도 압축 몫이 보인다(옛 기준값은 tokens).
+    const base = b.legacyTokens ?? b.tokens;
     return {
-      folder: b.folder, before: b.tokens, after: diet, expected: diet + exp, addedMemory: mem, withMemory: total, delta: diet - b.tokens, pct: p1(diet, b.tokens), expectedPct: p1(diet + exp, b.tokens), pctWithMemory: p1(total, b.tokens),
-      revived: ss?.revived.length ?? 0, revivedImportant: ss?.revivedImportant.length ?? 0, revivedTokens, allNow, allNowPct: p1(allNow, b.tokens),
+      folder: b.folder, before: base, after: diet, expected: diet + exp, addedMemory: mem, withMemory: total, delta: diet - base, pct: p1(diet, base), expectedPct: p1(diet + exp, base), pctWithMemory: p1(total, base),
+      revived: ss?.revived.length ?? 0, revivedImportant: ss?.revivedImportant.length ?? 0, revivedTokens, allNow, allNowPct: p1(allNow, base), legacyBase: b.legacyTokens !== undefined,
     };
   });
   const r = rates(events);
@@ -171,7 +173,7 @@ async function report(c: Ctx): Promise<void> {
   if (c.json) { console.log(JSON.stringify(out, null, 2)); return; }
   console.log(`처방: 제안 ${r.proposed} · 적용 ${r.applied} (적용률 ${pct(r.applied, r.proposed)}) · 되돌림 ${r.undone} (되돌림률 ${pct(r.undone, r.applied)}, 목표 ≤ 10%)`);
   for (const [k, v] of Object.entries(r.byKind)) console.log(`  ${KIND_LABEL[k as FixKind] ?? k}: 제안 ${v.proposed} · 적용 ${v.applied} · 되돌림 ${v.undone}`);
-  console.log(`\n폴더별 상시 로드 토큰(N3, 스킬 설명 제외) — 처방 전(${before.at.slice(0, 16)}) → 지금`);
+  console.log(`\n폴더별 상시 로드 토큰(N3, 스킬 설명 제외) — 처방 전(${before.at.slice(0, 16)}, ${rows.every((x) => x.legacyBase) ? '0.9.0 이전 형식(압축 전)으로 센 값' : '옛 기준값 — 압축 전 토큰이 없어 그때 렌더 그대로'}) → 지금`);
   const sg = (n: number) => `${n > 0 ? '+' : ''}${n}%`;
   console.log('  같은 집합 기준(처방 전에 실리던 룰·기억을 그대로 실을 때) — 빈자리를 채워 새로 실린 룰은 "되살린 룰"로 따로 센다');
   for (const x of rows) console.log(`  ${String(x.before).padStart(6)} → ${String(x.after).padStart(6)}  ${sg(x.pct)}  ${shortPath(x.folder)}${x.revived ? `   (되살린 룰 ${x.revived}개, 그중 중요 지침 ${x.revivedImportant}개 · ${x.revivedTokens}토큰)` : ''}${x.addedMemory ? `   (+ 기억 추가 ${x.addedMemory}토큰 → 합 ${sg(x.pctWithMemory)})` : ''}`);
