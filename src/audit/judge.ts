@@ -427,15 +427,15 @@ export class Judge {
 /** 첫 실행 공개(§2.4 표). 모델을 쓰는 감사를 처음 돌릴 때(판정자가 바뀌면 다시) 한 번 보여 준다. */
 export const MODEL_DISCLOSURE = [
   '[forgen] 감사에 모델 판정을 씁니다 — 처음 한 번만 보이는 안내 (끄기: --no-model)',
-  '  쓰는 곳              보내는 것                                                          모델               끄면',
-  `  교정 판정(N4)        사용자 발화 1개(≤ ${UTTER_MAX}자) + 직전 AI 응답 앞 ${PREV_MAX}자                           ${CORRECTION_MODEL}   N4 를 내지 않고 "모델 판정 꺼짐"`,
-  `  쌍 판정(N4·원장)     교정 요지 한 줄(≤ ${GIST_MAX}자) + 기억 문장(≤ ${PAIR_TEXT_MAX}자) — 사전 필터를 지난 쌍만, 쌍마다 1회   ${PAIR_MODEL}  결정적 검사만 남음`,
-  `  지시 검사(N2)        같은 뜻 중복·부딪힘 후보 쌍(각 ≤ ${CHECK_TEXT_MAX}자), 섞임 후보 지시(≤ ${MIX_TEXT_MAX}자) + 프로젝트 키 목록      ${CHECK_MODEL}   결정적 검사만 남음`,
-  `  처방 문안(forgen fix) 고칠 지시 문장들(합치기·짧게·색인·메모 초안)                                ${CHECK_MODEL}   결정적 처방(이동·같은 문장 정리)만`,
-  `  처방 채점            합친·줄인 문장 ↔ 원문(각 ≤ ${CHECK_TEXT_MAX}자) "같은 뜻인가"                                   ${PAIR_MODEL}  결정적 처방만`,
-  `  두 층 발동 조건 초안  룰 문장(≤ ${MIX_TEXT_MAX}자)·trigger + 그 룰이 실리는 폴더 키·도구 이름 목록                       ${CHECK_MODEL}   결정적 후보(룰 낱말·프로젝트)만`,
+  '  무엇을 판정하나            보내는 것                                                     모델            끄면',
+  `  교정인지                   내가 한 말 1개(≤ ${UTTER_MAX}자) + 바로 앞 AI 답 앞 ${PREV_MAX}자                       ${CORRECTION_MODEL}   "같은 말 다시 하기"를 세지 않음`,
+  `  같은 말인지                교정 요지 한 줄(≤ ${GIST_MAX}자) + 기억 문장(≤ ${PAIR_TEXT_MAX}자) — 비슷해 보이는 것만      ${PAIR_MODEL}  위와 같음`,
+  `  지시끼리 같은 뜻·부딪힘·섞임  후보 지시 두 줄(각 ≤ ${CHECK_TEXT_MAX}자), 섞임 후보(≤ ${MIX_TEXT_MAX}자) + 프로젝트 이름 목록     ${CHECK_MODEL}   모델 없이 하는 검사만`,
+  `  처방 문장                  고칠 지시 문장들(합치기·짧게·MEMORY.md 줄·새 메모 초안)                      ${CHECK_MODEL}   모델 없이 만드는 처방만`,
+  `  처방 문장 확인             합친·줄인 문장 ↔ 원문(각 ≤ ${CHECK_TEXT_MAX}자) "같은 뜻인가"                          ${PAIR_MODEL}  위와 같음`,
+  `  상황 맞춤 조건 초안        룰 문장(≤ ${MIX_TEXT_MAX}자) + 그 룰이 실리는 폴더 이름·도구 이름 목록                  ${CHECK_MODEL}   룰 낱말로만 만든 조건`,
   '  보내는 곳은 내가 이미 쓰는 로컬 `claude` CLI 뿐입니다(forgen 서버·제3자 없음). 대화 전체·파일 전체는 보내지 않고, 비밀키는 가리며 <private> 구간은 뺍니다.',
-  '  판정 결과는 ~/.forgen/audit/cache/ 에 캐시되어 같은 입력은 다시 보내지 않습니다.',
+  '  판정 결과는 ~/.forgen/audit/cache/ 에 저장해 같은 입력은 다시 보내지 않습니다.',
 ].join('\n');
 
 /** 공개를 이미 보였는가 — <FORGEN_HOME>/audit/model-notice.json. 이번 판정자 구성으로 보이지 않았으면 표시하고 기록한다. */

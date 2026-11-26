@@ -232,7 +232,7 @@ describe('forgen audit recurrence — 합성 D 축소판', () => {
     expect(sent).toBe(new Set(r.items.flatMap((i) => i.pairs.map((x) => `${i.gist}|${x.text}`))).size);
     expect(first.judgeStats?.calls).toBe(calls.length);
     expect(first.manifest.judge).toMatchObject({ correction: { model: CORRECTION_MODEL }, pair: { model: PAIR_MODEL, version: PAIR_PROMPT_VERSION, mode: 'single-asymmetric' }, prefilterMin: PREFILTER_MIN });
-    expect(r.notes.join(' ')).toContain('풀(forgen 룰 수 등)이 다르면');
+    expect(r.notes.join(' ')).toContain('기억이 바뀌면(룰을 지우거나 더하면)');
   });
 
   it('결정성: 캐시가 있으면 같은 입력 두 번 → 같은 숫자, 모델 호출 0', async () => {
@@ -251,7 +251,7 @@ describe('forgen audit recurrence — 합성 D 축소판', () => {
     expect(a.result.prompts).toMatchObject({ window: 200, sampled: 60, judged: 60, limit: 60 });
     expect(a.manifest.resultDigest).toBe(b.manifest.resultDigest);
     expect(a.result.status).toBe('insufficient'); // 교정 30 미만
-    expect(a.result.notes.join(' ')).toContain('하한');
+    expect(a.result.notes.join(' ')).toContain('실제보다 적게 나온다');
   });
 
   it('--no-model: N4 를 내지 않고 "모델 판정 꺼짐", 호출 0', async () => {
@@ -260,7 +260,7 @@ describe('forgen audit recurrence — 합성 D 축소판', () => {
     expect(r.result.status).toBe('model-off');
     expect(r.result.counts.total).toBe(0);
     expect(readJudgeCalls(FAKE).length).toBe(n);
-    expect(recurrenceLine(r.result)).toContain('모델 판정 꺼짐');
+    expect(recurrenceLine(r.result)).toContain('모델을 끄고 재서 세지 않음');
   });
 
   it('모델을 못 부르면(로그인 없음) 판정 불완전 — 숫자를 확정하지 않는다', async () => {
@@ -287,8 +287,8 @@ describe('forgen audit recurrence — 합성 D 축소판', () => {
       expect(w4).toMatchObject({ branch: 'not-loaded', match: { reason: 'tier2-missed', loadedVia: 'render-log' } });
       expect(r.items.find((i) => i.session === 'w-5')).toMatchObject({ branch: 'ignored', match: { loadedVia: 'render-log' } });
       expect(r.counts.tier2Missed).toBe(1);
-      expect(r.notes.join(' ')).toContain('교정이 나온 경우만 잡는다');
-      expect(recurrenceLine(r)).toContain('2층 미발동 1');
+      expect(r.notes.join(' ')).toContain('다시 교정한 경우만 센다');
+      expect(recurrenceLine(r)).toContain('상황 맞춤 룰이 안 들어와서 1');
       // 2주 단위: 구간 합 = 전체, 2층 미발동은 w-4 의 구간에
       expect(r.biweekly?.length).toBe(3);
       expect(r.biweekly?.reduce((n, b) => n + b.total, 0)).toBe(r.counts.total);
@@ -332,11 +332,11 @@ describe('CLI · 첫 화면 · 기준값', () => {
       await handleAudit(['recurrence', '--claude-dir', CLAUDE, '--since', '2026-10-01', '--until', '2026-11-01', '--lookback', '30d']);
       const text = log.mock.calls.map((c) => String(c[0])).join('\n');
       expect(summarizeLedger().pending).toBe(0);
-      expect(text).toContain('교정 원장: 판정 대기 1건 판정');
+      expect(text).toContain('아직 판정 안 된 교정 기록 1개를 판정함');
       expect(text).toContain('claude-sonnet');
       expect(text).toContain('처음 한 번만 보이는 안내');
-      expect(text).toContain('적혀 있는데도 또 말함');
-      expect(text).toMatch(/모델 호출 \d+회/);
+      expect(text).toContain('세션에 실렸는데도 또 말함');
+      expect(text).toMatch(/모델 호출 \d+번/);
       log.mockClear();
       await handleAudit(['recurrence', '--claude-dir', CLAUDE, '--since', '2026-10-01', '--until', '2026-11-01']);
       expect(log.mock.calls.map((c) => String(c[0])).join('\n')).not.toContain('처음 한 번만 보이는 안내');
@@ -346,7 +346,7 @@ describe('CLI · 첫 화면 · 기준값', () => {
     expect(latest?.counts.total).toBe(25);
     const { result } = runAudit({ folders: [PROJ], claudeDir: CLAUDE });
     expect(result.summary.recurrence.status).toBe('ok');
-    expect(topLines(result)[0]).toContain('적혀 있는데도 또 말함');
+    expect(topLines(result)[0]).toContain('이미 적혀 있는데 또 말한 것');
   });
 
   it('audit review → --import → score: 표본 25(예 10·아니오 10·모름 ≤5), 판정자 답은 숨김, 경로는 줄임, 일치율', async () => {
@@ -400,9 +400,9 @@ describe('CLI · 첫 화면 · 기준값', () => {
   it('§4.4 작을 때: 적힘 < 10 → 반복 전체, 그것도 < 10 → "기억이 된 것 a, 다시 나온 것 b"', () => {
     const base = latestRecurrence() as NonNullable<ReturnType<typeof latestRecurrence>>;
     const withC = (written: number, total: number) => ({ ...base, per30d: { ...base.per30d, written, total } });
-    expect(recurrenceLine(withC(16, 20))).toContain('적혀 있는데도 또 말함 약 16번');
+    expect(recurrenceLine(withC(16, 20))).toContain('이미 적혀 있는데 또 말한 것 약 16번');
     expect(recurrenceLine(withC(6, 12))).toContain('같은 말 다시 하기 약 12번');
-    expect(recurrenceLine(withC(2, 4))).toMatch(/기억이 된 것 약 [\d.]+, 다시 나온 것 약 4/);
+    expect(recurrenceLine(withC(2, 4))).toMatch(/기억으로 남은 것 약 [\d.]+, 다시 말한 것 약 4/);
     expect(recurrenceLine(null)).toContain('아직 재지 않음');
   });
 

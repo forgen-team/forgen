@@ -202,7 +202,7 @@ export async function runRecurrence(opts: RecurrenceOptions = {}): Promise<Recur
   const windowSample = limit && windowAll.length > limit ? [...windowAll].sort(byOrder).slice(0, limit) : windowAll;
   const frac = windowAll.length ? windowSample.length / windowAll.length : 1;
   const lookSample = frac < 1 ? [...lookAll].sort(byOrder).slice(0, Math.round(lookAll.length * frac)) : lookAll;
-  if (limit && frac < 1) notes.push(`표본 ${windowSample.length}/${windowAll.length}개(시드 고정)로 잰 근사 — 앞선 교정 목록도 같은 비율로 줄어 "적히지 않은 채 반복"은 하한`);
+  if (limit && frac < 1) notes.push(`요청 ${windowAll.length}개 중 ${windowSample.length}개만 뽑아 잰 어림값이다(매번 같은 것을 뽑음). 앞선 교정도 같은 비율로 줄어 "어디에도 안 적혀 또 말함"은 실제보다 적게 나온다`);
   const per30dPrompts = (windowAll.length / days) * 30;
 
   // 2. 기억
@@ -286,7 +286,7 @@ export async function runRecurrence(opts: RecurrenceOptions = {}): Promise<Recur
       const text = e.summary.slice(0, 300);
       earlierPool.push({ key: `evidence:${e.evidence_id}`, session: e.session_id, ts: e.timestamp, text, grams: bigrams(text), source: 'forgen-evidence' });
     }
-  } catch { notes.push('forgen 교정 근거(me/behavior)를 읽지 못해 앞선 교정 목록이 대화 기록 재생분뿐'); }
+  } catch { notes.push('forgen 에 저장된 교정 기록을 읽지 못해, 앞선 교정은 대화 기록에서 찾은 것만 썼다'); }
   earlierPool.sort((a, b) => (a.key < b.key ? -1 : 1));
 
   // 5. 후보 고르기 → 쌍 판정
@@ -419,21 +419,21 @@ export async function runRecurrence(opts: RecurrenceOptions = {}): Promise<Recur
   const pairUnjudged = [...pairVerdicts.values()].filter((x) => x === null).length;
   if (judge.stats.stopped || unjudged > windowSample.length * MAX_UNJUDGED_RATIO || pairUnjudged > pairs.length * MAX_UNJUDGED_RATIO) {
     status = 'incomplete';
-    statusNote = `판정 불완전 — 후보 ${windowSample.length}개 중 ${unjudged}개, 쌍 ${pairs.length}개 중 ${pairUnjudged}개를 판정하지 못함${judge.stats.stopped ? ` (${judge.stats.stopped})` : judge.stats.lastError ? ` (${judge.stats.lastError})` : ''}. 다시 돌리면 캐시 뒤 나머지만 묻는다`;
+    statusNote = `모델이 일부를 판정하지 못함 — 요청 ${windowSample.length}개 중 ${unjudged}개, 비교 ${pairs.length}개 중 ${pairUnjudged}개${judge.stats.stopped ? ` (${judge.stats.stopped})` : judge.stats.lastError ? ` (${judge.stats.lastError})` : ''}. 다시 돌리면 이미 판정한 것은 다시 묻지 않고 나머지만 묻는다`;
   } else if (windowCorr.length < MIN_CORRECTIONS || corr30 < MIN_CORRECTIONS_30D) {
     status = 'insufficient';
-    statusNote = `판정 불가 — 교정 ${windowCorr.length}개(하한 ${MIN_CORRECTIONS}) · 30일 환산 ${corr30}건(하한 ${MIN_CORRECTIONS_30D}). 숫자는 크기 참고용, 기간을 늘려 다시 잰다(최대 2배)`;
+    statusNote = `교정이 ${windowCorr.length}개뿐이라(믿을 만하려면 ${MIN_CORRECTIONS}개 이상) 숫자는 크기만 참고하세요. 기간을 늘리거나(--since) 표본을 빼고(--limit 없이) 다시 재면 정확해진다`;
   }
-  const pool = `forgen 룰 ${byKind['forgen-rule'] ?? 0} · 메모 주제 ${byKind['memory-topic'] ?? 0} · 메모 색인 줄 ${byKind['memory-index'] ?? 0} · 지침 줄 ${byKind['host-md'] ?? 0}`;
-  notes.push(`기억 풀: ${pool} — 풀(forgen 룰 수 등)이 다르면 같은 대화 기록이라도 숫자가 다르다`);
+  const pool = `forgen 룰 ${byKind['forgen-rule'] ?? 0} · 메모 파일 ${byKind['memory-topic'] ?? 0} · MEMORY.md 줄 ${byKind['memory-index'] ?? 0} · CLAUDE.md 등 지침 줄 ${byKind['host-md'] ?? 0}`;
+  notes.push(`비교한 기억: ${pool} — 기억이 바뀌면(룰을 지우거나 더하면) 같은 대화 기록이라도 숫자가 달라진다`);
   const ts = windowCorr.filter((p) => v(p)?.task_specific).length;
-  if (ts) notes.push(`이 작업에만 해당하는 교정 ${ts}개는 쌍 판정에 보내지 않았다(기억감이 아님, 속도)`);
-  if (unknown) notes.push(`판정자가 "모름"이라 한 쌍 ${unknown}개는 세지 않았다(forgen audit review 로 검수)`);
-  if (unknownTime) notes.push(`시점을 모르는 기억 ${unknownTime}개는 "적혀 있던 것"으로 세지 않았다(보수적, §2.2)`);
-  if (loadedVia.replay) notes.push(`"실렸는가" ${loadedVia.replay}건은 세션별 렌더 기록이 없어 그 세션 시작 시각의 룰로 다시 렌더해 추정(그 뒤 보관된 룰·바뀐 강도는 반영 못 함)`);
-  notes.push('호스트 기억(CLAUDE.md·메모 색인)이 그 세션에 실렸는지는 지금 파일 구성으로 판정한다');
-  if (counts.tier2Missed) notes.push(`2층 미발동 ${counts.tier2Missed}건 — 그 룰은 다음 세션부터 1층으로 자동 복귀한다(마지막 재발에서 90일 재발 0 이면 자격 게이트를 다시 본다). Q11: 중요 지침 누락으로 센다`);
-  notes.push('한계(2층·누락): "2층 미발동"은 교정이 나온 경우만 잡는다. 필요한 순간에 실리지 않았는데 사용자가 교정하지 않았거나, 실렸는데 모델이 무시하고 교정이 없었던 경우는 이 재생으로 알 수 없다');
+  if (ts) notes.push(`그 작업에만 해당하는 교정 ${ts}개는 기억과 비교하지 않았다(기억으로 남길 것이 아님)`);
+  if (unknown) notes.push(`모델이 "모르겠다"고 한 비교 ${unknown}개는 세지 않았다(직접 확인: forgen audit review)`);
+  if (unknownTime) notes.push(`언제 적혔는지 모르는 기억 ${unknownTime}개는 "이미 적혀 있던 것"으로 세지 않았다(적게 세는 쪽)`);
+  if (loadedVia.replay) notes.push(`그 세션에 forgen 룰이 실렸는지 ${loadedVia.replay}건은 기록이 없어, 그 세션 시작 때 있던 룰로 다시 만들어 보고 추정했다(그 뒤 지운 룰·바뀐 강도는 모름)`);
+  notes.push('CLAUDE.md·MEMORY.md 가 그 세션에 실렸는지는 지금 파일 구성으로 판단한다');
+  if (counts.tier2Missed) notes.push(`상황 맞춤 룰이 필요한 순간에 안 들어와 다시 말한 일 ${counts.tier2Missed}번 — 그 룰은 다음 세션부터 세션마다 실린다(90일 동안 다시 안 나오면 상황 맞춤으로 되돌릴지 다시 본다)`);
+  notes.push('한계: 다시 교정한 경우만 센다. 룰이 안 들어왔거나 무시됐는데 내가 다시 말하지 않고 넘어간 경우는 대화 기록으로 알 수 없다');
   // 2주 단위 추적(두 층 도입 뒤 N4): 구간마다 판정한 발화 수와 갈래
   const biweekly: Biweekly[] = [];
   for (let a = since.getTime(); a < until.getTime(); a += 14 * DAY) {
@@ -510,20 +510,21 @@ export function latestRecurrence(): RecurrenceResult | null {
  * 아니면 반복 교정 전체를, 그것도 10 미만이면 "교정 N번 중 기억이 된 것 a, 다시 나온 것 b".
  */
 export function recurrenceLine(r: RecurrenceResult | null): string {
-  if (!r) return '다시 말한 교정: 아직 재지 않음 — `forgen audit recurrence` 로 대화 기록을 재생한다(모델 판정, 로컬 claude CLI)';
-  if (r.status === 'model-off') return '다시 말한 교정: 모델 판정 꺼짐';
-  if (r.status === 'no-data') return `다시 말한 교정: ${r.statusNote}`;
+  if (!r) return '같은 교정을 다시 한 횟수: 아직 재지 않음 — forgen audit recurrence 로 지난 대화 기록을 읽어 잰다(내 컴퓨터의 claude CLI 로 판정)';
+  if (r.status === 'model-off') return '같은 교정을 다시 한 횟수: 모델을 끄고 재서 세지 않음';
+  if (r.status === 'no-data') return `같은 교정을 다시 한 횟수: ${r.statusNote}`;
   const c = r.per30d;
   const f = (x: number) => (x >= 10 ? String(Math.round(x)) : String(r1(x)));
-  const tag = r.status === 'ok' ? '' : r.status === 'insufficient' ? ' [판정 불가: 표본 하한 미달 — 크기 참고]' : ' [판정 불완전]';
-  const sample = `${r.prompts.limit ? ` · 표본 ${r.prompts.judged}/${r.prompts.window}` : ''} · 기억 풀 forgen 룰 ${r.memory.byKind['forgen-rule'] ?? 0}개 기준(풀이 다르면 숫자가 다름)`;
-  const head = `지난 30일(환산) 교정 약 ${f(r.corrections.per30d)}번`;
+  const tag = r.status === 'ok' ? '' : r.status === 'insufficient' ? ' [교정이 적어 크기만 참고]' : ' [일부 판정 못 함]';
+  const sample = r.prompts.limit ? ` · 요청 ${r.prompts.window}개 중 ${r.prompts.judged}개만 뽑아 잼` : '';
+  const pct = (x: number) => `${Math.round(x / 10 * 10) / 10}%`;
+  const head = `지난 30일 교정 약 ${f(r.corrections.per30d)}번`;
   if (c.written >= MIN_CORRECTIONS_30D) {
-    return `${head}, 그중 적혀 있는데도 또 말함 약 ${f(c.written)}번 (실렸는데 무시 ${f(c.ignored)} · 적혀는 있는데 안 실림 ${f(c.notLoaded)}${c.tier2Missed ? `, 그중 2층 미발동 ${f(c.tier2Missed)}` : ''}) · 적히지 않은 채 반복 약 ${f(c.unwrittenRepeat)}${c.deletedRepeat ? ` · 지운 뒤 다시 말함 ${f(c.deletedRepeat)}` : ''} — 프롬프트 1,000개당 반복 ${r.per1000.total}${sample}${tag}`;
+    return `${head}, 그중 이미 적혀 있는데 또 말한 것 약 ${f(c.written)}번 (세션에 실렸는데도 ${f(c.ignored)} · 적혀 있지만 그 세션에 안 실려서 ${f(c.notLoaded)}${c.tier2Missed ? `, 그중 상황 맞춤 룰이 안 들어와서 ${f(c.tier2Missed)}` : ''}) · 어디에도 안 적혀 또 말한 것 약 ${f(c.unwrittenRepeat)}${c.deletedRepeat ? ` · 지운 기억을 다시 말한 것 ${f(c.deletedRepeat)}` : ''} — 내 요청의 ${pct(r.per1000.total)}가 같은 말 다시 하기${sample}${tag}`;
   }
   if (c.total >= MIN_CORRECTIONS_30D) {
-    return `${head}, 그중 같은 말 다시 하기 약 ${f(c.total)}번 (적혀 있던 것 ${f(c.written)} · 적히지 않은 채 반복 ${f(c.unwrittenRepeat)}${c.deletedRepeat ? ` · 지운 뒤 ${f(c.deletedRepeat)}` : ''}) — 프롬프트 1,000개당 ${r.per1000.total}${sample}${tag}`;
+    return `${head}, 그중 같은 말 다시 하기 약 ${f(c.total)}번 (이미 적혀 있던 것 ${f(c.written)} · 어디에도 안 적힌 것 ${f(c.unwrittenRepeat)}${c.deletedRepeat ? ` · 지운 기억 ${f(c.deletedRepeat)}` : ''}) — 내 요청의 ${pct(r.per1000.total)}${sample}${tag}`;
   }
   const became = r.corrections.total ? r1((r.corrections.becameMemory / r.corrections.total) * r.corrections.per30d) : 0;
-  return `${head} 중 기억이 된 것 약 ${f(became)}, 다시 나온 것 약 ${f(c.total)} — 다시 말하는 일이 적다(기억이 먹히고 있다는 결과)${sample}${tag}`;
+  return `${head} 중 그 뒤 기억으로 남은 것 약 ${f(became)}, 다시 말한 것 약 ${f(c.total)} — 같은 말을 다시 하는 일이 적다(기억이 먹히고 있음)${sample}${tag}`;
 }
