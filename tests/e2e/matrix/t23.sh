@@ -25,8 +25,11 @@ B1=$(blk g6b "$HOME"); echo "0.9.0 block chars=${#B1}"
 ok "compact-block-smaller" '[ ${#B1} -lt ${#B} ]'
 ok "compact-no-category-prefix" '[ "$(echo "$B1" | grep -c "\[workflow|default")" = 0 ]'
 # 두 층 색인: 활성 룰 하나를 자격 통과로 적는다(대화 기록이 없는 컨테이너라 재생 대신 직접) + applies_when 선택 필드
-R=$(for f in ~/.forgen/me/rules/*.json; do jq -e 'select(.status=="active" and .scope=="me" and .strength=="default" and ((.projects // [])|length)==0 and .scope_state==null and .host_copy==null)' $f >/dev/null 2>&1 && echo $f; done | head -1); RID=$(jq -r .rule_id $R); echo "rule $RID"
-jq '.created_at="2026-01-01T00:00:00.000Z" | .applies_when={commands:["zzqtool deploy"],words:["zzqtool","deploy","canary"]}' $R > /tmp/r.json && cp /tmp/r.json $R
+# 0.9.0 안전 룰(enforce_via·Must Not·파괴/비밀 패턴)은 어떤 경로로도 2층에 가지 않으므로, 실데이터 룰을 고르지 않고
+# 안전 룰이 아닌 합성 룰을 하나 만든다(기존 룰 하나를 틀로 복사해 강제·범위 필드를 지움).
+T=$(ls ~/.forgen/me/rules/*.json | head -1); RID=00000000-0000-4000-8000-00000000g6t2; RID=${RID/g6t2/0623}; R=~/.forgen/me/rules/$RID.json
+jq --arg id "$RID" 'del(.enforce_via,.enforce_mode,.projects,.scope_state,.host_copy,.applies_when) | .rule_id=$id | .render_key="g6.tier2.zzq" | .status="active" | .scope="me" | .strength="default" | .source="onboarding" | .category="workflow" | .trigger="zzqtool 배포" | .policy="zzqtool 로 내보낼 때는 카나리 단계부터 확인하고 넘어간다" | .evidence_refs=[] | .created_at="2026-01-01T00:00:00.000Z" | .updated_at="2026-01-01T00:00:00.000Z" | .applies_when={commands:["zzqtool deploy"],words:["zzqtool","deploy","canary"]}' $T > /tmp/r.json && cp /tmp/r.json $R; echo "rule $RID"
+A0=$(act)
 mkdir -p ~/.forgen/state
 jq -n --arg id "$RID" '{version:1,generatedAt:"2026-11-26T00:00:00Z",params:{k:3,turns:3,minFireRate:0.8,maxFreq:0.05},rules:{($id):{qualified:true,reason:"fired",words:["zzqtool","deploy","canary"],topics:["zzqtool"],contexts:1,fired:1}},recur:{}}' > ~/.forgen/state/tier2-index.json
 B2=$(blk g6c "$HOME"); ok "tier2-index-line" '[ "$(echo "$B2" | grep -c "## Situational Rules")" = 1 ]'
