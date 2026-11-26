@@ -286,12 +286,19 @@ describe('전부 적용 → 측정 → 전부 되돌리기 (§9.1 0.9.0 확인 �
     expect(fs.existsSync(lock)).toBe(false);
     const a = await quiet(() => handleFix(['--kind', 'plugin-off', '--apply', ...ARGS()]));
     expect(a.out).toMatch(/처방 [1-9]\d*개 적용/);
+    // 0.9.2: 끈 forgen 스킬은 기록된다(설치·업그레이드가 다시 깔지 않게) — 되돌리면 기록도 지워진다
+    const offPath = path.join(FX.forgenHome, 'state', 'disabled-skills.json');
+    const off = JSON.parse(fs.readFileSync(offPath, 'utf-8'));
+    expect(off.version).toBe(1);
+    expect(Object.keys(off.skills)).toEqual(['claude:forgen-unused']);
+    expect(off.skills['claude:forgen-unused'].fixId).toMatch(/^plugin-off-[0-9a-f]{8}$/);
     // 죽은 pid · 31초 전 잠금 → 회수하고 진행
     fs.writeFileSync(lock, JSON.stringify({ pid: 2 ** 22 + 12345, ts: Date.now() - 31_000, token: 'x' }));
     const old = new Date(Date.now() - 31_000);
     fs.utimesSync(lock, old, old);
     const c = await quiet(() => handleFix(['--undo', 'all']));
     expect(c.out).not.toContain('다른 forgen fix');
+    expect(JSON.parse(fs.readFileSync(offPath, 'utf-8')).skills).toEqual({});
     expect(fs.existsSync(lock)).toBe(false);
     process.exitCode = 0;
   }, 60_000);

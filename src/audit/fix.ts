@@ -14,6 +14,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { createHash } from 'node:crypto';
 import { FORGEN_HOME, ME_RULES } from '../core/paths.js';
+import { forgetDisabledSkillsByFix, recordDisabledSkill } from '../host/disabled-skills.js';
 import { applyRuleProjects, judgeRuleScopes, type ContentVerdict } from '../engine/rule-project-cli.js';
 import { isHomeDir } from '../way/io.js';
 import { withFileLockSync } from '../hooks/shared/file-lock.js';
@@ -753,7 +754,7 @@ function planPluginOff(env: AuditEnv, now: Date): Array<Omit<Fix, 'id' | 'marks'
       const tokens = estimateTokens(`- ${frontmatterField(t, 'name') ?? n}: ${frontmatterField(t, 'description') ?? ''}`);
       out.push({
         kind: 'plugin-off', identity: `skill:${n}`, title: `스킬 ${n} → 백업 폴더로 옮겨 끔. 지난 ${UNUSED_DAYS}일 한 번도 안 불렀기 때문 — 안 하면 설명이 세션마다 약 ${tokens}토큰 실린다`,
-        why: `지난 ${UNUSED_DAYS}일 대화 기록에서 한 번도 부르지 않은 forgen 스킬이다. 백업 폴더로 옮겨 끈다(되돌리기 한 줄). forgen 을 다시 설치하면 돌아온다.`,
+        why: `지난 ${UNUSED_DAYS}일 대화 기록에서 한 번도 부르지 않은 forgen 스킬이다. 백업 폴더로 옮겨 끈다(되돌리기 한 줄). 끈 것은 기록해 두어 forgen 을 업그레이드·다시 설치해도 꺼진 채로 남는다(다시 켜기: forgen fix --undo).`,
         evidence: [path.join(skillsDir, n)], ops: [{ op: 'move-away', path: path.join(skillsDir, n) }], tokens,
       });
     }
@@ -847,6 +848,11 @@ export function stateHash(p: string): string {
   };
   walk(p, '');
   return `dir:${h.digest('hex')}`;
+}
+
+/** `<…>/skills/forgen-*` — forgen 이 깐 스킬 폴더(끈 기록 대상). */
+function isForgenSkillDir(p: string): boolean {
+  return path.basename(path.dirname(p)) === 'skills' && path.basename(p).startsWith('forgen-');
 }
 
 interface BackupEntry { path: string; before: string; after: string; existed: boolean; isDir: boolean; slot: string }
@@ -948,6 +954,10 @@ export function applyFix(f: Fix, backupRoot: string, now = new Date()): { backup
   const rec: BackupRecord = { schema: 'forgen-fix-backup/1', id: f.id, kind: f.kind, at: nowIso, title: f.title, entries, marks: f.marks.length };
   write600(path.join(dir, 'backup.json'), `${JSON.stringify(rec, null, 2)}\n`);
   appendLedger({ at: nowIso, event: 'apply', id: f.id, kind: f.kind, backup: dir, equivalents: f.equivalents, ...(f.scopedTo ? { scopedTo: f.scopedTo } : {}), ...(f.addsTo ? { addsTo: f.addsTo } : {}) });
+  // 0.9.2: 끈 forgen 스킬은 기록해 설치·업그레이드가 다시 깔지 않게 한다(Claude 만 — Codex 사본은 판정 근거가 없어 끄지 않음)
+  for (const o of f.ops) {
+    if (f.kind === 'plugin-off' && o.op === 'move-away' && isForgenSkillDir(o.path)) recordDisabledSkill(FORGEN_HOME, 'claude', path.basename(o.path), f.id, nowIso);
+  }
   return { backup: dir };
 }
 
@@ -1021,6 +1031,7 @@ export function undoFix(id: string, now = new Date()): { restored: number } | { 
     if (kept.length) atomicWrite(dp, `${kept.join('\n')}\n`, 0o600); else fs.rmSync(dp, { force: true });
   }
   appendLedger({ at: now.toISOString(), event: 'undo', id: rec.id, kind: rec.kind, backup: a.backup });
+  if (rec.kind === 'plugin-off') forgetDisabledSkillsByFix(FORGEN_HOME, rec.id);
   return { restored: rec.entries.length };
 }
 

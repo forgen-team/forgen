@@ -16,7 +16,7 @@
  *   - Claude 설치는 dist/host/install-claude.js 의 planClaudeInstall 을 호출 (`forgen install claude` 와 동일 경로)
  */
 
-import { readdirSync, readFileSync, writeFileSync, mkdirSync, existsSync, symlinkSync, cpSync, lstatSync, statSync, copyFileSync, renameSync, readlinkSync, unlinkSync, rmdirSync } from 'node:fs';
+import { readdirSync, readFileSync, writeFileSync, mkdirSync, existsSync, symlinkSync, cpSync, lstatSync, statSync, copyFileSync, renameSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { homedir, platform } from 'node:os';
 import { execFileSync } from 'node:child_process';
@@ -174,111 +174,25 @@ function installStarterPack() {
 }
 
 /**
- * forgen 이 설치한 dev-guide 스킬만 정리한다 (src/host/managed-marker.ts 의 removeOwnedDevGuideSkills 와 같은 규칙).
- *
- * 이전엔 `forgen-*` 디렉토리를 이름만 보고 재귀 삭제해, 사용자가 만든 `forgen-notes` / `forgen-react-mine`
- * 같은 스킬이 npm install 때마다 사라졌다. 소유 근거: (a) 패키지가 현재 제공하는 이름, 또는
- * (b) SKILL.md 가 `…/assets/dev-guide/…` 를 가리키는 심링크(이전 버전이 설치한 것).
- * SKILL.md 한 파일과 빈 디렉토리만 지운다.
+ * dev-guide 스킬 → ~/.codex/skills/forgen-<stack>-<skill>/SKILL.md
+ * 정리·설치 규칙은 dist/host/managed-marker.js 의 installDevGuideSkillSet 하나로 — Claude 설치(planClaudeInstall)와 같은 함수다.
+ * 사용자가 `forgen fix` 로 끈 스킬(<FORGEN_HOME>/state/disabled-skills.json 의 codex:<이름>)은 깔지 않는다(0.9.2).
  */
-function removeOwnedDevGuideSkills(skillsDir, devGuideRoot) {
-  const known = new Set();
-  try {
-    for (const tier of readdirSync(devGuideRoot)) {
-      const base = join(devGuideRoot, tier, 'skills');
-      if (!existsSync(base)) continue;
-      for (const stack of readdirSync(base)) {
-        const stackDir = join(base, stack);
-        if (!statSync(stackDir).isDirectory()) continue;
-        for (const skill of readdirSync(stackDir)) {
-          if (existsSync(join(stackDir, skill, 'SKILL.md'))) known.add(`forgen-${stack}-${skill}`);
-        }
-      }
-    }
-  } catch { /* 자산 없음 */ }
-
-  let removed = 0;
-  let entries = [];
-  try { entries = readdirSync(skillsDir); } catch { return 0; }
-  for (const name of entries) {
-    if (!name.startsWith('forgen-')) continue;
-    const dir = join(skillsDir, name);
-    const file = join(dir, 'SKILL.md');
-    let owned = known.has(name);
-    if (!owned) {
-      try { owned = /[\\/]assets[\\/]dev-guide[\\/]/.test(readlinkSync(file)); } catch { owned = false; }
-    }
-    if (!owned) continue;
-    try {
-      if (lstatSync(dir).isSymbolicLink()) continue;
-      lstatSync(file); // 없으면 throw
-      unlinkSync(file);
-      try { if (readdirSync(dir).length === 0) rmdirSync(dir); } catch { /* ignore */ }
-      removed++;
-    } catch { /* best-effort */ }
-  }
-  return removed;
-}
-
-/**
- * dev-guide 스킬 한 개 설치 (src/host/managed-marker.ts installSkillFile 과 같은 규칙).
- * 이미 있는 것은 덮어쓰지 않는다: 심링크된 스킬 디렉토리는 따라 들어가지 않고, 남아 있는 SKILL.md 는 건드리지 않는다
- * (rmSync/cpSync 는 심링크를 관통해 사용자 dotfiles 의 파일을 지우거나 덮어쓴다). 반환: 설치했는가.
- */
-function installSkillFile(src, skillsDir, name) {
-  const dir = join(skillsDir, name);
-  const file = join(dir, 'SKILL.md');
-  try {
-    try { if (lstatSync(dir).isSymbolicLink()) return false; } catch { /* 없음 */ }
-    mkdirSync(dir, { recursive: true });
-    try { lstatSync(file); return false; } catch { /* 없음 — 설치 */ }
-    try { symlinkSync(src, file, 'file'); } catch { copyFileSync(src, file); }
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * v0.4.9: dev-guide 14 skills → ~/.codex/skills/forgen-<stack>-<skill>/SKILL.md
- * forgen 자체 commands(forgen-compound 등) 와 prefix 겹치지 않도록
- * stale 정리는 removeOwnedDevGuideSkills (forgen 소유만).
- */
-
-function installDevGuideSkillsToCodex(home) {
+async function installDevGuideSkillsToCodex(home) {
   const devGuideRoot = join(PKG_ROOT, 'assets', 'dev-guide');
   if (!existsSync(devGuideRoot)) {
     console.log('[forgen] dev-guide assets not found — codex skill install skipped');
     return 0;
   }
-
+  const mod = await import(join(PKG_ROOT, 'dist', 'host', 'managed-marker.js'));
+  const off = await import(join(PKG_ROOT, 'dist', 'host', 'disabled-skills.js'));
   const codexSkillsDir = join(home, '.codex', 'skills');
-  mkdirSync(codexSkillsDir, { recursive: true });
-
-  // 1. forgen 이 설치한 dev-guide 스킬 정리 (forgen 자체 commands 와 사용자 스킬은 보존)
-  const removed = removeOwnedDevGuideSkills(codexSkillsDir, devGuideRoot);
-
-  // 2. assets/dev-guide/{tier}/skills/{stack}/{skill}/SKILL.md 수집
-  let installed = 0;
-  for (const tier of readdirSync(devGuideRoot)) {
-    const sideSkillsDir = join(devGuideRoot, tier, 'skills');
-    if (!existsSync(sideSkillsDir)) continue;
-    for (const stack of readdirSync(sideSkillsDir)) {
-      const stackDir = join(sideSkillsDir, stack);
-      if (!statSync(stackDir).isDirectory()) continue;
-      for (const skill of readdirSync(stackDir)) {
-        const skillFile = join(stackDir, skill, 'SKILL.md');
-        if (!existsSync(skillFile)) continue;
-
-        // 이미 있는 사용자 것은 덮어쓰지 않는다
-        if (installSkillFile(skillFile, codexSkillsDir, `forgen-${stack}-${skill}`)) installed++;
-      }
-    }
-  }
-
+  const r = mod.installDevGuideSkillSet({ pkgRoot: PKG_ROOT, skillsDir: codexSkillsDir, host: 'codex', forgenHome: process.env.FORGEN_HOME || join(home, '.forgen') });
   fixOwnership(codexSkillsDir);
-  console.log(`[forgen] codex dev-guide skills: ${installed} installed${removed > 0 ? ` (${removed} stale removed)` : ''}`);
-  return installed;
+  console.log(`[forgen] codex dev-guide skills: ${r.installed} installed${r.removed > 0 ? ` (${r.removed} stale removed)` : ''}`);
+  const notice = off.keptOffNotice(r.keptOff);
+  if (notice) console.log(`[forgen] codex: ${notice}`);
+  return r.installed;
 }
 
 // ── Main ──
@@ -396,7 +310,7 @@ async function main() {
   const starterInstalled = attempt('starter pack', installStarterPack) ?? 0;
 
   // ── dev-guide 스킬 (codex) ──
-  attempt('codex dev-guide skills', () => installDevGuideSkillsToCodex(HOME));
+  try { await installDevGuideSkillsToCodex(HOME); } catch (err) { problems.push(`codex dev-guide skills: ${err?.message ?? err}`); }
 
   // sudo 실행 시 파일 소유권을 실제 유저로 변경
   fixOwnership(join(HOME, '.claude'), join(HOME, '.forgen'), join(HOME, '.claude.json'));
@@ -426,6 +340,12 @@ async function main() {
       starterInstalled > 0 ? `${starterInstalled} starter solutions` : null,
     ].filter(Boolean);
     console.log(`[forgen] Installed: ${parts.join(', ')} → ${HOME}`);
+    // 0.9.2: 사용자가 forgen fix 로 끈 스킬은 업그레이드에서도 그대로 둔다
+    try {
+      const off = await import(join(PKG_ROOT, 'dist', 'host', 'disabled-skills.js'));
+      const notice = off.keptOffNotice(claude.skillsKeptOff ?? []);
+      if (notice) console.log(`[forgen] ${notice}`);
+    } catch { /* 알림만 */ }
     if (claude.statusLine === 'custom') {
       console.log('[forgen] statusLine is set to another command (e.g. claude-hud) — left untouched.');
       console.log('[forgen]   To switch to forgen (backup kept in statusLine_backup): forgen statusline install --force');

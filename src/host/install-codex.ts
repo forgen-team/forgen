@@ -19,7 +19,8 @@ import * as path from 'node:path';
 import { generateHooksJson } from '../hooks/hooks-generator.js';
 import { SHIM_COMMAND_RE, codexHookShimPath, shimSupported, toShimCommand, writeCodexHookShim } from './codex-hook-shim.js';
 import { HOOK_REGISTRY } from '../hooks/hook-registry.js';
-import { hasManagedSkillMarker, installSkillFile, isManagedAgentToml, removeOwnedDevGuideSkills } from './managed-marker.js';
+import { forgenHomeFor } from './disabled-skills.js';
+import { hasManagedSkillMarker, installDevGuideSkillSet, isManagedAgentToml } from './managed-marker.js';
 
 export interface CodexInstallOptions {
   /** forgen package root (build 산출물 dist/ 의 부모). 기본: 호출 시 process.cwd(). */
@@ -80,6 +81,8 @@ export interface CodexInstallResult {
   devGuideSkillsPath: string;
   devGuideSkillsInstalled: number;
   devGuideSkillsRemoved: number;
+  /** 0.9.2: codex: 로 끈 기록이 있어 깔지 않은 dev-guide 스킬 */
+  devGuideSkillsKeptOff: Array<{ name: string; fixId: string }>;
   /** ADR-014 D2: ~/.codex/agents/ch-*.toml 커스텀 에이전트 설치 결과 */
   agentsPath: string;
   agentsInstalled: number;
@@ -727,6 +730,7 @@ export function planCodexInstall(opts: CodexInstallOptions): CodexInstallResult 
     devGuideSkillsPath: devGuideResult.devGuideSkillsPath,
     devGuideSkillsInstalled: devGuideResult.devGuideSkillsInstalled,
     devGuideSkillsRemoved: devGuideResult.devGuideSkillsRemoved,
+    devGuideSkillsKeptOff: devGuideResult.devGuideSkillsKeptOff,
     agentsPath: codexAgents.agentsPath,
     agentsInstalled: codexAgents.installed,
     agentsRemoved: codexAgents.removed,
@@ -1058,49 +1062,13 @@ interface DevGuideSkillsOutcome {
   devGuideSkillsPath: string;
   devGuideSkillsInstalled: number;
   devGuideSkillsRemoved: number;
+  devGuideSkillsKeptOff: Array<{ name: string; fixId: string }>;
 }
 
 function installDevGuideSkillsToCodex(opts: { pkgRoot: string; codexHome: string; dryRun: boolean }): DevGuideSkillsOutcome {
-  const devGuideRoot = path.join(opts.pkgRoot, 'assets', 'dev-guide');
-  const codexSkillsDir = path.join(opts.codexHome, 'skills');
-
-  if (!fs.existsSync(devGuideRoot)) {
-    return { devGuideSkillsPath: codexSkillsDir, devGuideSkillsInstalled: 0, devGuideSkillsRemoved: 0 };
-  }
-
-  // Collect entries: assets/dev-guide/{tier}/skills/{stack}/{skill}/SKILL.md
-  const entries: Array<{ name: string; src: string }> = [];
-  for (const tier of fs.readdirSync(devGuideRoot)) {
-    const skillsBase = path.join(devGuideRoot, tier, 'skills');
-    if (!fs.existsSync(skillsBase)) continue;
-    for (const stack of fs.readdirSync(skillsBase)) {
-      const stackDir = path.join(skillsBase, stack);
-      if (!fs.statSync(stackDir).isDirectory()) continue;
-      for (const skill of fs.readdirSync(stackDir)) {
-        const skillMd = path.join(stackDir, skill, 'SKILL.md');
-        if (fs.existsSync(skillMd)) {
-          entries.push({ name: `forgen-${stack}-${skill}`, src: skillMd });
-        }
-      }
-    }
-  }
-
-  if (opts.dryRun) {
-    return { devGuideSkillsPath: codexSkillsDir, devGuideSkillsInstalled: entries.length, devGuideSkillsRemoved: 0 };
-  }
-
-  fs.mkdirSync(codexSkillsDir, { recursive: true });
-
-  // stale 정리 — forgen 이 설치한 dev-guide 스킬만 (사용자가 만든 `forgen-<stack>-*` 스킬은 보존, ADR-016 0.5.9)
-  const removed = removeOwnedDevGuideSkills(codexSkillsDir, opts.pkgRoot);
-
-  // 설치 — 이미 있는 것(사용자 심링크 디렉토리, 남아 있는 SKILL.md)은 덮어쓰지 않는다.
-  let installed = 0;
-  for (const { name, src } of entries) {
-    if (installSkillFile(src, codexSkillsDir, name)) installed++;
-  }
-
-  return { devGuideSkillsPath: codexSkillsDir, devGuideSkillsInstalled: installed, devGuideSkillsRemoved: removed };
+  // 공용 설치(installDevGuideSkillSet)를 지난다 — codex: 로 끈 기록이 있는 스킬은 깔지 않는다(0.9.2).
+  const r = installDevGuideSkillSet({ pkgRoot: opts.pkgRoot, skillsDir: path.join(opts.codexHome, 'skills'), host: 'codex', forgenHome: forgenHomeFor(os.homedir()), dryRun: opts.dryRun });
+  return { devGuideSkillsPath: r.skillsPath, devGuideSkillsInstalled: r.installed, devGuideSkillsRemoved: r.removed, devGuideSkillsKeptOff: r.keptOff };
 }
 
 // ── P3-3: Codex skills install ────────────────────────────────────────

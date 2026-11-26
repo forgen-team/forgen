@@ -15,6 +15,7 @@ import * as path from 'node:path';
 import * as readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { detectAvailableHosts, type HostAvailability } from '../core/host-detect.js';
+import { keptOffNotice } from './disabled-skills.js';
 import { planClaudeInstall, type ClaudeInstallResult } from './install-claude.js';
 import { planCodexInstall, type CodexInstallResult } from './install-codex.js';
 import { planOpencodeInstall, type OpencodeInstallResult } from './install-opencode.js';
@@ -149,6 +150,8 @@ export function renderResult(result: OrchestratorResult, dryRun: boolean): strin
     lines.push(`    settings.json hooks: ${result.claude.hooksInjected}`);
     lines.push(`    MCP: ${result.claude.mcpAlreadyPresent ? 'already present' : (result.claude.mcpRegistered ? 'registered' : 'skipped')}`);
     lines.push(`    skills: ${result.claude.skillsInstalled ?? 0} installed → ${result.claude.skillsPath ?? ''}`);
+    const claudeOff = keptOffNotice(result.claude.skillsKeptOff ?? []);
+    if (claudeOff) lines.push(`    ${claudeOff}`);
     const verifyLine: Record<typeof result.claude.verifySkill, string> = {
       installed: 'installed → ~/.claude/skills/verify (Claude runs it right before non-docs commits)',
       'user-owned': 'skipped — you already have your own `verify` skill (kept as is)',
@@ -164,6 +167,8 @@ export function renderResult(result: OrchestratorResult, dryRun: boolean): strin
     lines.push(`    hooks.json: ${result.codex.hooksCount} forgen hooks (preserved user: ${result.codex.preservedUserHookCount})`);
     lines.push(`    MCP: ${result.codex.mcpAlreadyPresent ? 'already present' : (result.codex.mcpRegistered ? 'registered' : 'skipped')}`);
     lines.push(`    skills: ${result.codex.skillsInstalled} commands + ${result.codex.devGuideSkillsInstalled} dev-guide → ${result.codex.skillsPath}`);
+    const codexOff = keptOffNotice(result.codex.devGuideSkillsKeptOff ?? []);
+    if (codexOff) lines.push(`    ${codexOff}`);
     lines.push(`    agents: ${result.codex.agentsInstalled} ch-*.toml → ${result.codex.agentsPath}${result.codex.multiAgentEnabled ? '' : '  (⚠ config.toml 에 [features] multi_agent = true 가 없어 Codex 가 spawn 하지 못함 — 추가 권장)'}`);
     lines.push(`    AGENTS.md: ${result.codex.agentsMdPath}`);
     for (const p of result.codex.staleAgentsMdCleaned) lines.push(`    cleaned old forgen block (your other content kept): ${p}`);

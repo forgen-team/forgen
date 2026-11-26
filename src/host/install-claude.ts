@@ -19,7 +19,8 @@ import * as path from 'node:path';
 import { generateHooksJson } from '../hooks/hooks-generator.js';
 import { applyStatusLineAuto, forgenStatuslineCommand } from '../core/statusline-install.js';
 import { ensureForgenRunShim, forgenRunShimPath, isForgenRunCommand, shimSupported } from './claude-shim.js';
-import { hasManagedSkillMarker, installSkillFile, removeOwnedDevGuideSkills } from './managed-marker.js';
+import { forgenHomeFor } from './disabled-skills.js';
+import { hasManagedSkillMarker, installDevGuideSkillSet } from './managed-marker.js';
 import { refreshCronAfterUpgrade } from '../core/compound-sweep-cli.js';
 import { HOOK_REGISTRY } from '../hooks/hook-registry.js';
 import { FileLockError, withFileLockSync } from '../hooks/shared/file-lock.js';
@@ -60,6 +61,8 @@ export interface ClaudeInstallResult {
   skillsPath: string;
   skillsInstalled: number;
   skillsRemoved: number;
+  /** 사용자가 `forgen fix` 로 끈 기록이 있어 깔지 않은 dev-guide 스킬(0.9.2) */
+  skillsKeptOff: Array<{ name: string; fixId: string }>;
   verifySkill: VerifySkillStatus;
   agentsPath: string;
   agentsInstalled: number;
@@ -331,54 +334,17 @@ function registerMcpInClaudeJson(opts: { pkgRoot: string; claudeJsonPath: string
 
 // ── 5. Dev-guide skills ────────────────────────────────────────────────
 
-const FORGEN_SKILL_PREFIX = 'forgen-';
-
 interface SkillsInstallOutcome {
   skillsPath: string;
   skillsInstalled: number;
   skillsRemoved: number;
+  skillsKeptOff: Array<{ name: string; fixId: string }>;
 }
 
-function installDevGuideSkills(opts: { pkgRoot: string; skillsDir: string; dryRun: boolean }): SkillsInstallOutcome {
-  const { pkgRoot, skillsDir, dryRun } = opts;
-  const devGuideRoot = path.join(pkgRoot, 'assets', 'dev-guide');
-
-  // Collect all SKILL.md entries: assets/dev-guide/{tier}/skills/{stack}/{skill}/SKILL.md
-  const entries: Array<{ name: string; src: string }> = [];
-  if (fs.existsSync(devGuideRoot)) {
-    for (const tier of fs.readdirSync(devGuideRoot)) {
-      const skillsBase = path.join(devGuideRoot, tier, 'skills');
-      if (!fs.existsSync(skillsBase)) continue;
-      for (const stack of fs.readdirSync(skillsBase)) {
-        const stackDir = path.join(skillsBase, stack);
-        if (!fs.statSync(stackDir).isDirectory()) continue;
-        for (const skill of fs.readdirSync(stackDir)) {
-          const skillMd = path.join(stackDir, skill, 'SKILL.md');
-          if (fs.existsSync(skillMd)) {
-            entries.push({ name: `${FORGEN_SKILL_PREFIX}${stack}-${skill}`, src: skillMd });
-          }
-        }
-      }
-    }
-  }
-
-  if (dryRun) {
-    return { skillsPath: skillsDir, skillsInstalled: entries.length, skillsRemoved: 0 };
-  }
-
-  fs.mkdirSync(skillsDir, { recursive: true });
-
-  // stale 정리 — forgen 이 설치한 dev-guide 스킬만 (패키지가 제공하는 이름 / dev-guide 를 가리키는 심링크).
-  // 이전엔 `forgen-*` 디렉토리를 이름만 보고 재귀 삭제해 사용자가 만든 스킬까지 지웠다 (ADR-016 0.5.9).
-  const removed = removeOwnedDevGuideSkills(skillsDir, pkgRoot);
-
-  // 설치 — 이미 있는 것(사용자 심링크 디렉토리, 남아 있는 SKILL.md)은 덮어쓰지 않는다.
-  let installed = 0;
-  for (const { name, src } of entries) {
-    if (installSkillFile(src, skillsDir, name)) installed += 1;
-  }
-
-  return { skillsPath: skillsDir, skillsInstalled: installed, skillsRemoved: removed };
+/** 공용 설치(installDevGuideSkillSet)를 지난다 — 사용자가 `forgen fix` 로 끈 스킬은 깔지 않는다(0.9.2). */
+function installDevGuideSkills(opts: { pkgRoot: string; skillsDir: string; homeDir: string; dryRun: boolean }): SkillsInstallOutcome {
+  const r = installDevGuideSkillSet({ pkgRoot: opts.pkgRoot, skillsDir: opts.skillsDir, host: 'claude', forgenHome: forgenHomeFor(opts.homeDir), dryRun: opts.dryRun });
+  return { skillsPath: r.skillsPath, skillsInstalled: r.installed, skillsRemoved: r.removed, skillsKeptOff: r.keptOff };
 }
 
 // ── 6. verify skill (ADR-016 D3) ───────────────────────────────────────
@@ -518,8 +484,8 @@ export function planClaudeInstall(opts: ClaudeInstallOptions): ClaudeInstallResu
     ? step<McpRegisterOutcome>('~/.claude.json MCP', { registered: false, alreadyPresent: false }, () =>
       registerMcpInClaudeJson({ pkgRoot, claudeJsonPath, shimPath, dryRun }))
     : { registered: false, alreadyPresent: false };
-  const skills = step<SkillsInstallOutcome>('dev-guide skills', { skillsPath: skillsDir, skillsInstalled: 0, skillsRemoved: 0 }, () =>
-    installDevGuideSkills({ pkgRoot, skillsDir, dryRun }));
+  const skills = step<SkillsInstallOutcome>('dev-guide skills', { skillsPath: skillsDir, skillsInstalled: 0, skillsRemoved: 0, skillsKeptOff: [] }, () =>
+    installDevGuideSkills({ pkgRoot, skillsDir, homeDir, dryRun }));
   const verifySkill: VerifySkillStatus = (opts.installVerifySkill ?? true)
     ? step<VerifySkillStatus>('verify skill', 'skipped', () => installVerifySkill({ pkgRoot, skillsDir, dryRun }))
     : 'skipped';
@@ -545,6 +511,7 @@ export function planClaudeInstall(opts: ClaudeInstallOptions): ClaudeInstallResu
     skillsPath: skills.skillsPath,
     skillsInstalled: skills.skillsInstalled,
     skillsRemoved: skills.skillsRemoved,
+    skillsKeptOff: skills.skillsKeptOff,
     verifySkill,
     agentsPath: agentsDir,
     agentsInstalled: agents.installed,
