@@ -13,7 +13,7 @@ import type { Unit } from './checks.js';
 
 const KIND: Record<string, string> = { 'forgen-rule': 'forgen 룰', 'memory-topic': '메모 파일', 'memory-index': 'MEMORY.md', 'host-md': '지침 파일' };
 const REASON: Record<string, string> = {
-  scope: '다른 폴더 전용으로 적혀 있어서', 'budget-or-other': 'forgen 룰 자리가 모자라 빠져서', 'topic-only': '메모 파일 본문에만 있어(세션 시작에 안 실림)', truncated: 'MEMORY.md 상한(200줄·25KB) 뒤에 있어서',
+  scope: '다른 폴더 전용으로 적혀 있어서', 'budget-or-other': '세션 시작에 넣는 forgen 룰 분량 상한 때문에 빠져서', 'topic-only': '메모 파일 본문에만 있어(세션 시작에 안 실림)', truncated: 'MEMORY.md 상한(200줄·25KB) 뒤에 있어서',
   'other-folder': '다른 폴더 기억에 있어서', conditional: '특정 파일을 다룰 때만 실리는 룰이라', 'tier2-missed': '상황 맞춤 룰인데 그때 안 들어와서',
 };
 
@@ -36,12 +36,13 @@ export function findings(run: AuditRun): Finding[] {
   // 1. 부딪힘(모델 판정 "예")
   const conflict = (m?.conflict ?? []).filter((p) => p.verdict === 'yes').sort((a, b) => b.score - a.score)[0];
   if (conflict) {
-    const edit = [conflict.a, conflict.b].find((x) => !x.ruleId) ?? conflict.a;
+    const md = [conflict.a, conflict.b].find((x) => !x.ruleId);
+    const rule = [conflict.a, conflict.b].find((x) => x.ruleId);
     out.push({
       kind: 'conflict',
-      scene: `${where(conflict.a)} 는 ${qq(conflict.a.text)} 라고 하고 ${where(conflict.b)} 는 ${qq(conflict.b.text)} 라고 합니다${conflict.reason ? `(${maskQuote(conflict.reason, 60)})` : ''}`,
-      effect: 'AI 가 둘 중 아무거나 따르거나 오락가락합니다',
-      fix: `맞는 쪽만 남기고 ${where(edit)} 를 직접 고치세요(forgen 이 자동으로 고치지 않음)`,
+      scene: `${where(conflict.a)} ${qq(conflict.a.text)} 와 ${where(conflict.b)} ${qq(conflict.b.text)} 가 서로 맞지 않습니다${conflict.reason ? `(${maskQuote(conflict.reason, 60)})` : ''}`,
+      effect: 'AI 가 둘 중 아무거나 따르거나 낡은 쪽을 사실로 믿습니다',
+      fix: `낡은 쪽만 고치세요 — ${[md ? `파일이면 ${where(md)} 를 직접 고치고` : '', rule ? `forgen 룰이면 forgen rule suppress ${(rule.ruleId as string).slice(0, 8)} 로 끕니다` : ''].filter(Boolean).join(', ')}(forgen 이 자동으로 고치지 않음)`,
       evidence: '파일 비교(모델 판정)',
     });
   }
@@ -57,7 +58,7 @@ export function findings(run: AuditRun): Finding[] {
       effect: '같은 말을 또 해야 합니다',
       fix: rep.branch === 'ignored'
         ? '룰 문장을 더 분명하게 고치세요(forgen rule list 에서 찾아 수정)'
-        : nowLoaded ? '지금은 세션 시작에 실립니다(직접 교정은 자리 때문에 빠지지 않게 바뀜) — forgen audit recurrence 로 다시 재서 확인' : 'forgen fix --list 에서 이 기억을 다루는 처방을 보세요',
+        : nowLoaded ? '지금은 세션 시작에 실립니다(0.9.1 부터 직접 교정은 분량 상한 때문에 먼저 빠지지 않음 — 그래도 넘치면 세션 시작 블록에 빠진 수를 적음) — forgen audit recurrence 로 다시 재서 확인' : 'forgen fix --list 에서 이 기억을 다루는 처방을 보세요',
       evidence: `${rep.ts.slice(0, 10)} 내가 한 말 "${maskQuote(rep.utterance || rep.gist, 80)}"`,
     });
   }
@@ -134,11 +135,12 @@ export function shareSummary(run: AuditRun): { text: string[]; markdown: string 
   const f = r.summary.findings;
   const rec = r.summary.recurrence;
   const kinds = findings(run).map((x) => KIND_NAME[x.kind]);
+  const pct = (per1000: number) => `${Math.round(per1000) / 10}%`;
   const lines = [
-    rec.status !== 'none' && rec.per30d
-      ? `지난 30일 교정 약 ${Math.round(rec.per30d.corrections)}번 — 그중 이미 적혀 있는데 또 말한 것 약 ${Math.round(rec.per30d.written)}번, 같은 말 다시 하기 전체 약 ${Math.round(rec.per30d.total)}번`
+    rec.status !== 'none' && rec.per1000
+      ? `내 요청 중 같은 교정을 다시 한 비율 ${pct(rec.per1000.total)}${rec.ci95 ? `(오차 범위 ${pct(rec.ci95[0])}~${pct(rec.ci95[1])})` : ''} · 그중 이미 적혀 있던 것 ${pct(rec.per1000.written)}${rec.sampled ? ' · 표본으로 잰 참고값' : ''}`
       : '같은 말 다시 하기: 아직 재지 않음',
-    `세션 시작에 늘 실리는 기억 약 ${representativeTokens(r)}토큰(자주 쓰는 폴더 평균) · 폴더 ${r.folders.length}곳`,
+    `세션 시작에 늘 실리는 기억 약 ${Math.round(representativeTokens(r) / 100) * 100}토큰(자주 쓰는 폴더 평균, 백 단위)`,
     f.conflicts === 'pending' ? `같은 문장 ${f.sameSentence}묶음 · 없는 것을 가리키는 줄 ${f.stale}개 (모델 판정 꺼짐)`
       : `서로 부딪히는 지시 ${f.conflicts}쌍 · 같은 뜻 중복 ${f.dupGroups}묶음 · 다른 프로젝트 지시 섞임 ${f.mixConfirmed}개 · 같은 문장 ${f.sameSentence}묶음 · 없는 것을 가리키는 줄 ${f.stale}개`,
     `MEMORY.md 상한에 잘린 곳 ${r.summary.truncation.truncated}곳 (메모 폴더 ${r.summary.truncation.memoryDirs}곳 중)`,

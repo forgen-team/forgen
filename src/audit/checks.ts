@@ -42,6 +42,19 @@ export function isDirective(u: Pick<Unit, 'text' | 'layer' | 'memoryType'>): boo
   return DIRECTIVE_KO.test(t) || DIRECTIVE_EN.test(t) || IMPERATIVE_EN.test(head);
 }
 
+/**
+ * 0.9.1 A1 사실 진술: 지금 구성·상태를 설명하는 문장(지시가 아님). 부딪힘(낡은 사실) 검사에만 넣는다.
+ * 표 줄·제목·파일 목록 줄은 빼고, 서술 어미나 상태 낱말(제거·없음·현재·구성·사용·이다 …)이 있는 줄.
+ */
+const CLAIM_KO = /(이다|입니다|였다|었다|었습니다|됩니다|된다|되었|됐다|돼 있|되어 있|있다|없다|없음|있음|제거|삭제|폐기|중단|현재|지금은|구성|사용 중|쓰고 있|이전했|옮겼|바뀌었|대체)/;
+const CLAIM_EN = /\b(is|are|was|were|has been|have been|uses|runs on|removed|deprecated|replaced|no longer|currently)\b/i;
+export function isFactualClaim(u: Pick<Unit, 'text' | 'layer'>): boolean {
+  if (u.layer === 'forgen-rule' || u.layer === 'memory-topic') return true;
+  const t = u.text.trim();
+  if (/^\|/.test(t) || /^#{1,6}\s/.test(t) || /^(?:[-*+]\s+)?`[^`]+\.[a-z.]+`\s*[-—:]/.test(t)) return false;
+  return CLAIM_KO.test(t) || CLAIM_EN.test(t);
+}
+
 /** 중요 지침(§2.3 확정): hard·strong·직접 교정 룰. 처방이 지우거나 묶음으로 범위를 옮기지 않는다. */
 export const isImportantRule = (r: { strength: string; source: string }) => r.strength === 'hard' || r.strength === 'strong' || r.source === 'explicit_correction';
 

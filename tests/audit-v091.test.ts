@@ -94,6 +94,42 @@ describe('#9 저장한 처방 재사용', () => {
   });
 });
 
+describe('A1 사실 진술 · A2 저장 처방 나이 · B9 홈 줄이기', () => {
+  it('설명문은 지시가 아니어도 사실 진술(부딪힘 후보), 표·제목·파일 목록 줄은 아님', async () => {
+    const { isFactualClaim } = await import('../src/audit/checks.js');
+    const md = (text: string) => ({ text, layer: 'project' as const });
+    expect(isFactualClaim(md('현재 앱 구성: apps/web, apps/rss-server. OCR·주식은 제거되었습니다.'))).toBe(true);
+    expect(isDirective(md('현재 앱 구성: apps/web, apps/rss-server. OCR·주식은 제거되었습니다.'))).toBe(false);
+    expect(isFactualClaim(md('| 2 | apps/web | 셸 |'))).toBe(false);
+    expect(isFactualClaim(md('## 구성'))).toBe(false);
+  });
+  it('저장 처방은 가장 최근 감사 회차보다 오래됐거나 대상 폴더가 그 뒤 바뀌면 다시 계산', () => {
+    const target = path.join(ROOT, 'm2', 'mem.md');
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, '- a\n');
+    const fix = { id: 'merge-aaaabbbb', kind: 'merge', title: 't', why: 'w', evidence: [], ops: [{ op: 'delete-line', path: target, text: '- a' }], equivalents: [], marks: [], model: false, tokens: 1 };
+    const write = (generatedAt: string, dirs: Record<string, string>) => fs.writeFileSync(path.join(fixDir(), 'plan-latest.json'), JSON.stringify({ schema: 'forgen-fix-plan/1', generatedAt, fixes: [{ ...fix, hashes: { [target]: stateHash(target) }, dirs }] }));
+    fs.mkdirSync(fixDir(), { recursive: true });
+    // 대상 폴더 지문은 저장할 때와 같은 방식으로 — 새 파일이 생기면 달라진다
+    write(new Date().toISOString(), {});
+    expect(savedFix('merge-aaaabbbb')?.id).toBe('merge-aaaabbbb');
+    write(new Date().toISOString(), { [path.dirname(target)]: 'stale-stamp' });
+    expect(savedFix('merge-aaaabbbb')).toBeNull();
+    // 감사 회차가 처방보다 나중이면 다시 계산
+    fs.mkdirSync(path.join(process.env.FORGEN_HOME as string, 'audit', '20991231T000000Z-ffffffff'), { recursive: true });
+    write('2026-01-01T00:00:00.000Z', {});
+    expect(savedFix('merge-aaaabbbb')).toBeNull();
+    fs.rmSync(path.join(process.env.FORGEN_HOME as string, 'audit', '20991231T000000Z-ffffffff'), { recursive: true });
+  });
+  it('계정 홈(/home/<이름>)은 HOME 을 바꿔 돌려도 ~ 로 줄인다', async () => {
+    const { shortPath } = await import('../src/audit/html.js');
+    const user = os.userInfo().username;
+    expect(shortPath(`/home/${user}/proj/CLAUDE.md`, '/tmp/elsewhere')).toBe('~/proj/CLAUDE.md');
+    expect(shortPath('/tmp/elsewhere/x', '/tmp/elsewhere')).toBe('~/x');
+    expect(shortPath('/opt/x', '/tmp/elsewhere')).toBe('/opt/x');
+  });
+});
+
 describe('#10 도움말 언어', () => {
   it('locale ko 면 audit·fix 도움말이 한국어, en 이면 영어', async () => {
     fs.mkdirSync(process.env.FORGEN_HOME as string, { recursive: true });
