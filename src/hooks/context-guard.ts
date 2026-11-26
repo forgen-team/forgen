@@ -461,7 +461,7 @@ export async function maybeSpawnAutoCompound(
 ): Promise<boolean> {
   // D9: 메시지 수 게이트 제거 — 짧은 세션의 교정도 승급돼야 한다. 비용은 러너가 새 내용의 양으로 제어한다.
   if (!transcriptPath || promptCount < 1) return false;
-  if (process.env.FORGEN_DOCTOR_PROBE === '1') return false; // doctor 프로브는 백그라운드 스폰 금지
+  if (process.env.FORGEN_DOCTOR_PROBE === '1' || process.env.FORGEN_DOCTOR_PROOF === '1') return false; // doctor 프로브·작동 증명은 백그라운드 스폰 금지
 
   const markerPath = path.join(STATE_DIR, 'last-auto-compound.json');
   try {

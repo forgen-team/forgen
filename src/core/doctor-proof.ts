@@ -44,7 +44,7 @@ export function runProofs(pkgRoot: string): Proof[] {
       enforce_via: [{ mech: 'A', hook: 'PreToolUse', verifier: { kind: 'tool_arg_regex', params: { pattern: 'zzblockprobe', requires_flag: true } }, block_message: 'forgen 진단 시험 차단' }],
     }));
     W(rule('00000000-0000-4000-8000-0000d0c70003', TIER2, { applies_when: { commands: ['zzdoctorprobe'], approved: { at: NOW, fix: 'doctor' } } }));
-    const env: NodeJS.ProcessEnv = { PATH: process.env.PATH, HOME: home, FORGEN_HOME: fh, FORGEN_CWD: work, FORGEN_DOCTOR_PROOF: '1' };
+    const env: NodeJS.ProcessEnv = { PATH: process.env.PATH, HOME: home, FORGEN_HOME: fh, FORGEN_CWD: work, FORGEN_DOCTOR_PROOF: '1', FORGEN_NO_BLOCK_JUDGE: '1' };
     const sid = 'forgen-doctor-proof';
     const out: Proof[] = [];
 
@@ -67,6 +67,7 @@ export function runProofs(pkgRoot: string): Proof[] {
     out.push({ name: '상황 맞춤 룰', ok: okT2, ms: hit.ms, detail: hit.error ?? (okT2 ? '조건 명령일 때만 들어옴(다른 명령에는 안 들어옴)' : '조건이 맞아도 안 들어왔거나 아무 때나 들어옴') });
     return out;
   } finally {
-    fs.rmSync(root, { recursive: true, force: true });
+    // 훅이 띄운 백그라운드 쓰기와 겹쳐도 정리가 실패하지 않게 잠깐씩 다시 시도한다(실측: ENOTEMPTY).
+    fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 }
