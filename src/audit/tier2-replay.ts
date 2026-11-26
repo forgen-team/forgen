@@ -37,7 +37,7 @@ export interface ReplayEvent { kind: 'user' | 'tool'; ts: string; words: Set<str
 interface Ctx { evidence: string; ts: string; events: ReplayEvent[]; learn: string[] }
 
 export interface Tier2ReplayRule {
-  id: string; strength: string; source: string; tier1Reason: string | null;
+  id: string; strength: string; source: string; tier1Reason: string | null; approved?: boolean;
   contexts: number; fired: number; firedTurn1: number; qualified: boolean; reason: string; freq: number; words: number;
 }
 
@@ -47,6 +47,8 @@ export interface Tier2ReplayResult {
   rules: number;
   /** 1층 조건(hard·strong·30일·재발)에 안 들어 게이트를 보는 룰 */
   candidates: number;
+  /** 오너가 승인한 발동 조건으로 2층(게이트 대신) */
+  approved: number;
   replayable: number;
   qualified: number;
   passRate: number;
@@ -197,6 +199,7 @@ export async function runTier2Replay(opts: ReplayOptions): Promise<{ result: Tie
   const detail: Tier2ReplayRule[] = [];
   const byReason: Record<string, number> = {};
   const tier1ByReason: Record<string, number> = {};
+  let approvedN = 0;
   let timeTested = 0, timeMissed = 0, inGateContexts = 0, inGateMissed = 0;
   const finalSets = new Map<string, Set<string>>();
   for (const r of rules) {
@@ -226,9 +229,11 @@ export async function runTier2Replay(opts: ReplayOptions): Promise<{ result: Tie
     const entry: Tier2Entry = { qualified, reason, words: [...finalSet].sort(), topics, contexts: cs.length, fired, freq: Math.round(freq * 10000) / 10000, ...(lastObservedAt ? { lastObservedAt } : {}) };
     base.rules[r.rule_id] = entry;
     const t = tierOf(r, base, now.getTime());
-    const tier1Reason = t.reason === 'tier2' || t.reason === 'not-qualified' ? null : t.reason;
+    // 'approved'(오너가 승인한 발동 조건)는 게이트를 대신하므로 게이트 대상·통과율에서 뺀다 — 게이트 임계는 그대로다.
+    const tier1Reason = t.reason === 'tier2' || t.reason === 'not-qualified' || t.reason === 'approved' ? null : t.reason;
+    if (t.reason === 'approved') approvedN++;
     if (tier1Reason) tier1ByReason[tier1Reason] = (tier1ByReason[tier1Reason] ?? 0) + 1;
-    else {
+    else if (t.reason !== 'approved') {
       byReason[reason] = (byReason[reason] ?? 0) + 1;
       if (qualified) {
         finalSets.set(r.rule_id, finalSet);
@@ -246,7 +251,7 @@ export async function runTier2Replay(opts: ReplayOptions): Promise<{ result: Tie
         }
       }
     }
-    detail.push({ id: r.rule_id, strength: r.strength, source: r.source, tier1Reason, contexts: cs.length, fired, firedTurn1, qualified, reason, freq: entry.freq ?? 0, words: finalSet.size });
+    detail.push({ id: r.rule_id, strength: r.strength, source: r.source, tier1Reason, ...(t.reason === 'approved' ? { approved: true } : {}), contexts: cs.length, fired, firedTurn1, qualified, reason, freq: entry.freq ?? 0, words: finalSet.size });
   }
 
   // ② 재발 사례(게이트에 안 쓴 상황)
@@ -266,14 +271,14 @@ export async function runTier2Replay(opts: ReplayOptions): Promise<{ result: Tie
   const per: number[] = [];
   if (finalSets.size) for (const e of corpus) { let n = 0; for (const s of finalSets.values()) if (overlap(e.words, s) >= MATCH_K) n++; per.push(n); }
   per.sort((a, b) => a - b);
-  const candidates = detail.filter((d) => !d.tier1Reason);
+  const candidates = detail.filter((d) => !d.tier1Reason && !d.approved);
   const replayable = candidates.filter((d) => d.contexts > 0);
   const qualified = candidates.filter((d) => d.qualified);
   if (!recRun) notes.push('같은 말 다시 하기 재생(audit recurrence) 결과가 없어 재발 이력·재발 사례 놓침은 비어 있다');
   notes.push('한계: 2층 미발동은 교정이 나온 경우만 잡는다. 실렸어야 할 때 안 실렸는데 사용자가 교정하지 않았거나, 실렸는데 모델이 무시하고 교정이 없었던 경우는 이 재생으로 알 수 없다');
   const result: Tier2ReplayResult = {
     generatedAt: now.toISOString(), params: base.params,
-    rules: rules.length, candidates: candidates.length, replayable: replayable.length, qualified: qualified.length,
+    rules: rules.length, candidates: candidates.length, approved: approvedN, replayable: replayable.length, qualified: qualified.length,
     passRate: candidates.length ? Math.round((qualified.length / candidates.length) * 1000) / 1000 : 0,
     passRateReplayable: replayable.length ? Math.round((qualified.length / replayable.length) * 1000) / 1000 : 0,
     byReason, tier1ByReason,

@@ -5,6 +5,7 @@
  *   쌍 판정(비대칭 1회): 교정·기억이 같은 tqNN 을 가지면 yes, 어느 쪽이든 UNK 가 있으면 unknown, 그 밖은 no.
  *   같은 뜻 중복: A·B 가 같은 dqNN 을 가지면 yes · 부딪힘: 같은 cqNN 이면 yes (둘 다 UNK 가 있으면 unknown, 그 밖은 no).
  *   섞임: 지시에 [[MIX]] 면 project(짐작한 프로젝트), [[UNK]] 면 unknown, 그 밖은 general.
+ *   두 층 발동 조건: 규칙에 [[CMD:x]] 면 tools Bash(+없는 도구 하나)·commands [x], [[PATH]] 면 paths docs/plans/**, cw… 낱말을 words 로.
  *   처방 문안: merge = 원문1 + " (합침)", rewrite = 원문1 앞 150자, index = 원문1 의 링크 뒤 "짧게", memo = 원문1 로 name·description·text.
  *   FAKE_STATE/calls.log 에 호출마다 "<종류> <항목 수> <모델>" 한 줄. FAKE_DOWN=1 이면 로그인 오류로 실패.
  */
@@ -21,7 +22,7 @@ process.stdin.on('end', () => {
   const model = process.argv[process.argv.indexOf('--model') + 1];
   const blocks = input.split(/^### /m).slice(1).map((b) => { const nl = b.indexOf('\\n'); return { id: b.slice(0, nl).trim(), body: b.slice(nl + 1) }; });
   const isPair = input.includes('이미 지시하고 있었나');
-  const kind = input.includes('기억 파일을 정리하는 편집자') ? 'fix' : input.includes('한 프로젝트에서만 뜻이 있는가') ? 'mix' : input.includes('하나만 남겨도 AI 가 받는') ? 'dup' : input.includes('동시에 지킬 수 없는가') ? 'conflict' : isPair ? 'pair' : 'correction';
+  const kind = input.includes('언제 쓰는 규칙인가') ? 'condition' : input.includes('기억 파일을 정리하는 편집자') ? 'fix' : input.includes('한 프로젝트에서만 뜻이 있는가') ? 'mix' : input.includes('하나만 남겨도 AI 가 받는') ? 'dup' : input.includes('동시에 지킬 수 없는가') ? 'conflict' : isPair ? 'pair' : 'correction';
   const out = [];
   for (const b of blocks) {
     if (kind === 'dup' || kind === 'conflict') {
@@ -37,6 +38,11 @@ process.stdin.on('end', () => {
       const g = (/^짐작: (.*)$/m.exec(b.body) || [])[1] || '';
       const answer = t.includes('[[MIX]]') ? 'project' : t.includes('[[UNK]]') ? 'unknown' : 'general';
       out.push(JSON.stringify({ id: b.id, answer, project: answer === 'project' && g !== '(없음)' ? g : null, reason: 'fake mix' }));
+    } else if (kind === 'condition') {
+      const t = (/^규칙: (.*)$/m.exec(b.body) || [])[1] || '';
+      const cmd = (/\\[\\[CMD:([^\\]]+)\\]\\]/.exec(t) || [])[1];
+      const words = (t.match(/cw[a-z]{3,}/g) || []).slice(0, 3);
+      out.push(JSON.stringify({ id: b.id, folders: [], tools: cmd ? ['Bash', 'NotATool'] : [], commands: cmd ? [cmd] : [], paths: t.includes('[[PATH]]') ? ['docs/plans/**'] : [], words, reason: 'fake cond' }));
     } else if (kind === 'fix') {
       const task = (/^task: (.*)$/m.exec(b.body) || [])[1] || '';
       const t1 = (/^원문1: (.*)$/m.exec(b.body) || [])[1] || '';

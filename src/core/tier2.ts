@@ -16,7 +16,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { STATE_DIR } from './paths.js';
-import type { Rule } from '../store/types.js';
+import type { AppliesWhen, Rule } from '../store/types.js';
 import { atomicWriteJSON, safeReadJSON } from '../hooks/shared/atomic-write.js';
 import { compactRuleText } from '../renderer/rule-renderer.js';
 
@@ -73,11 +73,21 @@ export function saveTier2Index(idx: Tier2Index, stateDir = STATE_DIR): void {
 
 const age = (iso: string | undefined, now: number) => (iso ? now - Date.parse(iso) : Number.POSITIVE_INFINITY);
 
-export type TierReason = 'hard' | 'strong' | 'session' | 'recent' | 'recurred' | 'tier2-missed' | 'not-qualified' | 'no-index' | 'tier2';
+export type TierReason = 'hard' | 'strong' | 'session' | 'recent' | 'recurred' | 'tier2-missed' | 'not-qualified' | 'no-index' | 'tier2' | 'approved';
 
 /** 한 룰의 층과 그 까닭. */
-export function tierOf(rule: Rule, idx: Tier2Index | null, now = Date.now()): { tier: 1 | 2; reason: TierReason } {
-  if (!idx) return { tier: 1, reason: 'no-index' };
+/** 사람이 승인한 발동 조건(forgen fix tier2-condition) — 자격 게이트를 대신한다. 조건이 비어 있으면 승인이 아니다. */
+export function approvedCondition(rule: Rule): AppliesWhen | null {
+  const a = rule.applies_when;
+  if (!a?.approved) return null;
+  const n = (a.tools?.length ?? 0) + (a.commands?.length ?? 0) + (a.paths?.length ?? 0) + (a.words?.length ?? 0);
+  return n ? a : null;
+}
+
+export function tierOf(rule: Rule, idxIn: Tier2Index | null, now = Date.now()): { tier: 1 | 2; reason: TierReason } {
+  // 색인이 없어도 승인된 조건은 쓴다(재생을 안 돌렸어도 오너가 직접 정한 조건). 재발 이력은 색인이 있을 때만 있다.
+  if (!idxIn && !approvedCondition(rule)) return { tier: 1, reason: 'no-index' };
+  const idx: Tier2Index = idxIn ?? { version: TIER2_INDEX_VERSION, generatedAt: '', params: { k: MATCH_K, turns: 3, minFireRate: 0.8, maxFreq: 0.05 }, rules: {}, recur: {} };
   if (rule.strength === 'hard') return { tier: 1, reason: 'hard' };
   if (rule.strength === 'strong') return { tier: 1, reason: 'strong' };
   if (rule.scope === 'session') return { tier: 1, reason: 'session' };
@@ -88,17 +98,24 @@ export function tierOf(rule: Rule, idx: Tier2Index | null, now = Date.now()): { 
     const last = [rule.created_at, e?.lastObservedAt].filter(Boolean).sort().pop();
     if (age(last, now) < RECENT_DAYS * DAY) return { tier: 1, reason: 'recent' };
   }
+  if (approvedCondition(rule)) return { tier: 2, reason: 'approved' };
   if (!e?.qualified || !e.words.length) return { tier: 1, reason: 'not-qualified' };
   return { tier: 2, reason: 'tier2' };
+}
+
+/** 색인 줄에 보일 주제 낱말: 게이트 결과의 주제, 승인 조건이면 그 낱말·명령 앞부분. */
+function topicsOf(r: Rule, idx: Tier2Index | null): string[] {
+  const a = approvedCondition(r);
+  if (a) return [...(a.words ?? []), ...(a.commands ?? []).map((c) => c.split(/\s+/)[0]), ...(a.tools ?? [])].filter(Boolean).slice(0, 3);
+  return idx?.rules[r.rule_id]?.topics ?? [];
 }
 
 /** 세션 시작 렌더에 줄 2층 집합(룰 ID → 색인 낱말). 색인이 없으면 빈 맵(전부 1층). */
 export function tier2Assignment(rules: Rule[], idx: Tier2Index | null = loadTier2Index(), now = Date.now()): Map<string, string[]> {
   const out = new Map<string, string[]>();
-  if (!idx) return out;
   for (const r of rules) {
     if (r.status !== 'active' || r.host_copy) continue;
-    if (tierOf(r, idx, now).tier === 2) out.set(r.rule_id, idx.rules[r.rule_id]?.topics ?? []);
+    if (tierOf(r, idx, now).tier === 2) out.set(r.rule_id, topicsOf(r, idx));
   }
   return out;
 }
@@ -157,9 +174,24 @@ export function toolSignalText(toolName: string, input: Record<string, unknown> 
   return parts.join(' ');
 }
 
+/** 승인 조건 판정용 도구 신호: 도구 이름·명령·만진 경로. */
+export function toolDetail(toolName: string, input: Record<string, unknown> | undefined): SignalDetail {
+  const i = input ?? {};
+  const paths = ['file_path', 'notebook_path', 'path'].map((k) => i[k]).filter((v): v is string => typeof v === 'string' && !!v);
+  return { tool: toolName, ...(typeof i.command === 'string' ? { command: i.command.slice(0, 2000) } : {}), paths };
+}
+
 // ── 세션별 2층 후보 ──
 
-export interface Tier2SessionRule { id: string; text: string; words: string[] }
+/** cond: 승인된 발동 조건(있으면 낱말 겹침 대신 이 조건으로 판정) */
+export interface Tier2SessionRule { id: string; text: string; words: string[]; cond?: AppliesWhen }
+
+function sessionRule(r: Rule, projectKey: string | null, idx: Tier2Index | null): Tier2SessionRule | null {
+  const a = approvedCondition(r);
+  if (a) { const { approved: _a, ...cond } = a; return { id: r.rule_id, text: compactRuleText(r, projectKey), words: [], cond }; }
+  const w = idx?.rules[r.rule_id]?.words ?? [];
+  return w.length ? { id: r.rule_id, text: compactRuleText(r, projectKey), words: w } : null;
+}
 export interface Tier2SessionFile { version: 1; session_id: string; at: string; rules: Tier2SessionRule[] }
 const SID_RE = /^[A-Za-z0-9._-]{1,128}$/;
 
@@ -173,9 +205,8 @@ export function writeTier2Session(sessionId: string | undefined, rules: Rule[], 
   const p = tier2SessionPath(sessionId);
   if (!p) return;
   try {
-    if (!rules.length || !idx) { fs.rmSync(p, { force: true }); return; }
-    const out: Tier2SessionRule[] = rules.map((r) => ({ id: r.rule_id, text: compactRuleText(r, projectKey), words: idx.rules[r.rule_id]?.words ?? [] }))
-      .filter((x) => x.words.length);
+    const out = rules.map((r) => sessionRule(r, projectKey, idx)).filter((x): x is Tier2SessionRule => !!x);
+    if (!out.length) { fs.rmSync(p, { force: true }); return; }
     fs.mkdirSync(path.dirname(p), { recursive: true });
     atomicWriteJSON(p, { version: 1, session_id: sessionId, at: new Date().toISOString(), rules: out } satisfies Tier2SessionFile, { mode: 0o600 });
   } catch { /* 기록 실패 = 이 세션은 2층 주입 없음(1층 색인 줄은 그대로) */ }
@@ -183,13 +214,13 @@ export function writeTier2Session(sessionId: string | undefined, rules: Rule[], 
 
 /** 위치 전환으로 들어온 프로젝트의 2층 룰을 이 세션 후보에 더한다(본문으로는 넣지 않는다 — §8.1 ② 표 첫 줄). */
 export function addTier2SessionRules(sessionId: string | undefined, rules: Rule[], projectKey: string | null, idx: Tier2Index | null = loadTier2Index()): void {
-  if (!sessionId || !rules.length || !idx) return;
+  if (!sessionId || !rules.length) return;
   const p = tier2SessionPath(sessionId);
   if (!p) return;
   try {
     const prev = readTier2Session(sessionId);
     const have = new Set((prev?.rules ?? []).map((r) => r.id));
-    const add = rules.filter((r) => !have.has(r.rule_id)).map((r) => ({ id: r.rule_id, text: compactRuleText(r, projectKey), words: idx.rules[r.rule_id]?.words ?? [] })).filter((x) => x.words.length);
+    const add = rules.filter((r) => !have.has(r.rule_id)).map((r) => sessionRule(r, projectKey, idx)).filter((x): x is Tier2SessionRule => !!x);
     if (!add.length) return;
     atomicWriteJSON(p, { version: 1, session_id: sessionId, at: prev?.at ?? new Date().toISOString(), rules: [...(prev?.rules ?? []), ...add] } satisfies Tier2SessionFile, { mode: 0o600 });
   } catch { /* fail-open */ }
@@ -203,12 +234,56 @@ export function readTier2Session(sessionId: string | undefined): Tier2SessionFil
   return f && f.version === 1 && Array.isArray(f.rules) ? f : null;
 }
 
-/** 이 신호(프롬프트 또는 도구 입력)에 발동하는 2층 룰 — 겹침 많은 순, 같으면 ID 순. */
-export function matchTier2(rules: Tier2SessionRule[], signal: string, k = MATCH_K): Array<{ rule: Tier2SessionRule; score: number }> {
+export interface SignalDetail { tool?: string; command?: string; paths?: string[]; cwd?: string; project?: string | null }
+
+/** 경로 글롭(* = 한 칸, ** = 여러 칸) 또는 조각. */
+function pathHit(pattern: string, p: string): boolean {
+  const pat = pattern.trim().replace(/^~\//, '');
+  if (!pat) return false;
+  if (!/[*?]/.test(pat)) return p.includes(pat.replace(/^\.\//, ''));
+  const body = pat.replace(/^\.\//, '').split('**').map((part) => part.split('*').map((x) => x.replace(/[.+^${}()|[\]\\?]/g, '\\$&')).join('[^/]*')).join('.*');
+  const re = new RegExp(`(^|/)${body}$`);
+  return re.test(p);
+}
+
+/**
+ * 승인된 조건 판정(결정적): folders 가 있으면 그 폴더(프로젝트 키·경로 조각)에서만. 도구 신호는 도구 이름(있으면)이 맞고 명령 글·경로가
+ * 하나라도 맞으면(명령·경로 조건이 없으면 도구 이름만으로). 프롬프트·도구 글의 낱말은 조건 낱말 2개 이상(하나뿐이면 1개)이 나오면.
+ * 점수 = 맞은 조건 수. 0 이면 발동 안 함.
+ */
+export function conditionScore(c: AppliesWhen, signal: string, where: 'prompt' | 'tool', d: SignalDetail = {}): number {
+  const lower = (xs?: string[]) => (xs ?? []).map((x) => x.toLowerCase().trim()).filter(Boolean);
+  const folders = lower(c.folders);
+  if (folders.length) {
+    const cwd = d.cwd ? d.cwd.toLowerCase() : undefined;
+    const proj = (d.project ?? '').toLowerCase();
+    if (!folders.some((f) => f === proj || cwd?.includes(f))) return 0;
+  }
+  let score = 0;
+  if (where === 'tool') {
+    const tools = lower(c.tools);
+    const toolOk = !tools.length || tools.includes((d.tool ?? '').toLowerCase());
+    const cmd = (d.command ?? '').toLowerCase();
+    const cmdHits = lower(c.commands).filter((x) => cmd.includes(x)).length;
+    const pHits = (c.paths ?? []).filter((x) => (d.paths ?? []).some((p) => pathHit(x, p))).length;
+    if (toolOk && (cmdHits || pHits)) score += cmdHits + pHits + (tools.length ? 1 : 0);
+    else if (toolOk && tools.length && !c.commands?.length && !c.paths?.length) score += 1;
+  }
+  const cw = new Set(lower(c.words).flatMap((w) => [...words(w)]));
+  if (cw.size) {
+    const n = overlap(words(signal), cw);
+    if (n >= Math.min(2, cw.size)) score += n;
+  }
+  return score;
+}
+
+/** 이 신호(프롬프트 또는 도구 입력)에 발동하는 2층 룰 — 점수(겹침·맞은 조건) 많은 순, 같으면 ID 순. */
+export function matchTier2(rules: Tier2SessionRule[], signal: string, k = MATCH_K, where: 'prompt' | 'tool' = 'prompt', detail: SignalDetail = {}): Array<{ rule: Tier2SessionRule; score: number }> {
   const ws = words(signal);
-  if (ws.size < k) return [];
   const hits: Array<{ rule: Tier2SessionRule; score: number }> = [];
   for (const r of rules) {
+    if (r.cond) { const s = conditionScore(r.cond, signal, where, detail); if (s > 0) hits.push({ rule: r, score: s }); continue; }
+    if (ws.size < k) continue;
     const s = overlap(ws, r.words);
     if (s >= k) hits.push({ rule: r, score: s });
   }
@@ -219,15 +294,16 @@ export function matchTier2(rules: Tier2SessionRule[], signal: string, k = MATCH_
  * 훅 진입점: 이 세션의 2층 후보 중 신호에 발동하고 아직 안 넣은 룰을 최대 2개 넣는다.
  * 넣은 룰은 work-context(tier2_injected·rules)와 세션별 렌더 기록('tier2')에 남긴다. 넣을 것이 없으면 null.
  */
-export async function tier2Context(sessionId: string | undefined, signal: string, where: 'prompt' | 'tool'): Promise<string | null> {
+export async function tier2Context(sessionId: string | undefined, signal: string, where: 'prompt' | 'tool', detail: SignalDetail = {}): Promise<string | null> {
   if (!sessionId || !signal) return null;
   const f = readTier2Session(sessionId);
   if (!f?.rules.length) return null;
   const { readWorkContext, markTier2Injected } = await import('./session-context.js');
-  const done = new Set(readWorkContext(sessionId)?.tier2_injected ?? []);
+  const wc0 = readWorkContext(sessionId);
+  const done = new Set(wc0?.tier2_injected ?? []);
   const pending = f.rules.filter((r) => !done.has(r.id));
   if (!pending.length) return null;
-  const hits = matchTier2(pending, signal).slice(0, MAX_PER_TURN);
+  const hits = matchTier2(pending, signal, MATCH_K, where, { cwd: wc0?.cwd, project: wc0?.project ?? null, ...detail }).slice(0, MAX_PER_TURN);
   if (!hits.length) return null;
   const fresh = markTier2Injected(sessionId, hits.map((h) => h.rule.id));
   if (!fresh.length) return null;

@@ -4,6 +4,7 @@
  *   forgen fix <id> [--apply]                             diff 를 보이고, --apply 면 적용(스냅샷 먼저)
  *   forgen fix --kind <종류|all> --apply                  묶음 적용(종류 순서대로, 종류마다 다시 계획)
  *   forgen fix --undo <id|all>                            그 처방이 건드린 파일만 되돌림 — 그사이 바뀌었으면 멈추고 3자 diff
+ *   forgen fix <id> --skip | --unskip                     묶음 적용에서 빼 둠 / 다시 넣음(목록에 "빼 둠"으로 남는다)
  *   forgen fix --report [--json]                          적용률·되돌림률, 적용 전후 폴더별 토큰(N3), 중요 지침 누락, 섞임
  *   공통: [--folder <경로>]... [--claude-dir <경로>] [--no-model]
  * 쓰는 곳은 처방 대상 파일(Q3 범위)과 <FORGEN_HOME>/backups/fix-*, <FORGEN_HOME>/audit/{fix,deleted.jsonl} 뿐이다. 커밋하지 않는다.
@@ -11,7 +12,7 @@
 import { Judge, takeModelDisclosure } from './judge.js';
 import {
   appliedFixes, applyFix, ensureBaseline, FIX_KINDS, KIND_LABEL, lossCheck, measure, newBackupRoot, planFixes, previewFix,
-  rates, readLedger, recordProposed, undoFix, unifiedDiff, appendLedger, fixPaths, withFixLock, type Fix, type FixKind, type FixPlan,
+  rates, readLedger, recordProposed, undoFix, unifiedDiff, appendLedger, fixPaths, withFixLock, excludedFixes, type Fix, type FixKind, type FixPlan,
 } from './fix.js';
 import { shortPath } from './html.js';
 
@@ -20,15 +21,18 @@ const HELP = `  forgen fix --list [--kind <종류>] [--json]
   forgen fix <id> [--apply]
       바뀌는 파일마다 diff · 이유 · 근거. --apply 면 스냅샷(~/.forgen/backups/fix-<시각>/) 뒤 적용
   forgen fix --kind <종류|all> --apply
-      그 종류 처방을 전부 적용(all = 끄기 → 지우기 → 합치기 → 겹침 → 범위 → 옮기기 → 짧게 → 색인 → 기억 추가)
+      그 종류 처방을 전부 적용(all = 끄기 → 지우기 → 합치기 → 겹침 → 범위 → 옮기기 → 짧게 → 색인 → 기억 추가. 두 층 발동 조건은 all 에 없고 --kind tier2-condition 으로만)
   forgen fix --undo <id|all>
       그 처방이 건드린 파일만 되돌린다. 그사이 그 파일이 바뀌었으면 멈추고 3자 diff(처방 전·처방 뒤·지금)
+  forgen fix <id> --skip | --unskip
+      그 처방을 묶음 적용(--kind … --apply)에서 빼 둔다 / 다시 넣는다. 예: 두 층 발동 조건 목록을 보고 맞지 않는 것만 빼고 일괄 승인
+      (forgen fix --list --kind tier2-condition → forgen fix <id> --skip → forgen fix --kind tier2-condition --apply)
   forgen fix --report [--json]
       적용률·되돌림률 · 적용 전후 폴더별 상시 로드 토큰(스킬 설명 제외) · 중요 지침 누락 · 섞임
   공통: [--folder <경로>]... [--claude-dir <경로>] [--no-model]  (--no-model: 결정적 처방만 — 같은 문장 정리·지우기·색인 줄 내리기·끄기)
   쓰는 곳: 자동 메모 · .claude/rules · forgen 룰 · git 안 CLAUDE.md·AGENTS.md(커밋 안 함). 관리형·git 밖 지침 파일은 지적만`;
 
-const KNOWN = new Set(['--list', '--kind', '--apply', '--undo', '--report', '--json', '--folder', '--claude-dir', '--no-model', '--help', '-h']);
+const KNOWN = new Set(['--list', '--kind', '--apply', '--undo', '--report', '--json', '--folder', '--claude-dir', '--no-model', '--skip', '--unskip', '--help', '-h']);
 const WITH_VALUE = new Set(['--kind', '--undo', '--folder', '--claude-dir']);
 
 function values(args: string[], name: string): string[] {
@@ -54,8 +58,8 @@ async function plan(c: Ctx): Promise<FixPlan> {
   return p;
 }
 
-function line(f: Fix): string {
-  return `  ${f.id}  ${f.title}${f.tokens > 0 ? `  (−${f.tokens}토큰)` : f.tokens < 0 ? `  (+${-f.tokens}토큰)` : ''}${f.model ? '  [모델 문안]' : ''}${f.blocked ? `\n      지적만: ${f.blocked}` : ''}${f.manual ? `\n      하나씩만: ${f.manual}` : ''}`;
+function line(f: Fix, skipped = false): string {
+  return `  ${f.id}  ${skipped ? '[빼 둠] ' : ''}${f.title}${f.tokens > 0 ? `  (−${f.tokens}토큰)` : f.tokens < 0 ? `  (+${-f.tokens}토큰)` : ''}${f.model ? '  [모델 문안]' : ''}${f.blocked ? `\n      지적만: ${f.blocked}` : ''}${f.manual ? `\n      하나씩만: ${f.manual}` : ''}`;
 }
 
 function show(f: Fix): void {
@@ -73,6 +77,7 @@ function show(f: Fix): void {
 
 async function applyKinds(c: Ctx, kinds: FixKind[]): Promise<void> {
   const root = newBackupRoot();
+  const excluded = excludedFixes();
   let applied = 0;
   let skipped = 0;
   let baselineSet = false;
@@ -83,7 +88,7 @@ async function applyKinds(c: Ctx, kinds: FixKind[]): Promise<void> {
     for (let pass = 0; pass < 50; pass++) {
       const p = await plan(c);
       if (!baselineSet) { ensureBaseline(p.run); baselineSet = true; }
-      const todo = p.fixes.filter((x) => x.kind === k && !x.blocked && !done.has(x.id));
+      const todo = p.fixes.filter((x) => x.kind === k && !x.blocked && !done.has(x.id) && !excluded.has(x.id));
       if (pass === 0) manual += todo.filter((x) => x.manual).length;
       const touched = new Set<string>();
       let deferred = 0;
@@ -100,8 +105,8 @@ async function applyKinds(c: Ctx, kinds: FixKind[]): Promise<void> {
       if (!deferred) break;
     }
   }
-  if (c.json) console.log(JSON.stringify({ schema: 'forgen-fix-apply/1', applied, skipped, manual, backup: root, model: modelUse }, null, 2));
-  else console.log(`\n✓ [forgen] 처방 ${applied}개 적용${skipped ? ` · ${skipped}개 건너뜀(대상이 바뀜 — 다시 --list)` : ''}${manual ? ` · 하나씩만 적용하는 처방 ${manual}개는 뺌(중요 지침 — forgen fix --list 에서 보고 <id> --apply)` : ''} · 스냅샷 ${root}\n  되돌리기: forgen fix --undo <id> | --undo all · 측정: forgen fix --report${c.model ? `\n  모델 호출 ${modelUse.calls}회(실패 ${modelUse.failed}, 캐시 적중 ${modelUse.cacheHits})` : ''}`);
+  if (c.json) console.log(JSON.stringify({ schema: 'forgen-fix-apply/1', applied, skipped, manual, excluded: excluded.size, backup: root, model: modelUse }, null, 2));
+  else console.log(`\n✓ [forgen] 처방 ${applied}개 적용${skipped ? ` · ${skipped}개 건너뜀(대상이 바뀜 — 다시 --list)` : ''}${manual ? ` · 하나씩만 적용하는 처방 ${manual}개는 뺌(중요 지침 — forgen fix --list 에서 보고 <id> --apply)` : ''}${excluded.size ? ` · 빼 둔 처방(--skip) ${excluded.size}개 제외` : ''} · 스냅샷 ${root}\n  되돌리기: forgen fix --undo <id> | --undo all · 측정: forgen fix --report${c.model ? `\n  모델 호출 ${modelUse.calls}회(실패 ${modelUse.failed}, 캐시 적중 ${modelUse.cacheHits})` : ''}`);
 }
 
 function printConflicts(id: string, conflicts: Array<{ path: string; base: string | null; fixed: string | null; current: string | null }>): void {
@@ -174,7 +179,8 @@ export async function handleFix(args: string[]): Promise<void> {
   const c: Ctx = { folders: values(args, '--folder'), claudeDir: values(args, '--claude-dir')[0], model: !args.includes('--no-model'), json: args.includes('--json') };
   const kindArg = values(args, '--kind')[0];
   // 쉼표로 여러 종류(적용 순서는 FIX_KINDS 순서)
-  const wanted = kindArg === 'all' ? FIX_KINDS : kindArg ? kindArg.split(',').map((k) => k.trim()) : null;
+  // all 에는 두 층 발동 조건을 넣지 않는다 — 오너가 목록을 보고 --kind tier2-condition 으로 따로 승인한다.
+  const wanted = kindArg === 'all' ? FIX_KINDS.filter((k) => k !== 'tier2-condition') : kindArg ? kindArg.split(',').map((k) => k.trim()) : null;
   const kinds: FixKind[] | null = wanted?.every((k) => FIX_KINDS.includes(k as FixKind)) ? FIX_KINDS.filter((k) => wanted.includes(k)) : null;
   if (kindArg && !kinds) { console.error(`[forgen] 알 수 없는 처방 종류: ${kindArg} (${FIX_KINDS.join(' · ')} · all)`); process.exitCode = 1; return; }
   try {
@@ -199,6 +205,12 @@ export async function handleFix(args: string[]): Promise<void> {
     if (positional[0]) {
       const f = p.fixes.find((x) => x.id === positional[0]) ?? (p.fixes.filter((x) => x.id.startsWith(positional[0])).length === 1 ? p.fixes.find((x) => x.id.startsWith(positional[0])) : undefined);
       if (!f) throw new Error(`처방을 찾지 못함: ${positional[0]} — forgen fix --list (원천이 바뀌면 처방도 바뀐다)`);
+      if (args.includes('--skip') || args.includes('--unskip')) {
+        const skip = args.includes('--skip');
+        appendLedger({ at: new Date().toISOString(), event: skip ? 'exclude' : 'include', id: f.id, kind: f.kind });
+        console.log(skip ? `✓ [forgen] ${f.id} 를 묶음 적용에서 빼 둠 — 되돌리기: forgen fix ${f.id} --unskip` : `✓ [forgen] ${f.id} 를 묶음 적용에 다시 넣음`);
+        return;
+      }
       if (!args.includes('--apply')) { show(f); return; }
       const r = await withFixLock(async () => { ensureBaseline(p.run); return applyFix(f, newBackupRoot()); });
       console.log(`✓ [forgen] ${f.id} 적용 · 스냅샷 ${r.backup}\n  되돌리기: forgen fix --undo ${f.id}`);
@@ -206,13 +218,15 @@ export async function handleFix(args: string[]): Promise<void> {
     }
     const list = kinds ? p.fixes.filter((f) => kinds.includes(f.kind)) : p.fixes;
     if (c.json) { console.log(JSON.stringify({ schema: 'forgen-fix-list/1', generatedAt: p.generatedAt, model: !!p.model, fixes: list.map(({ ops: _o, ...f }) => f) }, null, 2)); return; }
+    const excluded = excludedFixes();
     const ready = list.filter((f) => !f.blocked);
     console.log(`처방 ${ready.length}개 · 지적만 ${list.length - ready.length}개${p.model ? '' : ' (--no-model: 결정적 처방만)'}`);
     for (const k of FIX_KINDS) {
       const xs = list.filter((f) => f.kind === k);
       if (!xs.length) continue;
       console.log(`\n${KIND_LABEL[k]} (${xs.filter((f) => !f.blocked).length}${xs.some((f) => f.blocked) ? ` · 지적만 ${xs.filter((f) => f.blocked).length}` : ''})`);
-      for (const f of xs) console.log(line(f));
+      for (const f of xs) console.log(line(f, excluded.has(f.id)));
+      if (k === 'tier2-condition') console.log('  ↳ 승인하면 그 룰은 세션 시작에 색인 줄로만 보이고 조건이 맞을 때 한 번 들어온다 · 빼기: forgen fix <id> --skip · 일괄 승인: forgen fix --kind tier2-condition --apply · 되돌리기: forgen fix --undo <id>');
     }
     if (ready.length) console.log('\n보기: forgen fix <id> · 적용: forgen fix <id> --apply · 묶음: forgen fix --kind <종류|all> --apply');
     if (c.model) console.log(`모델 호출 ${modelUse.calls}회(실패 ${modelUse.failed}, 캐시 적중 ${modelUse.cacheHits})`);

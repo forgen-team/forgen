@@ -19,7 +19,7 @@ import { withFileLockSync } from '../hooks/shared/file-lock.js';
 import { withStatusChange } from '../store/rule-lifecycle.js';
 import { mergeRuleProjects } from '../store/rule-scope.js';
 import { loadRule, rulePath, saveRule } from '../store/rule-store.js';
-import type { Rule } from '../store/types.js';
+import type { AppliesWhen, Rule } from '../store/types.js';
 import { isImportantRule, normalizeSentence, type Unit } from './checks.js';
 import { PAIR_MODEL, type Judge } from './judge.js';
 import { latestRecurrenceRun } from './recurrence.js';
@@ -29,13 +29,28 @@ import { defaultEnv, encodeProjectDir, frontmatterField, gitRootOf, MEMORY_MAX_B
 import { estimateTokens } from './tokens.js';
 import { shortPath } from './html.js';
 
-export type FixKind = 'plugin-off' | 'remove' | 'merge' | 'overlap' | 'scope' | 'move' | 'rewrite' | 'index' | 'add-memory';
-/** 묶음 적용 순서: 끄기 → 지우기 → 합치기 → 겹침 → 범위 → 옮기기 → 짧게 → 색인 → 기억 추가(색인에 덧붙이므로 마지막). */
-export const FIX_KINDS: FixKind[] = ['plugin-off', 'remove', 'merge', 'overlap', 'scope', 'move', 'rewrite', 'index', 'add-memory'];
+export type FixKind = 'plugin-off' | 'remove' | 'merge' | 'overlap' | 'scope' | 'move' | 'rewrite' | 'index' | 'add-memory' | 'tier2-condition';
+/** 묶음 적용 순서: 끄기 → 지우기 → 합치기 → 겹침 → 범위 → 옮기기 → 짧게 → 색인 → 기억 추가(색인에 덧붙이므로) → 두 층 발동 조건(룰만 바꿈). */
+export const FIX_KINDS: FixKind[] = ['plugin-off', 'remove', 'merge', 'overlap', 'scope', 'move', 'rewrite', 'index', 'add-memory', 'tier2-condition'];
 export const KIND_LABEL: Record<FixKind, string> = {
   'plugin-off': '플러그인·스킬 끄기', remove: '지우기·끄기', merge: '합치기', overlap: '겹치는 교정 한 곳만(Q4)', scope: 'forgen 룰 범위 옮기기',
   move: '폴더 전용 룰로 옮기기', rewrite: '짧게 다시 쓰기', index: 'MEMORY.md 색인 줄 내리기', 'add-memory': '기억 추가',
+  'tier2-condition': '두 층 발동 조건(언제 쓰는지) 초안',
 };
+/** 발동 조건 초안에서 고를 수 있는 도구 이름(호스트 내장 도구). */
+export const CONDITION_TOOLS = ['Bash', 'Read', 'Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'Grep', 'Glob', 'WebFetch', 'WebSearch', 'Task', 'AskUserQuestion', 'Skill'];
+
+/** 발동 조건 한 줄(목록에서 읽히게). */
+export function conditionLine(c: AppliesWhen): string {
+  const q = (xs: string[]) => xs.map((x) => `"${x}"`).join(', ');
+  return [
+    c.folders?.length ? `폴더 ${c.folders.join(', ')}` : '어느 폴더나',
+    c.tools?.length ? `도구 ${c.tools.join(', ')}` : '',
+    c.commands?.length ? `명령 ${q(c.commands)}` : '',
+    c.paths?.length ? `경로 ${c.paths.join(', ')}` : '',
+    c.words?.length ? `낱말 ${c.words.join('·')}` : '',
+  ].filter(Boolean).join(' · ');
+}
 /** 처방 대상이 되는 길이(§8): 400자 넘는 룰·지시는 짧게, 110자 넘는 색인 줄은 내린다. */
 export const LONG_RULE = 400;
 export const LONG_INDEX = 110;
@@ -54,6 +69,7 @@ export type Op =
   | { op: 'rule'; ruleId: string; change: 'host-copy'; host: { path: string; line?: number } }
   | { op: 'rule'; ruleId: string; change: 'suppress' | 'supersede'; reason: string; keeper?: string }
   | { op: 'rule'; ruleId: string; change: 'policy'; policy: string; mergeFrom?: string[] }
+  | { op: 'rule'; ruleId: string; change: 'applies-when'; appliesWhen: AppliesWhen }
   | { op: 'json-set'; path: string; keys: string[]; value: unknown }
   | { op: 'move-away'; path: string };
 
@@ -155,6 +171,8 @@ export const fixPaths = (f: Fix): string[] => [...new Set(f.ops.map(opPath))];
 function ruleAfter(r: Rule, o: Extract<Op, { op: 'rule' }>, fixIdStr: string, nowIso: string, others: Map<string, Rule>): Rule {
   switch (o.change) {
     case 'scope': { const { scope_state: _s, ...rest } = r; return { ...rest, projects: o.projects }; }
+    // 승인 표시를 붙여야 자격 게이트를 대신한다(tier2.approvedCondition). 되돌리기는 룰 파일 스냅샷으로 — 조건이 빠지면 1층으로.
+    case 'applies-when': return { ...r, applies_when: { ...o.appliesWhen, approved: { at: nowIso, fix: fixIdStr } } };
     case 'host-copy': return { ...r, host_copy: { path: o.host.path, ...(o.host.line ? { line: o.host.line } : {}), at: nowIso, fix: fixIdStr } };
     case 'suppress': return withStatusChange(r, 'suppressed', o.reason, 'forgen fix', nowIso);
     case 'supersede': {
@@ -491,11 +509,68 @@ export async function planFixes(opts: PlanOptions = {}): Promise<FixPlan> {
     }
   }
 
+  // 8. 두 층 발동 조건 초안(오너 결정 2026-11-26): 자격 게이트를 못 넘은 룰 중 근거 상황이 없는 것.
+  //    1층 정의(hard·strong·30일 안 직접 교정·재발)에 드는 룰은 대상이 아니다. 게이트 임계(K·발동 비율)는 건드리지 않는다 —
+  //    승인된 조건이 "사람이 검증한 발동 조건"으로 게이트를 대신한다.
+  for (const f of await planConditions(run, judge, env, now)) add(f, `cond:${f.ops[0] && f.ops[0].op === 'rule' ? f.ops[0].ruleId : f.title}`);
+
   // 7. 플러그인·스킬 끄기 제안(끄기만)
   for (const { identity, ...f } of planPluginOff(env, now)) add(f, identity);
 
   fixes.sort((a, b) => FIX_KINDS.indexOf(a.kind) - FIX_KINDS.indexOf(b.kind) || (a.id < b.id ? -1 : 1));
   return { fixes, run, model: mc, generatedAt: now.toISOString() };
+}
+
+/** 두 층 발동 조건 초안 — 룰마다 처방 하나. 모델(Haiku)이 없으면 결정적 후보(룰 낱말·프로젝트)만. */
+async function planConditions(run: AuditRun, judge: Judge | null, env: AuditEnv, now: Date): Promise<Array<Omit<Fix, 'id' | 'marks' | 'equivalents'> & { marks?: DeletedMark[]; equivalents?: Fix['equivalents'] }>> {
+  const { loadTier2Index, tierOf, words } = await import('../core/tier2.js');
+  let idx = loadTier2Index();
+  if (!idx) {
+    // 재생을 아직 안 돌렸으면 메모리에서만 돌린다(아무것도 쓰지 않음) — 근거 상황이 있는지 알아야 대상을 고른다.
+    try { idx = (await (await import('./tier2-replay.js')).runTier2Replay({ claudeDir: env.claudeDir, now })).index; } catch { return []; }
+  }
+  const ctx = run.ctx;
+  const cands = [...ctx.rules.values()].filter((r) => r.scope === 'me' && !r.host_copy && !r.applies_when?.approved
+    && idx?.rules[r.rule_id]?.reason === 'no-context' && tierOf(r, idx, now.getTime()).reason === 'not-qualified').sort((a, b) => (a.rule_id < b.rule_id ? -1 : 1));
+  if (!cands.length) return [];
+  const foldersOf = (r: Rule): string[] => {
+    const here = run.result.folders.filter((f) => (ctx.loadedIn.get(`${r.rule_id}:0`) ?? []).includes(f.folder)).map((f) => f.projectKey ?? shortPath(f.folder));
+    return [...new Set([...(r.projects ?? []), ...here])].sort();
+  };
+  const detWords = (r: Rule) => [...words(`${r.trigger ?? ''} ${r.policy}`)].filter((w) => w.length >= 3 || /[가-힣]/.test(w)).slice(0, 4);
+  const drafts = judge?.modelEnabled
+    ? await judge.conditions(cands.map((r) => ({ id: r.rule_id, policy: r.policy, trigger: r.trigger ?? '', folders: foldersOf(r), tools: CONDITION_TOOLS })))
+    : new Map();
+  const out: Array<Omit<Fix, 'id' | 'marks' | 'equivalents'>> = [];
+  for (const r of cands) {
+    const d = drafts.get(r.rule_id) ?? null;
+    const known = new Set(foldersOf(r).map((f) => f.toLowerCase()));
+    const cond: AppliesWhen = d
+      ? {
+        ...(d.folders.filter((f: string) => known.has(f)).length ? { folders: d.folders.filter((f: string) => known.has(f)) } : r.projects?.length ? { folders: [...r.projects] } : {}),
+        ...(d.tools.filter((t: string) => CONDITION_TOOLS.includes(t)).length ? { tools: d.tools.filter((t: string) => CONDITION_TOOLS.includes(t)) } : {}),
+        ...(d.commands.length ? { commands: d.commands } : {}),
+        ...(d.paths.length ? { paths: d.paths } : {}),
+        ...((d.words.length ? d.words : detWords(r)).length ? { words: d.words.length ? d.words : detWords(r) } : {}),
+      }
+      : { ...(r.projects?.length ? { folders: [...r.projects] } : {}), ...(detWords(r).length ? { words: detWords(r) } : {}) };
+    if (!cond.tools?.length && !cond.commands?.length && !cond.paths?.length && !cond.words?.length) continue;
+    const unit = ctx.units.find((u) => u.ruleId === r.rule_id);
+    const loadedHere = (ctx.loadedIn.get(`${r.rule_id}:0`) ?? []).length;
+    out.push({
+      kind: 'tier2-condition',
+      title: `룰 ${r.rule_id.slice(0, 8)} "${shortText(r.policy, 34)}" ← ${conditionLine(cond)}`,
+      why: '자격 게이트를 못 넘은 룰이다(근거 교정의 대화 기록이 없어 재생할 수 없음). 그래서 지금은 세션 시작에 늘 실리거나 예산에서 빠진다. 이 조건을 승인하면 "사람이 검증한 발동 조건"으로 2층이 되어 세션 시작에는 색인 줄로만 보이고, 조건이 맞을 때 한 번 들어온다. 2층 미발동이 나오면 1층으로 돌아오고(90일 재발 0 이면 다시 2층), 되돌리기(--undo)로 조건을 지우면 1층이다.',
+      evidence: [
+        `룰: ${shortText(r.policy, 140)}`,
+        `결정적 후보: 낱말 ${detWords(r).join('·') || '없음'} · 프로젝트 ${r.projects?.join(', ') || '없음(전역)'}`,
+        d ? `초안(Haiku): ${conditionLine(cond)}${d.reason ? ` — ${d.reason}` : ''}` : '모델 판정 꺼짐 — 결정적 후보만',
+      ],
+      ops: [{ op: 'rule', ruleId: r.rule_id, change: 'applies-when', appliesWhen: cond }],
+      model: !!d, tokens: loadedHere && unit ? unit.tokens : 0,
+    });
+  }
+  return out;
 }
 
 /** 예전 이름 플러그인·같은 이름 중복 플러그인·30일 안 쓴 forgen 스킬. */
@@ -575,7 +650,7 @@ export const fixDir = () => path.join(FORGEN_HOME, 'audit', 'fix');
 export const ledgerPath = () => path.join(fixDir(), 'ledger.jsonl');
 export const deletedPath = () => path.join(FORGEN_HOME, 'audit', 'deleted.jsonl');
 
-export interface LedgerEvent { at: string; event: 'proposed' | 'apply' | 'undo' | 'undo-conflict' | 'skip'; id: string; kind: FixKind; backup?: string; equivalents?: Fix['equivalents']; scopedTo?: Fix['scopedTo']; addsTo?: Fix['addsTo']; note?: string }
+export interface LedgerEvent { at: string; event: 'proposed' | 'apply' | 'undo' | 'undo-conflict' | 'skip' | 'exclude' | 'include'; id: string; kind: FixKind; backup?: string; equivalents?: Fix['equivalents']; scopedTo?: Fix['scopedTo']; addsTo?: Fix['addsTo']; note?: string }
 
 /** 원자적 쓰기: 같은 폴더 임시 파일 → rename(심링크면 가리키는 대상에). 도중에 죽어도 반쪽 파일이 남지 않는다. */
 export function atomicWrite(p: string, data: string | Buffer, mode = 0o644): void {
@@ -603,6 +678,13 @@ export function readLedger(): LedgerEvent[] {
   if (!t) return [];
   return t.split('\n').filter(Boolean).flatMap((l) => { try { return [JSON.parse(l) as LedgerEvent]; } catch { return []; } });
 }
+/** 오너가 묶음 적용에서 뺀 처방(forgen fix <id> --skip). --unskip 으로 다시 넣는다. 마지막 기록이 이긴다. */
+export function excludedFixes(events = readLedger()): Set<string> {
+  const out = new Set<string>();
+  for (const e of events) { if (e.event === 'exclude') out.add(e.id); if (e.event === 'include') out.delete(e.id); }
+  return out;
+}
+
 /** 처음 보는 처방을 "제안됨"으로 남긴다(적용률의 분모). */
 export function recordProposed(fixes: Fix[], now = new Date()): void {
   const seen = new Set(readLedger().filter((e) => e.event === 'proposed').map((e) => e.id));

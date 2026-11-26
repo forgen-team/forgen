@@ -310,21 +310,16 @@ export function renderRulesDetailed(
   const included: Rule[] = [];
   const omitted: Rule[] = [];
   let strongShown = false;
-  // 압축 형식에서는 2층 룰도 순서대로 예산 자리를 차지한 것처럼 센다 — 1층 룰 선택이 두 층 이전과 같고, 2층으로 간 룰의 자리를
-  // 예산에서 빠졌던 룰로 다시 채우지 않는다(압축과 같은 원칙). 2층 룰 자체는 본문에 넣지 않는다(색인 줄).
-  const tier2Ids = new Set(tier2.map((r) => r.rule_id));
-  let slots = 0;
-  for (const rule of fmt.compact && tier2.length ? all : deduped) {
-    const isTier2 = tier2Ids.has(rule.rule_id);
-    const text = isTier2 ? '' : ruleToText(rule, fmt);
+  // 2층 룰은 예산을 쓰지 않는다 — 1층 선택은 2층 룰과 무관하게 정해진다(우선순위는 updated_at 을 보므로, 조건 승인처럼 룰 파일을
+  // 다시 쓰는 일이 1층 룰을 밀어내면 안 된다). 2층으로 빠진 자리는 예산에서 빠졌던 1층 룰이 채운다(§3.1 예산 탈락 결함).
+  for (const rule of deduped) {
+    const text = ruleToText(rule, fmt);
     const cost = fmt.compact ? legacyTextLength(rule) : text.length;
-    if (used + cost + 3 > ctx.max_chars || slots >= ctx.max_rules) {
-      if (!isTier2) omitted.push(rule);
+    if (used + cost + 3 > ctx.max_chars || included.length >= ctx.max_rules) {
+      omitted.push(rule);
       continue;
     }
     used += cost + 3;
-    slots++;
-    if (isTier2) continue;
     included.push(rule);
     if (fmt.compact && rule.strength === 'strong') strongShown = true;
     const section: SectionName = rule.strength === 'hard'

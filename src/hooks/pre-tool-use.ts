@@ -645,8 +645,8 @@ async function main(): Promise<void> {
   let tier2Ctx: string | null = null;
   if (data.session_id) {
     try {
-      const { tier2Context, toolSignalText } = await import('../core/tier2.js');
-      tier2Ctx = await tier2Context(data.session_id, toolSignalText(toolName, toolInput as Record<string, unknown>), 'tool');
+      const { tier2Context, toolSignalText, toolDetail } = await import('../core/tier2.js');
+      tier2Ctx = await tier2Context(data.session_id, toolSignalText(toolName, toolInput as Record<string, unknown>), 'tool', toolDetail(toolName, toolInput as Record<string, unknown>));
     } catch (e) { log.debug('tier2 판정 실패', e); }
   }
   const approveOut = (warning?: string): string => (tier2Ctx ? approveWithPreToolContext(tier2Ctx, warning || undefined) : warning ? approveWithWarning(warning) : approve());

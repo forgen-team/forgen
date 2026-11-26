@@ -87,6 +87,13 @@ describe('낱말·층 판정(결정적)', () => {
     expect(T.matchTier2(rs, 'storybook 하나만')).toEqual([]);
     expect(T.matchTier2(rs, 'Bash terraform plan -out x && terraform apply').map((h) => [h.rule.id, h.score])).toEqual([['b', 3]]);
   });
+  it('예산: 2층 룰은 자리를 차지하지 않는다 — 조건 승인으로 updated_at 이 새로워진 2층 룰이 1층 룰을 밀어내지 않고, 빈 자리는 1층 룰이 채운다', () => {
+    const fresh = rule('t2new', '방금 다시 저장된 2층 룰 문장', { updated_at: new Date().toISOString() });
+    const a = rule('t1a', '1층 룰 하나'); const b = rule('t1b', '1층 룰 둘');
+    const out = renderRulesDetailed([fresh, a, b], { warnings: [] } as never, null, { ...DEFAULT_CONTEXT, max_rules: 2, tier2: new Map([['t2new', ['x']]]) });
+    expect(out.included.map((r) => r.rule_id).sort()).toEqual(['t1a', 't1b']);
+    expect(out.omitted).toEqual([]);
+  });
   it('렌더: 2층 룰은 본문에 없고 색인 줄에 수·주제 낱말로 보인다(예산을 쓰지 않음)', () => {
     const tier2 = T.tier2Assignment(ALL, IDX as never);
     expect([...tier2.keys()].sort()).toEqual(['t2a', 't2b']);
