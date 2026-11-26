@@ -155,6 +155,29 @@ export function judgeInfo(): JudgeInfo {
   };
 }
 
+/**
+ * 0.9.2: 저장된 재생 결과가 지금과 다른 판정 방식으로 잰 것인가 — 다른 항목 목록(같으면 빈 배열).
+ * 비교: 교정 판정·쌍 판정(엄격·관대)의 모델과 판정 문안 번호, 후보 고르기(사전 점수 하한·상위 개수).
+ * forgen 버전만 다른 것은 같다고 본다(판정에 영향 있는 변경은 문안 번호를 올린다).
+ */
+export function judgeChanges(r: RecurrenceResult): string[] {
+  if (!r.judge) return [];
+  const now = judgeInfo();
+  const out: string[] = [];
+  const cmp = (label: string, a: string | number | null | undefined, b: string | number) => { if (a !== b) out.push(`${label}: ${a ?? '없음'} → ${b}`); };
+  cmp('correction.model', r.judge.correction?.model, now.correction.model);
+  cmp('correction.version', r.judge.correction?.version, now.correction.version);
+  cmp('pair.model', r.judge.pair?.model, now.pair.model);
+  cmp('pair.version', r.judge.pair?.version, now.pair.version);
+  if (r.range) cmp('pair.lenientVersion', r.range.lenientVersion, PAIR_PROMPT_LENIENT_VERSION);
+  cmp('prefilterMin', r.judge.prefilterMin, now.prefilterMin);
+  cmp('top', r.judge.top ? JSON.stringify(r.judge.top) : null, JSON.stringify(now.top));
+  return out;
+}
+
+/** 옛 판정 방식 결과에 붙이는 안내(첫 화면·fix --report·공유 요약). */
+export const STALE_JUDGE_NOTE = '이전 판정 방식으로 잰 값 — forgen audit recurrence 로 다시 재세요';
+
 export interface RecurrenceRun { result: RecurrenceResult; manifest: RecurrenceManifest; timing: Record<string, number>; judgeStats: Judge['stats'] | null; memoryFiles: string[] }
 
 const sha = (s: string) => createHash('sha256').update(s).digest('hex');
@@ -536,10 +559,17 @@ export function rangeText(r: RecurrenceResult, k: keyof Counts, unit: 'counts' |
   return fmt(a) === fmt(b) ? fmt(a) : `${fmt(a)}~${fmt(b)}`;
 }
 
+/** 옛 판정 방식 결과: 범위 대신 그때 값 하나를 옛 값이라고 밝혀 보인다. */
+export function staleLine(r: RecurrenceResult): string {
+  const pct = `${Math.round(r.per1000.total) / 10}%`;
+  return `같은 말 다시 하기: ${STALE_JUDGE_NOTE} (${r.generatedAt.slice(0, 10)} 에 잰 옛 값 ${pct} — 지금 방식과 기준이 달라 비교하지 마세요)`;
+}
+
 export function recurrenceLine(r: RecurrenceResult | null): string {
   if (!r) return '같은 교정을 다시 한 횟수: 아직 재지 않음 — forgen audit recurrence 로 지난 대화 기록을 읽어 잰다(내 컴퓨터의 claude CLI 로 판정)';
   if (r.status === 'model-off') return '같은 교정을 다시 한 횟수: 모델을 끄고 재서 세지 않음';
   if (r.status === 'no-data') return `같은 교정을 다시 한 횟수: ${r.statusNote}`;
+  if (judgeChanges(r).length) return staleLine(r);
   const c = r.per30d;
   const f = (x: number) => (x >= 10 ? String(Math.round(x)) : String(r1(x)));
   const tag = r.status === 'ok' ? '' : r.status === 'insufficient' ? ` [참고값(교정 ${r.corrections.total}개)]` : ' [일부 판정 못 함]';

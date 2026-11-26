@@ -28,7 +28,7 @@ export const TERMS_LINE = '"실린다" = 세션이 시작될 때 AI 에게 자�
 /** 같은 말 다시 하기 한 줄(첫 화면용, 퍼센트 없이) — 어느 재생 결과인지(날짜·전부/표본)를 같이 적는다(B2). */
 export function recurrenceShort(r: AuditResult): string {
   const rc = r.summary.recurrence;
-  if (rc.status === 'none' || !rc.per30d) return rc.line;
+  if (rc.status === 'none' || !rc.per30d || rc.staleJudge?.length) return rc.line;
   const f = (x: number) => String(Math.round(x));
   const src = `${rc.generatedAt?.slice(0, 10) ?? ''} 에 지난 대화 기록 요청 ${rc.prompts?.window ?? '?'}개 ${rc.sampled ? `중 ${rc.prompts?.judged ?? '?'}개 표본으로 잰 참고값` : '전부로 잰 값 — audit recurrence --limit 로 표본만 다시 재면 숫자가 다르게 나옴'}`;
   const rg = (lo: number, hi: number | undefined) => { const a = f(Math.min(lo, hi ?? lo)); const b = f(Math.max(lo, hi ?? lo)); return a === b ? a : `${a}~${b}`; };

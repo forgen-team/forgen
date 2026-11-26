@@ -13,7 +13,7 @@ import { resolvePendingCorrections } from '../core/correction-ledger-judge.js';
 import { maskQuote } from './quote.js';
 import { shortPath } from './html.js';
 import { TERMS_LINE } from './html.js';
-import { latestRecurrenceRun, rangeText, recurrenceLine, runRecurrence, writeRecurrenceRun, type RecurrenceResult, type RecurrenceRun } from './recurrence.js';
+import { judgeChanges, latestRecurrenceRun, rangeText, recurrenceLine, runRecurrence, STALE_JUDGE_NOTE, writeRecurrenceRun, type RecurrenceResult, type RecurrenceRun } from './recurrence.js';
 
 const DAY = 86_400_000;
 export const BASELINE_SCHEMA = 'forgen-audit-baseline/1' as const;
@@ -127,7 +127,7 @@ export async function handleRecurrence(args: string[], claudeDir: string | undef
     const full = latestRecurrenceRun();
     if (full && full.result.prompts.limit === null) {
       const fr = full.result;
-      console.log(`  ※ 감사 첫 화면(forgen audit)은 이 표본 결과가 아니라 ${fr.generatedAt.slice(0, 10)} 에 요청 ${fr.prompts.window}개 전부로 잰 결과(교정 약 ${Math.round(fr.corrections.per30d)}번 · 이미 적혀 있는데 또 말한 것 약 ${Math.round(fr.per30d.written)}번)를 씁니다 — 그래서 두 화면 숫자가 다릅니다. 같은 값을 보려면 --limit 없이 재세요`);
+      console.log(`  ※ 감사 첫 화면(forgen audit)은 이 표본 결과가 아니라 ${fr.generatedAt.slice(0, 10)} 에 요청 ${fr.prompts.window}개 전부로 잰 결과(교정 약 ${Math.round(fr.corrections.per30d)}번 · 이미 적혀 있는데 또 말한 것 약 ${Math.round(fr.per30d.written)}번)를 씁니다 — 그래서 두 화면 숫자가 다릅니다. 같은 값을 보려면 --limit 없이 재세요${judgeChanges(fr).length ? ` (그 결과는 ${STALE_JUDGE_NOTE})` : ''}`);
     }
   }
   if (tier2?.tier2Missed.length) console.log(`  상황 맞춤 룰 ${tier2.tier2Missed.length}개가 필요한 순간에 안 들어와, 다음 세션부터 세션마다 실리게 바꿈`);
