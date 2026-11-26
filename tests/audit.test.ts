@@ -304,7 +304,7 @@ describe('forgen audit CLI', () => {
       await handleAudit(['--folder', A, '--claude-dir', CLAUDE, '--no-open', '--timing', '--no-model']);
       const text = log.mock.calls.map((c) => String(c[0])).join('\n');
       expect(text).toContain('아직 재지 않음');
-      expect(text).toContain('MEMORY.md 잘림');
+      expect(text).toContain('MEMORY.md 가 상한(200줄·25KB)에 잘린 곳');
       expect(text).toMatch(/시간\(ms\): 원천 \d+/);
       await handleAudit(['nope']);
       expect(process.exitCode).toBe(1);

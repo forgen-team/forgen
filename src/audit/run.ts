@@ -27,6 +27,7 @@ import {
   readSkillCatalog, type SkillEntry, frontmatterField, splitFrontmatter,
 } from './sources.js';
 import { estimateTokens } from './tokens.js';
+import { recentSessionsByFolder } from './activity.js';
 import { latestRecurrence, recurrenceLine } from './recurrence.js';
 import type { ModelChecks } from './model-checks.js';
 
@@ -50,6 +51,8 @@ export interface FolderSummary {
   byLayer: Partial<Record<Layer, number>>;
   entries: FolderLoad['entries'];
   forgenRules: number;
+  /** 0.9.1 #2: 이 폴더에서 연 최근 30일 세션 수(대화 기록) — 대표 숫자의 가중치. */
+  sessions30d?: number;
   /** 결정적으로 줄일 수 있는 몫: 같은 문장의 남는 사본 + 낡은 줄. */
   reducible: { duplicate: number; stale: number; total: number; pct: number };
   /** 다른 프로젝트 섞임 후보가 이 폴더에서 차지하는 토큰(모델 판정 전). */
@@ -75,7 +78,7 @@ export interface AuditResult {
   model: { used: boolean; note: string };
   summary: {
     /** 첫 화면 첫 줄 — 가장 최근 `audit recurrence` 결과(§4.4 작을 때 규칙 적용). 없으면 status 'none'. */
-    recurrence: { status: 'none' | 'ok' | 'insufficient' | 'incomplete' | 'no-data'; line: string; generatedAt?: string; window?: { since: string; until: string }; per1000?: { total: number; written: number }; per30d?: { total: number; written: number; corrections: number }; sampled?: boolean; tier2Missed?: number };
+    recurrence: { status: 'none' | 'ok' | 'insufficient' | 'incomplete' | 'no-data'; line: string; generatedAt?: string; window?: { since: string; until: string }; per1000?: { total: number; written: number }; per30d?: { total: number; written: number; corrections: number }; sampled?: boolean; tier2Missed?: number; lenient?: { per1000: { total: number; written: number }; per30d: { total: number; written: number } }; ci95?: [number, number]; prompts?: { window: number; judged: number }; corrections?: number };
     tokens: { folders: number; min: number; max: number; median: number; reduciblePctMin: number; reduciblePctMax: number; reduciblePctMedian: number };
     /** conflicts·dupGroups·mixConfirmed 는 모델 판정 뒤의 확정 지적 수. 모델을 쓰지 않은 회차는 'pending'·null. */
     findings: { sameSentence: number; mixCandidates: number; stale: number; unscopedRules: number; claudeMdOver200: number; conflicts: number | 'pending'; dupGroups: number | null; mixConfirmed: number | null };
@@ -84,7 +87,9 @@ export interface AuditResult {
      * 그대로 실을 때의 토큰끼리 비교하고, 빈자리로 새로 실린 룰은 되살린 룰로 따로. allNow* 는 이전 정의(지금 실리는 전부).
      */
     /** formatPct = 압축(형식) 몫(처방 전 집합을 압축 전/후 형식으로), fixPct = 처방·두 층 몫(같은 형식에서 처방 전/후). 합 = pct. */
-    n3?: { baselineAt: string; medianPct: number; allNowMedianPct: number; formatMedianPct: number; fixMedianPct: number; revived: number; revivedImportant: number; folders: Array<{ folder: string; before: number; sameSet: number; allNow: number; pct: number; allNowPct: number; formatPct: number; fixPct: number; revived: number; revivedImportant: number }> };
+    n3?: { rep?: { pct: number; formatPct: number; fixPct: number; allNowPct: number; weighted: boolean; folders: number }; baselineAt: string; medianPct: number; allNowMedianPct: number; formatMedianPct: number; fixMedianPct: number; revived: number; revivedImportant: number; folders: Array<{ folder: string; before: number; sameSet: number; allNow: number; pct: number; allNowPct: number; formatPct: number; fixPct: number; revived: number; revivedImportant: number }> };
+    /** 0.9.1 #4·#6: 첫 화면 맨 위 "가장 중요한 발견"(장면 문장)과 끝의 "다음에 할 일". 감사 명령이 채운다. */
+    top?: { findings: string[]; next: string[] };
     truncation: { memoryDirs: number; truncated: number; tightest: { dir: string; folder: string | null; spareLines: number; spareBytes: number; spareItems: number; firstLimit: 'lines' | 'bytes' } | null };
   };
   folders: FolderSummary[];
@@ -134,6 +139,8 @@ export interface AuditContext {
   units: Unit[]; topics: Unit[]; loadedIn: Map<string, string[]>; rules: Map<string, Rule>; projectKeys: string[]; homeMemoryIndex: Set<string>; memory: Map<string, MemoryDir>;
   /** 0.9.0 두 층: 룰 ID → 그 룰이 2층(색인 줄로 보이고 상황이 맞으면 들어옴)인 폴더들. Q11 — 누락 검사에서 실린 것으로 본다 */
   tier2In?: Map<string, string[]>;
+  /** 폴더 → 프로젝트 키(감사한 폴더만) */
+  folderKeys?: Map<string, string | null>;
 }
 export interface AuditRun { result: AuditResult; manifest: Omit<AuditManifest, 'runId'>; timing: Record<string, number>; ctx: AuditContext }
 
@@ -329,6 +336,7 @@ export function runAudit(opts: AuditOptions = {}): AuditRun {
   const ruleUnitTokens = new Map(ruleUnits.map((u) => [u.ruleId as string, u.tokens + 1]));
   const tier2In = new Map<string, string[]>();
   for (const l of loads) for (const id of l.forgen.tier2Ids ?? []) tier2In.set(id, [...(tier2In.get(id) ?? []), l.folder]);
+  const sessionsByFolder = recentSessionsByFolder(env.claudeDir, loads.map((l) => l.folder), opts.now ?? new Date());
   const folderSummaries: FolderSummary[] = loads.map((l) => {
     const always = new Set(l.entries.filter((e) => e.always).map((e) => e.path));
     const memIdx = l.memoryDir ? memory.get(l.memoryDir) : undefined;
@@ -361,6 +369,7 @@ export function runAudit(opts: AuditOptions = {}): AuditRun {
       ...(l.forgen.legacyTokens ? { forgenLegacyTokens: l.forgen.legacyTokens } : {}),
       reducible: { duplicate, stale: staleTok, total, pct: l.totalTokens ? Math.round((total / l.totalTokens) * 1000) / 10 : 0 },
       mixCandidateTokens: mixTok,
+      sessions30d: sessionsByFolder.get(l.folder) ?? 0,
       ...(l.skills ? { skills: l.skills } : {}),
       ...(l.forgen.tier2Ids?.length ? { forgenTier2: { rules: l.forgen.tier2Ids.length, tokens: l.forgen.tier2Ids.reduce((n, id) => n + (ruleUnitTokens.get(id) ?? 0), 0), expected: Math.round(l.forgen.tier2Ids.reduce((n, id) => n + (ruleUnitTokens.get(id) ?? 0) * expectedLoadShare(ruleById.get(id)), 0)) } } : {}),
     };
@@ -384,7 +393,7 @@ export function runAudit(opts: AuditOptions = {}): AuditRun {
         if (!rec || rec.status === 'model-off') return { status: 'none' as const, line: recurrenceLine(null) };
         return {
           status: rec.status, line: recurrenceLine(rec), generatedAt: rec.generatedAt, window: { since: rec.window.since, until: rec.window.until },
-          per1000: { total: rec.per1000.total, written: rec.per1000.written }, per30d: { total: rec.per30d.total, written: rec.per30d.written, corrections: rec.corrections.per30d }, sampled: rec.prompts.limit !== null, tier2Missed: rec.counts.tier2Missed ?? 0,
+          per1000: { total: rec.per1000.total, written: rec.per1000.written }, per30d: { total: rec.per30d.total, written: rec.per30d.written, corrections: rec.corrections.per30d }, sampled: rec.prompts.limit !== null, tier2Missed: rec.counts.tier2Missed ?? 0, ...(rec.ci95per1000?.total ? { ci95: rec.ci95per1000.total } : {}), ...(rec.range ? { lenient: { per1000: { total: rec.range.lenient.per1000.total, written: rec.range.lenient.per1000.written }, per30d: { total: rec.range.lenient.per30d.total, written: rec.range.lenient.per30d.written } } } : {}), prompts: { window: rec.prompts.window, judged: rec.prompts.judged }, corrections: rec.corrections.total,
         };
       })(),
       tokens: { folders: tokens.length, min: tokens.length ? Math.min(...tokens) : 0, max: tokens.length ? Math.max(...tokens) : 0, median: median(tokens), reduciblePctMin: pcts.length ? Math.min(...pcts) : 0, reduciblePctMax: pcts.length ? Math.max(...pcts) : 0, reduciblePctMedian: pcts.length ? [...pcts].sort((a, b) => a - b)[pcts.length >> 1] : 0 },
@@ -420,7 +429,7 @@ export function runAudit(opts: AuditOptions = {}): AuditRun {
   const homeMemoryIndex = new Set(homeMemory.map((m) => m.index?.path).filter((p): p is string => !!p));
   const seenUnit = new Set<string>();
   const units = [...instructionUnits, ...ruleUnits].filter((u) => { const k = unitKey(u); if (seenUnit.has(k)) return false; seenUnit.add(k); return true; });
-  return { result, manifest, timing, ctx: { units, topics: topicFiles, loadedIn, rules: ruleById, projectKeys: sortedKeys, homeMemoryIndex, memory, ...(tier2In.size ? { tier2In } : {}) } };
+  return { result, manifest, timing, ctx: { units, topics: topicFiles, loadedIn, rules: ruleById, projectKeys: sortedKeys, homeMemoryIndex, memory, ...(tier2In.size ? { tier2In } : {}), folderKeys: new Map(folderSummaries.map((f) => [f.folder, f.projectKey])) } };
 }
 
 /** 생성 시각을 뺀 결과의 해시 — 같은 원천이면 같은 값. */

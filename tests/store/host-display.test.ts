@@ -170,13 +170,13 @@ describe('doctor [Multi-Host] 섹션', () => {
   });
 
   it('[Multi-Host] 섹션이 출력에 포함됨', async () => {
-    await runDoctor();
+    await runDoctor({ verbose: true }); // 0.9.1 B5: [Multi-Host] 는 --verbose 에서만
     const output = capturedLines.join('\n');
     expect(output).toContain('[Multi-Host]');
   });
 
   it('evidence 없으면 "No evidence recorded yet." 출력', async () => {
-    await runDoctor();
+    await runDoctor({ verbose: true }); // 0.9.1 B5: [Multi-Host] 는 --verbose 에서만
     const output = capturedLines.join('\n');
     expect(output).toContain('No evidence recorded yet.');
   });
@@ -186,7 +186,7 @@ describe('doctor [Multi-Host] 섹션', () => {
     writeEvidence('dr2', 'claude');
     writeEvidence('dr3', 'codex');
 
-    await runDoctor();
+    await runDoctor({ verbose: true }); // 0.9.1 B5: [Multi-Host] 는 --verbose 에서만
     const output = capturedLines.join('\n');
     expect(output).toContain('Registered hosts: claude, codex');
     expect(output).toMatch(/Evidence by host:.*claude:\d+.*codex:\d+.*total:\d+/);
@@ -197,7 +197,7 @@ describe('doctor [Multi-Host] 섹션', () => {
       writeEvidence(`warn-c${i}`, 'claude');
     }
 
-    await runDoctor();
+    await runDoctor({ verbose: true }); // 0.9.1 B5: [Multi-Host] 는 --verbose 에서만
     const output = capturedLines.join('\n');
     expect(output).toContain('⚠');
     expect(output).toContain('집중');
@@ -207,7 +207,7 @@ describe('doctor [Multi-Host] 섹션', () => {
     writeEvidence('small1', 'claude');
     writeEvidence('small2', 'claude');
 
-    await runDoctor();
+    await runDoctor({ verbose: true }); // 0.9.1 B5: [Multi-Host] 는 --verbose 에서만
     // ⚠ 경고가 [Multi-Host] 섹션에만 없어야 함 (State Hygiene 등 다른 ⚠ 는 무관)
     const multiHostIdx = capturedLines.findIndex(l => l.includes('[Multi-Host]'));
     const afterMultiHost = capturedLines.slice(multiHostIdx, multiHostIdx + 5).join('\n');

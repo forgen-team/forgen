@@ -113,7 +113,7 @@ describe('컨텍스트 상한 (넘기면 Claude Code 가 통째로 버린다)', 
     expect(out.length).toBeLessThanOrEqual(9500);
     expect(out).toContain('전역 룰 답변은 한국어로');
     expect(out).toContain('correction-record');
-    expect(out).toContain('lower-priority rules omitted');
+    expect(out).toMatch(/## Omitted\n- .*(이번 세션에 안 넣음|앞부분만 넣음|not loaded this session|shortened)/);
     expect(out).toContain('복구 메시지 1개 생략');
   });
 });

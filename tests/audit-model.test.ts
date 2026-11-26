@@ -67,7 +67,7 @@ describe('모델 판정 검사 — 합성 A·B·C', () => {
     // 첫 화면 셋째 줄 = 확정 지적 수
     const f = run.result.summary.findings;
     expect(f).toMatchObject({ conflicts: mc.counts.conflicts, dupGroups: mc.counts.dupGroups, mixConfirmed: 4 });
-    expect(topLines(run.result)[2]).toMatch(/^부딪힘 \d+쌍 · 같은 뜻 중복 \d+묶음 · 다른 프로젝트 섞임 4개 \(모델 판정\)/);
+    expect(topLines(run.result)[2]).toMatch(/^서로 부딪히는 지시 \d+쌍 · 같은 뜻 중복 \d+묶음 · 다른 프로젝트 지시 섞임 4개 \(모델 판정\)/);
     expect(run.result.model.used).toBe(true);
     expect(run.manifest.model).toMatchObject({ used: true });
     // 페이지 탭에 판정 결과·근거
@@ -102,7 +102,7 @@ describe('모델 판정 검사 — 합성 A·B·C', () => {
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
     try {
       await handleAudit(['--folder', FX.A, '--claude-dir', FX.claude, '--no-open', '--no-model']);
-      expect(log.mock.calls.map((c) => String(c[0])).join('\n')).toContain('모델 판정이 꺼져 세지 않음');
+      expect(log.mock.calls.map((c) => String(c[0])).join('\n')).toContain('모델을 꺼서 세지 않음');
     } finally { log.mockRestore(); }
     expect(readJudgeCalls(FAKE).length).toBe(n);
   });

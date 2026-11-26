@@ -12,7 +12,7 @@
 import { isNeg } from '../way/conflict.js';
 import { bigrams, topK } from './lexical.js';
 import { CHECK_MODEL, CONFLICT_PROMPT_VERSION, DUP_PROMPT_VERSION, MIX_PROMPT_VERSION, type CheckVerdict, type Judge, type MixVerdict } from './judge.js';
-import { isImportantRule, type MixCandidate, type Unit, type UnitLayer } from './checks.js';
+import { isDirective, isFactualClaim, isImportantRule, type MixCandidate, type Unit, type UnitLayer } from './checks.js';
 import { unitKey, type AuditContext, type AuditResult } from './run.js';
 import { createHash } from 'node:crypto';
 
@@ -21,6 +21,8 @@ export const DUP_TOP = 5;
 export const DUP_MIN = 0.3;
 export const CONFLICT_TOP = 5;
 export const CONFLICT_MIN = 0.2;
+/** 사실 진술 ↔ forgen 룰(낡은 사실) 후보 수 */
+export const FACT_TOP = 3;
 const MIN_NORM = 12;
 
 export interface CheckLoc { key: string; path: string; line: number; layer: UnitLayer; ruleId?: string; text: string; tokens: number; memoryType?: string }
@@ -64,7 +66,11 @@ const owner = (u: { ruleId?: string; path: string }) => u.ruleId ?? u.path;
 
 /** 결정적 후보 고르기 — 모델을 부르지 않는다. */
 export function pairCandidates(ctx: AuditContext): { dup: Omit<PairFinding, 'verdict' | 'reason'>[]; conflict: Omit<PairFinding, 'verdict' | 'reason'>[] } {
-  const units = ctx.units.filter((u) => u.norm.length >= MIN_NORM && (ctx.loadedIn.get(unitKey(u))?.length ?? 0) > 0);
+  // 0.9.1 #7: 같은 뜻 중복은 지시문만(목록·링크·표·설명 줄은 뺀다). 부딪힘은 지시문 + 사실 진술(지금 구성을 설명하는 문장)까지 —
+  // "OCR·주식은 제거됐다" 같은 설명문과 옛 구조를 설명하는 룰의 어긋남(낡은 사실)을 놓치지 않게.
+  const base = ctx.units.filter((u) => u.norm.length >= MIN_NORM && (ctx.loadedIn.get(unitKey(u))?.length ?? 0) > 0);
+  const units = base.filter((u) => isDirective(u));
+  const claims = base.filter((u) => isDirective(u) || isFactualClaim(u));
   const feedbackTopics = ctx.topics.filter((t) => t.memoryType === 'feedback' && t.norm.length >= MIN_NORM);
   const grams = new Map<string, Set<string>>();
   const g = (u: Unit) => { const k = unitKey(u); let x = grams.get(k); if (!x) { x = bigrams(u.norm); grams.set(k, x); } return x; };
@@ -77,11 +83,11 @@ export function pairCandidates(ctx: AuditContext): { dup: Omit<PairFinding, 'ver
   };
   const dup = new Map<string, Omit<PairFinding, 'verdict' | 'reason'>>();
   const conflict = new Map<string, Omit<PairFinding, 'verdict' | 'reason'>>();
-  const add = (m: typeof dup, kind: 'dup' | 'conflict', a: Unit, b: Unit, score: number) => {
+  const add = (m: typeof dup, kind: 'dup' | 'conflict', a: Unit, b: Unit, score: number, foldersOverride?: string[]) => {
     const [x, y] = [a, b].sort((p, q) => (unitKey(p) < unitKey(q) ? -1 : 1));
     const id = `${kind}-${sha(`${unitKey(x)}|${unitKey(y)}`).slice(0, 10)}`;
     if (m.has(id)) return;
-    const folders = together(x, y);
+    const folders = foldersOverride ?? together(x, y);
     if (!folders.length) return;
     m.set(id, { id, kind, a: loc(x), b: loc(y), score, folders });
   };
@@ -89,8 +95,24 @@ export function pairCandidates(ctx: AuditContext): { dup: Omit<PairFinding, 'ver
   for (const u of units) {
     const others = units.filter((o) => owner(o) !== owner(u) && o.norm !== u.norm);
     for (const { item, score } of topK(g(u), others, DUP_TOP, g, unitKey)) if (score >= DUP_MIN) add(dup, 'dup', u, item, score);
+  }
+  for (const u of claims) {
+    const others = claims.filter((o) => owner(o) !== owner(u) && o.norm !== u.norm);
     const opposite = others.filter((o) => isNeg(o.text) !== isNeg(u.text));
     for (const { item, score } of topK(g(u), opposite, CONFLICT_TOP, g, unitKey)) if (score >= CONFLICT_MIN) add(conflict, 'conflict', u, item, score);
+  }
+  // A1 낡은 사실: 사실 진술(설명문)과 forgen 룰은 부정 표지가 같아도 어긋날 수 있다("OCR 은 제거됐다" ↔ 옛 구조를 설명하는 룰).
+  // 설명문마다 같은 주제의 forgen 룰 상위 몇 개를 극성과 무관하게 부딪힘 후보로 더한다.
+  // 세션 시작에 안 실린(분량 상한에 빠진) 프로젝트 룰도 본다 — 그 프로젝트 작업에서 언제든 다시 실리고, 룰 목록·차단에도 쓰인다.
+  // 그 경우 "함께 실리는 폴더"는 설명문이 실리는 폴더 중 그 룰의 프로젝트에 해당하는 폴더다.
+  const ruleClaims = ctx.units.filter((u) => u.layer === 'forgen-rule' && u.norm.length >= MIN_NORM && ctx.rules.get(u.ruleId as string)?.projects?.length);
+  for (const u of claims.filter((x) => x.layer !== 'forgen-rule' && !isDirective(x))) {
+    for (const { item, score } of topK(g(u), ruleClaims, FACT_TOP, g, unitKey)) {
+      if (score < CONFLICT_MIN) continue;
+      const keys = ctx.rules.get(item.ruleId as string)?.projects ?? [];
+      const here = foldersOf(u).filter((f) => keys.some((k) => ctx.folderKeys?.get(f) === k));
+      if (here.length) add(conflict, 'conflict', u, item, score, here);
+    }
   }
   // forgen 룰 ↔ 메모 주제 파일(feedback): 겹치는 교정(Q4)의 근거
   for (const t of feedbackTopics) {

@@ -56,11 +56,11 @@ describe('N3 기준값 = 0.9.0 이전 형식(압축 전)', () => {
     expect(g.formatPct).toBe(f.pct);
     expect(g.fixPct).toBe(0);
     const text = await capture(() => handleFix(['--report', '--folder', FOLDER, '--claude-dir', CLAUDE, '--no-model']));
-    expect(text).toContain('0.9.0 이전 형식(압축 전)으로 센 값');
-    expect(text).toMatch(/압축 -\d+(\.\d)?% · 처방·두 층 0%/);
+    expect(text).toContain('forgen 룰 표기를 짧게 바꿔서');
+    expect(text).toMatch(/짧게 바꿔서 −\d+(\.\d)?% · 처방으로 0%/);
     const { n3EdgeWarning } = await import('../src/audit/fix-cli.js');
-    expect(n3EdgeWarning(-15.4)).toContain('목표 경계');
-    expect(n3EdgeWarning(-16)).toContain('목표 경계');
+    expect(n3EdgeWarning(-15.4)).toContain('목표에 아슬아슬함');
+    expect(n3EdgeWarning(-16)).toContain('목표에 아슬아슬함');
     expect(n3EdgeWarning(-14.9)).toBeNull();
     expect(n3EdgeWarning(-16.1)).toBeNull();
   });

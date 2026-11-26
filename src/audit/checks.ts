@@ -24,6 +24,37 @@ export interface Unit {
   memoryType?: string;
 }
 
+/**
+ * 0.9.1 #7 지시문 판별: 같은 뜻·부딪힘 검사는 "하라/하지 마라/규칙" 지시만 본다. 목록·링크·표·설명 줄은 뺀다.
+ * forgen 룰과 교정 메모 파일은 언제나 지시다. 마크다운 줄은 표 줄·제목은 빼고, 명령형·금지·규칙 어미나 낱말이 있을 때만 지시다.
+ * 판별 규칙은 실데이터 표본 20줄로 손으로 확인했다(docs/plans/2026-11-26-v0.9.1-fixes.md 구현 기록).
+ */
+const DIRECTIVE_KO = /(하라|해라|마라|말라|말 것|말고|말아야|하지 ?않|않는다|않을 것|안 ?된다|금지|필수|반드시|항상|절대|무조건|해야|하여야|할 것|한다(?:[.)\s]|$)|는다(?:[.)\s]|$)|쓴다|쓸 것|쓰지|지킨다|피한다|피할 것|지양|권장|먼저 (?:읽|확인|고치|합의|보여)|확인한다|확인할 것|대신 |우선한다)/;
+const DIRECTIVE_EN = /\b(must|never|always|don'?t|do not|should|avoid|prefer|required?|make sure|ensure|only use|use [a-z])/i;
+/** 영어 명령문: 줄 머리(앞의 짧은 표지 "dq02 "·"Team: " 는 건너뜀)가 동사 원형(또는 No …). */
+const IMPERATIVE_EN = /^(?:[A-Za-z]{1,4}\d+\s+|[^:]{1,30}:\s+)?(no|never|always|write|use|run|keep|add|avoid|check|make|prefer|do|put|call|follow|read|test|verify|commit|stop|ask|confirm|apply|consider|minimize|detect|manage|document|ensure|remove|delete|update|limit|split|wrap|return|log|handle|validate|include|exclude|set|treat|report|reply|answer|respond|show|explain|name|place|store|move|create|build|push|deploy)\b/i;
+export function isDirective(u: Pick<Unit, 'text' | 'layer' | 'memoryType'>): boolean {
+  if (u.layer === 'forgen-rule' || u.layer === 'memory-topic') return true;
+  const t = u.text.trim();
+  if (/^\|/.test(t) || /^#{1,6}\s/.test(t)) return false; // 표 줄·제목
+  if (/^(?:[-*+]\s+)?`[^`]+\.[a-z.]+`\s*[-—:]/.test(t)) return false; // 파일 목록 줄(`x.skill.md` - 설명)
+  const head = t.replace(/^(?:[-*+]|\d+[.)])\s+/, '').replace(/^\*\*|^`/, '');
+  return DIRECTIVE_KO.test(t) || DIRECTIVE_EN.test(t) || IMPERATIVE_EN.test(head);
+}
+
+/**
+ * 0.9.1 A1 사실 진술: 지금 구성·상태를 설명하는 문장(지시가 아님). 부딪힘(낡은 사실) 검사에만 넣는다.
+ * 표 줄·제목·파일 목록 줄은 빼고, 서술 어미나 상태 낱말(제거·없음·현재·구성·사용·이다 …)이 있는 줄.
+ */
+const CLAIM_KO = /(이다|입니다|였다|었다|었습니다|됩니다|된다|되었|됐다|돼 있|되어 있|있다|없다|없음|있음|제거|삭제|폐기|중단|현재|지금은|구성|사용 중|쓰고 있|이전했|옮겼|바뀌었|대체)/;
+const CLAIM_EN = /\b(is|are|was|were|has been|have been|uses|runs on|removed|deprecated|replaced|no longer|currently)\b/i;
+export function isFactualClaim(u: Pick<Unit, 'text' | 'layer'>): boolean {
+  if (u.layer === 'forgen-rule' || u.layer === 'memory-topic') return true;
+  const t = u.text.trim();
+  if (/^\|/.test(t) || /^#{1,6}\s/.test(t) || /^(?:[-*+]\s+)?`[^`]+\.[a-z.]+`\s*[-—:]/.test(t)) return false;
+  return CLAIM_KO.test(t) || CLAIM_EN.test(t);
+}
+
 /** 중요 지침(§2.3 확정): hard·strong·직접 교정 룰. 처방이 지우거나 묶음으로 범위를 옮기지 않는다. */
 export const isImportantRule = (r: { strength: string; source: string }) => r.strength === 'hard' || r.strength === 'strong' || r.source === 'explicit_correction';
 

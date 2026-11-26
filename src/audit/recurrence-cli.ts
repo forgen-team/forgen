@@ -10,7 +10,10 @@ import { FORGEN_HOME } from '../core/paths.js';
 import { writeFingerprintIfFirst } from './fingerprint.js';
 import { takeModelDisclosure } from './judge.js';
 import { resolvePendingCorrections } from '../core/correction-ledger-judge.js';
-import { recurrenceLine, runRecurrence, writeRecurrenceRun, type RecurrenceResult, type RecurrenceRun } from './recurrence.js';
+import { maskQuote } from './quote.js';
+import { shortPath } from './html.js';
+import { TERMS_LINE } from './html.js';
+import { latestRecurrenceRun, rangeText, recurrenceLine, runRecurrence, writeRecurrenceRun, type RecurrenceResult, type RecurrenceRun } from './recurrence.js';
 
 const DAY = 86_400_000;
 export const BASELINE_SCHEMA = 'forgen-audit-baseline/1' as const;
@@ -35,32 +38,42 @@ function value(args: string[], name: string): string | undefined {
   return i >= 0 && args[i + 1] && !args[i + 1].startsWith('--') ? args[i + 1] : undefined;
 }
 
-const LABEL: Record<string, string> = { ignored: '실렸는데 무시', notLoaded: '적혀는 있는데 안 실림', unwrittenRepeat: '적히지 않은 채 반복', deletedRepeat: '지운 뒤 다시 말함', written: '적혀 있는데도 또 말함(위 둘)', total: '반복 교정 전체' };
-const REASON: Record<string, string> = { scope: '다른 폴더 전용', 'budget-or-other': 'forgen 예산 탈락 등', 'topic-only': '주제 파일에만', truncated: '잘림 뒤', 'other-folder': '다른 폴더', conditional: 'paths: 조건부', 'cwd-missing': '폴더 없음', 'replay-unknown': '지금은 보관된 룰이라 재생으로 확인 못 함', 'tier2-missed': '2층 미발동(2층 후보였는데 안 실림)' };
+const LABEL: Record<string, string> = { ignored: '세션에 실렸는데도 또 말함', notLoaded: '적혀 있지만 그 세션에 안 실려 또 말함', unwrittenRepeat: '어디에도 안 적혀 또 말함', deletedRepeat: '지운 기억을 다시 말함', written: '이미 적혀 있던 것(위 둘)', total: '같은 말 다시 하기 전체' };
+const REASON: Record<string, string> = { scope: '다른 폴더 전용으로 적혀 있음', 'budget-or-other': 'forgen 룰 자리가 모자라 빠짐 등', 'topic-only': '메모 파일 본문에만 있음(세션 시작에 안 실림)', truncated: 'MEMORY.md 상한(200줄·25KB) 뒤에 있음', 'other-folder': '다른 폴더 기억에 있음', conditional: '특정 파일을 다룰 때만 실리는 룰(paths:)', 'cwd-missing': '그 폴더가 지금 없음', 'replay-unknown': '지금은 보관된 룰이라 확인 못 함', 'tier2-missed': '상황 맞춤 룰인데 그때 안 들어옴' };
+const KIND: Record<string, string> = { 'forgen-rule': 'forgen 룰', 'memory-topic': '메모 파일', 'memory-index': 'MEMORY.md', 'host-md': 'CLAUDE.md 등 지침 파일' };
+const pctOf = (per1000: number) => `${Math.round(per1000) / 10}%`;
 
 export function summaryLines(r: RecurrenceResult): string[] {
-  const out = [`같은 말 다시 하기 (N4) ${r.window.since.slice(0, 10)} ~ ${r.window.until.slice(0, 10)} (${r.window.days}일, 앞 ${r.window.lookbackDays}일 조회 전용) · 판정자 ${r.judge ? `교정 ${r.judge.correction.model}(${r.judge.correction.version}) · 쌍 ${r.judge.pair.model}(${r.judge.pair.version}, 1회 비대칭, 사전 필터 ≥ ${r.judge.prefilterMin})` : '없음'}`];
+  const out = [`같은 말 다시 하기 — ${r.window.since.slice(0, 10)} ~ ${r.window.until.slice(0, 10)} (${r.window.days}일, 그 앞 ${r.window.lookbackDays}일은 "전에 한 말"을 찾는 데만 씀) · 판정: 내 컴퓨터의 claude CLI${r.judge ? '(교정 찾기 Haiku · 같은 말인지 Sonnet)' : ''}`];
   out.push(`  ${recurrenceLine(r)}`);
+  if (r.range) out.push(`  범위: 아래 끝 = 엄격 판정(그 기억을 그 상황에서 그대로 따랐다면 교정이 필요 없었을 때만 "적혀 있었다"), 위 끝 = 관대 판정(같은 원칙이면 "적혀 있었다"). 예시·첫 화면 발견은 엄격 판정에서도 맞는 것만 씁니다`);
   if (r.statusNote) out.push(`  ${r.statusNote}`);
   if (r.status === 'model-off' || r.status === 'no-data') return out;
+  if (r.prompts.limit) out.push(`  (요청 ${r.prompts.window}개 중 ${r.prompts.sampled}개만 뽑아 잰 참고값 — 전부로 잰 감사 첫 화면 숫자와 다를 수 있음. 전부: --limit 없이)`);
   const p = r.prompts;
-  out.push(`  분모: 직전에 AI 응답이 있는 사용자 발화 ${p.window}개${p.limit ? ` 중 표본 ${p.sampled}` : ''} · 판정 ${p.judged}${p.unjudged ? ` · 판정 못 함 ${p.unjudged}` : ''} · 30일 환산 ${p.per30d}개`);
-  out.push(`  교정 ${r.corrections.total}개 (1,000개당 ${r.corrections.per1000}, 이 작업에만 해당 ${r.corrections.taskSpecific}, 그 뒤 기억이 된 것 ${r.corrections.becameMemory}) · 조회 구간 교정 ${r.corrections.lookback}`);
-  out.push('  갈래                          건수   1,000개당   30일 환산');
+  out.push(`  센 요청: AI 답 바로 뒤에 내가 한 말 ${p.window}개${p.limit ? ` 중 ${p.sampled}개를 뽑음` : ''} · 판정 ${p.judged}${p.unjudged ? ` · 판정 못 함 ${p.unjudged}` : ''}`);
+  out.push(`  교정 ${r.corrections.total}개 (그 작업에만 해당 ${r.corrections.taskSpecific} · 그 뒤 기억으로 남은 것 ${r.corrections.becameMemory})`);
+  // B4: 표본이 너무 작으면(교정이 적어 참고값) 요약만 짧게 — 예시 몇 개와 다음에 할 일
+  const short = r.status === 'insufficient';
+  if (!short) out.push(`  종류${r.range ? '(엄격~관대 판정)' : ''}                       번      요청 중 비율    30일로 치면`);
   for (const k of ['ignored', 'notLoaded', 'unwrittenRepeat', 'deletedRepeat', 'written', 'total'] as const) {
-    out.push(`    ${LABEL[k].padEnd(24)} ${String(r.counts[k]).padStart(5)}   ${String(r.per1000[k]).padStart(8)}   ${String(r.per30d[k]).padStart(8)}`);
+    if (!short) out.push(`    ${LABEL[k].padEnd(30)} ${rangeText(r, k, 'counts', String).padStart(7)}   ${rangeText(r, k, 'per1000', pctOf).padStart(12)}   ${rangeText(r, k, 'per30d', String).padStart(10)}`);
   }
-  out.push(`  95% 구간(1,000개당): 반복 전체 ${r.ci95per1000.total[0]}~${r.ci95per1000.total[1]} · 적혀 있던 것 ${r.ci95per1000.written[0]}~${r.ci95per1000.written[1]} · 쌍 판정 ${r.pairsJudged}개 중 "모름" ${r.unknown}(세지 않음, 검수 대상)`);
+  if (!short) out.push(`  오차 범위(95%): 같은 말 다시 하기 전체 ${pctOf(r.ci95per1000.total[0])}~${pctOf(r.ci95per1000.total[1])} · 이미 적혀 있던 것 ${pctOf(r.ci95per1000.written[0])}~${pctOf(r.ci95per1000.written[1])}`);
   const reasons = new Map<string, number>();
   for (const it of r.items) if (it.branch === 'not-loaded' && it.match?.reason) reasons.set(it.match.reason, (reasons.get(it.match.reason) ?? 0) + 1);
-  if (reasons.size) out.push(`  안 실린 까닭: ${[...reasons].map(([k, n]) => `${REASON[k] ?? k} ${n}`).join(' · ')}`);
+  if (reasons.size) out.push(`  적혀 있는데 안 실린 까닭: ${[...reasons].map(([k, n]) => `${REASON[k] ?? k} ${n}`).join(' · ')}`);
   const kinds = new Map<string, number>();
   for (const it of r.items) if (it.match && (it.branch === 'ignored' || it.branch === 'not-loaded')) kinds.set(it.match.kind, (kinds.get(it.match.kind) ?? 0) + 1);
-  if (kinds.size) out.push(`  적혀 있던 곳: ${[...kinds].map(([k, n]) => `${k} ${n}`).join(' · ')}`);
-  out.push(`  기억 ${r.memory.items}개 (${Object.entries(r.memory.byKind).map(([k, n]) => `${k} ${n}`).join(' · ')}) · 시점 모름 ${r.memory.unknownTime} · 지움 표시 ${r.memory.deleted}`);
+  if (kinds.size) out.push(`  적혀 있던 곳: ${[...kinds].map(([k, n]) => `${KIND[k] ?? k} ${n}`).join(' · ')}`);
+  for (const it of r.items.filter((x) => x.branch === 'ignored' || x.branch === 'not-loaded').slice(0, 3)) {
+    out.push(`    예: ${it.ts.slice(0, 10)} "${maskQuote(it.utterance || it.gist, 80)}" — ${it.match ? `${KIND[it.match.kind] ?? it.match.kind}에 "${maskQuote(it.match.text, 50)}"` : ''}`);
+  }
+  if (short) { out.push('  (교정이 적어 위 숫자는 참고값 — 표 대신 요약만 보입니다. 전부 재기: forgen audit recurrence --since <더 이른 날짜>)'); return out; }
+  out.push(`  비교한 기억 ${r.memory.items}개 (${Object.entries(r.memory.byKind).map(([k, n]) => `${KIND[k] ?? k} ${n}`).join(' · ')}) · 지운 기억 ${r.memory.deleted}개`);
   if (r.biweekly?.length) {
-    out.push('  2주 단위(두 층 도입 뒤 추적): 구간 · 판정 발화 · 교정 · 반복 전체(1,000개당) · 그중 2층 미발동 재발');
-    for (const b of r.biweekly) out.push(`    ${b.from.slice(0, 10)}~${b.to.slice(0, 10)}  ${String(b.prompts).padStart(5)}  ${String(b.corrections).padStart(4)}  ${String(b.total).padStart(4)} (${b.per1000})  ${b.tier2Missed}`);
+    out.push('  2주씩: 기간 · 센 요청 · 교정 · 같은 말 다시 하기(요청 중 비율) · 그중 상황 맞춤 룰이 안 들어와서');
+    for (const b of r.biweekly) out.push(`    ${b.from.slice(0, 10)}~${b.to.slice(0, 10)}  ${String(b.prompts).padStart(5)}  ${String(b.corrections).padStart(4)}  ${String(b.total).padStart(4)} (${pctOf(b.per1000)})  ${b.tier2Missed}`);
   }
   for (const n of r.notes) out.push(`  · ${n}`);
   return out;
@@ -68,9 +81,7 @@ export function summaryLines(r: RecurrenceResult): string[] {
 
 function statsLine(run: RecurrenceRun, ms: number): string {
   const s = run.judgeStats;
-  const t = run.timing;
-  const by = s ? Object.entries(s.byModel).map(([m, n]) => `${m} ${n}`).join(' · ') : '';
-  return `시간 ${Math.round(ms / 1000)}초 (기록 ${t.transcripts ?? 0}ms · 기억 ${t.memory ?? 0}ms · 교정 판정 ${t.correctionJudge ?? 0}ms · 쌍 판정 ${t.pairJudge ?? 0}ms) · 모델 호출 ${s?.calls ?? 0}회${by ? `(${by})` : ''} 실패 ${s?.failedCalls ?? 0} · 캐시 적중 ${s?.cacheHits ?? 0}`;
+  return `${Math.round(ms / 1000)}초 · 모델 호출 ${s?.calls ?? 0}번 (실패 ${s?.failedCalls ?? 0}, 저장된 판정 ${s?.cacheHits ?? 0}개 재사용)`;
 }
 
 function disclose(json: boolean): void {
@@ -109,20 +120,32 @@ export async function handleRecurrence(args: string[], claudeDir: string | undef
     console.log(JSON.stringify({ ...run.result, runId: out.runId, dir: out.dir, sourcesDigest: run.manifest.sourcesDigest, resultDigest: run.manifest.resultDigest, judgeStats: run.judgeStats, timing: run.timing, ledger, tier2 }, null, 2));
     return;
   }
+  console.log(`${TERMS_LINE}\n`);
   for (const l of summaryLines(run.result)) console.log(l);
-  if (tier2?.tier2Missed.length) console.log(`  두 층: 2층 미발동 룰 ${tier2.tier2Missed.length}개를 다음 세션부터 1층으로 올림 (${tier2.tier2Missed.map((x) => x.slice(0, 8)).join(', ')}) — 90일 재발 0 이면 자격 게이트를 다시 본다`);
+  // 숫자 일관성: 감사 첫 화면은 가장 최근의 "전부로 잰" 결과를 쓴다. 이번이 표본이면 어느 결과와 왜 다른지 바로 말한다.
+  if (run.result.prompts.limit) {
+    const full = latestRecurrenceRun();
+    if (full && full.result.prompts.limit === null) {
+      const fr = full.result;
+      console.log(`  ※ 감사 첫 화면(forgen audit)은 이 표본 결과가 아니라 ${fr.generatedAt.slice(0, 10)} 에 요청 ${fr.prompts.window}개 전부로 잰 결과(교정 약 ${Math.round(fr.corrections.per30d)}번 · 이미 적혀 있는데 또 말한 것 약 ${Math.round(fr.per30d.written)}번)를 씁니다 — 그래서 두 화면 숫자가 다릅니다. 같은 값을 보려면 --limit 없이 재세요`);
+    }
+  }
+  if (tier2?.tier2Missed.length) console.log(`  상황 맞춤 룰 ${tier2.tier2Missed.length}개가 필요한 순간에 안 들어와, 다음 세션부터 세션마다 실리게 바꿈`);
   console.log(`\n${statsLine(run, ms)}`);
-  if (ledger && (ledger.resolved || ledger.left)) console.log(`교정 원장: 판정 대기 ${ledger.resolved}건 판정${ledger.left ? ` · 남음 ${ledger.left}${ledger.stopped ? ` (${ledger.stopped})` : ''}` : ''}`);
-  if (run.result.pairsJudged) console.log('검수: forgen audit review  (판정 쌍 25개를 페이지로 — 기기 밖으로 아무것도 보내지 않음)');
-  if (fp) console.log(`첫 감사 — 기억 지문을 남김: ${fp}`);
-  console.log(`✓ [forgen] ${path.join(out.dir, 'result.json')}`);
+  if (ledger && (ledger.resolved || ledger.left)) console.log(`아직 판정 안 된 교정 기록 ${ledger.resolved}개를 판정함${ledger.left ? ` · 남은 것 ${ledger.left}${ledger.stopped ? ` (${ledger.stopped})` : ''}` : ''}`);
+  if (run.result.pairsJudged) console.log('모델 판정이 맞는지 직접 확인: forgen audit review (25개를 내 컴퓨터에서만 여는 페이지로)');
+  if (fp) console.log(`처음 재서 지금 기억 상태를 적어 둠: ${fp}`);
+  console.log(`✓ [forgen] 결과: ${shortPath(path.join(out.dir, 'result.json'))}`);
+  console.log('\n다음에 할 일');
+  console.log('  1. forgen audit — 이 결과로 첫 화면(가장 중요한 발견)을 다시 봅니다');
+  console.log('  2. forgen fix --list — 어디에도 안 적힌 교정은 "기억 추가" 처방으로 적을 수 있습니다');
 }
 
-interface BaselinePart { runId: string; window: RecurrenceResult['window']; status: RecurrenceResult['status']; statusNote: string; prompts: RecurrenceResult['prompts']; corrections: RecurrenceResult['corrections']; counts: RecurrenceResult['counts']; per1000: RecurrenceResult['per1000']; per30d: RecurrenceResult['per30d']; ci95per1000: RecurrenceResult['ci95per1000']; unknown: number; memory: RecurrenceResult['memory']; sourcesDigest: string; resultDigest: string }
+interface BaselinePart { range?: RecurrenceResult['range']; runId: string; window: RecurrenceResult['window']; status: RecurrenceResult['status']; statusNote: string; prompts: RecurrenceResult['prompts']; corrections: RecurrenceResult['corrections']; counts: RecurrenceResult['counts']; per1000: RecurrenceResult['per1000']; per30d: RecurrenceResult['per30d']; ci95per1000: RecurrenceResult['ci95per1000']; unknown: number; memory: RecurrenceResult['memory']; sourcesDigest: string; resultDigest: string }
 
 const part = (run: RecurrenceRun, runId: string): BaselinePart => {
   const r = run.result;
-  return { runId, window: r.window, status: r.status, statusNote: r.statusNote, prompts: r.prompts, corrections: r.corrections, counts: r.counts, per1000: r.per1000, per30d: r.per30d, ci95per1000: r.ci95per1000, unknown: r.unknown, memory: r.memory, sourcesDigest: run.manifest.sourcesDigest, resultDigest: run.manifest.resultDigest };
+  return { ...(r.range ? { range: r.range } : {}), runId, window: r.window, status: r.status, statusNote: r.statusNote, prompts: r.prompts, corrections: r.corrections, counts: r.counts, per1000: r.per1000, per30d: r.per30d, ci95per1000: r.ci95per1000, unknown: r.unknown, memory: r.memory, sourcesDigest: run.manifest.sourcesDigest, resultDigest: run.manifest.resultDigest };
 };
 
 /** 기준값: 배포 직전 6주(앞 30일 조회 전용) + 12주 전체(§4.2-5). --freeze 면 baseline.json 에 고정(덮어쓰기는 --force). */
@@ -131,7 +154,7 @@ export async function handleBaseline(args: string[], claudeDir: string | undefin
   const freeze = args.includes('--freeze');
   const force = args.includes('--force');
   if (args.includes('--limit')) throw new Error('기준값은 표본(--limit) 없이 전체로 잰다 — 표본으로 보려면 forgen audit recurrence --limit');
-  if (args.includes('--no-model')) throw new Error('기준값(N4)은 모델 판정이 필요하다 — --no-model 로는 잴 수 없다');
+  if (args.includes('--no-model')) throw new Error('기준값은 모델 판정이 필요하다 — --no-model 로는 잴 수 없다');
   const bp = BASELINE_PATH();
   if (freeze && fs.existsSync(bp) && !force) {
     throw new Error(`기준값이 이미 고정돼 있다: ${bp} — 다시 고정하려면 --freeze --force (이전 값은 baseline-<시각>.json 으로 남긴다)`);
@@ -152,7 +175,7 @@ export async function handleBaseline(args: string[], claudeDir: string | undefin
   const bad = [six.result, twelve.result].find((r) => r.status === 'incomplete' || r.status === 'no-data' || r.status === 'model-off');
   if (json) console.log(JSON.stringify({ ...body, frozen: false }, null, 2));
   else {
-    console.log('기준값 (N4) — 배포 직전 6주 · 12주 전체\n');
+    console.log('같은 말 다시 하기 기준값 — 배포 직전 6주 · 12주 전체\n');
     for (const l of summaryLines(six.result)) console.log(l);
     console.log('');
     for (const l of summaryLines(twelve.result)) console.log(l);

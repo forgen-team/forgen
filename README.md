@@ -34,6 +34,26 @@
 
 ---
 
+## See it before you install
+
+```
+npx -y @wooojin/forgen audit --since 30d
+```
+
+Nothing installed, no hooks registered, nothing written to `~/.claude` (with `--no-model` it stays byte-for-byte the same; model checks run your own `claude` CLI, which keeps its usual state files): it only reads your `CLAUDE.md`, `.claude/rules`, auto memory and the last 30 days of transcripts, and writes its report to `~/.forgen/audit/` (it prints the path). Model checks go through the `claude` CLI you already use and are announced before the first run; add `--no-model` to send nothing at all, `--share` for a short summary with counts only (no paths, names or text) to paste anywhere.
+
+| Without forgen | With forgen |
+|---|---|
+| A project's `CLAUDE.md` still describes a server you removed months ago. Claude reads it every session and tries to fix a server that is not there. | `forgen audit` shows the line that points at something that no longer exists → `forgen fix <id> --apply` deletes it (one command to undo). |
+| You told Claude "reply in Korean" last week. This week it answers in English, and you say it a third time. | The correction becomes a rule that loads every session, and the audit counts how often you still had to repeat yourself — with the date and your own words. |
+| The same instruction sits in `CLAUDE.md`, `AGENTS.md` and `.claude/rules`. Every session pays for it three times. | `forgen fix` keeps one copy and shows the sentence before and after. |
+| A rule meant for one project loads in every project, and Claude follows it where it does not belong. | The audit flags it and the fix makes it load only in that project. |
+| A crowded session start silently drops some of the corrections you gave in that folder. | Inferred and other-project rules go first; corrections you gave for that folder are shortened before they are dropped, and if even that cannot fit, the block says how many it left out. |
+
+Unsure whether the hooks work? `forgen doctor` runs a harmless test input through each real hook in a throwaway home and shows that it worked, and how many ms it took.
+
+---
+
 ## The first block (30 seconds)
 
 Here's forgen's most *visible* mechanism — a live guard you can trigger in 30 seconds. Fair warning up front (this is the honest-measurement tool, after all): on current frontier models this particular guard rarely fires, because Opus 4.8 / Sonnet 5 mostly stopped making unverified "done" claims on their own (we measured **blocks = 0** — see the caveat below). So treat this as a **safety net for weaker models and the occasional tail case**, not forgen's daily value. The daily value is quieter: your corrections becoming rules, and past solutions resurfacing. But the guard is the fastest thing to *see*, so we lead with it.

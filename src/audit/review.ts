@@ -63,18 +63,24 @@ export function shortWhere(p: string | undefined, line: number | undefined, key:
 }
 
 /** 시드 고정 표본: 예 무작위 10 + 아니오 점수 높은 순 10 + 모름 무작위 5. 같은 결과면 같은 표본. */
-export function buildReviewSample(r: RecurrenceResult, runId: string, now = new Date()): ReviewSample {
+/**
+ * 사전 등록(2026-11-26): 측정 질문은 "그때 이미 지시하고 있었나" 하나 — 교정 뒤에 생긴 기억과의 짝(tier later)은 다른 질문이라 표본에 넣지 않는다.
+ * opts.seed 로 새 표본을 뽑고, opts.exclude 의 쌍(앞서 문구 조정에 쓴 표본)은 뺀다.
+ */
+export function buildReviewSample(r: RecurrenceResult, runId: string, now = new Date(), opts: { seed?: string; exclude?: Set<string> } = {}): ReviewSample {
+  const seed = opts.seed ?? SEED;
   const all: Array<Omit<ReviewPair, 'bucket'>> = [];
   for (const it of r.items) {
     for (const p of it.pairs ?? []) {
-      if (!p.verdict) continue;
+      if (!p.verdict || p.tier === 'later') continue;
+      if (opts.exclude?.has(sha(`${it.id}|${p.tier}|${p.key}`).slice(0, 12))) continue;
       all.push({
         pairId: sha(`${it.id}|${p.tier}|${p.key}`).slice(0, 12), judge: p.verdict, ts: it.ts, gist: it.gist, utterance: it.utterance.slice(0, 300),
         memory: p.text, memoryWhere: shortWhere(p.path, p.line, p.key), memoryKind: p.kind, tier: p.tier, score: p.score,
       });
     }
   }
-  const rnd = (x: { pairId: string }) => sha(`${SEED}:${x.pairId}`);
+  const rnd = (x: { pairId: string }) => sha(`${seed}:${x.pairId}`);
   const byRnd = (a: { pairId: string }, b: { pairId: string }) => (rnd(a) < rnd(b) ? -1 : 1);
   const yes = all.filter((x) => x.judge === 'yes').sort(byRnd).slice(0, REVIEW_QUOTA.yes).map((x) => ({ ...x, bucket: 'yes-random' as const }));
   const no = all.filter((x) => x.judge === 'no').sort((a, b) => b.score - a.score || byRnd(a, b)).slice(0, REVIEW_QUOTA.no).map((x) => ({ ...x, bucket: 'no-top-score' as const }));

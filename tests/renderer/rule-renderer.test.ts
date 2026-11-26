@@ -229,7 +229,7 @@ describe('renderRules', () => {
       const tight = { surface: 'session_start' as const, max_rules: 60, max_chars: 10, include_pack_summary: false };
       const out = renderRules([], makeState(), profileWithFacets({ verification_depth: 0.95 }), tight);
       expect(out).not.toContain('[profile]');
-      expect(out).toMatch(/profile rules/);
+      expect(out).toMatch(/프로필 규칙 \d+개|\d+ profile/);
       // 룰 하나가 있고 예산이 룰 하나분만 남는 경우: 룰이 들어가고 facet 이 밀린다
       const rule = { rule_id: 'r1', category: 'workflow', scope: 'me', trigger: 't', policy: '룰 하나', strength: 'strong', source: 'explicit_correction', status: 'active', evidence_refs: [], render_key: 'workflow.r1', created_at: '2026-11-01T00:00:00Z', updated_at: '2026-11-01T00:00:00Z' } as unknown as Rule;
       const full = renderRules([rule], makeState(), profileWithFacets({ verification_depth: 0.95 }));
@@ -255,7 +255,7 @@ describe('렌더 예산 (룰이 조용히 사라지지 않는다)', () => {
     expect(r.included.map((x) => x.rule_id)[0]).toBe('s1');
     expect(r.omitted.length).toBeGreaterThan(0);
     expect(r.included.length + r.omitted.length).toBe(31);
-    expect(r.text).toContain(`${r.omitted.length} lower-priority rules omitted`);
+    expect(r.text).toMatch(new RegExp(`(중요 지침|우선순위 낮은 룰) ${r.omitted.length}개|${r.omitted.length} (important|lower-priority)`));
     for (const o of r.omitted) expect(r.text).not.toContain(o.policy);
   });
 
@@ -297,5 +297,35 @@ describe('composeRuleFiles', () => {
     const { files, omitted } = composeRuleFiles(map);
     expect(files.length).toBe(2);
     expect(omitted.length).toBe(6);
+  });
+});
+
+describe('0.9.1 #1 — 그 폴더의 중요 지침은 세션 시작 예산으로 빠지지 않는다', () => {
+  const rule = (id: string, strength: Rule['strength'], source: Rule['source'], policy: string, projects?: string[]): Rule => ({
+    rule_id: id, category: 'workflow', scope: 'me', trigger: 't', policy, strength, source, status: 'active',
+    evidence_refs: [], render_key: `workflow.${id}`, created_at: '2026-11-01T00:00:00Z', updated_at: '2026-11-01T00:00:00Z', ...(projects ? { projects } : {}),
+  });
+  const est = (t: string) => { let a = 0; let o = 0; for (const ch of t) { if ((ch.codePointAt(0) ?? 0) < 128) a++; else o++; } return Math.round(a / 4 + o * 0.9); };
+  it('직접 교정·strong 은 모두 실리고, 빠지는 것은 추론 룰뿐 · Omitted 줄은 사람 말 · 블록 ≤ 4,000토큰', () => {
+    setLocale('ko');
+    const corrections = Array.from({ length: 70 }, (_, i) => rule(`c${i}`, 'default', 'explicit_correction', `교정 ${i}: 배포 전에 실제 화면을 먼저 확인하고 결과를 보고한다. ${'자세한 설명 '.repeat(8)}`, i % 2 ? ['proj'] : undefined));
+    const inferred = Array.from({ length: 10 }, (_, i) => rule(`b${i}`, 'default', 'behavior_inference', `추론 ${i} ${'가'.repeat(60)}`));
+    const strong = rule('s1', 'strong', 'explicit_correction', '답변은 항상 한국어로');
+    const all = [...corrections, ...inferred, strong];
+    const ctx = { ...DEFAULT_CONTEXT, projectKey: 'proj' };
+    const r = renderRulesDetailed(all, makeState(), null, ctx);
+    const ids = new Set(r.included.map((x) => x.rule_id));
+    for (const x of [...corrections, strong]) expect(ids.has(x.rule_id)).toBe(true);
+    expect(r.omitted.length).toBeGreaterThan(0);
+    expect(r.omitted.every((x) => x.source === 'behavior_inference')).toBe(true);
+    expect(r.text).toMatch(/## Omitted\n- 추론 룰 \d+개는 이번 세션에 안 넣음/);
+    expect(r.text).not.toMatch(/lower-priority/);
+    expect(est(r.text)).toBeLessThanOrEqual(4000);
+  });
+  it('중요 지침이 빠지지 않는 폴더는 예전 선택과 같다', () => {
+    const few = [rule('a', 'strong', 'explicit_correction', '짧은 룰'), rule('b', 'default', 'behavior_inference', '추론 룰')];
+    const r = renderRulesDetailed(few, makeState(), null, DEFAULT_CONTEXT);
+    expect(r.included.map((x) => x.rule_id).sort()).toEqual(['a', 'b']);
+    expect(r.text).not.toContain('## Omitted');
   });
 });

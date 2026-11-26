@@ -174,6 +174,8 @@ async function main(): Promise<void> {
   // 양쪽 진입 경로 모두에서 session state 박제.
   // doctor 프로브(FORGEN_DOCTOR_PROBE=1): 세션 상태 기록·백그라운드 스폰 등 부작용 경로를 건너뛴다.
   const doctorProbe = process.env.FORGEN_DOCTOR_PROBE === '1';
+  // forgen doctor 작동 증명(격리 홈): 훅은 끝까지 실행하되 백그라운드 작업은 띄우지 않는다 — 격리 홈을 지우는 동안 쓰지 않게.
+  const noBackground = doctorProbe || process.env.FORGEN_DOCTOR_PROOF === '1';
   let v1RenderedRules: string | null = null;
   let bootIncluded: string[] = [];
   let bootTier2: import('../store/types.js').Rule[] = [];
@@ -412,7 +414,7 @@ async function main(): Promise<void> {
       const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
       let spawned = 0;
       for (const t of transcripts) {
-        if (spawned >= 3 || doctorProbe) break;
+        if (spawned >= 3 || noBackground) break;
         if (Date.now() - t.mtime > WEEK_MS) break; // mtime 내림차순 — 이후는 더 오래됨
         const prevTranscript = path.join(projectDir, t.name);
         const prevSessionId = t.name.replace('.jsonl', '');
@@ -429,7 +431,7 @@ async function main(): Promise<void> {
         log.debug(`이전 세션 auto-compound 시작: ${prevSessionId}`);
       }
       // D4: 새로 처리할 세션이 없어도 대기열(타임아웃·실패로 밀린 추출)에 기한이 된 항목이 있으면 재시도 러너를 띄운다.
-      if (spawned === 0 && !doctorProbe) {
+      if (spawned === 0 && !noBackground) {
         const { readQueue } = await import('../core/extraction-queue.js');
         const now = Date.now();
         if (readQueue().some((e) => e.nextAt <= now && (e.claimedUntil ?? 0) <= now)) {
@@ -465,7 +467,7 @@ async function main(): Promise<void> {
         shouldRun = Date.now() - last > 24 * 60 * 60 * 1000;
       }
     } catch { /* last-lifecycle.json parse failure — run lifecycle check anyway */ }
-    if (shouldRun && !doctorProbe) {
+    if (shouldRun && !noBackground) {
       // B-4: detached background spawn — hook timeout 초과 방지.
       //
       // Audit fix #5 (2026-04-21): prior invocation interpolated

@@ -67,8 +67,10 @@ describe('doctor W2-1 boundary (ADR-010)', () => {
     const output = await captureDoctor();
     expect(output).not.toContain('[Harness Maturity]');
     expect(output).not.toContain('Quick Wins');
-    // forgen 고유 진단은 유지된다
-    expect(output).toContain('[State Hygiene]');
+    // forgen 고유 진단은 유지된다(0.9.1 B5: 개발자용이라 --verbose 에서만, 기본 화면에는 안내 한 줄)
+    expect(output).not.toContain('[State Hygiene]');
+    expect(output).toContain('forgen doctor --verbose');
+    expect(await captureDoctor({ verbose: true })).toContain('[State Hygiene]');
     expect(output).not.toContain('[Codex Parity]');
   });
 

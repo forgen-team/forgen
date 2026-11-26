@@ -33,6 +33,9 @@ export interface MemoryWrite {
   tool: string;
   /** 쓴 내용(Write content · Edit new_string · MultiEdit new_string 들) */
   content: string;
+  /** 그때 모습 복원용: Write 의 전문, Edit·MultiEdit 의 (old → new) 바꾸기 목록 */
+  full?: string;
+  edits?: Array<{ old: string; new: string; all?: boolean }>;
 }
 
 export interface TranscriptFile { path: string; session: string; bytes: number; sha256: string }
@@ -91,10 +94,17 @@ function memoryWritesOf(m: { message?: { content?: unknown }; timestamp?: string
     const rel = MEMORY_REL.exec(fp);
     if (!rel) continue;
     let text = '';
-    if (typeof blk.input.content === 'string') text = blk.input.content;
-    else if (typeof blk.input.new_string === 'string') text = blk.input.new_string;
-    else if (Array.isArray(blk.input.edits)) text = (blk.input.edits as Array<{ new_string?: string }>).map((e) => e?.new_string ?? '').join('\n');
-    out.push({ rel: `${rel[1]}/memory/${rel[2].replace(/\\/g, '/')}`, at: m.timestamp, tool: blk.name, content: text });
+    let full: string | undefined;
+    let edits: MemoryWrite['edits'];
+    const inp = blk.input as { content?: unknown; old_string?: unknown; new_string?: unknown; replace_all?: unknown; edits?: unknown };
+    if (typeof inp.content === 'string') { text = inp.content; full = inp.content; }
+    else if (typeof inp.new_string === 'string') { text = inp.new_string; edits = typeof inp.old_string === 'string' ? [{ old: inp.old_string, new: inp.new_string, all: inp.replace_all === true }] : undefined; }
+    else if (Array.isArray(inp.edits)) {
+      const es = inp.edits as Array<{ old_string?: string; new_string?: string; replace_all?: boolean }>;
+      text = es.map((e) => e?.new_string ?? '').join('\n');
+      if (es.every((e) => typeof e?.old_string === 'string' && typeof e?.new_string === 'string')) edits = es.map((e) => ({ old: e.old_string as string, new: e.new_string as string, all: e.replace_all === true }));
+    }
+    out.push({ rel: `${rel[1]}/memory/${rel[2].replace(/\\/g, '/')}`, at: m.timestamp, tool: blk.name, content: text, ...(full !== undefined ? { full } : {}), ...(edits ? { edits } : {}) });
   }
   return out;
 }

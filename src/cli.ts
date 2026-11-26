@@ -8,6 +8,8 @@ if (nodeVersion < 20) {
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import * as os from 'node:os';
+import { helpKo } from './help-ko.js';
 import { fileURLToPath } from 'node:url';
 import { prepareHarness, isFirstRun } from './core/harness.js';
 import { spawnClaudeWithResume } from './core/spawn.js';
@@ -765,6 +767,11 @@ async function main() {
 // ---------------------------------------------------------------------------
 
 function printHelp() {
+  // 0.9.1 #10: 설정 locale 이 ko 면 한국어 도움말
+  try {
+    const cfg = JSON.parse(fs.readFileSync(path.join(process.env.FORGEN_HOME ? path.resolve(process.env.FORGEN_HOME) : path.join(os.homedir(), '.forgen'), 'config.json'), 'utf-8')) as { locale?: string };
+    if (cfg.locale === 'ko') { console.log(helpKo(PKG_VERSION)); return; }
+  } catch { /* 설정 없음 = 영어 */ }
   console.log(`
   Forgen v${PKG_VERSION}
   The more you use Claude, the better it knows you.
