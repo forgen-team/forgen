@@ -93,11 +93,18 @@ export async function handleRecurrence(args: string[], claudeDir: string | undef
   const fp = writeFingerprintIfFirst(run.memoryFiles, new Date(), run.result.forgenVersion);
   // 0.9.0 두 층: 재발·2층 미발동 이력을 두 층 색인에 합친다 — 2층 미발동 룰은 다음 세션부터 1층(자동 복귀)
   let tier2: { updated: number; tier2Missed: string[] } | null = null;
-  try { tier2 = (await import('./tier2-replay.js')).mergeRecurrence(run.result.items); } catch { /* 색인 문제는 재생 결과를 막지 않는다 */ }
+  try { tier2 = (await import('./tier2-replay.js')).mergeRecurrence(run.result.items); } catch (e) {
+    // 재생 결과는 막지 않되 조용히 넘기지 않는다 — 실패하면 2층 미발동 룰이 1층으로 돌아오지 못한다.
+    process.stderr.write(`[forgen] ⚠ 두 층 색인 갱신 실패 — 2층에서 놓친 룰이 1층으로 돌아오지 않았습니다: ${e instanceof Error ? e.message : String(e)}\n`);
+  }
   const ms = Date.now() - started;
   // 교정 원장의 판정 대기도 같은 판정기로 푼다 — 세션 학습(Haiku 동의)이 꺼진 사용자도 여기서 풀린다.
   let ledger: Awaited<ReturnType<typeof resolvePendingCorrections>> | null = null;
-  if (model) { try { ledger = await resolvePendingCorrections({ max: 500 }); } catch { /* 원장 문제는 재생 결과를 막지 않는다 */ } }
+  if (model) {
+    try { ledger = await resolvePendingCorrections({ max: 500 }); } catch (e) {
+      process.stderr.write(`[forgen] ⚠ 교정 원장 판정 대기를 풀지 못했습니다: ${e instanceof Error ? e.message : String(e)}\n`);
+    }
+  }
   if (json) {
     console.log(JSON.stringify({ ...run.result, runId: out.runId, dir: out.dir, sourcesDigest: run.manifest.sourcesDigest, resultDigest: run.manifest.resultDigest, judgeStats: run.judgeStats, timing: run.timing, ledger, tier2 }, null, 2));
     return;
