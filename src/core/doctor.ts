@@ -144,6 +144,9 @@ async function reinstallForRepair(): Promise<boolean> {
     const { planClaudeInstall } = await import('../host/install-claude.js');
     const r = planClaudeInstall({ pkgRoot: currentPkgRoot(), homeDir: os.homedir() });
     console.log(`\n  [Repair] 재설치 경로 실행 — hooks ${r.hooksInjected}, MCP ${r.mcpRegistered ? '재등록' : '유지'}, statusLine ${r.statusLine}`);
+    const { keptOffNotice } = await import('../host/disabled-skills.js');
+    const off = keptOffNotice(r.skillsKeptOff);
+    if (off) console.log(`  [Repair] ${off}`);
     for (const e of r.errors) console.warn(`  [Repair] 오류: ${e}`);
     return r.errors.length === 0;
   } catch (e) {

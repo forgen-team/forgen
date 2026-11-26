@@ -7,6 +7,7 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { readDisabledSkills, type SkillHost } from './disabled-skills.js';
 
 const SKILL_MARKER = '<!-- forgen-managed -->';
 const AGENT_TOML_MARKER = '# forgen-managed';
@@ -136,4 +137,50 @@ export function installSkillFile(src: string, skillsDir: string, name: string): 
   } catch {
     return false;
   }
+}
+
+export interface DevGuideSkillSetOutcome {
+  skillsPath: string;
+  installed: number;
+  removed: number;
+  /** 사용자가 `forgen fix` 로 끈 기록이 있어 깔지 않은 스킬 */
+  keptOff: Array<{ name: string; fixId: string }>;
+}
+
+/**
+ * dev-guide 스킬 묶음 설치 — Claude·Codex 의 모든 설치 경로(postinstall, `forgen install`, `doctor --repair`, 세션 시작 보완 설치)가
+ * 이 함수를 지난다. forgen 소유 사본을 정리한 뒤 다시 깔되, `<FORGEN_HOME>/state/disabled-skills.json` 에 `<host>:<이름>` 이 있으면
+ * 깔지 않는다(0.9.2 — 업그레이드가 사용자가 끈 스킬을 되살리지 않게). 이전 버전에 없던 새 스킬은 기록이 없으니 깔린다.
+ */
+export function installDevGuideSkillSet(opts: { pkgRoot: string; skillsDir: string; host: SkillHost; forgenHome: string; dryRun?: boolean }): DevGuideSkillSetOutcome {
+  const { pkgRoot, skillsDir, host } = opts;
+  const root = path.join(pkgRoot, 'assets', 'dev-guide');
+  const entries: Array<{ name: string; src: string }> = [];
+  try {
+    for (const tier of fs.readdirSync(root)) {
+      const skillsBase = path.join(root, tier, 'skills');
+      if (!fs.existsSync(skillsBase)) continue;
+      for (const stack of fs.readdirSync(skillsBase)) {
+        const stackDir = path.join(skillsBase, stack);
+        if (!fs.statSync(stackDir).isDirectory()) continue;
+        for (const skill of fs.readdirSync(stackDir)) {
+          const src = path.join(stackDir, skill, 'SKILL.md');
+          if (fs.existsSync(src)) entries.push({ name: `forgen-${stack}-${skill}`, src });
+        }
+      }
+    }
+  } catch { /* 자산 없음 */ }
+  const off = readDisabledSkills(opts.forgenHome, !opts.dryRun).skills;
+  const keptOff = entries.filter((e) => off[`${host}:${e.name}`]).map((e) => ({ name: e.name, fixId: off[`${host}:${e.name}`].fixId }));
+  if (opts.dryRun) return { skillsPath: skillsDir, installed: entries.length - keptOff.length, removed: 0, keptOff };
+  if (!entries.length) return { skillsPath: skillsDir, installed: 0, removed: 0, keptOff };
+  fs.mkdirSync(skillsDir, { recursive: true });
+  // stale 정리 — forgen 이 설치한 dev-guide 스킬만 (패키지가 제공하는 이름 / dev-guide 를 가리키는 심링크).
+  const removed = removeOwnedDevGuideSkills(skillsDir, pkgRoot);
+  let installed = 0;
+  for (const { name, src } of entries) {
+    if (off[`${host}:${name}`]) continue;
+    if (installSkillFile(src, skillsDir, name)) installed += 1;
+  }
+  return { skillsPath: skillsDir, installed, removed, keptOff };
 }

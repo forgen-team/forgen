@@ -28,7 +28,7 @@ export const TERMS_LINE = '"실린다" = 세션이 시작될 때 AI 에게 자�
 /** 같은 말 다시 하기 한 줄(첫 화면용, 퍼센트 없이) — 어느 재생 결과인지(날짜·전부/표본)를 같이 적는다(B2). */
 export function recurrenceShort(r: AuditResult): string {
   const rc = r.summary.recurrence;
-  if (rc.status === 'none' || !rc.per30d) return rc.line;
+  if (rc.status === 'none' || !rc.per30d || rc.staleJudge?.length) return rc.line;
   const f = (x: number) => String(Math.round(x));
   const src = `${rc.generatedAt?.slice(0, 10) ?? ''} 에 지난 대화 기록 요청 ${rc.prompts?.window ?? '?'}개 ${rc.sampled ? `중 ${rc.prompts?.judged ?? '?'}개 표본으로 잰 참고값` : '전부로 잰 값 — audit recurrence --limit 로 표본만 다시 재면 숫자가 다르게 나옴'}`;
   const rg = (lo: number, hi: number | undefined) => { const a = f(Math.min(lo, hi ?? lo)); const b = f(Math.max(lo, hi ?? lo)); return a === b ? a : `${a}~${b}`; };
@@ -36,7 +36,7 @@ export function recurrenceShort(r: AuditResult): string {
   const written = rg(rc.per30d.written, L?.written);
   const unwritten = rg(Math.max(0, rc.per30d.total - rc.per30d.written), L ? Math.max(0, L.total - L.written) : undefined);
   const pct = (x: number) => `${Math.round(x) / 10}%`;
-  const share = rc.per1000 ? (L && rc.lenient ? `${pct(Math.min(rc.per1000.total, rc.lenient.per1000.total))}~${pct(Math.max(rc.per1000.total, rc.lenient.per1000.total))}` : pct(rc.per1000.total)) : '';
+  const share = rc.per1000 ? (L && rc.lenient && pct(rc.per1000.total) !== pct(rc.lenient.per1000.total) ? `${pct(Math.min(rc.per1000.total, rc.lenient.per1000.total))}~${pct(Math.max(rc.per1000.total, rc.lenient.per1000.total))}` : pct(rc.per1000.total)) : '';
   return `지난 30일 교정 약 ${f(rc.per30d.corrections)}번 중 이미 적혀 있는데 또 말한 것 약 ${written}번 · 어디에도 안 적혀 또 말한 것 약 ${unwritten}번${share ? ` — 같은 말 다시 하기 ${share}` : ''}${L ? '(판정 기준에 따라 — 경계가 애매한 교정이 있어 범위로 보여 줍니다)' : ''} (${src} — 자세히: forgen audit recurrence)`;
 }
 

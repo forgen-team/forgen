@@ -28,8 +28,9 @@ function runHook(pkgRoot: string, hook: string, input: unknown, env: NodeJS.Proc
 const parse = (s: string): Record<string, unknown> => { try { return JSON.parse(s.trim().split('\n').filter(Boolean).pop() ?? '{}') as Record<string, unknown>; } catch { return {}; } };
 const ctxOf = (j: Record<string, unknown>) => String((j.hookSpecificOutput as { additionalContext?: string } | undefined)?.additionalContext ?? '');
 
-export function runProofs(pkgRoot: string): Proof[] {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'forgen-doctor-proof-'));
+export function runProofs(pkgRoot: string, opts: { tmpBase?: string } = {}): Proof[] {
+  // tmpBase: 격리 홈을 만들 상위 폴더(테스트가 자기 폴더만 확인하도록). 기본은 OS 임시 폴더.
+  const root = fs.mkdtempSync(path.join(opts.tmpBase ?? os.tmpdir(), 'forgen-doctor-proof-'));
   try {
     const home = path.join(root, 'home');
     const fh = path.join(home, '.forgen');

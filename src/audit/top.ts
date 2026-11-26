@@ -10,7 +10,7 @@ import type { Rule } from '../store/types.js';
 import { fixId, ident, importantMissing, baselinePath } from './fix.js';
 import { shortPath } from './html.js';
 import { maskQuote } from './quote.js';
-import { latestRecurrence } from './recurrence.js';
+import { judgeChanges, latestRecurrence, STALE_JUDGE_NOTE } from './recurrence.js';
 import { unitKey, type AuditRun } from './run.js';
 import type { Unit } from './checks.js';
 
@@ -90,7 +90,7 @@ export function findings(run: AuditRun): Finding[] {
       fix: rep.branch === 'ignored'
         ? '룰 문장을 더 분명하게 고치세요(forgen rule list 에서 찾아 수정)'
         : nowLoaded ? '지금은 세션 시작에 실립니다(0.9.1 부터 직접 교정은 분량 상한 때문에 먼저 빠지지 않음 — 그래도 넘치면 세션 시작 블록에 빠진 수를 적음) — forgen audit recurrence 로 다시 재서 확인' : 'forgen fix --list 에서 이 기억을 다루는 처방을 보세요',
-      evidence: `${rep.ts.slice(0, 10)} 내가 한 말 "${maskQuote(rep.utterance || rep.gist, 80)}"`,
+      evidence: `${rep.ts.slice(0, 10)} 내가 한 말 "${maskQuote(rep.utterance || rep.gist, 80)}"${rec && judgeChanges(rec).length ? ` · ${STALE_JUDGE_NOTE}` : ''}`,
     });
   }
   // 3. 다른 프로젝트 섞임(모델 판정 "프로젝트 전용")
@@ -149,6 +149,7 @@ export function nextSteps(run: AuditRun): string[] {
   const c = r.summary.findings.conflicts;
   if (typeof c === 'number' && c > 0) out.push(`서로 부딪히는 지시 ${c}쌍은 forgen 이 고치지 않습니다 — 위 "가장 중요한 발견"의 파일을 직접 정리하세요`);
   if (r.summary.recurrence.status === 'none') out.push('forgen audit recurrence — 지난 30일 대화 기록에서 같은 말을 다시 한 횟수를 잽니다');
+  else if (r.summary.recurrence.staleJudge?.length) out.push('forgen audit recurrence — 저장된 같은 말 다시 하기 값이 이전 판정 방식이라 지금 방식으로 다시 잽니다');
   else if (fs.existsSync(baselinePath())) out.push('forgen fix --report — 처방 전후 세션 시작 토큰과 빠진 중요 지침을 봅니다');
   return out.slice(0, 3);
 }
@@ -169,7 +170,8 @@ export function shareSummary(run: AuditRun): { text: string[]; markdown: string 
   const pct = (per1000: number) => `${Math.round(per1000) / 10}%`;
   const rng = (lo: number, hi?: number) => (hi === undefined || pct(lo) === pct(hi) ? pct(lo) : `${pct(Math.min(lo, hi))}~${pct(Math.max(lo, hi))}`);
   const lines = [
-    rec.status !== 'none' && rec.per1000
+    rec.staleJudge?.length ? '같은 말 다시 하기: 이전 판정 방식으로 잰 값이라 뺌(다시 재야 함)'
+    : rec.status !== 'none' && rec.per1000
       ? `내 요청 중 같은 교정을 다시 한 비율 ${rng(rec.per1000.total, rec.lenient?.per1000.total)} · 그중 이미 적혀 있던 것 ${rng(rec.per1000.written, rec.lenient?.per1000.written)}${rec.lenient ? '(판정 기준에 따라 범위)' : rec.ci95 ? `(오차 범위 ${pct(rec.ci95[0])}~${pct(rec.ci95[1])})` : ''}${rec.sampled ? ' · 표본으로 잰 참고값' : ''}`
       : '같은 말 다시 하기: 아직 재지 않음',
     `세션 시작에 늘 실리는 기억 약 ${Math.round(representativeTokens(r) / 100) * 100}토큰(자주 쓰는 폴더 평균, 백 단위)`,
