@@ -331,11 +331,11 @@ export async function runDoctor(opts: DoctorOptions = {}): Promise<number> {
   const isKnowledgeFile = (f: string) => f.endsWith('.md') || f.endsWith('.json');
   if (exists(ME_SOLUTIONS)) {
     const solutions = fs.readdirSync(ME_SOLUTIONS).filter(isKnowledgeFile).length;
-    console.log(`  Personal solutions: ${solutions}`);
+    console.log(`  개인 솔루션: ${solutions}개`);
   }
   if (exists(ME_BEHAVIOR)) {
     const behavior = fs.readdirSync(ME_BEHAVIOR).filter(isKnowledgeFile).length;
-    console.log(`  Behavioral patterns: ${behavior}`);
+    console.log(`  교정·행동 기록: ${behavior}개`);
   }
   if (exists(ME_RULES)) {
     // v0.4.1 정확도: removed 상태 rule 은 "학습된 규칙" 에서 제외하고 별도 표시.
@@ -353,8 +353,8 @@ export async function runDoctor(opts: DoctorOptions = {}): Promise<number> {
       } catch { /* skip */ }
     }
     const live = active + suppressed;
-    const removedTag = (removed > 0 ? ` (${removed} removed/superseded)` : '') + (candidate > 0 ? ` (+${candidate} mined candidates, not injected)` : '');
-    console.log(`  Personal rules: ${live}  [active:${active} suppressed:${suppressed}]${removedTag}`);
+    const removedTag = (removed > 0 ? ` (정리·합쳐진 것 ${removed})` : '') + (candidate > 0 ? ` (+ 아직 세션에 안 넣는 후보 ${candidate})` : '');
+    console.log(`  내 룰: ${live}개 [사용 중 ${active} · 꺼짐 ${suppressed}]${removedTag}`);
   }
   console.log();
 
