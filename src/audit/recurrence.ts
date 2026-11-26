@@ -544,7 +544,6 @@ export function recurrenceLine(r: RecurrenceResult | null): string {
   const f = (x: number) => (x >= 10 ? String(Math.round(x)) : String(r1(x)));
   const tag = r.status === 'ok' ? '' : r.status === 'insufficient' ? ` [참고값(교정 ${r.corrections.total}개)]` : ' [일부 판정 못 함]';
   const sample = r.prompts.limit ? ` · 요청 ${r.prompts.window}개 중 ${r.prompts.judged}개만 뽑아 잼` : '';
-  const pct = (x: number) => `${Math.round(x / 10 * 10) / 10}%`;
   const head = `지난 30일 교정 약 ${f(r.corrections.per30d)}번`;
   const R = (k: keyof Counts) => rangeText(r, k, 'per30d', f);
   const P = rangeText(r, 'total', 'per1000', (x) => `${Math.round(x) / 10}%`);
