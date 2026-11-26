@@ -9,34 +9,54 @@ import { representative } from './activity.js';
 
 const kb = (b: number) => `${(b / 1024).toFixed(1)}KB`;
 
+/** 홈으로 볼 경로: HOME + 이 계정의 홈(/home/<이름>·/Users/<이름>) — HOME 을 바꿔 돌려도 계정 홈은 ~ 로 줄인다(B9). */
+export function homeDirs(home = os.homedir()): string[] {
+  let user = '';
+  try { user = os.userInfo().username; } catch { /* 없음 */ }
+  return [...new Set([home, ...(user ? [`/home/${user}`, `/Users/${user}`] : [])].filter(Boolean))].sort((a, b) => b.length - a.length);
+}
+
 export function shortPath(p: string, home = os.homedir()): string {
-  return home && (p === home || p.startsWith(`${home}/`)) ? `~${p.slice(home.length)}` : p;
+  for (const h of homeDirs(home)) if (p === h || p.startsWith(`${h}/`)) return `~${p.slice(h.length)}`;
+  return p;
 }
 
 /** 요약 줄(첫 화면 "가장 중요한 발견" 아래): 다시 한 교정 · 세션 시작 토큰 · 지적 수 · MEMORY.md 여유 · 상황 맞춤 룰 · 처방 전후. */
+/** 첫 화면 맨 위 한 줄: 화면에 나오는 낱말의 뜻(B1). */
+export const TERMS_LINE = '"실린다" = 세션이 시작될 때 AI 에게 자동으로 보내지는 지시 · "부딪힘" = 동시에 지킬 수 없는 두 지시';
+
+/** 같은 말 다시 하기 한 줄(첫 화면용, 퍼센트 없이) — 어느 재생 결과인지(날짜·전부/표본)를 같이 적는다(B2). */
+export function recurrenceShort(r: AuditResult): string {
+  const rc = r.summary.recurrence;
+  if (rc.status === 'none' || !rc.per30d) return rc.line;
+  const f = (x: number) => String(Math.round(x));
+  const src = `지난 대화 기록 재생 ${rc.generatedAt?.slice(0, 10) ?? ''}, 요청 ${rc.prompts?.window ?? '?'}개 ${rc.sampled ? `중 ${rc.prompts?.judged ?? '?'}개 표본 — 참고값` : '전부'}`;
+  return `지난 30일 교정 약 ${f(rc.per30d.corrections)}번 중 이미 적혀 있는데 또 말한 것 약 ${f(rc.per30d.written)}번 · 어디에도 안 적혀 또 말한 것 약 ${f(Math.max(0, rc.per30d.total - rc.per30d.written))}번 (${src} — 자세히: forgen audit recurrence)`;
+}
+
+/** 요약 줄(첫 화면 "가장 중요한 발견" 아래). 퍼센트는 처방 전후 하나만(B6) — 나머지는 자세히 화면에. */
 export function topLines(r: AuditResult): string[] {
   const f = r.summary.findings;
   const tr = r.summary.truncation;
   const tight = tr.tightest
-    ? `가장 빠듯한 곳(${shortPath(tr.tightest.folder ?? tr.tightest.dir)}) ${tr.tightest.spareLines}줄·${kb(tr.tightest.spareBytes)} 남음(약 ${tr.tightest.spareItems}개 더 적을 수 있음, ${tr.tightest.firstLimit === 'bytes' ? '25KB' : '200줄'} 상한이 먼저 닿음)`
+    ? `가장 빠듯한 곳(${shortPath(tr.tightest.folder ?? tr.tightest.dir)}) ${tr.tightest.spareLines}줄·${kb(tr.tightest.spareBytes)} 남음(약 ${tr.tightest.spareItems}개 더 적을 수 있음)`
     : 'MEMORY.md 없음';
   const rep = representative(r.folders.map((x) => ({ value: x.totalTokens, sessions: x.sessions30d ?? 0 })));
   const tokens = r.folders.map((x) => x.totalTokens);
-  const red = r.folders.map((x) => x.reducible.pct);
   const n3 = r.summary.n3;
   const n3rep = n3?.rep;
   const pc = (x: number) => `${x > 0 ? '+' : x < 0 ? '−' : ''}${Math.abs(x)}%`;
   return [
-    r.summary.recurrence.line,
+    recurrenceShort(r),
     rep
-      ? `세션 시작에 실리는 기억: ${rep.weighted ? `자주 쓰는 폴더(최근 30일 세션 3개 이상) ${rep.folders}곳, 세션 수로 가중한 평균` : `폴더 ${rep.folders}곳 평균`} 약 ${Math.round(rep.value)}토큰 · 폴더별 ${Math.min(...tokens)}~${Math.max(...tokens)} · 모델 없이 바로 줄일 수 있는 양(같은 문장 사본·없는 경로) 최대 ${red.length ? Math.max(...red) : 0}%`
+      ? `세션 시작에 실리는 기억: ${rep.weighted ? `자주 쓰는 폴더(최근 30일 세션 3개 이상) ${rep.folders}곳 평균` : `폴더 ${rep.folders}곳 평균`} 약 ${Math.round(rep.value)}토큰 (폴더별 ${Math.min(...tokens)}~${Math.max(...tokens)})`
       : '세션 시작에 실리는 기억: 감사한 폴더 없음',
     f.conflicts === 'pending' || f.dupGroups === null || f.mixConfirmed === null
-      ? `같은 문장 ${f.sameSentence}묶음 · 지금 없는 것을 가리키는 줄 ${f.stale}개 · 늘 실리는 .claude/rules 파일(paths: 없음) ${f.unscopedRules}개 (부딪힘·같은 뜻·다른 프로젝트 섞임은 모델을 꺼서 세지 않음)`
-      : `서로 부딪히는 지시 ${f.conflicts}쌍 · 같은 뜻 중복 ${f.dupGroups}묶음 · 다른 프로젝트 지시 섞임 ${f.mixConfirmed}개 (모델 판정${r.checks.model?.status === 'incomplete' ? ', 일부 못 함' : ''}) · 같은 문장 ${f.sameSentence}묶음 · 지금 없는 것을 가리키는 줄 ${f.stale}개 · 늘 실리는 .claude/rules 파일(paths: 없음) ${f.unscopedRules}개`,
-    `MEMORY.md 가 상한에 잘린 곳 ${tr.truncated}/${tr.memoryDirs} · ${tight}`,
+      ? `같은 문장 ${f.sameSentence}묶음 · 지금 없는 것을 가리키는 줄 ${f.stale}개 · 늘 실리는 .claude/rules 파일 ${f.unscopedRules}개(paths: 없음 = 특정 파일을 다룰 때만 실리게 하는 표시가 없음) (부딪힘·같은 뜻·섞임은 모델을 꺼서 세지 않음)`
+      : `서로 부딪히는 지시 ${f.conflicts}쌍 · 같은 뜻 중복 ${f.dupGroups}묶음 · 다른 프로젝트 지시 섞임 ${f.mixConfirmed}개 (모델 판정${r.checks.model?.status === 'incomplete' ? ', 일부 못 함' : ''}) · 같은 문장 ${f.sameSentence}묶음 · 지금 없는 것을 가리키는 줄 ${f.stale}개 · 늘 실리는 .claude/rules 파일 ${f.unscopedRules}개(paths: 없음 = 특정 파일을 다룰 때만 실리게 하는 표시가 없음)`,
+    `MEMORY.md 가 상한(200줄·25KB)에 잘린 곳 ${tr.truncated}/${tr.memoryDirs} · ${tight}`,
     ...situationalLine(r),
-    ...(n3 ? [`처방 전(${n3.baselineAt.slice(0, 10)}) 대비 세션 시작 기억: ${n3rep ? `${n3rep.weighted ? '자주 쓰는 폴더 평균' : '폴더 평균'} ${pc(n3rep.pct)} (forgen 룰 표기를 짧게 해서 ${pc(n3rep.formatPct)} · 처방으로 ${pc(n3rep.fixPct)})` : `${pc(n3.medianPct)}`}${n3.revived ? ` · 전에는 자리가 없어 빠지던 룰 ${n3.revived}개가 이제 실림(넣고 세면 ${pc(n3rep?.allNowPct ?? n3.allNowMedianPct)})` : ''}`] : []),
+    ...(n3 ? [`처방 전(${n3.baselineAt.slice(0, 10)}) 대비 ${n3rep?.weighted ? '자주 쓰는 폴더의 ' : ''}세션 시작 기억 ${pc(n3rep ? n3rep.pct : n3.medianPct)} — 자세히: forgen fix --report`] : []),
   ];
 }
 
@@ -49,7 +69,7 @@ function situationalLine(r: AuditResult): string[] {
 }
 
 export function renderAuditHtml(r: AuditResult, runId: string): string {
-  return htmlPage({ title: 'forgen 감사', data: { ...r, runId, home: os.homedir(), top: topLines(r), findingsTop: r.summary.top?.findings ?? [], next: r.summary.top?.next ?? [] }, js: JS, css: CSS });
+  return htmlPage({ title: 'forgen 감사', data: { ...r, runId, home: os.homedir(), homes: homeDirs(), terms: TERMS_LINE, top: topLines(r), findingsTop: r.summary.top?.findings ?? [], next: r.summary.top?.next ?? [] }, js: JS, css: CSS });
 }
 
 const CSS = `
@@ -66,7 +86,8 @@ var D = JSON.parse(document.getElementById('forgen-data').textContent);
 var view = document.getElementById('view');
 ${DOM_HELPERS_JS}
 var HOME = D.home || '';
-function sp(p){ return HOME && p && (p===HOME || p.indexOf(HOME+'/')===0) ? '~'+p.slice(HOME.length) : (p||''); }
+var HOMES = D.homes || [HOME];
+function sp(p){ p = p||''; for (var i=0;i<HOMES.length;i++){ var h=HOMES[i]; if (h && (p===h || p.indexOf(h+'/')===0)) return '~'+p.slice(h.length); } return p; }
 function loc(x){ return x.ruleId ? 'forgen 룰 '+x.ruleId.slice(0,8) : sp(x.path)+(x.line?':'+x.line:''); }
 function clip(s,n){ s=String(s||''); return s.length>n ? s.slice(0,n-1)+'…' : s; }
 var LAYER={managed:'관리형 정책',user:'사용자 CLAUDE.md','user-rules':'사용자 .claude/rules',project:'프로젝트 CLAUDE.md','project-local':'CLAUDE.local.md','project-rules':'프로젝트 .claude/rules',agents:'AGENTS.md','import':'@import 로 불러온 파일','memory-index':'MEMORY.md','memory-topic':'메모 파일','forgen-render':'forgen 룰(세션 시작)','forgen-rule':'forgen 룰'};
@@ -75,6 +96,7 @@ function lay(l){ return LAYER[l]||l; }
 document.getElementById('meta').textContent = 'forgen ' + (D.forgenVersion||'') + ' · ' + (D.generatedAt||'').replace('T',' ').slice(0,16) + ' UTC · ' + (D.model && D.model.used ? '부딪힘·같은 뜻·섞임은 모델 판정' : '모델을 끄고 검사함') + ' · 이 파일은 내 컴퓨터에서만 열리며 밖으로 아무것도 보내지 않습니다';
 var header = document.querySelector('header');
 function block(title, xs, ordered){ if(!xs.length) return; header.insertBefore(el('h2',{cls:'toph',text:title}), document.getElementById('tabs')); var ul=el(ordered?'ol':'ul',{id:'top'}); xs.forEach(function(t){ ul.appendChild(el('li',{text:t})); }); header.insertBefore(ul, document.getElementById('tabs')); }
+if(D.terms) header.insertBefore(el('p',{cls:'note',text:D.terms}), document.getElementById('tabs'));
 block('가장 중요한 발견', D.findingsTop||[], true);
 block('요약', D.top||[], false);
 block('다음에 할 일', D.next||[], true);

@@ -422,7 +422,7 @@ export async function runRecurrence(opts: RecurrenceOptions = {}): Promise<Recur
     statusNote = `모델이 일부를 판정하지 못함 — 요청 ${windowSample.length}개 중 ${unjudged}개, 비교 ${pairs.length}개 중 ${pairUnjudged}개${judge.stats.stopped ? ` (${judge.stats.stopped})` : judge.stats.lastError ? ` (${judge.stats.lastError})` : ''}. 다시 돌리면 이미 판정한 것은 다시 묻지 않고 나머지만 묻는다`;
   } else if (windowCorr.length < MIN_CORRECTIONS || corr30 < MIN_CORRECTIONS_30D) {
     status = 'insufficient';
-    statusNote = `교정이 ${windowCorr.length}개뿐이라(믿을 만하려면 ${MIN_CORRECTIONS}개 이상) 숫자는 크기만 참고하세요. 기간을 늘리거나(--since) 표본을 빼고(--limit 없이) 다시 재면 정확해진다`;
+    statusNote = `참고값(교정 ${windowCorr.length}개로 잼)`;
   }
   const pool = `forgen 룰 ${byKind['forgen-rule'] ?? 0} · 메모 파일 ${byKind['memory-topic'] ?? 0} · MEMORY.md 줄 ${byKind['memory-index'] ?? 0} · CLAUDE.md 등 지침 줄 ${byKind['host-md'] ?? 0}`;
   notes.push(`비교한 기억: ${pool} — 기억이 바뀌면(룰을 지우거나 더하면) 같은 대화 기록이라도 숫자가 달라진다`);
@@ -515,7 +515,7 @@ export function recurrenceLine(r: RecurrenceResult | null): string {
   if (r.status === 'no-data') return `같은 교정을 다시 한 횟수: ${r.statusNote}`;
   const c = r.per30d;
   const f = (x: number) => (x >= 10 ? String(Math.round(x)) : String(r1(x)));
-  const tag = r.status === 'ok' ? '' : r.status === 'insufficient' ? ' [교정이 적어 크기만 참고]' : ' [일부 판정 못 함]';
+  const tag = r.status === 'ok' ? '' : r.status === 'insufficient' ? ` [참고값(교정 ${r.corrections.total}개)]` : ' [일부 판정 못 함]';
   const sample = r.prompts.limit ? ` · 요청 ${r.prompts.window}개 중 ${r.prompts.judged}개만 뽑아 잼` : '';
   const pct = (x: number) => `${Math.round(x / 10 * 10) / 10}%`;
   const head = `지난 30일 교정 약 ${f(r.corrections.per30d)}번`;

@@ -12,7 +12,7 @@
  */
 import { performance } from 'node:perf_hooks';
 import { n3EdgeWarning } from './fix-cli.js';
-import { renderAuditHtml, shortPath, topLines } from './html.js';
+import { renderAuditHtml, shortPath, TERMS_LINE, topLines } from './html.js';
 import { writeFingerprintIfFirst } from './fingerprint.js';
 import { handleBaseline, handleRecurrence } from './recurrence-cli.js';
 import { AGREEMENT_TARGET, importReview, scoreReviews, writeKindReview, writeReview } from './review.js';
@@ -283,8 +283,9 @@ export async function handleAudit(args: string[]): Promise<void> {
     return;
   }
   console.log(r.model.used
-    ? 'forgen 감사 — 내 Claude 기억(CLAUDE.md·메모·forgen 룰)을 읽기만 해서 점검했습니다. 부딪힘·같은 뜻·섞임은 내 컴퓨터의 claude CLI 가 판정(후보 문장만 보냄)\n'
-    : 'forgen 감사 — 내 Claude 기억(CLAUDE.md·메모·forgen 룰)을 읽기만 해서 점검했습니다(--no-model: 모델을 부르지 않음, 아무것도 밖으로 보내지 않음)\n');
+    ? 'forgen 감사 — 내 Claude 기억(CLAUDE.md·메모·forgen 룰)을 읽기만 해서 점검했습니다. 부딪힘·같은 뜻·섞임은 내 컴퓨터의 claude CLI 가 판정(판정할 지시 문장만 골라 보냄)'
+    : 'forgen 감사 — 내 Claude 기억(CLAUDE.md·메모·forgen 룰)을 읽기만 해서 점검했습니다(--no-model: 모델을 부르지 않음, 아무것도 밖으로 보내지 않음)');
+  console.log(`${TERMS_LINE}\n`);
   const top = r.summary.top;
   if (top?.findings.length) {
     console.log('가장 중요한 발견');

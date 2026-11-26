@@ -11,6 +11,7 @@ import { writeFingerprintIfFirst } from './fingerprint.js';
 import { takeModelDisclosure } from './judge.js';
 import { resolvePendingCorrections } from '../core/correction-ledger-judge.js';
 import { maskQuote } from './quote.js';
+import { shortPath } from './html.js';
 import { recurrenceLine, runRecurrence, writeRecurrenceRun, type RecurrenceResult, type RecurrenceRun } from './recurrence.js';
 
 const DAY = 86_400_000;
@@ -46,14 +47,17 @@ export function summaryLines(r: RecurrenceResult): string[] {
   out.push(`  ${recurrenceLine(r)}`);
   if (r.statusNote) out.push(`  ${r.statusNote}`);
   if (r.status === 'model-off' || r.status === 'no-data') return out;
+  if (r.prompts.limit) out.push(`  (요청 ${r.prompts.window}개 중 ${r.prompts.sampled}개만 뽑아 잰 참고값 — 전부로 잰 감사 첫 화면 숫자와 다를 수 있음. 전부: --limit 없이)`);
   const p = r.prompts;
   out.push(`  센 요청: AI 답 바로 뒤에 내가 한 말 ${p.window}개${p.limit ? ` 중 ${p.sampled}개를 뽑음` : ''} · 판정 ${p.judged}${p.unjudged ? ` · 판정 못 함 ${p.unjudged}` : ''}`);
   out.push(`  교정 ${r.corrections.total}개 (그 작업에만 해당 ${r.corrections.taskSpecific} · 그 뒤 기억으로 남은 것 ${r.corrections.becameMemory})`);
-  out.push('  종류                                   번   요청 중 비율   30일로 치면');
+  // B4: 표본이 너무 작으면(교정이 적어 참고값) 요약만 짧게 — 예시 몇 개와 다음에 할 일
+  const short = r.status === 'insufficient';
+  if (!short) out.push('  종류                                   번   요청 중 비율   30일로 치면');
   for (const k of ['ignored', 'notLoaded', 'unwrittenRepeat', 'deletedRepeat', 'written', 'total'] as const) {
-    out.push(`    ${LABEL[k].padEnd(30)} ${String(r.counts[k]).padStart(4)}   ${pctOf(r.per1000[k]).padStart(8)}   ${String(r.per30d[k]).padStart(8)}`);
+    if (!short) out.push(`    ${LABEL[k].padEnd(30)} ${String(r.counts[k]).padStart(4)}   ${pctOf(r.per1000[k]).padStart(8)}   ${String(r.per30d[k]).padStart(8)}`);
   }
-  out.push(`  오차 범위(95%): 같은 말 다시 하기 전체 ${pctOf(r.ci95per1000.total[0])}~${pctOf(r.ci95per1000.total[1])} · 이미 적혀 있던 것 ${pctOf(r.ci95per1000.written[0])}~${pctOf(r.ci95per1000.written[1])}`);
+  if (!short) out.push(`  오차 범위(95%): 같은 말 다시 하기 전체 ${pctOf(r.ci95per1000.total[0])}~${pctOf(r.ci95per1000.total[1])} · 이미 적혀 있던 것 ${pctOf(r.ci95per1000.written[0])}~${pctOf(r.ci95per1000.written[1])}`);
   const reasons = new Map<string, number>();
   for (const it of r.items) if (it.branch === 'not-loaded' && it.match?.reason) reasons.set(it.match.reason, (reasons.get(it.match.reason) ?? 0) + 1);
   if (reasons.size) out.push(`  적혀 있는데 안 실린 까닭: ${[...reasons].map(([k, n]) => `${REASON[k] ?? k} ${n}`).join(' · ')}`);
@@ -63,6 +67,7 @@ export function summaryLines(r: RecurrenceResult): string[] {
   for (const it of r.items.filter((x) => x.branch === 'ignored' || x.branch === 'not-loaded').slice(0, 3)) {
     out.push(`    예: ${it.ts.slice(0, 10)} "${maskQuote(it.utterance || it.gist, 80)}" — ${it.match ? `${KIND[it.match.kind] ?? it.match.kind}에 "${maskQuote(it.match.text, 50)}"` : ''}`);
   }
+  if (short) { out.push('  (교정이 적어 위 숫자는 참고값 — 표 대신 요약만 보입니다. 전부 재기: forgen audit recurrence --since <더 이른 날짜>)'); return out; }
   out.push(`  비교한 기억 ${r.memory.items}개 (${Object.entries(r.memory.byKind).map(([k, n]) => `${KIND[k] ?? k} ${n}`).join(' · ')}) · 지운 기억 ${r.memory.deleted}개`);
   if (r.biweekly?.length) {
     out.push('  2주씩: 기간 · 센 요청 · 교정 · 같은 말 다시 하기(요청 중 비율) · 그중 상황 맞춤 룰이 안 들어와서');
@@ -119,7 +124,10 @@ export async function handleRecurrence(args: string[], claudeDir: string | undef
   if (ledger && (ledger.resolved || ledger.left)) console.log(`아직 판정 안 된 교정 기록 ${ledger.resolved}개를 판정함${ledger.left ? ` · 남은 것 ${ledger.left}${ledger.stopped ? ` (${ledger.stopped})` : ''}` : ''}`);
   if (run.result.pairsJudged) console.log('모델 판정이 맞는지 직접 확인: forgen audit review (25개를 내 컴퓨터에서만 여는 페이지로)');
   if (fp) console.log(`처음 재서 지금 기억 상태를 적어 둠: ${fp}`);
-  console.log(`✓ [forgen] 결과: ${path.join(out.dir, 'result.json')}`);
+  console.log(`✓ [forgen] 결과: ${shortPath(path.join(out.dir, 'result.json'))}`);
+  console.log('\n다음에 할 일');
+  console.log('  1. forgen audit — 이 결과로 첫 화면(가장 중요한 발견)을 다시 봅니다');
+  console.log('  2. forgen fix --list — 어디에도 안 적힌 교정은 "기억 추가" 처방으로 적을 수 있습니다');
 }
 
 interface BaselinePart { runId: string; window: RecurrenceResult['window']; status: RecurrenceResult['status']; statusNote: string; prompts: RecurrenceResult['prompts']; corrections: RecurrenceResult['corrections']; counts: RecurrenceResult['counts']; per1000: RecurrenceResult['per1000']; per30d: RecurrenceResult['per30d']; ci95per1000: RecurrenceResult['ci95per1000']; unknown: number; memory: RecurrenceResult['memory']; sourcesDigest: string; resultDigest: string }
