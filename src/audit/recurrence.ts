@@ -11,7 +11,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { createHash } from 'node:crypto';
 import { FORGEN_HOME, STATE_DIR } from '../core/paths.js';
-import { readSessionRenders, rulesLoadedAt } from '../core/session-renders.js';
+import { readSessionRenders, rulesLoadedAt, tier2PendingAt } from '../core/session-renders.js';
 import { renderSessionStartReadOnly } from '../core/v1-bootstrap.js';
 import { loadAllEvidence } from '../store/evidence-store.js';
 import { appliesForContext, projectKeyFor } from '../store/rule-scope.js';
@@ -88,7 +88,14 @@ export interface CorrectionItem {
 
 export interface PairRecord { tier: 'memory' | 'later' | 'deleted' | 'earlier'; key: string; kind: string; text: string; score: number; verdict: PairVerdict | null; path?: string; line?: number }
 
-export interface Counts { ignored: number; notLoaded: number; written: number; unwrittenRepeat: number; deletedRepeat: number; total: number }
+/**
+ * tier2Missed(0.9.0 두 층): notLoaded 중 "2층 미발동" — 적혀 있고 그 세션의 2층 후보였는데 교정 때까지 안 실림(Q11: 누락으로 센다).
+ * 옛 결과에는 없다(선택 필드).
+ */
+export interface Counts { ignored: number; notLoaded: number; written: number; unwrittenRepeat: number; deletedRepeat: number; total: number; tier2Missed?: number }
+
+/** 2주 단위 추적(0.9.0 두 층 도입 뒤 N4): 구간마다 판정한 발화·교정·반복·2층 미발동 재발. */
+export interface Biweekly { from: string; to: string; prompts: number; corrections: number; written: number; total: number; tier2Missed: number; per1000: number }
 
 export interface RecurrenceResult {
   schema: typeof RECURRENCE_SCHEMA;
@@ -111,6 +118,8 @@ export interface RecurrenceResult {
   /** 기억 풀 — 풀(forgen 룰 수 등)이 다르면 숫자가 다르다 */
   memory: { items: number; byKind: Record<string, number>; unknownTime: number; deleted: number };
   loadedVia: { renderLog: number; replay: number };
+  /** 2주 단위 N4 추적(갈래 "2층 미발동 재발" 포함). 옛 결과에는 없다. */
+  biweekly?: Biweekly[];
   notes: string[];
   items: CorrectionItem[];
 }
@@ -148,7 +157,7 @@ export interface RecurrenceRun { result: RecurrenceResult; manifest: RecurrenceM
 
 const sha = (s: string) => createHash('sha256').update(s).digest('hex');
 const r1 = (x: number) => Math.round(x * 10) / 10;
-const zero = (): Counts => ({ ignored: 0, notLoaded: 0, written: 0, unwrittenRepeat: 0, deletedRepeat: 0, total: 0 });
+const zero = (): Counts => ({ ignored: 0, notLoaded: 0, written: 0, unwrittenRepeat: 0, deletedRepeat: 0, total: 0, tier2Missed: 0 });
 
 /** 포아송 95% 구간(Byar 근사) — 건수 k 의 하한·상한. */
 export function poissonCi(k: number): [number, number] {
@@ -331,6 +340,8 @@ export async function runRecurrence(opts: RecurrenceOptions = {}): Promise<Recur
       const rule = rules.get(m.ruleId ?? '') as Rule | undefined;
       // 지금은 활성이 아닌 룰(보관·억제)은 재생 렌더가 되살리지 못한다 — 안 실렸는지 알 수 없음을 따로 적는다.
       if (l.via === 'replay' && rule && rule.status !== 'active') return { loaded: false, via: l.via, reason: 'replay-unknown' };
+      // 0.9.0 두 층: 그 세션의 2층 후보였는데 교정 때까지 상황 판정이 한 번도 넣지 않았다 = "2층 미발동"(자동 1층 복귀 신호)
+      if (l.via === 'render-log' && tier2PendingAt(renders.get(p.session), p.ts).has(m.ruleId ?? '')) return { loaded: false, via: l.via, reason: 'tier2-missed' };
       let key: string | null = null;
       try { key = p.cwd ? projectKeyFor(p.cwd) : null; } catch { /* 없음 */ }
       return { loaded: false, via: l.via, reason: rule && !appliesForContext(rule, key) ? 'scope' : 'budget-or-other' };
@@ -386,7 +397,7 @@ export async function runRecurrence(opts: RecurrenceOptions = {}): Promise<Recur
     }
     if (it.becameMemory) becameMemory++;
     if (it.branch === 'ignored') counts.ignored++;
-    else if (it.branch === 'not-loaded') counts.notLoaded++;
+    else if (it.branch === 'not-loaded') { counts.notLoaded++; if (it.match?.reason === 'tier2-missed') counts.tier2Missed = (counts.tier2Missed ?? 0) + 1; }
     else if (it.branch === 'unwritten-repeat') counts.unwrittenRepeat++;
     else if (it.branch === 'deleted-repeat') counts.deletedRepeat++;
     items.push(it);
@@ -421,13 +432,29 @@ export async function runRecurrence(opts: RecurrenceOptions = {}): Promise<Recur
   if (unknownTime) notes.push(`시점을 모르는 기억 ${unknownTime}개는 "적혀 있던 것"으로 세지 않았다(보수적, §2.2)`);
   if (loadedVia.replay) notes.push(`"실렸는가" ${loadedVia.replay}건은 세션별 렌더 기록이 없어 그 세션 시작 시각의 룰로 다시 렌더해 추정(그 뒤 보관된 룰·바뀐 강도는 반영 못 함)`);
   notes.push('호스트 기억(CLAUDE.md·메모 색인)이 그 세션에 실렸는지는 지금 파일 구성으로 판정한다');
+  if (counts.tier2Missed) notes.push(`2층 미발동 ${counts.tier2Missed}건 — 그 룰은 다음 세션부터 1층으로 자동 복귀한다(마지막 재발에서 90일 재발 0 이면 자격 게이트를 다시 본다). Q11: 중요 지침 누락으로 센다`);
+  notes.push('한계(2층·누락): "2층 미발동"은 교정이 나온 경우만 잡는다. 필요한 순간에 실리지 않았는데 사용자가 교정하지 않았거나, 실렸는데 모델이 무시하고 교정이 없었던 경우는 이 재생으로 알 수 없다');
+  // 2주 단위 추적(두 층 도입 뒤 N4): 구간마다 판정한 발화 수와 갈래
+  const biweekly: Biweekly[] = [];
+  for (let a = since.getTime(); a < until.getTime(); a += 14 * DAY) {
+    const from = new Date(a).toISOString();
+    const to = new Date(Math.min(a + 14 * DAY, until.getTime())).toISOString();
+    const inB = (ts: string) => ts >= from && ts < to;
+    const its = items.filter((x) => inB(x.ts));
+    const prompts = judgedWindow.filter((x) => inB(x.ts)).length;
+    const total = its.filter((x) => x.branch !== 'new').length;
+    biweekly.push({
+      from, to, prompts, corrections: its.length, written: its.filter((x) => x.branch === 'ignored' || x.branch === 'not-loaded').length, total,
+      tier2Missed: its.filter((x) => x.match?.reason === 'tier2-missed').length, per1000: prompts ? r1((total * 1000) / prompts) : 0,
+    });
+  }
 
   const result: RecurrenceResult = {
     ...base, status, statusNote,
     prompts: { window: windowAll.length, lookback: lookAll.length, sampled: windowSample.length, judged: n, unjudged, limit, per30d: r1(per30dPrompts) },
     corrections: { total: windowCorr.length, taskSpecific: windowCorr.filter((p) => v(p)?.task_specific).length, lookback: lookCorr.length, per1000: r1(corrPer1000), per30d: corr30, becameMemory },
     counts, per1000, per30d, ci95per1000: { total: ci(counts.total), written: ci(counts.written) }, unknown, pairsJudged,
-    loadedVia, notes, items,
+    loadedVia, biweekly, notes, items,
   };
   lap('classify');
   return { result, manifest: manifestFor(result), timing, judgeStats: judge.stats, memoryFiles };
@@ -492,7 +519,7 @@ export function recurrenceLine(r: RecurrenceResult | null): string {
   const sample = `${r.prompts.limit ? ` · 표본 ${r.prompts.judged}/${r.prompts.window}` : ''} · 기억 풀 forgen 룰 ${r.memory.byKind['forgen-rule'] ?? 0}개 기준(풀이 다르면 숫자가 다름)`;
   const head = `지난 30일(환산) 교정 약 ${f(r.corrections.per30d)}번`;
   if (c.written >= MIN_CORRECTIONS_30D) {
-    return `${head}, 그중 적혀 있는데도 또 말함 약 ${f(c.written)}번 (실렸는데 무시 ${f(c.ignored)} · 적혀는 있는데 안 실림 ${f(c.notLoaded)}) · 적히지 않은 채 반복 약 ${f(c.unwrittenRepeat)}${c.deletedRepeat ? ` · 지운 뒤 다시 말함 ${f(c.deletedRepeat)}` : ''} — 프롬프트 1,000개당 반복 ${r.per1000.total}${sample}${tag}`;
+    return `${head}, 그중 적혀 있는데도 또 말함 약 ${f(c.written)}번 (실렸는데 무시 ${f(c.ignored)} · 적혀는 있는데 안 실림 ${f(c.notLoaded)}${c.tier2Missed ? `, 그중 2층 미발동 ${f(c.tier2Missed)}` : ''}) · 적히지 않은 채 반복 약 ${f(c.unwrittenRepeat)}${c.deletedRepeat ? ` · 지운 뒤 다시 말함 ${f(c.deletedRepeat)}` : ''} — 프롬프트 1,000개당 반복 ${r.per1000.total}${sample}${tag}`;
   }
   if (c.total >= MIN_CORRECTIONS_30D) {
     return `${head}, 그중 같은 말 다시 하기 약 ${f(c.total)}번 (적혀 있던 것 ${f(c.written)} · 적히지 않은 채 반복 ${f(c.unwrittenRepeat)}${c.deletedRepeat ? ` · 지운 뒤 ${f(c.deletedRepeat)}` : ''}) — 프롬프트 1,000개당 ${r.per1000.total}${sample}${tag}`;

@@ -36,7 +36,11 @@ const HELP = `  forgen audit [--folder <경로>]... [--claude-dir <경로>] [--j
       판정 쌍 25개(예 무작위 10 · 아니오 중 점수 높은 10 · 모름 5)를 검수 페이지로 → 답 JSON 을 내려받아 --import
       --kind 가 없으면 같은 말 다시 하기(N4) 쌍, 있으면 가장 최근 forgen audit 회차의 그 검사(N2)
   forgen audit score [--json]
-      검수 답과 판정자의 일치율(기준 ≥ 90%)`;
+      검수 답과 판정자의 일치율(기준 ≥ 90%)
+  forgen audit tier2 --replay [--apply] [--json] [--claude-dir <경로>]
+      두 층 주입의 자격 게이트: 룰마다 근거 교정 직전 3턴을 재생해 결정적 발동 판정이 맞히는지(leave-one-out).
+      통과율·놓침(시간 나누기·재발 사례)·사건당 발동 수를 낸다. --apply 면 ~/.forgen/state/tier2-index.json 에 적는다
+      (그다음 세션부터 자격을 지난 룰은 상황이 맞을 때 한 번 들어오고, 세션 시작에는 색인 줄로만 보인다)`;
 
 function values(args: string[], name: string): string[] {
   const out: string[] = [];
@@ -51,6 +55,7 @@ const KNOWN_BY_SUB: Record<string, Set<string>> = {
   baseline: new Set(['--claude-dir', '--until', '--freeze', '--force', '--json', '--help', '-h']),
   review: new Set(['--import', '--kind', '--no-open', '--json', '--help', '-h']),
   score: new Set(['--json', '--help', '-h']),
+  tier2: new Set(['--replay', '--apply', '--json', '--claude-dir', '--help', '-h']),
 };
 const WITH_VALUE = new Set(['--folder', '--claude-dir', '--since', '--until', '--lookback', '--limit', '--import', '--kind']);
 
@@ -90,6 +95,24 @@ function handleScore(rest: string[]): void {
     console.log(`  판정자 "예" 중 오너도 같은 뜻 ${pct(r.yes.agree, r.yes.compared)} · 판정자 "아니오" 중 오너도 다름 ${pct(r.no.agree, r.no.compared)} · 오너 모르겠음 ${r.ownerUnsure}`);
     console.log(`  판정자 "모름" 쌍에 오너: 같은 뜻 ${r.unknown.same} · 다름 ${r.unknown.different} · 모르겠음 ${r.unknown.unsure}`);
   }
+}
+
+async function handleTier2(rest: string[], claudeDir?: string): Promise<void> {
+  if (!rest.includes('--replay')) throw new Error('forgen audit tier2 --replay [--apply] — 지금은 재생만 있다');
+  const { runTier2Replay, applyTier2Index } = await import('./tier2-replay.js');
+  const { defaultEnv } = await import('./sources.js');
+  const { result: r, index } = await runTier2Replay({ claudeDir: defaultEnv(claudeDir).claudeDir });
+  if (rest.includes('--apply')) applyTier2Index(index);
+  if (rest.includes('--json')) { console.log(JSON.stringify({ schema: 'forgen-audit-tier2/1', applied: rest.includes('--apply'), ...r }, null, 2)); return; }
+  const pct = (a: number, b: number) => (b ? `${Math.round((a / b) * 1000) / 10}% (${a}/${b})` : '— (0)');
+  console.log(`두 층 자격 게이트 재생 — 룰 ${r.rules}개 · 대화 기록 세션 ${r.sessions.found}/${r.sessions.needed} · 사건 ${r.sessions.events}`);
+  console.log(`  1층 고정(게이트를 보지 않음): ${Object.entries(r.tier1ByReason).map(([k, v]) => `${k} ${v}`).join(' · ') || '없음'}`);
+  console.log(`  게이트 대상 ${r.candidates} → 통과 ${r.qualified} — 통과율 ${pct(r.qualified, r.candidates)} (재생 가능한 것 중 ${pct(r.qualified, r.replayable)})`);
+  console.log(`  떨어진 까닭: ${Object.entries(r.byReason).filter(([k]) => k !== 'fired').map(([k, v]) => `${k} ${v}`).join(' · ') || '없음'}`);
+  console.log(`  2층 놓침(게이트에 안 쓴 상황): 시간 나누기 ${pct(r.miss.timeSplit.missed, r.miss.timeSplit.tested)} · 재발 사례 ${pct(r.miss.recurrence.missed, r.miss.recurrence.tested)} — 출시 조건 ≤ 20%`);
+  console.log(`  사건(프롬프트·도구 호출)당 발동 2층 룰: 평균 ${r.firesPerEvent.mean} · p90 ${r.firesPerEvent.p90} (턴당 최대 2개만 넣음)`);
+  for (const n of r.notes) console.log(`  - ${n}`);
+  console.log(rest.includes('--apply') ? '✓ [forgen] 자격 결과를 적음 — 다음 세션부터 두 층' : '  (--apply 를 붙이면 적용 — 지금은 아무것도 쓰지 않았다)');
 }
 
 /** 모델 판정 검사를 회차에 붙인다(판정기·캐시는 judge.ts). */
@@ -138,9 +161,10 @@ export async function handleAudit(args: string[]): Promise<void> {
   }
   const started = performance.now();
   const claudeDir = values(rest, '--claude-dir')[0];
-  if (sub === 'recurrence' || sub === 'baseline' || sub === 'review' || sub === 'score') {
+  if (sub === 'recurrence' || sub === 'baseline' || sub === 'review' || sub === 'score' || sub === 'tier2') {
     try {
-      if (sub === 'recurrence') await handleRecurrence(rest, claudeDir);
+      if (sub === 'tier2') await handleTier2(rest, claudeDir);
+      else if (sub === 'recurrence') await handleRecurrence(rest, claudeDir);
       else if (sub === 'baseline') await handleBaseline(rest, claudeDir);
       else if (sub === 'review') await handleReview(rest);
       else handleScore(rest);

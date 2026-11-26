@@ -29,7 +29,16 @@ export function topLines(r: AuditResult): string[] {
       ? `같은 문장 ${f.sameSentence}묶음 · 낡은 참조 ${f.stale}개 · paths: 없는 룰 ${f.unscopedRules}개 (부딪힘·같은 뜻 중복·다른 프로젝트 섞임은 모델 판정이 꺼져 세지 않음)`
       : `부딪힘 ${f.conflicts}쌍 · 같은 뜻 중복 ${f.dupGroups}묶음 · 다른 프로젝트 섞임 ${f.mixConfirmed}개 (모델 판정${r.checks.model?.status === 'incomplete' ? ', 판정 불완전' : ''}) · 같은 문장 ${f.sameSentence}묶음 · 낡은 참조 ${f.stale}개 · paths: 없는 룰 ${f.unscopedRules}개`,
     `MEMORY.md 잘림 ${tr.truncated}곳 / 메모 폴더 ${tr.memoryDirs}곳 · ${tight}`,
+    ...tier2Line(r),
   ];
+}
+
+/** 0.9.0 두 층: 2층 룰 수(폴더 최대)와 2층 미발동(재생). 두 층을 안 쓰면 줄이 없다. */
+function tier2Line(r: AuditResult): string[] {
+  const n = Math.max(0, ...r.folders.map((f) => f.forgenTier2?.rules ?? 0));
+  const missed = r.summary.recurrence.tier2Missed ?? 0;
+  if (!n && !missed) return [];
+  return [`두 층: 세션 시작에는 색인 줄로만 보이는 2층 룰 최대 ${n}개(상황이 맞으면 한 번 들어옴) · 2층 미발동 재발 ${missed}건(누락으로 셈, 그 룰은 1층으로 복귀) — 한계: 교정 없이 지나간 미발동·무시는 못 잡는다`];
 }
 
 export function renderAuditHtml(r: AuditResult, runId: string): string {

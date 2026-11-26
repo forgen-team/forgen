@@ -201,7 +201,7 @@ describe('forgen audit recurrence — 합성 D 축소판', () => {
     expect(by('ignored')).toEqual([1, 2, 3, 4, 5, 6, 13, 14, 15].map(tq));
     expect(by('not-loaded')).toEqual([7, 8, 9, 10, 11, 12].map(tq));
     expect(by('unwritten-repeat')).toEqual([16, 17, 18, 19, 20, 21, 22, 23, 24, 25].map(tq));
-    expect(r.counts).toEqual({ ignored: 9, notLoaded: 6, written: 15, unwrittenRepeat: 10, deletedRepeat: 0, total: 25 });
+    expect(r.counts).toEqual({ ignored: 9, notLoaded: 6, written: 15, unwrittenRepeat: 10, deletedRepeat: 0, total: 25, tier2Missed: 0 });
     expect(r.per1000.total).toBe(125);
     expect(r.per1000.written).toBe(75);
     // 실렸는가의 근거: 렌더 기록 3 · 재생 렌더 3(전역 룰) · 다른 프로젝트 전용 2 는 재생에서 빠짐
@@ -270,6 +270,42 @@ describe('forgen audit recurrence — 합성 D 축소판', () => {
       expect(r.result.status).toBe('incomplete');
       expect(r.result.statusNote).toContain('로그인');
     } finally { delete process.env.FAKE_DOWN; }
+  });
+
+  it('0.9.0 두 층: 2층 후보였는데 교정 때까지 안 실린 룰 = "2층 미발동"(누락으로 셈) · 2주 단위 추적 · 색인에 합치면 1층 복귀', async () => {
+    const log = path.join(FH, 'state', 'metrics', 'session-renders.jsonl');
+    const saved = fs.readFileSync(log, 'utf-8');
+    const idxPath = path.join(FH, 'state', 'tier2-index.json');
+    try {
+      // w-4: 세션 시작 블록에는 없고(2층 후보로 색인 줄에만) 그 뒤 'tier2' 사건도 없음
+      appendSessionRender({ at: new Date(Date.parse(day(6)) - 3_600_000).toISOString(), session: 'w-4', event: 'start', cwd: PROJ, project: 'proj-x', ruleIds: [], tier2: [ruleIds[tq(4)]] });
+      // w-5: 2층 후보였고 교정 전에 상황 판정이 넣었다 → 실렸는데 무시
+      appendSessionRender({ at: new Date(Date.parse(day(7)) - 3_600_000).toISOString(), session: 'w-5', event: 'start', cwd: PROJ, project: 'proj-x', ruleIds: [], tier2: [ruleIds[tq(5)]] });
+      appendSessionRender({ at: new Date(Date.parse(day(7)) - 60_000).toISOString(), session: 'w-5', event: 'tier2', cwd: PROJ, project: 'proj-x', ruleIds: [ruleIds[tq(5)]], via: 'prompt' });
+      const r = (await runRecurrence(opts())).result;
+      const w4 = r.items.find((i) => i.session === 'w-4');
+      expect(w4).toMatchObject({ branch: 'not-loaded', match: { reason: 'tier2-missed', loadedVia: 'render-log' } });
+      expect(r.items.find((i) => i.session === 'w-5')).toMatchObject({ branch: 'ignored', match: { loadedVia: 'render-log' } });
+      expect(r.counts.tier2Missed).toBe(1);
+      expect(r.notes.join(' ')).toContain('교정이 나온 경우만 잡는다');
+      expect(recurrenceLine(r)).toContain('2층 미발동 1');
+      // 2주 단위: 구간 합 = 전체, 2층 미발동은 w-4 의 구간에
+      expect(r.biweekly?.length).toBe(3);
+      expect(r.biweekly?.reduce((n, b) => n + b.total, 0)).toBe(r.counts.total);
+      expect(r.biweekly?.reduce((n, b) => n + b.prompts, 0)).toBe(r.prompts.judged);
+      expect(r.biweekly?.find((b) => w4 && w4.ts >= b.from && w4.ts < b.to)?.tier2Missed).toBe(1);
+      // 색인이 있으면 재발 이력에 합친다 → 그 룰은 다음 세션부터 1층(재자격은 90일 뒤)
+      const { mergeRecurrence } = await import('../src/audit/tier2-replay.js');
+      const { loadTier2Index, tierOf } = await import('../src/core/tier2.js');
+      W(idxPath, JSON.stringify({ version: 1, generatedAt: '', params: { k: 3, turns: 3, minFireRate: 0.8, maxFreq: 0.05 }, rules: { [ruleIds[tq(4)]]: { qualified: true, reason: 'fired', words: ['a', 'b', 'c'], topics: [], contexts: 1, fired: 1 } }, recur: {} }));
+      const m = mergeRecurrence(r.items);
+      expect(m.tier2Missed).toEqual([ruleIds[tq(4)]]);
+      const idx = loadTier2Index();
+      expect(idx?.recur[ruleIds[tq(4)]]).toMatchObject({ kind: 'tier2-missed', lastAt: w4?.ts });
+      const rule = { rule_id: ruleIds[tq(4)], strength: 'default', source: 'explicit_correction', scope: 'me', created_at: SEP } as never;
+      expect(tierOf(rule, idx, Date.parse(w4?.ts ?? '') + 89 * 86_400_000)).toEqual({ tier: 1, reason: 'tier2-missed' });
+      expect(tierOf(rule, idx, Date.parse(w4?.ts ?? '') + 91 * 86_400_000)).toEqual({ tier: 2, reason: 'tier2' });
+    } finally { fs.writeFileSync(log, saved); fs.rmSync(idxPath, { force: true }); }
   });
 
   it('지운 뒤 다시 말함(§4.3): 지움 표시가 있으면 그 갈래로 센다', async () => {

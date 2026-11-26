@@ -45,7 +45,7 @@ export interface TranscriptScan {
   sessionCwd: Map<string, string>;
 }
 
-const SKIP_PREFIX = ['[Request interrupted', 'Another Claude session sent a message'];
+export const SKIP_PREFIX = ['[Request interrupted', 'Another Claude session sent a message'];
 const MEMORY_REL = /[\\/]projects[\\/]([^\\/]+)[\\/]memory[\\/](.+)$/;
 
 export function listTopLevelTranscripts(claudeDir: string): string[] {

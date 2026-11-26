@@ -833,6 +833,12 @@ export function measure(run: AuditRun, now = new Date()): Measure {
           if (typeOf.get(tp) === 'feedback') important.add(`topic:${tp}`);
         }
       }
+      // Q11(오너 결정 2026-11-26): 2층 룰은 자격 게이트를 지났고 색인 줄에 보이므로 누락이 아니다(실린 것으로 본다).
+      // 2층 미발동(재생)은 따로 센다 — 그 룰은 그다음부터 1층으로 올라가 여기서는 다시 실린다.
+      for (const [id, folders] of ctx.tier2In ?? []) {
+        if (!folders.includes(f.folder)) continue;
+        loaded.add(`rule:${id}`);
+      }
       const skills = f.skills?.tokens ?? 0;
       return { folder: f.folder, projectKey: f.projectKey, tokens: f.totalTokens - skills, skills, important: [...important].sort(), loaded: [...loaded].sort() };
     }),

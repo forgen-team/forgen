@@ -141,9 +141,14 @@ async function report(c: Ctx): Promise<void> {
     return { folder: b.folder, before: b.tokens, after: diet, addedMemory: mem, withMemory: total, delta: diet - b.tokens, pct: p1(diet, b.tokens), pctWithMemory: p1(total, b.tokens) };
   });
   const r = rates(events);
+  // Q11: 2층 룰은 색인 줄에 보이면 누락이 아니지만, 필요한 순간에 안 실린 "2층 미발동"(재생)은 누락으로 센다.
+  const { latestRecurrence } = await import('./recurrence.js');
+  const rec = latestRecurrence();
+  const tier2Missed = (rec?.items ?? []).filter((it) => it.match?.reason === 'tier2-missed').map((it) => ({ ruleId: it.match?.ruleId ?? '', ts: it.ts }));
+  const tier2 = { rules: run.ctx.tier2In?.size ?? 0, tokensUpper: run.result.folders.map((f) => ({ folder: f.folder, rules: f.forgenTier2?.rules ?? 0, tokens: f.forgenTier2?.tokens ?? 0 })) };
   const out = {
     schema: 'forgen-fix-report/1', rates: r, folders: rows, medianPct: median(rows.map((x) => x.pct)), increased: rows.filter((x) => x.delta > 0).map((x) => x.folder),
-    loss, mixConfirmed: mix, applied: appliedFixes().length, baselineAt: before.at,
+    loss, tier2Missed, tier2, mixConfirmed: mix, applied: appliedFixes().length, baselineAt: before.at,
   };
   if (c.json) { console.log(JSON.stringify(out, null, 2)); return; }
   console.log(`처방: 제안 ${r.proposed} · 적용 ${r.applied} (적용률 ${pct(r.applied, r.proposed)}) · 되돌림 ${r.undone} (되돌림률 ${pct(r.undone, r.applied)}, 목표 ≤ 10%)`);
@@ -154,6 +159,11 @@ async function report(c: Ctx): Promise<void> {
   if (added.size) console.log('  기억 추가(적히지 않은 채 반복된 교정의 새 메모)는 N3 다이어트 비교에서 빼고 따로 적는다');
   console.log(`  중앙값 ${out.medianPct > 0 ? '+' : ''}${out.medianPct}% (목표 −15% 이상) · 늘어난 폴더 ${out.increased.length}`);
   console.log(`중요 지침 누락 ${loss.reduce((n, l) => n + l.missing.length, 0)}${loss.length ? `: ${loss.map((l) => `${shortPath(l.folder)} ${l.missing.join(', ')}`).join(' / ')}` : ''}`);
+  if (tier2.rules || tier2Missed.length) {
+    console.log(`  2층(색인 줄로만 보이고 상황이 맞으면 한 번 들어옴) ${tier2.rules}개 — Q11: 자격 게이트를 지났고 색인에 보이므로 누락으로 세지 않음`);
+    console.log(`  2층 미발동(재생, 누락으로 셈) ${tier2Missed.length}${tier2Missed.length ? `: ${tier2Missed.map((x) => `${x.ruleId.slice(0, 8)}@${x.ts.slice(0, 10)}`).join(', ')}` : ''}`);
+    console.log('  한계: 2층 미발동은 교정이 나온 경우만 잡는다. 안 실렸는데 교정 없이 지나갔거나 실렸는데 모델이 무시하고 교정이 없었던 경우는 못 잡는다');
+  }
   console.log(`다른 프로젝트 섞임(모델 판정) ${mix === null ? '— (--no-model)' : mix}`);
 }
 

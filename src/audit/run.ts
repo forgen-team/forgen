@@ -56,6 +56,8 @@ export interface FolderSummary {
   mixCandidateTokens: number;
   /** 스킬·에이전트 목록 몫(앞머리 name·description 근사). */
   skills?: { tokens: number; count: number; bySource: Record<string, number> };
+  /** 0.9.0 두 층: 세션 시작에는 색인 줄로만 보이는 2층 룰 수와, 전부 들어오면 더해질 토큰(상한 — 실제는 상황이 맞은 것만). */
+  forgenTier2?: { rules: number; tokens: number };
 }
 
 export interface AuditResult {
@@ -67,7 +69,7 @@ export interface AuditResult {
   model: { used: boolean; note: string };
   summary: {
     /** 첫 화면 첫 줄 — 가장 최근 `audit recurrence` 결과(§4.4 작을 때 규칙 적용). 없으면 status 'none'. */
-    recurrence: { status: 'none' | 'ok' | 'insufficient' | 'incomplete' | 'no-data'; line: string; generatedAt?: string; window?: { since: string; until: string }; per1000?: { total: number; written: number }; per30d?: { total: number; written: number; corrections: number }; sampled?: boolean };
+    recurrence: { status: 'none' | 'ok' | 'insufficient' | 'incomplete' | 'no-data'; line: string; generatedAt?: string; window?: { since: string; until: string }; per1000?: { total: number; written: number }; per30d?: { total: number; written: number; corrections: number }; sampled?: boolean; tier2Missed?: number };
     tokens: { folders: number; min: number; max: number; median: number; reduciblePctMin: number; reduciblePctMax: number; reduciblePctMedian: number };
     /** conflicts·dupGroups·mixConfirmed 는 모델 판정 뒤의 확정 지적 수. 모델을 쓰지 않은 회차는 'pending'·null. */
     findings: { sameSentence: number; mixCandidates: number; stale: number; unscopedRules: number; claudeMdOver200: number; conflicts: number | 'pending'; dupGroups: number | null; mixConfirmed: number | null };
@@ -116,7 +118,11 @@ export interface AuditManifest {
  *   units: 지시 줄·forgen 룰(세션 시작에 실리는 것과 잘린 색인 줄), topics: 감사한 메모 폴더의 주제 파일(파일 하나 = 한 단위)
  *   loadedIn: 단위 키(unitKey) → 그 단위가 세션 시작에 실리는 폴더들
  */
-export interface AuditContext { units: Unit[]; topics: Unit[]; loadedIn: Map<string, string[]>; rules: Map<string, Rule>; projectKeys: string[]; homeMemoryIndex: Set<string>; memory: Map<string, MemoryDir> }
+export interface AuditContext {
+  units: Unit[]; topics: Unit[]; loadedIn: Map<string, string[]>; rules: Map<string, Rule>; projectKeys: string[]; homeMemoryIndex: Set<string>; memory: Map<string, MemoryDir>;
+  /** 0.9.0 두 층: 룰 ID → 그 룰이 2층(색인 줄로 보이고 상황이 맞으면 들어옴)인 폴더들. Q11 — 누락 검사에서 실린 것으로 본다 */
+  tier2In?: Map<string, string[]>;
+}
 export interface AuditRun { result: AuditResult; manifest: Omit<AuditManifest, 'runId'>; timing: Record<string, number>; ctx: AuditContext }
 
 export const unitKey = (u: { path: string; line: number; ruleId?: string }) => `${u.ruleId ?? u.path}:${u.line}`;
@@ -179,10 +185,11 @@ export function runAudit(opts: AuditOptions = {}): AuditRun {
   const active = scan.rules.filter((r) => r.status === 'active');
   const ruleById = new Map(active.map((r) => [r.rule_id, r]));
   const loads: FolderLoad[] = hostLoads.map((h) => {
-    let forgen = { tokens: 0, ruleIds: [] as string[] };
+    let forgen = { tokens: 0, ruleIds: [] as string[], tier2Ids: [] as string[] };
     try {
+      // 세션 시작 몫 = 1층 + 2층 색인 줄(두 층). 감사와 실제 세션 시작은 같은 렌더 함수를 쓴다.
       const r = renderSessionStartReadOnly(h.folder);
-      forgen = { tokens: estimateTokens(r.text), ruleIds: [...r.includedRuleIds].sort() };
+      forgen = { tokens: estimateTokens(r.text), ruleIds: [...r.includedRuleIds].sort(), tier2Ids: [...r.tier2RuleIds].sort() };
     } catch { /* 렌더 실패는 0 으로 */ }
     const hostTokens = h.entries.filter((e) => e.always).reduce((n, e) => n + e.tokens, 0);
     let projectKey: string | null = null;
@@ -297,6 +304,9 @@ export function runAudit(opts: AuditOptions = {}): AuditRun {
   // 5. 폴더별 토큰과 결정적으로 줄일 몫
   const staleKeys = new Set(stale.map((s) => `${s.ruleId ?? s.path}:${s.line}`));
   const loadedIn = new Map<string, string[]>();
+  const ruleUnitTokens = new Map(ruleUnits.map((u) => [u.ruleId as string, u.tokens + 1]));
+  const tier2In = new Map<string, string[]>();
+  for (const l of loads) for (const id of l.forgen.tier2Ids ?? []) tier2In.set(id, [...(tier2In.get(id) ?? []), l.folder]);
   const folderSummaries: FolderSummary[] = loads.map((l) => {
     const always = new Set(l.entries.filter((e) => e.always).map((e) => e.path));
     const memIdx = l.memoryDir ? memory.get(l.memoryDir) : undefined;
@@ -329,6 +339,7 @@ export function runAudit(opts: AuditOptions = {}): AuditRun {
       reducible: { duplicate, stale: staleTok, total, pct: l.totalTokens ? Math.round((total / l.totalTokens) * 1000) / 10 : 0 },
       mixCandidateTokens: mixTok,
       ...(l.skills ? { skills: l.skills } : {}),
+      ...(l.forgen.tier2Ids?.length ? { forgenTier2: { rules: l.forgen.tier2Ids.length, tokens: l.forgen.tier2Ids.reduce((n, id) => n + (ruleUnitTokens.get(id) ?? 0), 0) } } : {}),
     };
   });
   lap('checks');
@@ -350,7 +361,7 @@ export function runAudit(opts: AuditOptions = {}): AuditRun {
         if (!rec || rec.status === 'model-off') return { status: 'none' as const, line: recurrenceLine(null) };
         return {
           status: rec.status, line: recurrenceLine(rec), generatedAt: rec.generatedAt, window: { since: rec.window.since, until: rec.window.until },
-          per1000: { total: rec.per1000.total, written: rec.per1000.written }, per30d: { total: rec.per30d.total, written: rec.per30d.written, corrections: rec.corrections.per30d }, sampled: rec.prompts.limit !== null,
+          per1000: { total: rec.per1000.total, written: rec.per1000.written }, per30d: { total: rec.per30d.total, written: rec.per30d.written, corrections: rec.corrections.per30d }, sampled: rec.prompts.limit !== null, tier2Missed: rec.counts.tier2Missed ?? 0,
         };
       })(),
       tokens: { folders: tokens.length, min: tokens.length ? Math.min(...tokens) : 0, max: tokens.length ? Math.max(...tokens) : 0, median: median(tokens), reduciblePctMin: pcts.length ? Math.min(...pcts) : 0, reduciblePctMax: pcts.length ? Math.max(...pcts) : 0, reduciblePctMedian: pcts.length ? [...pcts].sort((a, b) => a - b)[pcts.length >> 1] : 0 },
@@ -386,7 +397,7 @@ export function runAudit(opts: AuditOptions = {}): AuditRun {
   const homeMemoryIndex = new Set(homeMemory.map((m) => m.index?.path).filter((p): p is string => !!p));
   const seenUnit = new Set<string>();
   const units = [...instructionUnits, ...ruleUnits].filter((u) => { const k = unitKey(u); if (seenUnit.has(k)) return false; seenUnit.add(k); return true; });
-  return { result, manifest, timing, ctx: { units, topics: topicFiles, loadedIn, rules: ruleById, projectKeys: sortedKeys, homeMemoryIndex, memory } };
+  return { result, manifest, timing, ctx: { units, topics: topicFiles, loadedIn, rules: ruleById, projectKeys: sortedKeys, homeMemoryIndex, memory, ...(tier2In.size ? { tier2In } : {}) } };
 }
 
 /** 생성 시각을 뺀 결과의 해시 — 같은 원천이면 같은 값. */

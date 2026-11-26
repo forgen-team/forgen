@@ -36,7 +36,7 @@ function value(args: string[], name: string): string | undefined {
 }
 
 const LABEL: Record<string, string> = { ignored: '실렸는데 무시', notLoaded: '적혀는 있는데 안 실림', unwrittenRepeat: '적히지 않은 채 반복', deletedRepeat: '지운 뒤 다시 말함', written: '적혀 있는데도 또 말함(위 둘)', total: '반복 교정 전체' };
-const REASON: Record<string, string> = { scope: '다른 폴더 전용', 'budget-or-other': 'forgen 예산 탈락 등', 'topic-only': '주제 파일에만', truncated: '잘림 뒤', 'other-folder': '다른 폴더', conditional: 'paths: 조건부', 'cwd-missing': '폴더 없음', 'replay-unknown': '지금은 보관된 룰이라 재생으로 확인 못 함' };
+const REASON: Record<string, string> = { scope: '다른 폴더 전용', 'budget-or-other': 'forgen 예산 탈락 등', 'topic-only': '주제 파일에만', truncated: '잘림 뒤', 'other-folder': '다른 폴더', conditional: 'paths: 조건부', 'cwd-missing': '폴더 없음', 'replay-unknown': '지금은 보관된 룰이라 재생으로 확인 못 함', 'tier2-missed': '2층 미발동(2층 후보였는데 안 실림)' };
 
 export function summaryLines(r: RecurrenceResult): string[] {
   const out = [`같은 말 다시 하기 (N4) ${r.window.since.slice(0, 10)} ~ ${r.window.until.slice(0, 10)} (${r.window.days}일, 앞 ${r.window.lookbackDays}일 조회 전용) · 판정자 ${r.judge ? `교정 ${r.judge.correction.model}(${r.judge.correction.version}) · 쌍 ${r.judge.pair.model}(${r.judge.pair.version}, 1회 비대칭, 사전 필터 ≥ ${r.judge.prefilterMin})` : '없음'}`];
@@ -58,6 +58,10 @@ export function summaryLines(r: RecurrenceResult): string[] {
   for (const it of r.items) if (it.match && (it.branch === 'ignored' || it.branch === 'not-loaded')) kinds.set(it.match.kind, (kinds.get(it.match.kind) ?? 0) + 1);
   if (kinds.size) out.push(`  적혀 있던 곳: ${[...kinds].map(([k, n]) => `${k} ${n}`).join(' · ')}`);
   out.push(`  기억 ${r.memory.items}개 (${Object.entries(r.memory.byKind).map(([k, n]) => `${k} ${n}`).join(' · ')}) · 시점 모름 ${r.memory.unknownTime} · 지움 표시 ${r.memory.deleted}`);
+  if (r.biweekly?.length) {
+    out.push('  2주 단위(두 층 도입 뒤 추적): 구간 · 판정 발화 · 교정 · 반복 전체(1,000개당) · 그중 2층 미발동 재발');
+    for (const b of r.biweekly) out.push(`    ${b.from.slice(0, 10)}~${b.to.slice(0, 10)}  ${String(b.prompts).padStart(5)}  ${String(b.corrections).padStart(4)}  ${String(b.total).padStart(4)} (${b.per1000})  ${b.tier2Missed}`);
+  }
   for (const n of r.notes) out.push(`  · ${n}`);
   return out;
 }
@@ -87,15 +91,19 @@ export async function handleRecurrence(args: string[], claudeDir: string | undef
   const run = await runRecurrence({ claudeDir, since: parseDate(value(args, '--since'), '--since'), until: parseDate(value(args, '--until'), '--until'), lookbackDays: parseDays(value(args, '--lookback')), limit, model });
   const out = writeRecurrenceRun(run);
   const fp = writeFingerprintIfFirst(run.memoryFiles, new Date(), run.result.forgenVersion);
+  // 0.9.0 두 층: 재발·2층 미발동 이력을 두 층 색인에 합친다 — 2층 미발동 룰은 다음 세션부터 1층(자동 복귀)
+  let tier2: { updated: number; tier2Missed: string[] } | null = null;
+  try { tier2 = (await import('./tier2-replay.js')).mergeRecurrence(run.result.items); } catch { /* 색인 문제는 재생 결과를 막지 않는다 */ }
   const ms = Date.now() - started;
   // 교정 원장의 판정 대기도 같은 판정기로 푼다 — 세션 학습(Haiku 동의)이 꺼진 사용자도 여기서 풀린다.
   let ledger: Awaited<ReturnType<typeof resolvePendingCorrections>> | null = null;
   if (model) { try { ledger = await resolvePendingCorrections({ max: 500 }); } catch { /* 원장 문제는 재생 결과를 막지 않는다 */ } }
   if (json) {
-    console.log(JSON.stringify({ ...run.result, runId: out.runId, dir: out.dir, sourcesDigest: run.manifest.sourcesDigest, resultDigest: run.manifest.resultDigest, judgeStats: run.judgeStats, timing: run.timing, ledger }, null, 2));
+    console.log(JSON.stringify({ ...run.result, runId: out.runId, dir: out.dir, sourcesDigest: run.manifest.sourcesDigest, resultDigest: run.manifest.resultDigest, judgeStats: run.judgeStats, timing: run.timing, ledger, tier2 }, null, 2));
     return;
   }
   for (const l of summaryLines(run.result)) console.log(l);
+  if (tier2?.tier2Missed.length) console.log(`  두 층: 2층 미발동 룰 ${tier2.tier2Missed.length}개를 다음 세션부터 1층으로 올림 (${tier2.tier2Missed.map((x) => x.slice(0, 8)).join(', ')}) — 90일 재발 0 이면 자격 게이트를 다시 본다`);
   console.log(`\n${statsLine(run, ms)}`);
   if (ledger && (ledger.resolved || ledger.left)) console.log(`교정 원장: 판정 대기 ${ledger.resolved}건 판정${ledger.left ? ` · 남음 ${ledger.left}${ledger.stopped ? ` (${ledger.stopped})` : ''}` : ''}`);
   if (run.result.pairsJudged) console.log('검수: forgen audit review  (판정 쌍 25개를 페이지로 — 기기 밖으로 아무것도 보내지 않음)');
