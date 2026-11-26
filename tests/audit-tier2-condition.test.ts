@@ -204,3 +204,17 @@ describe('forgen fix tier2-condition', () => {
     expect(renderSessionStartReadOnly(FOLDER).text).toContain('미리 빌드해 본다');
   });
 });
+
+describe('N3 같은 집합 비교(오너 결정 2026-11-26)', () => {
+  it('처방 전에 실리던 집합만 센다 — 빈자리로 새로 실린 룰은 "되살린 룰"(중요 지침 수 포함)로 빼고, 이전 정의 값도 남는다', async () => {
+    const { sameSetN3 } = await import('../src/audit/fix.js');
+    const before = { at: OLD, folders: [{ folder: '/f', projectKey: null, tokens: 1000, skills: 0, important: [], loaded: ['rule:a', 'rule:b'], sessionRules: ['a', 'b'] }] };
+    const after = { at: OLD, folders: [{ folder: '/f', projectKey: null, tokens: 950, skills: 0, important: [], loaded: ['rule:a', 'rule:c', 'rule:d'], sessionRules: ['a', 'c', 'd'] }] };
+    const run = { ctx: { units: [{ ruleId: 'c', tokens: 39 }, { ruleId: 'd', tokens: 19 }], rules: new Map([['c', rule('c', 'x')], ['d', rule('d', 'y', { source: 'onboarding' })]]) } } as never;
+    const [x] = sameSetN3(before as never, after as never, run);
+    expect(x).toMatchObject({ tokens: 950, revived: ['c', 'd'], revivedImportant: ['c'], revivedTokens: 60, sameSet: 890 });
+    // 옛 기준값(sessionRules 없음)은 loaded 의 rule: 로 대신한다
+    const old = { ...before, folders: [{ ...before.folders[0], sessionRules: undefined }] };
+    expect(sameSetN3(old as never, after as never, run)[0].revived).toEqual(['c', 'd']);
+  });
+});

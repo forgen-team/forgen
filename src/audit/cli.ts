@@ -134,6 +134,18 @@ const LAYER_LABEL: Record<string, string> = {
   agents: 'AGENTS', 'project-rules': '프로젝트 룰', 'memory-index': 'MEMORY.md', 'forgen-render': 'forgen',
 };
 
+/** N3 같은 집합 비교(처방 기준값이 있을 때) + 이전 정의 한 줄. */
+export function n3Lines(r: AuditResult): string[] {
+  const n = r.summary.n3;
+  if (!n) return [];
+  const sg = (x: number) => `${x > 0 ? '+' : ''}${x}%`;
+  return [
+    `N3(같은 집합 — 처방 전에 실리던 룰·기억을 그대로 실을 때, 스킬 설명 제외) 기준 ${n.baselineAt.slice(0, 16)}: 중앙값 ${sg(n.medianPct)} (목표 −15% 이상)`,
+    ...n.folders.map((f) => `  ${String(f.before).padStart(6)} → ${String(f.sameSet).padStart(6)}  ${sg(f.pct)}  ${shortPath(f.folder)}${f.revived ? `  (되살린 룰 ${f.revived}, 중요 지침 ${f.revivedImportant})` : ''}`),
+    `  되살린 룰 ${n.revived}개(그중 중요 지침 ${n.revivedImportant}개) · 이전 정의(지금 실리는 전부) 중앙값 ${sg(n.allNowMedianPct)}`,
+  ];
+}
+
 function tokenTable(r: AuditResult): string[] {
   const out = [`폴더별 상시 로드 토큰 (로컬 근사: 영문 4자≈1 · 그 밖 1자≈0.9)`];
   for (const f of r.folders) {
@@ -175,6 +187,7 @@ export async function handleAudit(args: string[]): Promise<void> {
     return;
   }
   const run = runAudit({ folders: values(rest, '--folder'), claudeDir });
+  try { const n3 = (await import('./fix.js')).n3Summary(run); if (n3) run.result.summary.n3 = n3; } catch (e) { process.stderr.write(`[forgen] N3 같은 집합 비교 실패: ${e instanceof Error ? e.message : String(e)}\n`); }
   const json = rest.includes('--json');
   let judgeStats: JudgeStats | null = null;
   if (sub !== 'tokens' && !rest.includes('--no-model')) {
@@ -184,8 +197,8 @@ export async function handleAudit(args: string[]): Promise<void> {
   }
 
   if (sub === 'tokens') {
-    if (json) console.log(JSON.stringify({ schema: 'forgen-audit-tokens/1', generatedAt: run.result.generatedAt, folders: run.result.folders.map((f) => ({ folder: f.folder, projectKey: f.projectKey, totalTokens: f.totalTokens, ...(f.forgenTier2 ? { forgenTier2: f.forgenTier2, expectedTokens: f.totalTokens + (f.forgenTier2.expected ?? 0) } : {}), byLayer: f.byLayer, reducible: f.reducible, mixCandidateTokens: f.mixCandidateTokens, entries: f.entries })) }, null, 2));
-    else for (const l of tokenTable(run.result)) console.log(l);
+    if (json) console.log(JSON.stringify({ schema: 'forgen-audit-tokens/1', generatedAt: run.result.generatedAt, ...(run.result.summary.n3 ? { n3: run.result.summary.n3 } : {}), folders: run.result.folders.map((f) => ({ folder: f.folder, projectKey: f.projectKey, totalTokens: f.totalTokens, ...(f.forgenTier2 ? { forgenTier2: f.forgenTier2, expectedTokens: f.totalTokens + (f.forgenTier2.expected ?? 0) } : {}), byLayer: f.byLayer, reducible: f.reducible, mixCandidateTokens: f.mixCandidateTokens, entries: f.entries })) }, null, 2));
+    else { for (const l of tokenTable(run.result)) console.log(l); for (const l of n3Lines(run.result)) console.log(l); }
     return;
   }
 

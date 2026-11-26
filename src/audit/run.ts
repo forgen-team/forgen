@@ -77,6 +77,11 @@ export interface AuditResult {
     tokens: { folders: number; min: number; max: number; median: number; reduciblePctMin: number; reduciblePctMax: number; reduciblePctMedian: number };
     /** conflicts·dupGroups·mixConfirmed 는 모델 판정 뒤의 확정 지적 수. 모델을 쓰지 않은 회차는 'pending'·null. */
     findings: { sameSentence: number; mixCandidates: number; stale: number; unscopedRules: number; claudeMdOver200: number; conflicts: number | 'pending'; dupGroups: number | null; mixConfirmed: number | null };
+    /**
+     * N3 같은 집합 비교(오너 결정 2026-11-26) — 처방 기준값(forgen fix 를 처음 적용할 때 남김)이 있을 때만. 처방 전에 실리던 룰·기억을
+     * 그대로 실을 때의 토큰끼리 비교하고, 빈자리로 새로 실린 룰은 되살린 룰로 따로. allNow* 는 이전 정의(지금 실리는 전부).
+     */
+    n3?: { baselineAt: string; medianPct: number; allNowMedianPct: number; revived: number; revivedImportant: number; folders: Array<{ folder: string; before: number; sameSet: number; allNow: number; pct: number; allNowPct: number; revived: number; revivedImportant: number }> };
     truncation: { memoryDirs: number; truncated: number; tightest: { dir: string; folder: string | null; spareLines: number; spareBytes: number; spareItems: number; firstLimit: 'lines' | 'bytes' } | null };
   };
   folders: FolderSummary[];

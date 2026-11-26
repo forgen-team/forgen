@@ -935,7 +935,8 @@ export function undoFix(id: string, now = new Date()): { restored: number } | { 
 
 // ── 측정: N3(폴더별, 스킬 설명 제외) · 중요 지침 누락 · 적용률·되돌림률 ──
 
-export interface FolderMeasure { folder: string; projectKey: string | null; tokens: number; skills: number; important: string[]; loaded: string[] }
+/** sessionRules: 세션 시작 본문에 실린 forgen 룰 ID(2층 제외) — N3 같은 집합 비교(오너 결정 2026-11-26). 옛 기준값에는 없다. */
+export interface FolderMeasure { folder: string; projectKey: string | null; tokens: number; skills: number; important: string[]; loaded: string[]; sessionRules?: string[] }
 export interface Measure { at: string; folders: FolderMeasure[] }
 
 /** 감사 회차에서 폴더마다 상시 로드 토큰(§1.1 의 다섯 층 + forgen 주입, 스킬 설명 제외)과 실리는 지시의 신원. */
@@ -969,9 +970,51 @@ export function measure(run: AuditRun, now = new Date()): Measure {
         if (!folders.includes(f.folder)) continue;
         loaded.add(`rule:${id}`);
       }
+      const sessionRules = [...loaded].filter((k) => k.startsWith('rule:') && !(ctx.tier2In?.get(k.slice(5)) ?? []).includes(f.folder)).map((k) => k.slice(5)).sort();
       const skills = f.skills?.tokens ?? 0;
-      return { folder: f.folder, projectKey: f.projectKey, tokens: f.totalTokens - skills, skills, important: [...important].sort(), loaded: [...loaded].sort() };
+      return { folder: f.folder, projectKey: f.projectKey, tokens: f.totalTokens - skills, skills, important: [...important].sort(), loaded: [...loaded].sort(), sessionRules };
     }),
+  };
+}
+
+/**
+ * N3 같은 집합 비교(오너 결정 2026-11-26): "처방 전에 실리던 룰·기억 집합을 그대로 실을 때의 토큰"끼리 비교한다.
+ * 처방·두 층 뒤 예산 빈자리를 채워 새로 실리게 된(처방 전에는 예산에서 빠지던) forgen 룰은 N3 에서 빼고 "되살린 룰"로 따로 센다.
+ * 이전 정의(지금 실리는 전부)는 빠지던 룰이 다시 실리는 개선을 손해로 셌다. 이전 정의 값(tokens)도 같이 낸다.
+ * 되살린 룰 토큰은 그 룰 한 줄의 압축 형식 토큰(+줄머리 1)으로 센다. 옛 기준값(sessionRules 없음)은 loaded 의 rule: 로 대신한다.
+ */
+export interface SameSet { folder: string; tokens: number; sameSet: number; revived: string[]; revivedImportant: string[]; revivedTokens: number }
+export function sameSetN3(before: Measure, after: Measure, run: AuditRun): SameSet[] {
+  const tok = new Map(run.ctx.units.filter((u) => u.ruleId).map((u) => [u.ruleId as string, u.tokens + 1]));
+  return after.folders.map((a) => {
+    const b = before.folders.find((x) => x.folder === a.folder);
+    const had = new Set(b?.sessionRules ?? (b?.loaded ?? []).filter((k) => k.startsWith('rule:')).map((k) => k.slice(5)));
+    const revived = b ? (a.sessionRules ?? []).filter((id) => !had.has(id)) : [];
+    const revivedTokens = revived.reduce((n, id) => n + (tok.get(id) ?? 0), 0);
+    const revivedImportant = revived.filter((id) => { const r = run.ctx.rules.get(id); return !!r && isImportantRule(r); });
+    return { folder: a.folder, tokens: a.tokens, sameSet: a.tokens - revivedTokens, revived, revivedImportant, revivedTokens };
+  });
+}
+
+/** 감사 결과에 붙일 N3(같은 집합) 요약 — 처방 기준값이 없으면 null(아무것도 쓰지 않는다). */
+export function n3Summary(run: AuditRun): NonNullable<import('./run.js').AuditResult['summary']['n3']> | null {
+  const t = readText(baselinePath());
+  if (!t) return null;
+  let before: Measure;
+  try { before = JSON.parse(t) as Measure; } catch { return null; }
+  const after = measure(run);
+  const ss = sameSetN3(before, after, run);
+  const pct = (a: number, b: number) => (b ? Math.round(((a - b) / b) * 1000) / 10 : 0);
+  const med = (xs: number[]) => { if (!xs.length) return 0; const s2 = [...xs].sort((a, b) => a - b); const m = s2.length >> 1; return s2.length % 2 ? s2[m] : Math.round(((s2[m - 1] + s2[m]) / 2) * 10) / 10; };
+  const folders = before.folders.map((b) => {
+    const x = ss.find((y) => y.folder === b.folder);
+    const allNow = x?.tokens ?? 0;
+    const sameSet = x?.sameSet ?? 0;
+    return { folder: b.folder, before: b.tokens, sameSet, allNow, pct: pct(sameSet, b.tokens), allNowPct: pct(allNow, b.tokens), revived: x?.revived.length ?? 0, revivedImportant: x?.revivedImportant.length ?? 0 };
+  });
+  return {
+    baselineAt: before.at, medianPct: med(folders.map((f) => f.pct)), allNowMedianPct: med(folders.map((f) => f.allNowPct)),
+    revived: new Set(ss.flatMap((x) => x.revived)).size, revivedImportant: new Set(ss.flatMap((x) => x.revivedImportant)).size, folders,
   };
 }
 

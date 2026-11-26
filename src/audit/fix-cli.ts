@@ -12,7 +12,7 @@
 import { Judge, takeModelDisclosure } from './judge.js';
 import {
   appliedFixes, applyFix, ensureBaseline, FIX_KINDS, KIND_LABEL, lossCheck, measure, newBackupRoot, planFixes, previewFix,
-  rates, readLedger, recordProposed, undoFix, unifiedDiff, appendLedger, fixPaths, withFixLock, excludedFixes, type Fix, type FixKind, type FixPlan,
+  rates, readLedger, recordProposed, undoFix, unifiedDiff, appendLedger, fixPaths, withFixLock, excludedFixes, sameSetN3, type Fix, type FixKind, type FixPlan,
 } from './fix.js';
 import { shortPath } from './html.js';
 
@@ -140,13 +140,21 @@ async function report(c: Ctx): Promise<void> {
   const added = new Map<string, number>();
   for (const e of live.values()) if (e.addsTo) added.set(e.addsTo.folder, (added.get(e.addsTo.folder) ?? 0) + e.addsTo.tokens);
   const p1 = (a: number, b: number) => (b ? Math.round(((a - b) / b) * 1000) / 10 : 0);
+  // N3 = 같은 집합 비교(오너 결정 2026-11-26): 처방 전에 실리던 룰·기억 집합을 그대로 실을 때의 토큰. 빈자리를 채워 새로 실린 룰은 "되살린 룰"로 따로.
+  const same = new Map(sameSetN3(before, after, run).map((x) => [x.folder, x]));
   const rows = before.folders.map((b) => {
     const total = after.folders.find((x) => x.folder === b.folder)?.tokens ?? 0;
     const mem = added.get(b.folder) ?? 0;
-    const diet = total - mem;
+    const ss = same.get(b.folder);
+    const revivedTokens = ss?.revivedTokens ?? 0;
+    const diet = total - mem - revivedTokens;
+    const allNow = total - mem; // 이전 정의(지금 실리는 전부)
     // 기대치: 2층 룰이 발동률 추정만큼 들어온다고 보고 더한 값(넓은 조건은 절감 0). 최대치(diet)와 따로 낸다 — 선전에는 기대치.
     const exp = run.result.folders.find((x) => x.folder === b.folder)?.forgenTier2?.expected ?? 0;
-    return { folder: b.folder, before: b.tokens, after: diet, expected: diet + exp, addedMemory: mem, withMemory: total, delta: diet - b.tokens, pct: p1(diet, b.tokens), expectedPct: p1(diet + exp, b.tokens), pctWithMemory: p1(total, b.tokens) };
+    return {
+      folder: b.folder, before: b.tokens, after: diet, expected: diet + exp, addedMemory: mem, withMemory: total, delta: diet - b.tokens, pct: p1(diet, b.tokens), expectedPct: p1(diet + exp, b.tokens), pctWithMemory: p1(total, b.tokens),
+      revived: ss?.revived.length ?? 0, revivedImportant: ss?.revivedImportant.length ?? 0, revivedTokens, allNow, allNowPct: p1(allNow, b.tokens),
+    };
   });
   const r = rates(events);
   // Q11: 2층 룰은 색인 줄에 보이면 누락이 아니지만, 필요한 순간에 안 실린 "2층 미발동"(재생)은 누락으로 센다.
@@ -155,7 +163,9 @@ async function report(c: Ctx): Promise<void> {
   const tier2Missed = (rec?.items ?? []).filter((it) => it.match?.reason === 'tier2-missed').map((it) => ({ ruleId: it.match?.ruleId ?? '', ts: it.ts }));
   const tier2 = { rules: run.ctx.tier2In?.size ?? 0, tokensUpper: run.result.folders.map((f) => ({ folder: f.folder, rules: f.forgenTier2?.rules ?? 0, tokens: f.forgenTier2?.tokens ?? 0 })) };
   const out = {
-    schema: 'forgen-fix-report/1', rates: r, folders: rows, medianPct: median(rows.map((x) => x.pct)), expectedMedianPct: median(rows.map((x) => x.expectedPct)), increased: rows.filter((x) => x.delta > 0).map((x) => x.folder),
+    schema: 'forgen-fix-report/1', n3Definition: 'same-set/2026-11-26', rates: r, folders: rows, medianPct: median(rows.map((x) => x.pct)), expectedMedianPct: median(rows.map((x) => x.expectedPct)),
+    allNowMedianPct: median(rows.map((x) => x.allNowPct)),
+    revived: new Set([...same.values()].flatMap((x) => x.revived)).size, revivedImportant: new Set([...same.values()].flatMap((x) => x.revivedImportant)).size, increased: rows.filter((x) => x.delta > 0).map((x) => x.folder),
     loss, tier2Missed, tier2, mixConfirmed: mix, applied: appliedFixes().length, baselineAt: before.at,
   };
   if (c.json) { console.log(JSON.stringify(out, null, 2)); return; }
@@ -163,7 +173,10 @@ async function report(c: Ctx): Promise<void> {
   for (const [k, v] of Object.entries(r.byKind)) console.log(`  ${KIND_LABEL[k as FixKind] ?? k}: 제안 ${v.proposed} · 적용 ${v.applied} · 되돌림 ${v.undone}`);
   console.log(`\n폴더별 상시 로드 토큰(N3, 스킬 설명 제외) — 처방 전(${before.at.slice(0, 16)}) → 지금`);
   const sg = (n: number) => `${n > 0 ? '+' : ''}${n}%`;
-  for (const x of rows) console.log(`  ${String(x.before).padStart(6)} → ${String(x.after).padStart(6)}  ${sg(x.pct)}  ${shortPath(x.folder)}${x.addedMemory ? `   (+ 기억 추가 ${x.addedMemory}토큰 → 합 ${sg(x.pctWithMemory)})` : ''}`);
+  console.log('  같은 집합 기준(처방 전에 실리던 룰·기억을 그대로 실을 때) — 빈자리를 채워 새로 실린 룰은 "되살린 룰"로 따로 센다');
+  for (const x of rows) console.log(`  ${String(x.before).padStart(6)} → ${String(x.after).padStart(6)}  ${sg(x.pct)}  ${shortPath(x.folder)}${x.revived ? `   (되살린 룰 ${x.revived}개, 그중 중요 지침 ${x.revivedImportant}개 · ${x.revivedTokens}토큰)` : ''}${x.addedMemory ? `   (+ 기억 추가 ${x.addedMemory}토큰 → 합 ${sg(x.pctWithMemory)})` : ''}`);
+  if (out.revived) console.log(`  되살린 룰 ${out.revived}개(그중 중요 지침 ${out.revivedImportant}개) — 처방 전에는 예산에서 빠지던 룰이 빈자리로 다시 실림(N3 에서 뺌)`);
+  console.log(`  이전 정의(지금 실리는 전부): ${rows.map((x) => `${shortPath(x.folder)} ${sg(x.allNowPct)}`).join(' · ')} · 중앙값 ${sg(out.allNowMedianPct)}`);
   if (added.size) console.log('  기억 추가(적히지 않은 채 반복된 교정의 새 메모)는 N3 다이어트 비교에서 빼고 따로 적는다');
   console.log(`  중앙값 ${out.medianPct > 0 ? '+' : ''}${out.medianPct}% (목표 −15% 이상) · 늘어난 폴더 ${out.increased.length}`);
   if (rows.some((x) => x.expected !== x.after)) {
