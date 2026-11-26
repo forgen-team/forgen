@@ -68,6 +68,8 @@ describe('#7 지시문 판별 (실데이터 표본에서 고른 모양)', () => 
     ['- Go Store 파일 분리 패턴', false],
     ['- ARIA combobox 검색 UI', false],
     ['## 반복 수정 경고', false],
+    ['- `deploy.skill.md` - 프로덕션 배포 절차 (빌드 후 nginx 재시작 필수!)', false],
+    ['- BYOK로 외부 API를 쓰되 키와 데이터의 주권은 내가 갖는다', true],
   ])('%s → %s', (text, want) => { expect(isDirective(md(text))).toBe(want); });
   it('forgen 룰·교정 메모 파일은 언제나 지시', () => {
     expect(isDirective({ text: 'React Query', layer: 'forgen-rule' })).toBe(true);
