@@ -174,6 +174,8 @@ export interface RuleRendererStrings {
   trustFullTrust: string;
   evidenceCollectionHeader: string;
   evidenceCollectionRules: string[];
+  /** 0.9.0 압축 세션 시작 블록용(약 50토큰). axis_hint 설명은 correction-record 도구 스키마에 있다. */
+  evidenceCollectionRulesCompact: string[];
   judgmentMinimalChange: string[];
   judgmentBalanced: string[];
   judgmentStructural: string[];
@@ -193,6 +195,9 @@ export const RULE_RENDERER: Record<Locale, RuleRendererStrings> = {
       'kind 선택: fix-now(즉시 수정), prefer-from-now(앞으로 이렇게), avoid-this(하지 마라)',
       'axis_hint: quality_safety(품질/검증), autonomy(자율/확인), judgment_philosophy(변경 접근법), communication_style(설명 스타일)',
       '교정이 아닌 일반 피드백은 기록하지 않는다.',
+    ],
+    evidenceCollectionRulesCompact: [
+      '사용자가 행동을 교정하면 반드시 correction-record MCP 도구로 기록하라(kind: fix-now·prefer-from-now·avoid-this). 일반 피드백은 기록하지 않는다.',
     ],
     judgmentMinimalChange: [
       '기존 코드 구조를 최대한 유지하라. 동작하는 코드를 불필요하게 리팩토링하지 마라.',
@@ -226,6 +231,9 @@ export const RULE_RENDERER: Record<Locale, RuleRendererStrings> = {
       'kind: fix-now (immediate fix), prefer-from-now (going forward), avoid-this (never do this)',
       'axis_hint: quality_safety, autonomy, judgment_philosophy, communication_style',
       'Do not record general feedback — only explicit behavioral corrections.',
+    ],
+    evidenceCollectionRulesCompact: [
+      'When the user corrects your behavior, call the correction-record MCP tool (kind: fix-now, prefer-from-now, avoid-this). Not for general feedback.',
     ],
     judgmentMinimalChange: [
       'Preserve existing code structure. Do not refactor working code unnecessarily.',

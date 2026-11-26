@@ -712,8 +712,9 @@ describe('Scenario 5: Profile → Session → Rules Pipeline', () => {
 
     expect(typeof rules).toBe('string');
     expect(rules.length).toBeGreaterThan(0);
-    // 보수형 품질 팩 → 검증 관련 키워드가 포함되어야 함
-    expect(rules.toLowerCase()).toMatch(/보수|conservative|quality|confirm|검증|verify/i);
+    // 룰이 없어도 교정 기록 지시(학습 루프 입구)는 항상 실린다. (예전에는 axis_hint 설명 속 "quality" 낱말에 기대어 통과했다 —
+    // 0.9.0 압축으로 axis_hint 설명은 도구 스키마로 옮겼다.)
+    expect(rules).toMatch(/correction-record/);
   });
 
   it('다른 팩 조합이 다른 규칙을 생성한다', async () => {

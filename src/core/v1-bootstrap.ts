@@ -25,7 +25,7 @@ import { loadContextRules, cleanupStaleSessionRules, markRulesInjected } from '.
 import { projectKeyFor } from '../store/rule-scope.js';
 import { projectRuleIndex } from './project-switch.js';
 import { composeSession } from '../preset/preset-manager.js';
-import { renderRulesDetailed, DEFAULT_CONTEXT  } from '../renderer/rule-renderer.js';
+import { renderRulesDetailed, DEFAULT_CONTEXT, type RenderContext } from '../renderer/rule-renderer.js';
 import { recordRenderReport } from '../renderer/render-report.js';
 import { saveSessionState, loadRecentSessions } from '../store/session-state-store.js';
 import { loadEvidenceBySession } from '../store/evidence-store.js';
@@ -85,6 +85,13 @@ function withProjectIndex(text: string, cwd?: string): string {
   } catch { return text; }
 }
 
+/** 세션 시작 렌더 맥락: 압축 형식(§8.1 ①)에서 이 폴더 프로젝트와 같은 프로젝트 태그를 빼기 위해 키를 넘긴다. */
+function sessionRenderContext(cwd?: string): RenderContext {
+  let projectKey: string | null = null;
+  try { projectKey = projectKeyFor(cwd ?? process.env.FORGEN_CWD ?? process.cwd()); } catch { /* 키 없음 = 태그 유지 */ }
+  return { ...DEFAULT_CONTEXT, projectKey };
+}
+
 let lastIncluded: string[] = [];
 function renderWithoutProfile(cwd?: string): string | null {
   lastIncluded = [];
@@ -98,7 +105,7 @@ function renderWithoutProfile(cwd?: string): string | null {
       return idx;
     }
     const state = { warnings: [] } as unknown as SessionEffectiveState;
-    const result = renderRulesDetailed(rules, state, null as unknown as Profile, DEFAULT_CONTEXT);
+    const result = renderRulesDetailed(rules, state, null as unknown as Profile, sessionRenderContext(cwd));
     lastIncluded = result.included.map((r) => r.rule_id);
     recordRenderReport(result);
     return withProjectIndex(result.text, cwd);
@@ -135,11 +142,11 @@ function renderReadOnly(cwd: string, asOf?: string): { text: string; includedRul
       return { text: idx ?? '', includedRuleIds: [] };
     }
     const state = { warnings: [] } as unknown as SessionEffectiveState;
-    const result = renderRulesDetailed(rules, state, null as unknown as Profile, DEFAULT_CONTEXT);
+    const result = renderRulesDetailed(rules, state, null as unknown as Profile, sessionRenderContext(cwd));
     return { text: withProjectIndex(result.text, cwd), includedRuleIds: result.included.map((r) => r.rule_id) };
   }
   const session = composeSession({ session_id: 'audit-read-only', profile, personalRules: rules, sessionOverlays: [], runtime: detectRuntimeCapability() });
-  const rendered = renderRulesDetailed([...rules], session, profile, DEFAULT_CONTEXT);
+  const rendered = renderRulesDetailed([...rules], session, profile, sessionRenderContext(cwd));
   return { text: withProjectIndex(rendered.text, cwd), includedRuleIds: rendered.included.map((r) => r.rule_id) };
 }
 
@@ -226,7 +233,7 @@ export function bootstrapV1Session(cwd?: string, opts: { trackInjection?: boolea
 
   // 6. Rule 렌더링
   const allRules = [...personalRules];
-  const rendered = renderRulesDetailed(allRules, session, profile, DEFAULT_CONTEXT);
+  const rendered = renderRulesDetailed(allRules, session, profile, sessionRenderContext(cwd));
   const renderedRules = withProjectIndex(rendered.text, cwd);
 
   // 6b. Inject tracking (ADR-002 Meta signal) — rendered rules count as injected.

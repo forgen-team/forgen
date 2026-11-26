@@ -209,7 +209,7 @@ export function runAudit(opts: AuditOptions = {}): AuditRun {
     const loadedHere = layerOf.has(m.index.path);
     instructionUnits.push(...markdownUnits(m.index, 'memory-index').filter((u) => !loadedHere || u.line > m.loadedLines));
   }
-  const ruleUnits: Unit[] = active.map((r) => ({ text: r.policy, norm: normalizeSentence(r.policy), path: path.join(ME_RULES, `${r.rule_id}.json`), line: 0, layer: 'forgen-rule' as const, ruleId: r.rule_id, tokens: estimateTokens(ruleToText(r)) }));
+  const ruleUnits: Unit[] = active.map((r) => ({ text: r.policy, norm: normalizeSentence(r.policy), path: path.join(ME_RULES, `${r.rule_id}.json`), line: 0, layer: 'forgen-rule' as const, ruleId: r.rule_id, tokens: estimateTokens(ruleToText(r, { compact: true })) }));
   const auditedMemory = new Set(loads.map((l) => l.memoryDir).filter(Boolean));
   const topicUnits: Unit[] = [];
   const topicFiles: Unit[] = [];

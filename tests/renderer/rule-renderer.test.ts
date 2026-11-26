@@ -48,11 +48,49 @@ describe('renderRules', () => {
     expect(output).toContain('Never expose credentials');
   });
 
-  it('quality rules go to How To Validate with [category|strength] tag', () => {
+  it('quality rules go to How To Validate with [category|strength] tag (예전 형식, compact:false)', () => {
     const rules = [makeRule({ category: 'quality', strength: 'default', policy: 'Run tests before completing' })];
-    const output = renderRules(rules, makeState(), profile);
+    const output = renderRules(rules, makeState(), profile, { ...DEFAULT_CONTEXT, compact: false });
     expect(output).toContain('## How To Validate');
     expect(output).toContain('[quality|default] Run tests before completing');
+  });
+
+  describe('0.9.0 압축 형식(세션 시작 기본)', () => {
+    it('분류 접두·default 강도 없음, 절 머리는 그대로', () => {
+      const output = renderRules([makeRule({ category: 'quality', strength: 'default', policy: 'Run tests before completing' })], makeState(), profile);
+      expect(output).toContain('## How To Validate\n- Run tests before completing');
+      expect(output).not.toContain('[quality|');
+    });
+    it('strong 은 `! ` 표시 + 범례 한 줄, hard 는 표시 없음', () => {
+      const output = renderRules([
+        makeRule({ rule_id: 's1', strength: 'strong', policy: 'Ask before deploy', render_key: 'q.s1' }),
+        makeRule({ rule_id: 'h1', strength: 'hard', category: 'safety', policy: 'No secrets', render_key: 'q.h1' }),
+      ], makeState(), profile);
+      expect(output).toContain('- ! Ask before deploy');
+      expect(output).toContain('(! = strong preference)');
+      expect(output).toContain('## Must Not\n- No secrets');
+    });
+    it('이 폴더 프로젝트와 같은 프로젝트 태그는 빼고, 다른 키·범위 미정은 남긴다', () => {
+      const rules = [
+        makeRule({ rule_id: 'p1', policy: 'Use pnpm here', projects: ['alpha'], render_key: 'q.p1' }),
+        makeRule({ rule_id: 'p2', policy: 'Other project rule', projects: ['beta'], render_key: 'q.p2' }),
+        makeRule({ rule_id: 'p3', policy: 'Unknown scope rule', scope_state: 'unresolved', render_key: 'q.p3' }),
+      ];
+      const output = renderRules(rules, makeState(), profile, { ...DEFAULT_CONTEXT, projectKey: 'alpha' });
+      expect(output).toContain('- Use pnpm here');
+      expect(output).toContain('- [beta] Other project rule');
+      expect(output).toContain('- [project-unknown] Unknown scope rule');
+    });
+    it('Evidence 블록은 줄이되 도구 이름·kind 셋·일반 피드백 제외는 남긴다(axis_hint 는 도구 스키마로)', () => {
+      const compact = renderRules([], makeState(), profile);
+      const full = renderRules([], makeState(), profile, { ...DEFAULT_CONTEXT, compact: false });
+      expect(compact).toContain('correction-record');
+      for (const k of ['fix-now', 'prefer-from-now', 'avoid-this']) expect(compact).toContain(k);
+      expect(compact).toContain('일반 피드백은 기록하지 않는다');
+      expect(compact).not.toContain('axis_hint');
+      expect(full).toContain('axis_hint');
+      expect(compact.length).toBeLessThan(full.length / 2);
+    });
   });
 
   it('hard rules omit category tag (Must Not section conveys meaning)', () => {

@@ -56,13 +56,16 @@ export function projectSwitchContext(sessionId: string | undefined, where: strin
   const lines: string[] = [];
   const ids: string[] = [];
   let used = 0; let omitted = 0;
+  let strong = false;
   for (const r of rules) {
-    const line = `- ${ruleToText(r)}`;
+    // 0.9.0 압축 형식(세션 시작 블록과 같은 모양): 이 프로젝트 태그·분류 접두·날짜 꼬리 없음, strong 은 `! `.
+    const line = `- ${ruleToText(r, { compact: true, projectKey: key })}`;
     if (used + line.length + 1 > SWITCH_BUDGET_CHARS) { omitted++; continue; }
     lines.push(line); ids.push(r.rule_id); used += line.length + 1;
+    if (r.strength === 'strong') strong = true;
   }
   addSessionRules(sessionId, ids);
   if (ids.length) appendSessionRender({ session: sessionId, event: 'switch', cwd: where, project: key, ruleIds: ids });
   const tail = omitted ? `\n- ${omitted} more omitted (budget). List: forgen rule list` : '';
-  return `<forgen-rules project="${key}">\nYou are now working in project "${key}". These are this user's rules for it, in addition to the rules given at session start:\n${lines.join('\n')}${tail}\n</forgen-rules>`;
+  return `<forgen-rules project="${key}">\nYou are now working in project "${key}". These are this user's rules for it, in addition to the rules given at session start${strong ? ' (! = strong preference)' : ''}:\n${lines.join('\n')}${tail}\n</forgen-rules>`;
 }
