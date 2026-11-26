@@ -16,7 +16,7 @@ import { renderSessionStartReadOnly } from '../core/v1-bootstrap.js';
 import { loadAllEvidence } from '../store/evidence-store.js';
 import { appliesForContext, projectKeyFor } from '../store/rule-scope.js';
 import type { Rule } from '../store/types.js';
-import { CORRECTION_MODEL, CORRECTION_PROMPT_VERSION, Judge, PAIR_MODEL, PAIR_PROMPT_VERSION, type CorrectionVerdict, type PairVerdict } from './judge.js';
+import { CORRECTION_MODEL, CORRECTION_PROMPT_VERSION, Judge, PAIR_MODEL, PAIR_PROMPT_LENIENT_VERSION, PAIR_PROMPT_VERSION, type CorrectionVerdict, type PairVerdict } from './judge.js';
 import { bigrams, topK } from './lexical.js';
 import { deletedItems, forgenRuleItems, hostFileItems, itemAt, memoryItems, type MemoryItem } from './memory-items.js';
 import { forgenVersion } from './run.js';
@@ -112,6 +112,8 @@ export interface RecurrenceResult {
   per1000: Counts;
   per30d: Counts;
   ci95per1000: { total: [number, number]; written: [number, number] };
+  /** 오너 결정 2026-11-26 범위: 엄격 판본(아래 끝 = counts 와 같음)·관대 판본(위 끝)의 갈래 수. 발견·처방은 엄격(확실한 것)으로 고른다. */
+  range?: { strictVersion: string; lenientVersion: string; lenient: { counts: Counts; per1000: Counts; per30d: Counts } };
   /** "모름"으로 판정된 쌍(세지 않음, 검수 대상) */
   unknown: number;
   pairsJudged: number;
@@ -318,7 +320,10 @@ export async function runRecurrence(opts: RecurrenceOptions = {}): Promise<Recur
   }
   // 사전 등록(2026-11-26): 교정 뒤에 생긴 기억과의 짝은 "그때 이미 지시하고 있었나"로 묻지 않고 따로("나중 기억이 이 교정을 반영했나") 판정한다.
   const isLater = (x: { id: string }) => x.id.includes('|later|');
-  const pairVerdicts = new Map([...(await judge.pairs(pairs.filter((x) => !isLater(x)))), ...(await judge.laterPairs(pairs.filter(isLater)))]);
+  const laterVerdicts = await judge.laterPairs(pairs.filter(isLater));
+  const pairVerdicts = new Map([...(await judge.pairs(pairs.filter((x) => !isLater(x)))), ...laterVerdicts]);
+  // 범위의 위 끝: 같은 쌍을 관대 판본으로도(캐시) — 경계가 애매한 교정은 판본에 따라 갈린다
+  const lenientVerdicts = new Map([...(await judge.pairs(pairs.filter((x) => !isLater(x)), 'lenient')), ...laterVerdicts]);
   lap('pairJudge');
 
   // 6. 실렸는가 + 갈래
@@ -362,13 +367,14 @@ export async function runRecurrence(opts: RecurrenceOptions = {}): Promise<Recur
     return e.always ? { loaded: true, via: 'host-load' } : { loaded: false, reason: 'conditional' };
   };
 
+  const classify = (vm: Map<string, PairVerdict | null>) => {
   const items: CorrectionItem[] = [];
   const counts = zero();
   let unknown = 0;
   let pairsJudged = 0;
   let becameMemory = 0;
   for (const [id, { p, gist, cands, skipped }] of plan) {
-    const verdict = (c: Cand): PairVerdict | null => pairVerdicts.get(`${id}|${c.tier}|${c.key}`) ?? null;
+    const verdict = (c: Cand): PairVerdict | null => vm.get(`${id}|${c.tier}|${c.key}`) ?? null;
     const same = (tier: Cand['tier']) => cands.filter((c) => c.tier === tier && verdict(c) === 'yes');
     const recs: PairRecord[] = cands.map((c) => ({
       tier: c.tier, key: c.key, kind: c.mem?.kind ?? (c.earlier ? `earlier:${c.earlier.source}` : ''), text: c.text.slice(0, 400), score: c.score, verdict: verdict(c),
@@ -408,11 +414,19 @@ export async function runRecurrence(opts: RecurrenceOptions = {}): Promise<Recur
   counts.written = counts.ignored + counts.notLoaded;
   counts.total = counts.written + counts.unwrittenRepeat + counts.deletedRepeat;
   items.sort((a, b) => (a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : a.id < b.id ? -1 : 1));
+  return { items, counts, unknown, pairsJudged, becameMemory };
+  };
+  const loadedSnap = { ...loadedVia };
+  const lenientRun = classify(lenientVerdicts);
+  Object.assign(loadedVia, loadedSnap, { renderLog: 0, replay: 0 });
+  const { items, counts, unknown, pairsJudged, becameMemory } = classify(pairVerdicts);
 
   const n = judgedWindow.length;
   const scale = (c: Counts, f: number): Counts => Object.fromEntries(Object.entries(c).map(([k, x]) => [k, r1(x * f)])) as unknown as Counts;
   const per1000 = scale(counts, n ? 1000 / n : 0);
   const per30d = scale(per1000, per30dPrompts / 1000);
+  const lp1000 = scale(lenientRun.counts, n ? 1000 / n : 0);
+  const range = { strictVersion: PAIR_PROMPT_VERSION, lenientVersion: PAIR_PROMPT_LENIENT_VERSION, lenient: { counts: lenientRun.counts, per1000: lp1000, per30d: scale(lp1000, per30dPrompts / 1000) } };
   const ci = (k: number): [number, number] => { const [lo, hi] = poissonCi(k); return n ? [r1((lo * 1000) / n), r1((hi * 1000) / n)] : [0, 0]; };
   const corrPer1000 = n ? (windowCorr.length * 1000) / n : 0;
   const corr30 = r1((corrPer1000 * per30dPrompts) / 1000);
@@ -456,7 +470,7 @@ export async function runRecurrence(opts: RecurrenceOptions = {}): Promise<Recur
     ...base, status, statusNote,
     prompts: { window: windowAll.length, lookback: lookAll.length, sampled: windowSample.length, judged: n, unjudged, limit, per30d: r1(per30dPrompts) },
     corrections: { total: windowCorr.length, taskSpecific: windowCorr.filter((p) => v(p)?.task_specific).length, lookback: lookCorr.length, per1000: r1(corrPer1000), per30d: corr30, becameMemory },
-    counts, per1000, per30d, ci95per1000: { total: ci(counts.total), written: ci(counts.written) }, unknown, pairsJudged,
+    counts, per1000, per30d, ci95per1000: { total: ci(counts.total), written: ci(counts.written) }, range, unknown, pairsJudged,
     loadedVia, biweekly, notes, items,
   };
   lap('classify');
@@ -512,6 +526,16 @@ export function latestRecurrence(): RecurrenceResult | null {
  * 첫 화면 첫 줄(§0, §4.4 작을 때 규칙). 30일 환산 "적혀 있는데도 또 말함" ≥ 10 이면 그것을,
  * 아니면 반복 교정 전체를, 그것도 10 미만이면 "교정 N번 중 기억이 된 것 a, 다시 나온 것 b".
  */
+/** 범위 안내 한 마디(처음 보는 사람용). */
+export const RANGE_NOTE = '판정 기준에 따라 — 경계가 애매한 교정이 있어 범위로 보여 줍니다';
+/** 엄격 값~관대 값(범위가 없으면 엄격 값 하나). fmt 로 숫자 꼴을 정한다. */
+export function rangeText(r: RecurrenceResult, k: keyof Counts, unit: 'counts' | 'per1000' | 'per30d', fmt: (x: number) => string): string {
+  const lo = (r[unit] as Counts)[k] ?? 0;
+  const hi = r.range ? ((r.range.lenient[unit] as Counts)[k] ?? 0) : lo;
+  const [a, b] = [Math.min(lo, hi), Math.max(lo, hi)];
+  return fmt(a) === fmt(b) ? fmt(a) : `${fmt(a)}~${fmt(b)}`;
+}
+
 export function recurrenceLine(r: RecurrenceResult | null): string {
   if (!r) return '같은 교정을 다시 한 횟수: 아직 재지 않음 — forgen audit recurrence 로 지난 대화 기록을 읽어 잰다(내 컴퓨터의 claude CLI 로 판정)';
   if (r.status === 'model-off') return '같은 교정을 다시 한 횟수: 모델을 끄고 재서 세지 않음';
@@ -522,11 +546,15 @@ export function recurrenceLine(r: RecurrenceResult | null): string {
   const sample = r.prompts.limit ? ` · 요청 ${r.prompts.window}개 중 ${r.prompts.judged}개만 뽑아 잼` : '';
   const pct = (x: number) => `${Math.round(x / 10 * 10) / 10}%`;
   const head = `지난 30일 교정 약 ${f(r.corrections.per30d)}번`;
+  const R = (k: keyof Counts) => rangeText(r, k, 'per30d', f);
+  const P = rangeText(r, 'total', 'per1000', (x) => `${Math.round(x) / 10}%`);
+  const note = r.range ? ` (${RANGE_NOTE})` : '';
+  // 범위(엄격~관대): 작을 때 규칙(§4.4)은 엄격 값(아래 끝)으로 고른다
   if (c.written >= MIN_CORRECTIONS_30D) {
-    return `${head}, 그중 이미 적혀 있는데 또 말한 것 약 ${f(c.written)}번 (세션에 실렸는데도 ${f(c.ignored)} · 적혀 있지만 그 세션에 안 실려서 ${f(c.notLoaded)}${c.tier2Missed ? `, 그중 상황 맞춤 룰이 안 들어와서 ${f(c.tier2Missed)}` : ''}) · 어디에도 안 적혀 또 말한 것 약 ${f(c.unwrittenRepeat)}${c.deletedRepeat ? ` · 지운 기억을 다시 말한 것 ${f(c.deletedRepeat)}` : ''} — 내 요청의 ${pct(r.per1000.total)}가 같은 말 다시 하기${sample}${tag}`;
+    return `${head}, 그중 이미 적혀 있는데 또 말한 것 약 ${R('written')}번 (세션에 실렸는데도 ${R('ignored')} · 적혀 있지만 그 세션에 안 실려서 ${R('notLoaded')}${c.tier2Missed ? `, 그중 상황 맞춤 룰이 안 들어와서 ${f(c.tier2Missed)}` : ''}) · 어디에도 안 적혀 또 말한 것 약 ${R('unwrittenRepeat')}${c.deletedRepeat ? ` · 지운 기억을 다시 말한 것 ${R('deletedRepeat')}` : ''} — 내 요청의 ${P}가 같은 말 다시 하기${note}${sample}${tag}`;
   }
   if (c.total >= MIN_CORRECTIONS_30D) {
-    return `${head}, 그중 같은 말 다시 하기 약 ${f(c.total)}번 (이미 적혀 있던 것 ${f(c.written)} · 어디에도 안 적힌 것 ${f(c.unwrittenRepeat)}${c.deletedRepeat ? ` · 지운 기억 ${f(c.deletedRepeat)}` : ''}) — 내 요청의 ${pct(r.per1000.total)}${sample}${tag}`;
+    return `${head}, 그중 같은 말 다시 하기 약 ${R('total')}번 (이미 적혀 있던 것 ${R('written')} · 어디에도 안 적힌 것 ${R('unwrittenRepeat')}${c.deletedRepeat ? ` · 지운 기억 ${R('deletedRepeat')}` : ''}) — 내 요청의 ${P}${note}${sample}${tag}`;
   }
   const became = r.corrections.total ? r1((r.corrections.becameMemory / r.corrections.total) * r.corrections.per30d) : 0;
   return `${head} 중 그 뒤 기억으로 남은 것 약 ${f(became)}, 다시 말한 것 약 ${f(c.total)} — 같은 말을 다시 하는 일이 적다(기억이 먹히고 있음)${sample}${tag}`;

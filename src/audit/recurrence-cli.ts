@@ -13,7 +13,7 @@ import { resolvePendingCorrections } from '../core/correction-ledger-judge.js';
 import { maskQuote } from './quote.js';
 import { shortPath } from './html.js';
 import { TERMS_LINE } from './html.js';
-import { latestRecurrenceRun, recurrenceLine, runRecurrence, writeRecurrenceRun, type RecurrenceResult, type RecurrenceRun } from './recurrence.js';
+import { latestRecurrenceRun, rangeText, recurrenceLine, runRecurrence, writeRecurrenceRun, type RecurrenceResult, type RecurrenceRun } from './recurrence.js';
 
 const DAY = 86_400_000;
 export const BASELINE_SCHEMA = 'forgen-audit-baseline/1' as const;
@@ -46,6 +46,7 @@ const pctOf = (per1000: number) => `${Math.round(per1000) / 10}%`;
 export function summaryLines(r: RecurrenceResult): string[] {
   const out = [`같은 말 다시 하기 — ${r.window.since.slice(0, 10)} ~ ${r.window.until.slice(0, 10)} (${r.window.days}일, 그 앞 ${r.window.lookbackDays}일은 "전에 한 말"을 찾는 데만 씀) · 판정: 내 컴퓨터의 claude CLI${r.judge ? '(교정 찾기 Haiku · 같은 말인지 Sonnet)' : ''}`];
   out.push(`  ${recurrenceLine(r)}`);
+  if (r.range) out.push(`  범위: 아래 끝 = 엄격 판정(그 기억을 그 상황에서 그대로 따랐다면 교정이 필요 없었을 때만 "적혀 있었다"), 위 끝 = 관대 판정(같은 원칙이면 "적혀 있었다"). 예시·첫 화면 발견은 엄격 판정에서도 맞는 것만 씁니다`);
   if (r.statusNote) out.push(`  ${r.statusNote}`);
   if (r.status === 'model-off' || r.status === 'no-data') return out;
   if (r.prompts.limit) out.push(`  (요청 ${r.prompts.window}개 중 ${r.prompts.sampled}개만 뽑아 잰 참고값 — 전부로 잰 감사 첫 화면 숫자와 다를 수 있음. 전부: --limit 없이)`);
@@ -54,9 +55,9 @@ export function summaryLines(r: RecurrenceResult): string[] {
   out.push(`  교정 ${r.corrections.total}개 (그 작업에만 해당 ${r.corrections.taskSpecific} · 그 뒤 기억으로 남은 것 ${r.corrections.becameMemory})`);
   // B4: 표본이 너무 작으면(교정이 적어 참고값) 요약만 짧게 — 예시 몇 개와 다음에 할 일
   const short = r.status === 'insufficient';
-  if (!short) out.push('  종류                                   번   요청 중 비율   30일로 치면');
+  if (!short) out.push(`  종류${r.range ? '(엄격~관대 판정)' : ''}                       번      요청 중 비율    30일로 치면`);
   for (const k of ['ignored', 'notLoaded', 'unwrittenRepeat', 'deletedRepeat', 'written', 'total'] as const) {
-    if (!short) out.push(`    ${LABEL[k].padEnd(30)} ${String(r.counts[k]).padStart(4)}   ${pctOf(r.per1000[k]).padStart(8)}   ${String(r.per30d[k]).padStart(8)}`);
+    if (!short) out.push(`    ${LABEL[k].padEnd(30)} ${rangeText(r, k, 'counts', String).padStart(7)}   ${rangeText(r, k, 'per1000', pctOf).padStart(12)}   ${rangeText(r, k, 'per30d', String).padStart(10)}`);
   }
   if (!short) out.push(`  오차 범위(95%): 같은 말 다시 하기 전체 ${pctOf(r.ci95per1000.total[0])}~${pctOf(r.ci95per1000.total[1])} · 이미 적혀 있던 것 ${pctOf(r.ci95per1000.written[0])}~${pctOf(r.ci95per1000.written[1])}`);
   const reasons = new Map<string, number>();
@@ -140,11 +141,11 @@ export async function handleRecurrence(args: string[], claudeDir: string | undef
   console.log('  2. forgen fix --list — 어디에도 안 적힌 교정은 "기억 추가" 처방으로 적을 수 있습니다');
 }
 
-interface BaselinePart { runId: string; window: RecurrenceResult['window']; status: RecurrenceResult['status']; statusNote: string; prompts: RecurrenceResult['prompts']; corrections: RecurrenceResult['corrections']; counts: RecurrenceResult['counts']; per1000: RecurrenceResult['per1000']; per30d: RecurrenceResult['per30d']; ci95per1000: RecurrenceResult['ci95per1000']; unknown: number; memory: RecurrenceResult['memory']; sourcesDigest: string; resultDigest: string }
+interface BaselinePart { range?: RecurrenceResult['range']; runId: string; window: RecurrenceResult['window']; status: RecurrenceResult['status']; statusNote: string; prompts: RecurrenceResult['prompts']; corrections: RecurrenceResult['corrections']; counts: RecurrenceResult['counts']; per1000: RecurrenceResult['per1000']; per30d: RecurrenceResult['per30d']; ci95per1000: RecurrenceResult['ci95per1000']; unknown: number; memory: RecurrenceResult['memory']; sourcesDigest: string; resultDigest: string }
 
 const part = (run: RecurrenceRun, runId: string): BaselinePart => {
   const r = run.result;
-  return { runId, window: r.window, status: r.status, statusNote: r.statusNote, prompts: r.prompts, corrections: r.corrections, counts: r.counts, per1000: r.per1000, per30d: r.per30d, ci95per1000: r.ci95per1000, unknown: r.unknown, memory: r.memory, sourcesDigest: run.manifest.sourcesDigest, resultDigest: run.manifest.resultDigest };
+  return { ...(r.range ? { range: r.range } : {}), runId, window: r.window, status: r.status, statusNote: r.statusNote, prompts: r.prompts, corrections: r.corrections, counts: r.counts, per1000: r.per1000, per30d: r.per30d, ci95per1000: r.ci95per1000, unknown: r.unknown, memory: r.memory, sourcesDigest: run.manifest.sourcesDigest, resultDigest: run.manifest.resultDigest };
 };
 
 /** 기준값: 배포 직전 6주(앞 30일 조회 전용) + 12주 전체(§4.2-5). --freeze 면 baseline.json 에 고정(덮어쓰기는 --force). */

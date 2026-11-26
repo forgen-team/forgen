@@ -314,6 +314,10 @@ async function report(c: Ctx): Promise<void> {
     console.log('  한계: 다시 교정하지 않고 지나간 경우는 셀 수 없다');
   }
   console.log(`다른 프로젝트 지시가 섞인 것(모델 판정): ${mix === null ? '— (--no-model 이라 안 셈)' : `${mix}개`}`);
+  if (rec && rec.status !== 'model-off' && rec.status !== 'no-data') {
+    const { rangeText, RANGE_NOTE } = await import('./recurrence.js');
+    console.log(`같은 말 다시 하기(가장 최근 재생 ${rec.generatedAt.slice(0, 10)}): 내 요청의 ${rangeText(rec, 'total', 'per1000', (x) => `${Math.round(x) / 10}%`)} · 이미 적혀 있는데 또 말한 것 30일 약 ${rangeText(rec, 'written', 'per30d', (x) => String(Math.round(x)))}번${rec.range ? ` (${RANGE_NOTE})` : ''}`);
+  }
   console.log('자세히(룰 ID·폴더별 전체 숫자): forgen fix --report --json');
   console.log('\n다음에 할 일');
   console.log(`  1. forgen fix --list — 남은 처방을 추천 순서로 봅니다`);

@@ -78,7 +78,7 @@ export interface AuditResult {
   model: { used: boolean; note: string };
   summary: {
     /** 첫 화면 첫 줄 — 가장 최근 `audit recurrence` 결과(§4.4 작을 때 규칙 적용). 없으면 status 'none'. */
-    recurrence: { status: 'none' | 'ok' | 'insufficient' | 'incomplete' | 'no-data'; line: string; generatedAt?: string; window?: { since: string; until: string }; per1000?: { total: number; written: number }; per30d?: { total: number; written: number; corrections: number }; sampled?: boolean; tier2Missed?: number; ci95?: [number, number]; prompts?: { window: number; judged: number }; corrections?: number };
+    recurrence: { status: 'none' | 'ok' | 'insufficient' | 'incomplete' | 'no-data'; line: string; generatedAt?: string; window?: { since: string; until: string }; per1000?: { total: number; written: number }; per30d?: { total: number; written: number; corrections: number }; sampled?: boolean; tier2Missed?: number; lenient?: { per1000: { total: number; written: number }; per30d: { total: number; written: number } }; ci95?: [number, number]; prompts?: { window: number; judged: number }; corrections?: number };
     tokens: { folders: number; min: number; max: number; median: number; reduciblePctMin: number; reduciblePctMax: number; reduciblePctMedian: number };
     /** conflicts·dupGroups·mixConfirmed 는 모델 판정 뒤의 확정 지적 수. 모델을 쓰지 않은 회차는 'pending'·null. */
     findings: { sameSentence: number; mixCandidates: number; stale: number; unscopedRules: number; claudeMdOver200: number; conflicts: number | 'pending'; dupGroups: number | null; mixConfirmed: number | null };
@@ -393,7 +393,7 @@ export function runAudit(opts: AuditOptions = {}): AuditRun {
         if (!rec || rec.status === 'model-off') return { status: 'none' as const, line: recurrenceLine(null) };
         return {
           status: rec.status, line: recurrenceLine(rec), generatedAt: rec.generatedAt, window: { since: rec.window.since, until: rec.window.until },
-          per1000: { total: rec.per1000.total, written: rec.per1000.written }, per30d: { total: rec.per30d.total, written: rec.per30d.written, corrections: rec.corrections.per30d }, sampled: rec.prompts.limit !== null, tier2Missed: rec.counts.tier2Missed ?? 0, ...(rec.ci95per1000?.total ? { ci95: rec.ci95per1000.total } : {}), prompts: { window: rec.prompts.window, judged: rec.prompts.judged }, corrections: rec.corrections.total,
+          per1000: { total: rec.per1000.total, written: rec.per1000.written }, per30d: { total: rec.per30d.total, written: rec.per30d.written, corrections: rec.corrections.per30d }, sampled: rec.prompts.limit !== null, tier2Missed: rec.counts.tier2Missed ?? 0, ...(rec.ci95per1000?.total ? { ci95: rec.ci95per1000.total } : {}), ...(rec.range ? { lenient: { per1000: { total: rec.range.lenient.per1000.total, written: rec.range.lenient.per1000.written }, per30d: { total: rec.range.lenient.per30d.total, written: rec.range.lenient.per30d.written } } } : {}), prompts: { window: rec.prompts.window, judged: rec.prompts.judged }, corrections: rec.corrections.total,
         };
       })(),
       tokens: { folders: tokens.length, min: tokens.length ? Math.min(...tokens) : 0, max: tokens.length ? Math.max(...tokens) : 0, median: median(tokens), reduciblePctMin: pcts.length ? Math.min(...pcts) : 0, reduciblePctMax: pcts.length ? Math.max(...pcts) : 0, reduciblePctMedian: pcts.length ? [...pcts].sort((a, b) => a - b)[pcts.length >> 1] : 0 },

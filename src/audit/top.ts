@@ -167,9 +167,10 @@ export function shareSummary(run: AuditRun): { text: string[]; markdown: string 
   const rec = r.summary.recurrence;
   const kinds = findings(run).map((x) => KIND_NAME[x.kind]);
   const pct = (per1000: number) => `${Math.round(per1000) / 10}%`;
+  const rng = (lo: number, hi?: number) => (hi === undefined || pct(lo) === pct(hi) ? pct(lo) : `${pct(Math.min(lo, hi))}~${pct(Math.max(lo, hi))}`);
   const lines = [
     rec.status !== 'none' && rec.per1000
-      ? `내 요청 중 같은 교정을 다시 한 비율 ${pct(rec.per1000.total)}${rec.ci95 ? `(오차 범위 ${pct(rec.ci95[0])}~${pct(rec.ci95[1])})` : ''} · 그중 이미 적혀 있던 것 ${pct(rec.per1000.written)}${rec.sampled ? ' · 표본으로 잰 참고값' : ''}`
+      ? `내 요청 중 같은 교정을 다시 한 비율 ${rng(rec.per1000.total, rec.lenient?.per1000.total)} · 그중 이미 적혀 있던 것 ${rng(rec.per1000.written, rec.lenient?.per1000.written)}${rec.lenient ? '(판정 기준에 따라 범위)' : rec.ci95 ? `(오차 범위 ${pct(rec.ci95[0])}~${pct(rec.ci95[1])})` : ''}${rec.sampled ? ' · 표본으로 잰 참고값' : ''}`
       : '같은 말 다시 하기: 아직 재지 않음',
     `세션 시작에 늘 실리는 기억 약 ${Math.round(representativeTokens(r) / 100) * 100}토큰(자주 쓰는 폴더 평균, 백 단위)`,
     f.conflicts === 'pending' ? `같은 문장 ${f.sameSentence}묶음 · 없는 것을 가리키는 줄 ${f.stale}개 (모델 판정 꺼짐)`

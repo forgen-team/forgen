@@ -166,6 +166,16 @@ describe('그때 모습 — 교정 뒤에 덧붙인 메모로 "이미 적혀 있
   });
 });
 
+describe('범위 표시(엄격~관대)', () => {
+  it('두 판본 값이 다르면 a~b, 같으면 하나', async () => {
+    const { rangeText } = await import('../src/audit/recurrence.js');
+    const z = { ignored: 0, notLoaded: 0, written: 0, unwrittenRepeat: 0, deletedRepeat: 0, total: 0 };
+    const r = { counts: { ...z, total: 25 }, per1000: { ...z, total: 88 }, per30d: { ...z, total: 25 }, range: { strictVersion: 's', lenientVersion: 'l', lenient: { counts: { ...z, total: 43 }, per1000: { ...z, total: 153 }, per30d: { ...z, total: 43 } } } };
+    expect(rangeText(r as never, 'total', 'per1000', (x) => `${Math.round(x) / 10}%`)).toBe('8.8%~15.3%');
+    expect(rangeText(r as never, 'written', 'counts', String)).toBe('0');
+  });
+});
+
 describe('판정 설명의 A·B 라벨', () => {
   it('글자순으로 보낸 쌍의 설명 라벨을 호출 순서로 되돌린다(영문 낱말 속 A·B 는 그대로)', async () => {
     const { swapAB } = await import('../src/audit/judge.js');

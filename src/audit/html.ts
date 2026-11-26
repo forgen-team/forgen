@@ -31,7 +31,13 @@ export function recurrenceShort(r: AuditResult): string {
   if (rc.status === 'none' || !rc.per30d) return rc.line;
   const f = (x: number) => String(Math.round(x));
   const src = `${rc.generatedAt?.slice(0, 10) ?? ''} 에 지난 대화 기록 요청 ${rc.prompts?.window ?? '?'}개 ${rc.sampled ? `중 ${rc.prompts?.judged ?? '?'}개 표본으로 잰 참고값` : '전부로 잰 값 — audit recurrence --limit 로 표본만 다시 재면 숫자가 다르게 나옴'}`;
-  return `지난 30일 교정 약 ${f(rc.per30d.corrections)}번 중 이미 적혀 있는데 또 말한 것 약 ${f(rc.per30d.written)}번 · 어디에도 안 적혀 또 말한 것 약 ${f(Math.max(0, rc.per30d.total - rc.per30d.written))}번 (${src} — 자세히: forgen audit recurrence)`;
+  const rg = (lo: number, hi: number | undefined) => { const a = f(Math.min(lo, hi ?? lo)); const b = f(Math.max(lo, hi ?? lo)); return a === b ? a : `${a}~${b}`; };
+  const L = rc.lenient?.per30d;
+  const written = rg(rc.per30d.written, L?.written);
+  const unwritten = rg(Math.max(0, rc.per30d.total - rc.per30d.written), L ? Math.max(0, L.total - L.written) : undefined);
+  const pct = (x: number) => `${Math.round(x) / 10}%`;
+  const share = rc.per1000 ? (L && rc.lenient ? `${pct(Math.min(rc.per1000.total, rc.lenient.per1000.total))}~${pct(Math.max(rc.per1000.total, rc.lenient.per1000.total))}` : pct(rc.per1000.total)) : '';
+  return `지난 30일 교정 약 ${f(rc.per30d.corrections)}번 중 이미 적혀 있는데 또 말한 것 약 ${written}번 · 어디에도 안 적혀 또 말한 것 약 ${unwritten}번${share ? ` — 같은 말 다시 하기 ${share}` : ''}${L ? '(판정 기준에 따라 — 경계가 애매한 교정이 있어 범위로 보여 줍니다)' : ''} (${src} — 자세히: forgen audit recurrence)`;
 }
 
 /** 요약 줄(첫 화면 "가장 중요한 발견" 아래). 퍼센트는 처방 전후 하나만(B6) — 나머지는 자세히 화면에. */

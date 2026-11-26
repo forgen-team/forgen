@@ -213,6 +213,9 @@ describe('forgen audit recurrence — 합성 D 축소판', () => {
     expect(r.items.find((i) => i.gist.includes(tq(30)))?.branch).toBe('new');
     expect(r.memory.unknownTime).toBeGreaterThanOrEqual(1);
     expect(r.corrections.becameMemory).toBe(1);
+    // 오너 결정 2026-11-26 범위: 엄격·관대 두 판본으로 다 판정해 범위를 낸다(아래 끝 = counts)
+    expect(r.range?.strictVersion).not.toBe(r.range?.lenientVersion);
+    expect(r.range?.lenient.counts.total).toBeGreaterThanOrEqual(0);
     // 사전 등록 2026-11-26: 교정 뒤에 생긴 기억과의 짝은 "그때 이미 지시했나"가 아니라 따로(나중 기억 질문) 판정한다
     expect(readJudgeCalls(FAKE).some((c) => c.startsWith('later '))).toBe(true);
     const unk = r.items.find((i) => i.gist.includes(tq(33)));
@@ -231,8 +234,10 @@ describe('forgen audit recurrence — 합성 D 축소판', () => {
     expect(calls.filter((c) => c.startsWith('correction ')).every((c) => c.endsWith(CORRECTION_MODEL))).toBe(true);
     expect(calls.filter((c) => c.startsWith('pair ') || c.startsWith('later ')).every((c) => c.endsWith(PAIR_MODEL))).toBe(true);
     // 쌍 판정(그때 이미 지시했나) + 나중 기억 판정(따로) — 둘 다 쌍마다 1회
+    // 범위(오너 결정 2026-11-26): "그때 이미" 쌍은 엄격·관대 두 판본으로, 나중 기억 쌍은 한 번
     const sent = calls.filter((c) => c.startsWith('pair ') || c.startsWith('later ')).reduce((n, c) => n + Number(c.split(' ')[1]), 0);
-    expect(sent).toBe(new Set(r.items.flatMap((i) => i.pairs.map((x) => `${x.tier === 'later' ? 'L' : 'P'}|${i.gist}|${x.text}`))).size);
+    const uniq = new Set(r.items.flatMap((i) => i.pairs.map((x) => `${x.tier === 'later' ? 'L' : 'P'}|${i.gist}|${x.text}`)));
+    expect(sent).toBe([...uniq].reduce((n, k) => n + (k.startsWith('L|') ? 1 : 2), 0));
     expect(first.judgeStats?.calls).toBe(calls.length);
     expect(first.manifest.judge).toMatchObject({ correction: { model: CORRECTION_MODEL }, pair: { model: PAIR_MODEL, version: PAIR_PROMPT_VERSION, mode: 'single-asymmetric' }, prefilterMin: PREFILTER_MIN });
     expect(r.notes.join(' ')).toContain('기억이 바뀌면(룰을 지우거나 더하면)');
@@ -402,7 +407,7 @@ describe('CLI · 첫 화면 · 기준값', () => {
 
   it('§4.4 작을 때: 적힘 < 10 → 반복 전체, 그것도 < 10 → "기억이 된 것 a, 다시 나온 것 b"', () => {
     const base = latestRecurrence() as NonNullable<ReturnType<typeof latestRecurrence>>;
-    const withC = (written: number, total: number) => ({ ...base, per30d: { ...base.per30d, written, total } });
+    const withC = (written: number, total: number) => ({ ...base, range: undefined, per30d: { ...base.per30d, written, total } });
     expect(recurrenceLine(withC(16, 20))).toContain('이미 적혀 있는데 또 말한 것 약 16번');
     expect(recurrenceLine(withC(6, 12))).toContain('같은 말 다시 하기 약 12번');
     expect(recurrenceLine(withC(2, 4))).toMatch(/기억으로 남은 것 약 [\d.]+, 다시 말한 것 약 4/);

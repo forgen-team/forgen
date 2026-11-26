@@ -71,6 +71,21 @@ export const LATER_PROMPT = `너는 기억 감사의 판정자다. 아래 쌍마
 출력은 쌍마다 한 줄 JSON 만, 다른 말 없이:
 {"id":"<id>","answer":"yes"|"no"|"unknown"}`;
 
+/**
+ * 관대 판본(범위의 위 끝, 오너 결정 2026-11-26 "범위로 보여 주기"): 표현·사례가 달라도 같은 원칙이면 yes.
+ * 엄격 판본(PAIR_PROMPT, 범위의 아래 끝)과 함께 돌려 "같은 말 다시 하기"를 엄격 값~관대 값으로 낸다. 두 모델이 경계 사례에서 15% 안팎 갈려서다.
+ */
+export const PAIR_PROMPT_LENIENT_VERSION = 'n4-pair/4';
+export const PAIR_PROMPT_LENIENT = `너는 기억 감사의 판정자다. 아래 쌍마다 "교정"(사용자가 AI 에게 한 교정의 요지)과 "기억"(그 교정 시점에 이미 있던 룰·메모·지침, 또는 그보다 앞선 다른 교정)이 있다.
+질문: 이 교정이 고치려는 행동을, 이 기억이 그 시점에 이미 지시하고 있었나?
+- yes: 기억을 AI 가 지켰다면 이 교정은 필요 없었다. 기억이 더 일반적인 지시이고 교정이 그 구체적인 경우여도 yes.
+- no: 주제(영역·도구·기능)만 겹치고 요구하는 행동이 다르거나, 기억을 지켜도 이 교정의 문제가 그대로 남는다.
+  주제가 같아도 요구하는 행동의 축이 다르면 no다(예: 기억은 "화면 글의 양을 줄여라", 교정은 "눌러야 하는 단계를 줄여라").
+- 표현·사례가 달라도 같은 원칙을 요구하면 yes다(예: 기억 "판정을 사용자에게 떠넘기기 전에 직접 시도하라" ↔ 교정 "수동 실행을 떠넘기기 전에 열린 연결부터 시도하라").
+- unknown: 문장만으로는 판단할 수 없다(뜻이 모호하거나 맥락이 더 필요함).
+출력은 쌍마다 한 줄 JSON 만, 다른 말 없이:
+{"id":"<id>","answer":"yes"|"no"|"unknown"}`;
+
 /** 지시 검사(같은 뜻 중복·부딪힘·섞임)와 처방 문안의 판정자 — Haiku(§2.4 표). 교정 판정과 같은 모델 ID. */
 export const CHECK_MODEL = CORRECTION_MODEL;
 export const CHECK_TEXT_MAX = 400;
@@ -367,13 +382,14 @@ export class Judge {
   }
 
   /** 쌍 판정(Sonnet 1회, 비대칭): 이 교정이 고치려는 행동을 이 기억이 이미 지시했나 — yes/no/unknown, 못 물으면 null. */
-  pairs(items: Array<{ id: string; gist: string; memory: string }>): Promise<Map<string, PairVerdict | null>> {
+  pairs(items: Array<{ id: string; gist: string; memory: string }>, mode: 'strict' | 'lenient' = 'strict'): Promise<Map<string, PairVerdict | null>> {
+    const version = mode === 'lenient' ? PAIR_PROMPT_LENIENT_VERSION : PAIR_PROMPT_VERSION;
     return this.run<{ gist: string; memory: string }, PairVerdict>({
-      version: PAIR_PROMPT_VERSION, model: PAIR_MODEL, header: PAIR_PROMPT,
+      version, model: PAIR_MODEL, header: mode === 'lenient' ? PAIR_PROMPT_LENIENT : PAIR_PROMPT,
       items: items.map((it) => {
         const gist = prepareText(it.gist, GIST_MAX);
         const memory = prepareText(it.memory, PAIR_TEXT_MAX);
-        return { id: it.id, key: pairKey(gist, memory), input: { gist, memory } };
+        return { id: it.id, key: mode === 'lenient' ? sha(`${version}\0${PAIR_MODEL}\0${gist}\0${memory}`) : pairKey(gist, memory), input: { gist, memory } };
       }),
       block: (c) => `교정: ${c.gist}\n기억: ${c.memory}`,
       parse: (r) => (r.answer === 'yes' || r.answer === 'no' || r.answer === 'unknown' ? r.answer : undefined),
