@@ -97,6 +97,8 @@ export interface Fix {
   addsTo?: { folder: string; tokens: number };
   /** 이 처방으로 줄어드는 상시 로드 토큰(어림, 폴더마다 다를 수 있어 최대값) */
   tokens: number;
+  /** tier2-condition: 과거 세션 재생으로 잰 발동률(넓음 ≥ 50% 세션, 좁음 = 0%) */
+  estimate?: { sessions: number; turns: number; sessionsN: number; wide: boolean; narrow: boolean };
 }
 
 export interface FixPlan { fixes: Fix[]; run: AuditRun; model: ModelChecks | null; generatedAt: string }
@@ -523,14 +525,15 @@ export async function planFixes(opts: PlanOptions = {}): Promise<FixPlan> {
 
 /** 두 층 발동 조건 초안 — 룰마다 처방 하나. 모델(Haiku)이 없으면 결정적 후보(룰 낱말·프로젝트)만. */
 async function planConditions(run: AuditRun, judge: Judge | null, env: AuditEnv, now: Date): Promise<Array<Omit<Fix, 'id' | 'marks' | 'equivalents'> & { marks?: DeletedMark[]; equivalents?: Fix['equivalents'] }>> {
-  const { loadTier2Index, tierOf, words } = await import('../core/tier2.js');
+  const { loadTier2Index, tierOf, words, isSafetyRule } = await import('../core/tier2.js');
   let idx = loadTier2Index();
   if (!idx) {
     // 재생을 아직 안 돌렸으면 메모리에서만 돌린다(아무것도 쓰지 않음) — 근거 상황이 있는지 알아야 대상을 고른다.
     try { idx = (await (await import('./tier2-replay.js')).runTier2Replay({ claudeDir: env.claudeDir, now })).index; } catch { return []; }
   }
   const ctx = run.ctx;
-  const cands = [...ctx.rules.values()].filter((r) => r.scope === 'me' && !r.host_copy && !r.applies_when?.approved
+  // 안전 룰(isSafetyRule)은 tierOf 가 이미 1층('safety')으로 두지만, 후보에서도 명시적으로 뺀다.
+  const cands = [...ctx.rules.values()].filter((r) => r.scope === 'me' && !r.host_copy && !r.applies_when?.approved && !isSafetyRule(r)
     && idx?.rules[r.rule_id]?.reason === 'no-context' && tierOf(r, idx, now.getTime()).reason === 'not-qualified').sort((a, b) => (a.rule_id < b.rule_id ? -1 : 1));
   if (!cands.length) return [];
   const foldersOf = (r: Rule): string[] => {
@@ -538,6 +541,9 @@ async function planConditions(run: AuditRun, judge: Judge | null, env: AuditEnv,
     return [...new Set([...(r.projects ?? []), ...here])].sort();
   };
   const detWords = (r: Rule) => [...words(`${r.trigger ?? ''} ${r.policy}`)].filter((w) => w.length >= 3 || /[가-힣]/.test(w)).slice(0, 4);
+  const { conditionRate, loadConditionCorpus } = await import('./tier2-replay.js');
+  let corpus: Awaited<ReturnType<typeof loadConditionCorpus>> = { sessions: [], turns: 0 };
+  try { corpus = await loadConditionCorpus(env.claudeDir, { now }); } catch { /* 대화 기록 없음 = 추정 없음 */ }
   const drafts = judge?.modelEnabled
     ? await judge.conditions(cands.map((r) => ({ id: r.rule_id, policy: r.policy, trigger: r.trigger ?? '', folders: foldersOf(r), tools: CONDITION_TOOLS })))
     : new Map();
@@ -555,22 +561,64 @@ async function planConditions(run: AuditRun, judge: Judge | null, env: AuditEnv,
       }
       : { ...(r.projects?.length ? { folders: [...r.projects] } : {}), ...(detWords(r).length ? { words: detWords(r) } : {}) };
     if (!cond.tools?.length && !cond.commands?.length && !cond.paths?.length && !cond.words?.length) continue;
+    // 발동률 추정(과거 세션 재생, 결정적): 넓으면(세션 50%+) 사실상 1층이라 절감이 없고, 0% 면 영영 안 실릴 위험.
+    // 넓은 조건은 2차 초안으로 좁혀 본다 — 혼자서 세션 30%+ 에 걸리는 요소(명령·경로·낱말·도구만)를 뺀다. 그래도 넓으면 경고만.
+    let est = corpus.sessions.length ? conditionRate(cond, corpus) : null;
+    let narrowed: string[] = [];
+    if (est && est.sessions >= WIDE_SESSIONS) {
+      const n = narrowCondition(cond, (x) => conditionRate(x, corpus).sessions);
+      if (n) { const e2 = conditionRate(n.cond, corpus); if (e2.sessions < WIDE_SESSIONS && e2.sessions > 0) { Object.assign(cond, { commands: undefined, paths: undefined, words: undefined, tools: undefined }, n.cond); est = e2; narrowed = n.dropped; } }
+    }
+    for (const k of ['commands', 'paths', 'words', 'tools'] as const) if (!cond[k]?.length) delete cond[k];
+    const wide = !!est && est.sessions >= WIDE_SESSIONS;
+    const narrow = !!est && est.sessions === 0;
+    const pctS = est ? `${Math.round(est.sessions * 100)}%` : '';
+    const estTag = est ? ` [발동 추정 세션 ${pctS}·턴 ${est.turns < 0.01 && est.turns > 0 ? '<1' : Math.round(est.turns * 100)}%${wide ? ' ⚠넓음' : narrow ? ' ⚠좁음' : ''}${narrowed.length ? ' · 2차 초안' : ''}]` : ' [발동 추정 없음: 대화 기록 없음]';
     const unit = ctx.units.find((u) => u.ruleId === r.rule_id);
     const loadedHere = (ctx.loadedIn.get(`${r.rule_id}:0`) ?? []).length;
     out.push({
       kind: 'tier2-condition',
-      title: `룰 ${r.rule_id.slice(0, 8)} "${shortText(r.policy, 34)}" ← ${conditionLine(cond)}`,
+      title: `룰 ${r.rule_id.slice(0, 8)} "${shortText(r.policy, 34)}" ← ${conditionLine(cond)}${estTag}`,
+      ...(wide ? { manual: `넓음 경고 — 과거 세션 ${pctS}에서 발동(사실상 1층, 절감 거의 없음). 일괄 승인에서 빼고, 보고 나서 forgen fix <id> --apply 로만` } : {}),
+      ...(narrow ? { manual: `좁음 경고 — 과거 세션 ${est?.sessionsN}개에서 한 번도 발동 안 함(영영 안 실릴 위험). 일괄 승인에서 빼고, 조건을 보고 forgen fix <id> --apply 로만` } : {}),
+      ...(est ? { estimate: { sessions: Math.round(est.sessions * 1000) / 1000, turns: Math.round(est.turns * 1000) / 1000, sessionsN: est.sessionsN, wide, narrow } } : {}),
       why: '자격 게이트를 못 넘은 룰이다(근거 교정의 대화 기록이 없어 재생할 수 없음). 그래서 지금은 세션 시작에 늘 실리거나 예산에서 빠진다. 이 조건을 승인하면 "사람이 검증한 발동 조건"으로 2층이 되어 세션 시작에는 색인 줄로만 보이고, 조건이 맞을 때 한 번 들어온다. 2층 미발동이 나오면 1층으로 돌아오고(90일 재발 0 이면 다시 2층), 되돌리기(--undo)로 조건을 지우면 1층이다.',
       evidence: [
         `룰: ${shortText(r.policy, 140)}`,
         `결정적 후보: 낱말 ${detWords(r).join('·') || '없음'} · 프로젝트 ${r.projects?.join(', ') || '없음(전역)'}`,
-        d ? `초안(Haiku): ${conditionLine(cond)}${d.reason ? ` — ${d.reason}` : ''}` : '모델 판정 꺼짐 — 결정적 후보만',
+        d ? `초안(Haiku): ${d.reason || '이유 없음'}` : '모델 판정 꺼짐 — 결정적 후보만',
+        ...(narrowed.length ? [`2차 초안: 혼자서 넓게 걸리는 요소를 뺌 — ${narrowed.join(', ')}`] : []),
+        est ? `발동 추정: 최근 세션 ${est.sessionsN}개 중 ${pctS} · 사용자 턴 ${est.turnsN}개 중 ${Math.round(est.turns * 1000) / 10}% (런타임과 같은 판정으로 대화 기록 재생)` : '발동 추정: 대화 기록 없음',
       ],
-      ops: [{ op: 'rule', ruleId: r.rule_id, change: 'applies-when', appliesWhen: cond }],
+      ops: [{ op: 'rule', ruleId: r.rule_id, change: 'applies-when', appliesWhen: { ...cond, ...(est ? { estimate: { sessions: Math.round(est.sessions * 1000) / 1000, turns: Math.round(est.turns * 1000) / 1000, at: now.toISOString() } } : {}) } }],
       model: !!d, tokens: loadedHere && unit ? unit.tokens : 0,
     });
   }
   return out;
+}
+
+/** 넓음: 과거 세션의 이 비율 이상에서 발동하면 사실상 1층이다. 2차 초안은 혼자서 NARROW_DROP 이상에 걸리는 요소를 뺀다. */
+export const WIDE_SESSIONS = 0.5;
+const NARROW_DROP = 0.3;
+
+/** 2차 초안(결정적): 조건 요소마다 혼자서의 발동률을 재서 넓은 요소를 뺀다. 남는 것이 없으면 null. */
+function narrowCondition(c: AppliesWhen, rateOf: (x: AppliesWhen) => number): { cond: AppliesWhen; dropped: string[] } | null {
+  const base = c.folders?.length ? { folders: c.folders } : {};
+  const dropped: string[] = [];
+  const keep = (k: 'commands' | 'paths', label: string) => (c[k] ?? []).filter((v) => {
+    const r = rateOf({ ...base, ...(c.tools?.length ? { tools: c.tools } : {}), [k]: [v] });
+    if (r >= NARROW_DROP) { dropped.push(`${label} "${v}"(${Math.round(r * 100)}%)`); return false; }
+    return true;
+  });
+  const commands = keep('commands', '명령');
+  const paths = keep('paths', '경로');
+  const words = (c.words ?? []).filter((w) => { const r = rateOf({ ...base, words: [w] }); if (r >= NARROW_DROP) { dropped.push(`낱말 "${w}"(${Math.round(r * 100)}%)`); return false; } return true; });
+  // 도구만 남는 조건(명령·경로가 다 빠짐)은 도구 이름만으로 발동해 넓다 — 도구 조건도 뺀다.
+  const tools = commands.length || paths.length ? c.tools : undefined;
+  if (c.tools?.length && !tools) dropped.push(`도구 ${c.tools.join(', ')}(명령·경로 없이는 넓음)`);
+  const out: AppliesWhen = { ...base, ...(tools?.length ? { tools } : {}), ...(commands.length ? { commands } : {}), ...(paths.length ? { paths } : {}), ...(words.length ? { words } : {}) };
+  if (!dropped.length || (!out.commands?.length && !out.paths?.length && !out.words?.length)) return null;
+  return { cond: out, dropped };
 }
 
 /** 예전 이름 플러그인·같은 이름 중복 플러그인·30일 안 쓴 forgen 스킬. */

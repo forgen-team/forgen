@@ -73,9 +73,33 @@ export function saveTier2Index(idx: Tier2Index, stateDir = STATE_DIR): void {
 
 const age = (iso: string | undefined, now: number) => (iso ? now - Date.parse(iso) : Number.POSITIVE_INFINITY);
 
-export type TierReason = 'hard' | 'strong' | 'session' | 'recent' | 'recurred' | 'tier2-missed' | 'not-qualified' | 'no-index' | 'tier2' | 'approved';
+export type TierReason = 'hard' | 'strong' | 'safety' | 'session' | 'recent' | 'recurred' | 'tier2-missed' | 'not-qualified' | 'no-index' | 'tier2' | 'approved';
 
 /** 한 룰의 층과 그 까닭. */
+/**
+ * 안전·보안 룰 — 두 층 주입 어디서도 2층에 가지 않는다(게이트 통과·승인 조건·재자격 모두, fresh-context 비평 2026-11-26).
+ * 2층은 "필요한 순간에 안 실릴" 위험을 받아들이는 대신 토큰을 줄이는 장치다. 안 실렸을 때 되돌릴 수 없는 피해(삭제·비밀 노출·강제 푸시)가
+ * 나는 룰은 그 위험을 받을 수 없으므로 결정적으로 1층에 둔다. 근거(하나라도 맞으면):
+ *   ① enforce_via·enforce_mode 가 있다 — 이미 훅으로 강제하는 룰이다(사다리 3·4칸)
+ *   ② strength hard — 렌더에서 Must Not 절에 들어간다
+ *   ③ category safety(·security 류 이름)
+ *   ④ 정책 문장에 파괴·비밀 패턴(아래 SAFETY_RE, 한국어 포함)
+ * 넓게 잡는다 — 잘못 잡으면 1층에 남을 뿐(토큰 절감이 덜 될 뿐)이고, 놓치면 안전 룰이 안 실린다.
+ */
+export const SAFETY_RE = new RegExp([
+  'rm\\s+-[a-z]*[rf]', 'force[\\s-]*push', 'push\\s+(--force|-f\\b)', '--force', 'reset\\s+--hard', 'drop\\s+(table|database|schema)', 'truncate\\s+table', 'delete\\s+from',
+  'secret', 'credential', 'password', 'passwd', 'api[\\s_-]?key', 'private[\\s_-]?key', 'token', '\\.env\\b', 'ssh[\\s_-]?key', 'byok',
+  'destructive', 'irreversible', 'production\\s+(data|db|database)', 'sudo\\b', 'chmod\\s+777',
+  '비밀', '시크릿', '자격\\s*증명', '인증\\s*정보', '암호', '토큰', '키\\s*(노출|유출|커밋)', '강제\\s*푸시', '강제\\s*push', '위험\\s*명령', '파괴', '되돌릴\\s*수\\s*없', '복구\\s*불가',
+  '(데이터|파일|폴더|디렉터리|디렉토리|db|테이블)\\s*(를|을)?\\s*(삭제|지우|날리)', '프로덕션\\s*(데이터|db|배포)', '실\\s*데이터',
+].join('|'), 'i');
+export function isSafetyRule(rule: Pick<Rule, 'strength' | 'category' | 'policy'> & Partial<Pick<Rule, 'enforce_via' | 'enforce_mode' | 'trigger'>>): boolean {
+  if (rule.enforce_via?.length || rule.enforce_mode) return true;
+  if (rule.strength === 'hard') return true;
+  if (/^(safety|security)/i.test(String(rule.category ?? ''))) return true;
+  return SAFETY_RE.test(`${rule.policy ?? ''} ${rule.trigger ?? ''}`);
+}
+
 /** 사람이 승인한 발동 조건(forgen fix tier2-condition) — 자격 게이트를 대신한다. 조건이 비어 있으면 승인이 아니다. */
 export function approvedCondition(rule: Rule): AppliesWhen | null {
   const a = rule.applies_when;
@@ -90,6 +114,7 @@ export function tierOf(rule: Rule, idxIn: Tier2Index | null, now = Date.now()): 
   const idx: Tier2Index = idxIn ?? { version: TIER2_INDEX_VERSION, generatedAt: '', params: { k: MATCH_K, turns: 3, minFireRate: 0.8, maxFreq: 0.05 }, rules: {}, recur: {} };
   if (rule.strength === 'hard') return { tier: 1, reason: 'hard' };
   if (rule.strength === 'strong') return { tier: 1, reason: 'strong' };
+  if (isSafetyRule(rule)) return { tier: 1, reason: 'safety' };
   if (rule.scope === 'session') return { tier: 1, reason: 'session' };
   const rec = idx.recur[rule.rule_id];
   if (rec && age(rec.lastAt, now) < REQUALIFY_DAYS * DAY) return { tier: 1, reason: rec.kind === 'tier2-missed' ? 'tier2-missed' : 'recurred' };

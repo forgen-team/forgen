@@ -26,13 +26,14 @@ const HELP = `  forgen fix --list [--kind <종류>] [--json]
       그 처방이 건드린 파일만 되돌린다. 그사이 그 파일이 바뀌었으면 멈추고 3자 diff(처방 전·처방 뒤·지금)
   forgen fix <id> --skip | --unskip
       그 처방을 묶음 적용(--kind … --apply)에서 빼 둔다 / 다시 넣는다. 예: 두 층 발동 조건 목록을 보고 맞지 않는 것만 빼고 일괄 승인
-      (forgen fix --list --kind tier2-condition → forgen fix <id> --skip → forgen fix --kind tier2-condition --apply)
+      (forgen fix --list --kind tier2-condition → forgen fix <id> --skip → forgen fix --kind tier2-condition --apply 로 요약 확인 → --apply --yes)
+      두 층 발동 조건은 목록 한 줄에 과거 세션 발동률 추정을 붙인다. 넓음(세션 50%+)·좁음(0%) 경고가 붙은 것은 일괄에서 빠지고 하나씩만 승인
   forgen fix --report [--json]
       적용률·되돌림률 · 적용 전후 폴더별 상시 로드 토큰(스킬 설명 제외) · 중요 지침 누락 · 섞임
   공통: [--folder <경로>]... [--claude-dir <경로>] [--no-model]  (--no-model: 결정적 처방만 — 같은 문장 정리·지우기·색인 줄 내리기·끄기)
   쓰는 곳: 자동 메모 · .claude/rules · forgen 룰 · git 안 CLAUDE.md·AGENTS.md(커밋 안 함). 관리형·git 밖 지침 파일은 지적만`;
 
-const KNOWN = new Set(['--list', '--kind', '--apply', '--undo', '--report', '--json', '--folder', '--claude-dir', '--no-model', '--skip', '--unskip', '--help', '-h']);
+const KNOWN = new Set(['--list', '--kind', '--apply', '--yes', '--undo', '--report', '--json', '--folder', '--claude-dir', '--no-model', '--skip', '--unskip', '--help', '-h']);
 const WITH_VALUE = new Set(['--kind', '--undo', '--folder', '--claude-dir']);
 
 function values(args: string[], name: string): string[] {
@@ -106,7 +107,7 @@ async function applyKinds(c: Ctx, kinds: FixKind[]): Promise<void> {
     }
   }
   if (c.json) console.log(JSON.stringify({ schema: 'forgen-fix-apply/1', applied, skipped, manual, excluded: excluded.size, backup: root, model: modelUse }, null, 2));
-  else console.log(`\n✓ [forgen] 처방 ${applied}개 적용${skipped ? ` · ${skipped}개 건너뜀(대상이 바뀜 — 다시 --list)` : ''}${manual ? ` · 하나씩만 적용하는 처방 ${manual}개는 뺌(중요 지침 — forgen fix --list 에서 보고 <id> --apply)` : ''}${excluded.size ? ` · 빼 둔 처방(--skip) ${excluded.size}개 제외` : ''} · 스냅샷 ${root}\n  되돌리기: forgen fix --undo <id> | --undo all · 측정: forgen fix --report${c.model ? `\n  모델 호출 ${modelUse.calls}회(실패 ${modelUse.failed}, 캐시 적중 ${modelUse.cacheHits})` : ''}`);
+  else console.log(`\n✓ [forgen] 처방 ${applied}개 적용${skipped ? ` · ${skipped}개 건너뜀(대상이 바뀜 — 다시 --list)` : ''}${manual ? ` · 하나씩만 적용하는 처방 ${manual}개는 뺌(중요 지침·발동 넓음/좁음 경고 — forgen fix --list 에서 보고 <id> --apply)` : ''}${excluded.size ? ` · 빼 둔 처방(--skip) ${excluded.size}개 제외` : ''} · 스냅샷 ${root}\n  되돌리기: forgen fix --undo <id> | --undo all · 측정: forgen fix --report${c.model ? `\n  모델 호출 ${modelUse.calls}회(실패 ${modelUse.failed}, 캐시 적중 ${modelUse.cacheHits})` : ''}`);
 }
 
 function printConflicts(id: string, conflicts: Array<{ path: string; base: string | null; fixed: string | null; current: string | null }>): void {
@@ -143,7 +144,9 @@ async function report(c: Ctx): Promise<void> {
     const total = after.folders.find((x) => x.folder === b.folder)?.tokens ?? 0;
     const mem = added.get(b.folder) ?? 0;
     const diet = total - mem;
-    return { folder: b.folder, before: b.tokens, after: diet, addedMemory: mem, withMemory: total, delta: diet - b.tokens, pct: p1(diet, b.tokens), pctWithMemory: p1(total, b.tokens) };
+    // 기대치: 2층 룰이 발동률 추정만큼 들어온다고 보고 더한 값(넓은 조건은 절감 0). 최대치(diet)와 따로 낸다 — 선전에는 기대치.
+    const exp = run.result.folders.find((x) => x.folder === b.folder)?.forgenTier2?.expected ?? 0;
+    return { folder: b.folder, before: b.tokens, after: diet, expected: diet + exp, addedMemory: mem, withMemory: total, delta: diet - b.tokens, pct: p1(diet, b.tokens), expectedPct: p1(diet + exp, b.tokens), pctWithMemory: p1(total, b.tokens) };
   });
   const r = rates(events);
   // Q11: 2층 룰은 색인 줄에 보이면 누락이 아니지만, 필요한 순간에 안 실린 "2층 미발동"(재생)은 누락으로 센다.
@@ -152,7 +155,7 @@ async function report(c: Ctx): Promise<void> {
   const tier2Missed = (rec?.items ?? []).filter((it) => it.match?.reason === 'tier2-missed').map((it) => ({ ruleId: it.match?.ruleId ?? '', ts: it.ts }));
   const tier2 = { rules: run.ctx.tier2In?.size ?? 0, tokensUpper: run.result.folders.map((f) => ({ folder: f.folder, rules: f.forgenTier2?.rules ?? 0, tokens: f.forgenTier2?.tokens ?? 0 })) };
   const out = {
-    schema: 'forgen-fix-report/1', rates: r, folders: rows, medianPct: median(rows.map((x) => x.pct)), increased: rows.filter((x) => x.delta > 0).map((x) => x.folder),
+    schema: 'forgen-fix-report/1', rates: r, folders: rows, medianPct: median(rows.map((x) => x.pct)), expectedMedianPct: median(rows.map((x) => x.expectedPct)), increased: rows.filter((x) => x.delta > 0).map((x) => x.folder),
     loss, tier2Missed, tier2, mixConfirmed: mix, applied: appliedFixes().length, baselineAt: before.at,
   };
   if (c.json) { console.log(JSON.stringify(out, null, 2)); return; }
@@ -163,6 +166,11 @@ async function report(c: Ctx): Promise<void> {
   for (const x of rows) console.log(`  ${String(x.before).padStart(6)} → ${String(x.after).padStart(6)}  ${sg(x.pct)}  ${shortPath(x.folder)}${x.addedMemory ? `   (+ 기억 추가 ${x.addedMemory}토큰 → 합 ${sg(x.pctWithMemory)})` : ''}`);
   if (added.size) console.log('  기억 추가(적히지 않은 채 반복된 교정의 새 메모)는 N3 다이어트 비교에서 빼고 따로 적는다');
   console.log(`  중앙값 ${out.medianPct > 0 ? '+' : ''}${out.medianPct}% (목표 −15% 이상) · 늘어난 폴더 ${out.increased.length}`);
+  if (rows.some((x) => x.expected !== x.after)) {
+    console.log('  두 층 기대치(2층 룰이 과거 발동률만큼 들어온다고 보고, 넓은 조건은 절감 0) — 선전에는 이 값을 쓴다:');
+    for (const x of rows) console.log(`    ${String(x.before).padStart(6)} → ${String(x.expected).padStart(6)}  ${sg(x.expectedPct)}  ${shortPath(x.folder)}`);
+    console.log(`    중앙값 ${out.expectedMedianPct > 0 ? '+' : ''}${out.expectedMedianPct}% (위 "지금" 값은 최대치)`);
+  }
   console.log(`중요 지침 누락 ${loss.reduce((n, l) => n + l.missing.length, 0)}${loss.length ? `: ${loss.map((l) => `${shortPath(l.folder)} ${l.missing.join(', ')}`).join(' / ')}` : ''}`);
   if (tier2.rules || tier2Missed.length) {
     console.log(`  2층(색인 줄로만 보이고 상황이 맞으면 한 번 들어옴) ${tier2.rules}개 — Q11: 자격 게이트를 지났고 색인에 보이므로 누락으로 세지 않음`);
@@ -200,7 +208,25 @@ export async function handleFix(args: string[]): Promise<void> {
     }
     if (args.includes('--report')) { await report(c); return; }
     const positional = args.filter((a, i) => !a.startsWith('-') && !(i > 0 && WITH_VALUE.has(args[i - 1])));
-    if (args.includes('--apply') && kinds) { await withFixLock(() => applyKinds(c, kinds)); return; }
+    if (args.includes('--apply') && kinds) {
+      // 두 층 발동 조건 일괄 승인은 요약을 보이고 --yes 가 있어야 적용한다. 넓음·좁음 경고가 붙은 것은 일괄에서 빠진다(개별 승인만).
+      if (kinds.includes('tier2-condition') && !args.includes('--yes')) {
+        const p = await plan(c);
+        const xs = p.fixes.filter((f) => f.kind === 'tier2-condition' && !f.blocked);
+        const ex = excludedFixes();
+        const wide = xs.filter((f) => f.estimate?.wide).length;
+        const narrow = xs.filter((f) => f.estimate?.narrow).length;
+        const skipped = xs.filter((f) => ex.has(f.id)).length;
+        const go = xs.filter((f) => !f.manual && !ex.has(f.id)).length;
+        const tokens = xs.filter((f) => !f.manual && !ex.has(f.id)).reduce((n, f) => n + f.tokens, 0);
+        console.log(`두 층 발동 조건 ${xs.length}개 — 넓음 경고 ${wide} · 좁음 경고 ${narrow} · 빼 둠 ${skipped}`);
+        console.log(`일괄 승인하면 ${go}개 적용(세션 시작 약 −${tokens}토큰 상한). 경고 붙은 ${wide + narrow}개는 일괄에서 빠진다 — 보고 나서 forgen fix <id> --apply 로 하나씩`);
+        console.log('목록: forgen fix --list --kind tier2-condition · 빼기: forgen fix <id> --skip · 확인 뒤 적용: forgen fix --kind tier2-condition --apply --yes');
+        return;
+      }
+      await withFixLock(() => applyKinds(c, kinds));
+      return;
+    }
     const p = await plan(c);
     if (positional[0]) {
       const f = p.fixes.find((x) => x.id === positional[0]) ?? (p.fixes.filter((x) => x.id.startsWith(positional[0])).length === 1 ? p.fixes.find((x) => x.id.startsWith(positional[0])) : undefined);
@@ -226,7 +252,7 @@ export async function handleFix(args: string[]): Promise<void> {
       if (!xs.length) continue;
       console.log(`\n${KIND_LABEL[k]} (${xs.filter((f) => !f.blocked).length}${xs.some((f) => f.blocked) ? ` · 지적만 ${xs.filter((f) => f.blocked).length}` : ''})`);
       for (const f of xs) console.log(line(f, excluded.has(f.id)));
-      if (k === 'tier2-condition') console.log('  ↳ 승인하면 그 룰은 세션 시작에 색인 줄로만 보이고 조건이 맞을 때 한 번 들어온다 · 빼기: forgen fix <id> --skip · 일괄 승인: forgen fix --kind tier2-condition --apply · 되돌리기: forgen fix --undo <id>');
+      if (k === 'tier2-condition') console.log('  ↳ 승인하면 그 룰은 세션 시작에 색인 줄로만 보이고 조건이 맞을 때 한 번 들어온다 · 빼기: forgen fix <id> --skip · 일괄 승인: forgen fix --kind tier2-condition --apply --yes(경고 붙은 것은 빠짐) · 되돌리기: forgen fix --undo <id>');
     }
     if (ready.length) console.log('\n보기: forgen fix <id> · 적용: forgen fix <id> --apply · 묶음: forgen fix --kind <종류|all> --apply');
     if (c.model) console.log(`모델 호출 ${modelUse.calls}회(실패 ${modelUse.failed}, 캐시 적중 ${modelUse.cacheHits})`);

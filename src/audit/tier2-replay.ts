@@ -17,7 +17,7 @@ import { loadAllEvidence } from '../store/evidence-store.js';
 import { loadActiveRules } from '../store/rule-store.js';
 import type { Evidence, Rule } from '../store/types.js';
 import {
-  loadTier2Index, MATCH_K, overlap, saveTier2Index, tierOf, TIER2_INDEX_VERSION, toolSignalText, words,
+  conditionScore, loadTier2Index, MATCH_K, overlap, saveTier2Index, tierOf, TIER2_INDEX_VERSION, toolDetail, toolSignalText, words,
   type Tier2Entry, type Tier2Index, type Tier2Recur,
 } from '../core/tier2.js';
 import { latestRecurrenceRun } from './recurrence.js';
@@ -33,7 +33,8 @@ export const LEARN_DF = 0.01;
 const LEARN_PER_CONTEXT = 8;
 const MIN_EVENTS_FOR_DF = 500;
 
-export interface ReplayEvent { kind: 'user' | 'tool'; ts: string; words: Set<string> }
+/** raw: 발동 조건 추정용(keepRaw 일 때만) — 프롬프트 글 또는 도구 이름·명령·경로 */
+export interface ReplayEvent { kind: 'user' | 'tool'; ts: string; words: Set<string>; raw?: { text: string; tool?: string; command?: string; paths?: string[] }; cwd?: string }
 interface Ctx { evidence: string; ts: string; events: ReplayEvent[]; learn: string[] }
 
 export interface Tier2ReplayRule {
@@ -78,13 +79,13 @@ function textOf(content: unknown): { text: string; toolResult: boolean } {
 }
 
 /** 최상위 세션 한 개의 사건(사람 프롬프트·도구 호출) — 시간순. */
-export async function readSessionEvents(file: string): Promise<ReplayEvent[]> {
+export async function readSessionEvents(file: string, opts: { keepRaw?: boolean } = {}): Promise<ReplayEvent[]> {
   const out: ReplayEvent[] = [];
   const rl = readline.createInterface({ input: fs.createReadStream(file), crlfDelay: Infinity });
   try {
     for await (const line of rl) {
       if (!line || (!line.includes('"type":"user"') && !line.includes('"tool_use"'))) continue;
-      let m: { type?: string; isSidechain?: boolean; isMeta?: boolean; isCompactSummary?: boolean; message?: { content?: unknown }; timestamp?: string };
+      let m: { type?: string; isSidechain?: boolean; isMeta?: boolean; isCompactSummary?: boolean; message?: { content?: unknown }; timestamp?: string; cwd?: string };
       try { m = JSON.parse(line); } catch { continue; }
       if (m.isSidechain || !m.timestamp) continue;
       if (m.type === 'user') {
@@ -92,10 +93,14 @@ export async function readSessionEvents(file: string): Promise<ReplayEvent[]> {
         const { text, toolResult } = textOf(m.message?.content);
         const t = text.trimStart();
         if (toolResult || !t || t.startsWith('<') || SKIP_PREFIX.some((p) => t.startsWith(p))) continue;
-        out.push({ kind: 'user', ts: m.timestamp, words: words(text.slice(0, 3000)) });
+        out.push({ kind: 'user', ts: m.timestamp, words: words(text.slice(0, 3000)), ...(opts.keepRaw ? { raw: { text: text.slice(0, 3000) }, ...(m.cwd ? { cwd: m.cwd } : {}) } : {}) });
       } else if (m.type === 'assistant' && Array.isArray(m.message?.content)) {
         for (const b of m.message.content as Array<{ type?: string; name?: string; input?: Record<string, unknown> }>) {
-          if (b?.type === 'tool_use') out.push({ kind: 'tool', ts: m.timestamp, words: words(toolSignalText(b.name ?? '', b.input)) });
+          if (b?.type !== 'tool_use') continue;
+          const sig = toolSignalText(b.name ?? '', b.input);
+          if (!opts.keepRaw) { out.push({ kind: 'tool', ts: m.timestamp, words: words(sig) }); continue; }
+          const d = toolDetail(b.name ?? '', b.input);
+          out.push({ kind: 'tool', ts: m.timestamp, words: words(sig), raw: { text: sig, tool: d.tool, ...(d.command ? { command: d.command } : {}), paths: d.paths ?? [] }, ...(m.cwd ? { cwd: m.cwd } : {}) });
         }
       }
     }
@@ -310,4 +315,49 @@ export function mergeRecurrence(items: Array<{ ts: string; session: string; bran
   }
   if (updated) saveTier2Index(idx);
   return { updated, tier2Missed: [...new Set(missed)].sort() };
+}
+
+// ── 발동 조건 발동률 추정(결정적, 대화 기록 재생) ──
+
+/** 추정에 쓰는 과거 세션: 최근 수정된 최상위 세션부터 maxSessions 개(큰 기록 제외), 원천은 읽기만. */
+export interface ConditionCorpus { sessions: Array<{ id: string; project: string | null; cwd: string; events: ReplayEvent[] }>; turns: number }
+
+export async function loadConditionCorpus(claudeDir: string, opts: { maxSessions?: number; maxBytes?: number; sinceDays?: number; now?: Date } = {}): Promise<ConditionCorpus> {
+  const { projectKeyFor } = await import('../store/rule-scope.js');
+  const now = (opts.now ?? new Date()).getTime();
+  const since = now - (opts.sinceDays ?? 30) * 86_400_000;
+  const files = listTopLevelTranscripts(claudeDir).map((f) => { try { const st = fs.statSync(f); return { f, m: st.mtimeMs, b: st.size }; } catch { return null; } })
+    .filter((x): x is { f: string; m: number; b: number } => !!x && x.m >= since && x.b <= (opts.maxBytes ?? 30 * 1024 * 1024))
+    .sort((a, b) => b.m - a.m || (a.f < b.f ? -1 : 1)).slice(0, opts.maxSessions ?? 150);
+  const sessions: ConditionCorpus['sessions'] = [];
+  let turns = 0;
+  for (const { f } of files) {
+    const events = await readSessionEvents(f, { keepRaw: true });
+    const userTurns = events.filter((e) => e.kind === 'user').length;
+    if (!userTurns) continue;
+    turns += userTurns;
+    const cwd = events.find((e) => e.cwd)?.cwd ?? '';
+    let project: string | null = null;
+    try { project = cwd ? projectKeyFor(cwd) : null; } catch { /* 없음 */ }
+    sessions.push({ id: path.basename(f, '.jsonl'), project, cwd, events });
+  }
+  return { sessions, turns };
+}
+
+/** 조건 하나가 과거 세션·사용자 턴 몇 %에서 발동했을지(런타임과 같은 conditionScore). 턴 = 사용자 프롬프트 + 뒤따른 도구 호출. */
+export function conditionRate(c: import('../store/types.js').AppliesWhen, corpus: ConditionCorpus): { sessions: number; turns: number; sessionsN: number; turnsN: number } {
+  let sHit = 0, tHit = 0;
+  for (const s of corpus.sessions) {
+    let fired = false, turnFired = false;
+    for (const e of s.events) {
+      if (e.kind === 'user') { if (turnFired) tHit++; turnFired = false; }
+      if (turnFired && fired) continue;
+      const d = { cwd: e.cwd ?? s.cwd, project: s.project, ...(e.kind === 'tool' ? { tool: e.raw?.tool, command: e.raw?.command, paths: e.raw?.paths } : {}) };
+      if (conditionScore(c, e.raw?.text ?? '', e.kind === 'user' ? 'prompt' : 'tool', d) > 0) { fired = true; turnFired = true; }
+    }
+    if (turnFired) tHit++;
+    if (fired) sHit++;
+  }
+  const n = corpus.sessions.length;
+  return { sessions: n ? sHit / n : 0, turns: corpus.turns ? tHit / corpus.turns : 0, sessionsN: n, turnsN: corpus.turns };
 }

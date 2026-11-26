@@ -56,8 +56,12 @@ export interface FolderSummary {
   mixCandidateTokens: number;
   /** 스킬·에이전트 목록 몫(앞머리 name·description 근사). */
   skills?: { tokens: number; count: number; bySource: Record<string, number> };
-  /** 0.9.0 두 층: 세션 시작에는 색인 줄로만 보이는 2층 룰 수와, 전부 들어오면 더해질 토큰(상한 — 실제는 상황이 맞은 것만). */
-  forgenTier2?: { rules: number; tokens: number };
+  /**
+   * 0.9.0 두 층: 세션 시작에는 색인 줄로만 보이는 2층 룰 수와, 전부 들어오면 더해질 토큰(상한).
+   * expected: 발동률 추정을 반영해 한 세션에 들어올 것으로 보는 토큰(승인 조건은 과거 세션 발동률, 넓은 조건은 늘 들어오는 것으로 — 절감 0).
+   * N3 의 "최대치" = 상시 로드(1층 + 색인), "기대치" = 최대치 + expected. 선전에는 기대치를 쓴다.
+   */
+  forgenTier2?: { rules: number; tokens: number; expected?: number };
 }
 
 export interface AuditResult {
@@ -126,6 +130,13 @@ export interface AuditContext {
 export interface AuditRun { result: AuditResult; manifest: Omit<AuditManifest, 'runId'>; timing: Record<string, number>; ctx: AuditContext }
 
 export const unitKey = (u: { path: string; line: number; ruleId?: string }) => `${u.ruleId ?? u.path}:${u.line}`;
+
+/** 2층 룰이 한 세션에 들어올 비율(기대치 셈): 승인 조건은 추정 세션 발동률(넓음 ≥ 50% 은 1 — 절감 0), 게이트 통과 룰은 추정이 없어 0. */
+export function expectedLoadShare(r: Rule | undefined): number {
+  const e = r?.applies_when?.approved ? r.applies_when.estimate : undefined;
+  if (!e) return 0;
+  return e.sessions >= 0.5 ? 1 : Math.max(0, Math.min(1, e.sessions));
+}
 
 export function forgenVersion(): string {
   try { return (JSON.parse(fs.readFileSync(new URL('../../package.json', import.meta.url), 'utf-8')) as { version?: string }).version ?? ''; } catch { return ''; }
@@ -339,7 +350,7 @@ export function runAudit(opts: AuditOptions = {}): AuditRun {
       reducible: { duplicate, stale: staleTok, total, pct: l.totalTokens ? Math.round((total / l.totalTokens) * 1000) / 10 : 0 },
       mixCandidateTokens: mixTok,
       ...(l.skills ? { skills: l.skills } : {}),
-      ...(l.forgen.tier2Ids?.length ? { forgenTier2: { rules: l.forgen.tier2Ids.length, tokens: l.forgen.tier2Ids.reduce((n, id) => n + (ruleUnitTokens.get(id) ?? 0), 0) } } : {}),
+      ...(l.forgen.tier2Ids?.length ? { forgenTier2: { rules: l.forgen.tier2Ids.length, tokens: l.forgen.tier2Ids.reduce((n, id) => n + (ruleUnitTokens.get(id) ?? 0), 0), expected: Math.round(l.forgen.tier2Ids.reduce((n, id) => n + (ruleUnitTokens.get(id) ?? 0) * expectedLoadShare(ruleById.get(id)), 0)) } } : {}),
     };
   });
   lap('checks');

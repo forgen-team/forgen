@@ -153,7 +153,7 @@ export interface RuleStatusChange {
  * paths 는 경로 글롭(* · **) 또는 조각, words 는 프롬프트 낱말. approved 가 있으면 사람이 검증한 조건 — 자격 게이트를 대신한다
  * (`forgen fix --kind tier2-condition --apply`). 없으면 게이트 재생의 낱말에 더해질 뿐이다.
  */
-export interface AppliesWhen { folders?: string[]; tools?: string[]; commands?: string[]; paths?: string[]; words?: string[]; approved?: { at: string; fix?: string } }
+export interface AppliesWhen { folders?: string[]; tools?: string[]; commands?: string[]; paths?: string[]; words?: string[]; approved?: { at: string; fix?: string }; estimate?: { sessions: number; turns: number; at: string } }
 
 export interface Rule {
   /** R5-B3: 미래 breaking schema change 를 위한 version 필드. 없으면 v0 (pre-0.4.0) 으로 취급. */

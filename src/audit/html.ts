@@ -38,7 +38,9 @@ function tier2Line(r: AuditResult): string[] {
   const n = Math.max(0, ...r.folders.map((f) => f.forgenTier2?.rules ?? 0));
   const missed = r.summary.recurrence.tier2Missed ?? 0;
   if (!n && !missed) return [];
-  return [`두 층: 세션 시작에는 색인 줄로만 보이는 2층 룰 최대 ${n}개(상황이 맞으면 한 번 들어옴) · 2층 미발동 재발 ${missed}건(누락으로 셈, 그 룰은 1층으로 복귀) — 한계: 교정 없이 지나간 미발동·무시는 못 잡는다`];
+  const exp = r.folders.filter((f) => f.forgenTier2).map((f) => `${shortPath(f.folder)} ${f.totalTokens}→${f.totalTokens + (f.forgenTier2?.expected ?? 0)}`);
+  return [`두 층: 세션 시작에는 색인 줄로만 보이는 2층 룰 최대 ${n}개(상황이 맞으면 한 번 들어옴) · 2층 미발동 재발 ${missed}건(누락으로 셈, 그 룰은 1층으로 복귀) — 한계: 교정 없이 지나간 미발동·무시는 못 잡는다`,
+    ...(exp.length ? [`세션당 토큰 최대치(상시 로드)→기대치(발동률 추정 반영, 넓은 조건은 절감 0): ${exp.join(' · ')} — 선전에는 기대치를 쓴다`] : [])];
 }
 
 export function renderAuditHtml(r: AuditResult, runId: string): string {

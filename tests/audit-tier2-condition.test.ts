@@ -48,12 +48,28 @@ const RULES = [
   rule('c-strong', '강한 합성 룰 cwstrong', { strength: 'strong' }),
   rule('c-recent', '최근 합성 교정 cwrecent', { created_at: new Date(Date.now() - 3 * 86_400_000).toISOString() }),
   rule('c-gate', '게이트에서 발동 못 한 합성 룰 cwmissed'),
+  rule('c-wide', '어디서나 나오는 합성 룰 cwwide cwalpha'),
+  rule('c-safe', '배포 스크립트에서 rm -rf 전에 대상 경로를 확인한다 cwsafe'),
+  rule('c-enf', '강제되는 합성 룰 cwenf', { enforce_via: [{ hook: 'PreToolUse', mech: 'A' }] as never }),
 ];
+// 과거 세션(발동률 추정): 5세션 모두 cwwide 낱말 → c-wide 넓음, 1세션만 eas build → c-cmd 20%, docs/plans 경로는 없음 → c-onb 좁음
+{
+  const proj = path.join(CLAUDE, 'projects', '-ws-proj-c');
+  fs.mkdirSync(proj, { recursive: true });
+  for (let i = 0; i < 5; i++) {
+    const t = (k: number) => new Date(Date.now() - 86_400_000 + i * 600_000 + k * 1000).toISOString();
+    const lines = [
+      { type: 'user', sessionId: `s${i}`, cwd: FOLDER, timestamp: t(0), message: { role: 'user', content: `cwwide cwalpha 작업 ${i} 해 줘` } },
+      { type: 'assistant', sessionId: `s${i}`, cwd: FOLDER, timestamp: t(1), message: { role: 'assistant', content: [{ type: 'tool_use', id: 'x', name: 'Bash', input: { command: i === 0 ? 'npx eas build --profile preview' : 'ls -la' } }] } },
+    ];
+    fs.writeFileSync(path.join(proj, `s${i}.jsonl`), `${lines.map((l) => JSON.stringify(l)).join('\n')}\n`);
+  }
+}
 for (const r of RULES) fs.writeFileSync(path.join(FH, 'me', 'rules', `${r.rule_id}.json`), JSON.stringify(r));
 const entry = (reason: string) => ({ qualified: false, reason, words: ['x', 'y', 'z'], topics: [], contexts: reason === 'no-context' ? 0 : 1, fired: 0 });
 fs.writeFileSync(path.join(FH, 'state', 'tier2-index.json'), JSON.stringify({
   version: 1, generatedAt: OLD, params: { k: 3, turns: 3, minFireRate: 0.8, maxFreq: 0.05 },
-  rules: { 'c-cmd': entry('no-context'), 'c-onb': entry('no-context'), 'c-strong': entry('no-context'), 'c-recent': entry('no-context'), 'c-gate': entry('missed') }, recur: {},
+  rules: { 'c-cmd': entry('no-context'), 'c-onb': entry('no-context'), 'c-strong': entry('no-context'), 'c-recent': entry('no-context'), 'c-gate': entry('missed'), 'c-wide': entry('no-context'), 'c-safe': entry('no-context'), 'c-enf': entry('no-context') }, recur: {},
 }));
 const idxBefore = fs.readFileSync(path.join(FH, 'state', 'tier2-index.json'), 'utf-8');
 const cli = async (...a: string[]) => {
@@ -77,13 +93,32 @@ describe('조건 판정(결정적)', () => {
   });
 });
 
+describe('안전 룰은 어떤 경로로도 2층에 가지 않는다', () => {
+  it('isSafetyRule: enforce_via·enforce_mode · hard(Must Not) · safety 분류 · 파괴·비밀 패턴(한국어 포함)', () => {
+    const base = rule('s', '평범한 합성 룰');
+    expect(T.isSafetyRule(base)).toBe(false);
+    expect(T.isSafetyRule({ ...base, enforce_mode: 'advise' })).toBe(true);
+    expect(T.isSafetyRule({ ...base, strength: 'hard' })).toBe(true);
+    expect(T.isSafetyRule({ ...base, category: 'safety' })).toBe(true);
+    for (const p of ['git push --force 금지', 'force push 하지 말 것', 'DROP TABLE 전에 백업', '.env 파일은 커밋하지 않는다', 'API key 를 로그에 남기지 않는다', '비밀키 노출 주의', '강제 푸시 금지', '데이터를 삭제하기 전에 확인', '되돌릴 수 없는 작업은 묻는다', 'credential 파일', 'rm -rf 전에 확인'])
+      expect(T.isSafetyRule({ ...base, policy: p }), p).toBe(true);
+  });
+  it('게이트 통과·승인 조건·재자격 모두 안전 룰은 1층(safety)', () => {
+    const idx = { version: 1, generatedAt: OLD, params: { k: 3, turns: 3, minFireRate: 0.8, maxFreq: 0.05 }, rules: { s1: { qualified: true, reason: 'fired', words: ['a', 'b', 'c'], topics: [], contexts: 1, fired: 1 } }, recur: { s1: { lastAt: '2026-01-01T00:00:00.000Z', kind: 'tier2-missed' as const, count: 1 } } };
+    const r = rule('s1', '프로덕션 데이터 삭제 전에 백업한다', { applies_when: { words: ['백업'], approved: { at: OLD } } });
+    expect(T.tierOf(r, idx as never)).toEqual({ tier: 1, reason: 'safety' });
+    expect(T.tierOf(r, null)).toEqual({ tier: 1, reason: 'safety' });
+    expect(T.tier2Assignment([r], idx as never).size).toBe(0);
+  });
+});
+
 describe('forgen fix tier2-condition', () => {
   let ids: Record<string, string> = {};
   it('초안: 근거 상황이 없고 1층 정의에 안 드는 룰만(strong·30일·게이트 발동 못 함은 빼고), 모델 초안 + 결정적 후보, 없는 도구는 버림', async () => {
     const p = await planFixes({ folders: [FOLDER], claudeDir: CLAUDE, judge: new Judge({ model: true }) });
     const fx = p.fixes.filter((f) => f.kind === 'tier2-condition');
     const rid = (f: (typeof fx)[number]) => (f.ops[0] as { ruleId: string }).ruleId;
-    expect(fx.map(rid).sort()).toEqual(['c-cmd', 'c-onb']);
+    expect(fx.map(rid).sort()).toEqual(['c-cmd', 'c-onb', 'c-wide']); // 안전 룰(rm -rf 패턴·enforce_via)은 후보가 아님
     ids = Object.fromEntries(fx.map((f) => [rid(f), f.id]));
     const cmd = fx.find((f) => rid(f) === 'c-cmd');
     expect(cmd?.model).toBe(true);
@@ -91,6 +126,16 @@ describe('forgen fix tier2-condition', () => {
     expect(cmd?.title).not.toContain('NotATool');
     expect(cmd?.evidence.join('\n')).toContain('결정적 후보: 낱말');
     expect(fx.find((f) => rid(f) === 'c-onb')?.title).toContain('경로 docs/plans/**');
+    // 발동률 추정: 넓음(세션 100%, 2차 초안으로도 못 좁힘)·좁음(0%) 경고는 개별 승인만
+    expect(cmd?.title).toContain('[발동 추정 세션 20%');
+    expect(cmd?.manual).toBeUndefined();
+    const wide = fx.find((f) => rid(f) === 'c-wide');
+    expect(wide?.title).toContain('⚠넓음');
+    expect(wide?.estimate).toMatchObject({ wide: true, sessions: 1 });
+    expect(wide?.manual).toContain('넓음 경고');
+    const onb = fx.find((f) => rid(f) === 'c-onb');
+    expect(onb?.title).toContain('세션 0%');
+    expect(onb?.manual).toContain('좁음 경고');
     expect(readJudgeCalls(FAKE).some((c) => c.startsWith('condition '))).toBe(true);
     // 계획은 아무것도 쓰지 않는다(색인·룰 그대로)
     expect(fs.readFileSync(path.join(FH, 'state', 'tier2-index.json'), 'utf-8')).toBe(idxBefore);
@@ -106,7 +151,7 @@ describe('forgen fix tier2-condition', () => {
 
   it('목록 → 하나 빼 두기 → 일괄 승인: 빼 둔 것은 그대로, 승인된 룰은 "사람이 검증한 조건"으로 2층', async () => {
     const list = await cli('--list', '--kind', 'tier2-condition');
-    expect(list).toContain('두 층 발동 조건(언제 쓰는지) 초안 (2)');
+    expect(list).toContain('두 층 발동 조건(언제 쓰는지) 초안 (3)');
     expect(list).toContain('forgen fix --kind tier2-condition --apply');
     expect(await cli(ids['c-onb'], '--skip')).toContain('빼 둠');
     expect(excludedFixes().has(ids['c-onb'])).toBe(true);
@@ -114,10 +159,16 @@ describe('forgen fix tier2-condition', () => {
     // all 에는 들어가지 않는다
     await cli('--kind', 'all', '--apply');
     expect(loadRule('c-cmd')?.applies_when).toBeUndefined();
-    const out = await cli('--kind', 'tier2-condition', '--apply');
+    // --yes 없이는 요약만(넓음·좁음 경고 수), 아무것도 적용하지 않는다
+    const summary = await cli('--kind', 'tier2-condition', '--apply');
+    expect(summary).toContain('두 층 발동 조건 3개 — 넓음 경고 1 · 좁음 경고 1 · 빼 둠 1');
+    expect(summary).toContain('일괄 승인하면 1개 적용');
+    expect(loadRule('c-cmd')?.applies_when).toBeUndefined();
+    const out = await cli('--kind', 'tier2-condition', '--apply', '--yes');
     expect(out).toContain('빼 둔 처방(--skip) 1개 제외');
+    expect(loadRule('c-wide')?.applies_when).toBeUndefined(); // 경고 붙은 것은 일괄에서 빠짐
     const r = loadRule('c-cmd') as Rule;
-    expect(r.applies_when).toMatchObject({ tools: ['Bash'], commands: ['eas build'], approved: { fix: ids['c-cmd'] } });
+    expect(r.applies_when).toMatchObject({ tools: ['Bash'], commands: ['eas build'], approved: { fix: ids['c-cmd'] }, estimate: { sessions: 0.2 } });
     expect(loadRule('c-onb')?.applies_when).toBeUndefined();
     expect(T.tierOf(r, T.loadTier2Index())).toEqual({ tier: 2, reason: 'approved' });
     const ro = renderSessionStartReadOnly(FOLDER);
