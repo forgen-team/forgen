@@ -175,6 +175,11 @@ export interface Rule {
    * 세션 시작마다 실려서, forgen 은 세션 시작 주입에서만 뺀다. 룰은 강제·측정용으로 그대로 남는다(status 는 active).
    */
   host_copy?: { path: string; line?: number; at: string; fix?: string };
+  /**
+   * 0.9.0 두 층(선택 필드): 이 룰이 들어올 상황 — 도구 이름·명령·경로 조각·낱말. 두 층 자격 게이트가 룰 낱말 집합에 더한다.
+   * 옛 버전은 무시한다(전부 세션 시작에 실리던 대로).
+   */
+  applies_when?: { tools?: string[]; commands?: string[]; paths?: string[]; words?: string[] };
   /** source 'imported' 일 때 가져온 곳(파일 경로 등). 사용자 발화가 아니라는 표시이기도 하다. */
   imported_from?: string;
   /** 세션 임시 룰의 소유 세션. 다른 실행 중인 세션의 임시 룰을 정리하지 않기 위해 쓴다. */

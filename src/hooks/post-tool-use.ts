@@ -463,6 +463,12 @@ async function main(): Promise<void> {
       switchContext = projectSwitchContext(data.session_id, data.cwd)
         ?? (touchedDir ? projectSwitchContext(data.session_id, touchedDir) : null);
     } catch (e) { log.debug('project switch 실패', e); }
+    // 0.9.0 두 층: PreToolUse 가 차단·확인으로 끝나 2층 룰을 못 넣은 경우의 보완(이미 넣은 룰은 다시 넣지 않는다).
+    try {
+      const { tier2Context, toolSignalText } = await import('../core/tier2.js');
+      const t2 = await tier2Context(data.session_id, toolSignalText(toolName, toolInput as Record<string, unknown>), 'tool');
+      if (t2) switchContext = switchContext ? `${switchContext}\n${t2}` : t2;
+    } catch (e) { log.debug('tier2 판정 실패', e); }
   }
 
   if (switchContext) {

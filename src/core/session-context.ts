@@ -27,6 +27,10 @@ export interface WorkContextFile {
   injected?: string[];
   /** 0.8.0 M2: 이 세션에 실제로 들어간 룰 ID(세션 시작 블록 + 위치 전환 주입). 교정 3분류의 "주입됐다" 판정. */
   rules?: string[];
+  /** 0.9.0 두 층: 이 세션(세션 시작·압축 뒤 재시작 이후)에 2층으로 넣은 룰 ID — "한 번만 넣기". rules 에도 같이 들어간다. */
+  tier2_injected?: string[];
+  /** 0.9.0 두 층: 이번 사용자 턴(turns 합)에 넣은 2층 룰 수 — 한 턴 최대 2개 */
+  tier2_turn?: { turn: number; count: number };
 }
 
 export type WorkVia = 'hook-input' | 'session-file' | 'process-cwd';
@@ -79,6 +83,10 @@ function writeWorkContext(p: string, sessionId: string, cwd: string, opts: { cou
   const next: WorkContextFile = {
     version: 1, session_id: sessionId, cwd, project, updated_at: new Date().toISOString(), turns,
     ...(prev?.injected?.length ? { injected: prev.injected } : {}),
+    // 위치가 바뀌어도 이 세션에 들어간 룰 기록(rules·tier2_injected)은 남긴다 — 예전에는 rules 가 여기서 사라졌다.
+    ...(prev?.rules?.length ? { rules: prev.rules } : {}),
+    ...(prev?.tier2_injected?.length ? { tier2_injected: prev.tier2_injected } : {}),
+    ...(prev?.tier2_turn ? { tier2_turn: prev.tier2_turn } : {}),
   };
   atomicWriteJSON(p, next, { mode: 0o600 });
   return next;
@@ -139,7 +147,9 @@ export function markProjectInjected(sessionId: string, key: string, opts: { rese
     const base: WorkContextFile = prev ?? {
       version: 1, session_id: sessionId, cwd: opts.cwd ?? '', project: opts.cwd ? projectKeyFor(opts.cwd) : null, updated_at: '', turns: {},
     };
-    atomicWriteJSON(p, { ...base, ...(opts.cwd ? { cwd: opts.cwd, project: projectKeyFor(opts.cwd) } : {}), updated_at: new Date().toISOString(), injected, rules }, { mode: 0o600 });
+    const tier2 = opts.reset ? {} : { ...(prev?.tier2_injected?.length ? { tier2_injected: prev.tier2_injected } : {}), ...(prev?.tier2_turn ? { tier2_turn: prev.tier2_turn } : {}) };
+    const { tier2_injected: _t, tier2_turn: _tt, ...rest } = base;
+    atomicWriteJSON(p, { ...rest, ...(opts.cwd ? { cwd: opts.cwd, project: projectKeyFor(opts.cwd) } : {}), updated_at: new Date().toISOString(), injected, rules, ...tier2 }, { mode: 0o600 });
     return true;
   };
   // 잠금을 못 잡으면 "넣지 않음"이 아니라 "넣음"으로 본다 — 같은 룰이 한 번 더 들어가는 편이 영영 빠지는 것보다 낫다.
@@ -157,6 +167,27 @@ export function addSessionRules(sessionId: string, ruleIds: string[]): void {
       atomicWriteJSON(p, { ...prev, rules: [...new Set([...(prev.rules ?? []), ...ruleIds])] }, { mode: 0o600 });
     });
   } catch { /* 기록 실패는 분류 정확도만 낮춘다 */ }
+}
+
+/**
+ * 0.9.0 두 층: 2층 룰을 이 세션에 넣었다고 적는다(잠금 안). 이미 넣은 룰은 빼고 새로 넣은 ID 만 돌려준다 — "한 번만 넣기".
+ * 세션 시작 기록이 없으면(work-context 없음) 아무것도 넣지 않는다. 잠금을 못 잡으면 넣는 쪽으로 본다(전환 주입과 같은 원칙).
+ */
+export function markTier2Injected(sessionId: string, ruleIds: string[], perTurn = 2): string[] {
+  const p = workContextPath(sessionId);
+  if (!p || ruleIds.length === 0) return [];
+  const run = (): string[] => {
+    const prev = readWorkContext(sessionId);
+    if (!prev) return [];
+    const done = new Set(prev.tier2_injected ?? []);
+    const turn = Object.values(prev.turns ?? {}).reduce((n, v) => n + v, 0);
+    const used = prev.tier2_turn?.turn === turn ? prev.tier2_turn.count : 0;
+    const fresh = [...new Set(ruleIds)].filter((id) => !done.has(id)).slice(0, Math.max(0, perTurn - used));
+    if (!fresh.length) return [];
+    atomicWriteJSON(p, { ...prev, tier2_injected: [...done, ...fresh], rules: [...new Set([...(prev.rules ?? []), ...fresh])], tier2_turn: { turn, count: used + fresh.length } }, { mode: 0o600 });
+    return fresh;
+  };
+  try { return withFileLockSync(p, run); } catch { return run(); }
 }
 
 /** 테스트·정리용 */

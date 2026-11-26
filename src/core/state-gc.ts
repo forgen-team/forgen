@@ -36,6 +36,7 @@ const SESSION_SCOPED_PREFIXES = [
   'context-',
   'last-',
   'work-context-', // 0.8.0 S1: 세션별 현재 작업 위치
+  'tier2-session-', // 0.9.0 두 층: 세션별 2층 후보(낱말·문장)
   'current-model-', // W4-3 per-model 가드 프로필의 세션별 모델 캐시
 ];
 

@@ -6,8 +6,10 @@
  *
  * work-context-<세션>.json 의 rules 필드도 같은 ID 를 갖지만 state-gc 가 세션 파일로 지우므로, 감사용으로는
  * 지워지지 않는 추가 전용 파일이 따로 필요하다: `state/metrics/session-renders.jsonl` (커지면 이름을 바꿔 보관).
- *   { at, session, event: 'start' | 'switch', cwd, project, ruleIds }
+ *   { at, session, event: 'start' | 'switch' | 'tier2', cwd, project, ruleIds, tier2?, via? }
  * 'start' 는 세션 시작·압축 뒤 재시작 — 그 앞의 주입은 컨텍스트에서 사라진 것으로 본다.
+ * 0.9.0 두 층: 'start' 의 tier2 = 그 세션의 2층 후보(색인 줄로만 보이고 아직 안 실림), 'tier2' 사건 = 상황이 맞아 훅이 넣은 2층 룰
+ *   (via: prompt | tool). 옛 버전은 'tier2' 줄을 건너뛰고 tier2 필드를 무시한다(선택 필드).
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -17,10 +19,14 @@ import { rotateIfBig } from '../engine/lifecycle/signals.js';
 export interface SessionRenderRecord {
   at: string;
   session: string;
-  event: 'start' | 'switch';
+  event: 'start' | 'switch' | 'tier2';
   cwd: string;
   project: string | null;
   ruleIds: string[];
+  /** 'start' 만: 이 세션의 2층 후보 ID */
+  tier2?: string[];
+  /** 'tier2' 만: 어느 신호로 넣었나 */
+  via?: 'prompt' | 'tool';
 }
 
 export function sessionRendersPath(stateDir = STATE_DIR): string {
@@ -32,7 +38,11 @@ export function appendSessionRender(rec: Omit<SessionRenderRecord, 'at'> & { at?
     const p = sessionRendersPath();
     fs.mkdirSync(path.dirname(p), { recursive: true });
     rotateIfBig(p);
-    fs.appendFileSync(p, `${JSON.stringify({ at: rec.at ?? new Date().toISOString(), session: rec.session, event: rec.event, cwd: rec.cwd, project: rec.project, ruleIds: [...new Set(rec.ruleIds)].sort() })}\n`, { mode: 0o600 });
+    const line = {
+      at: rec.at ?? new Date().toISOString(), session: rec.session, event: rec.event, cwd: rec.cwd, project: rec.project, ruleIds: [...new Set(rec.ruleIds)].sort(),
+      ...(rec.tier2?.length ? { tier2: [...new Set(rec.tier2)].sort() } : {}), ...(rec.via ? { via: rec.via } : {}),
+    };
+    fs.appendFileSync(p, `${JSON.stringify(line)}\n`, { mode: 0o600 });
   } catch { /* 기록 실패는 감사 정확도만 낮춘다(재생 렌더로 추정) */ }
 }
 
@@ -51,7 +61,7 @@ export function readSessionRenders(stateDir = STATE_DIR): Map<string, SessionRen
       if (!line) continue;
       try {
         const r = JSON.parse(line) as SessionRenderRecord;
-        if (!r.session || !Array.isArray(r.ruleIds) || (r.event !== 'start' && r.event !== 'switch')) continue;
+        if (!r.session || !Array.isArray(r.ruleIds) || (r.event !== 'start' && r.event !== 'switch' && r.event !== 'tier2')) continue;
         const list = out.get(r.session) ?? [];
         list.push(r);
         out.set(r.session, list);
@@ -62,7 +72,7 @@ export function readSessionRenders(stateDir = STATE_DIR): Map<string, SessionRen
   return out;
 }
 
-/** 시각 t 에 그 세션 컨텍스트에 있던 룰 ID: t 이전 마지막 'start' + 그 뒤 t 까지의 'switch'. 기록이 없으면 null. */
+/** 시각 t 에 그 세션 컨텍스트에 있던 룰 ID: t 이전 마지막 'start' + 그 뒤 t 까지의 'switch'·'tier2'. 기록이 없으면 null. */
 export function rulesLoadedAt(records: SessionRenderRecord[] | undefined, t: string): Set<string> | null {
   if (!records?.length) return null;
   let cur: Set<string> | null = null;
@@ -71,6 +81,16 @@ export function rulesLoadedAt(records: SessionRenderRecord[] | undefined, t: str
     if (r.event === 'start') cur = new Set(r.ruleIds);
     else if (cur) for (const id of r.ruleIds) cur.add(id);
     else cur = new Set(r.ruleIds);
+  }
+  return cur;
+}
+
+/** 시각 t 에 그 세션의 2층 후보였던 룰 ID(t 이전 마지막 'start' 의 tier2). 기록이 없거나 두 층 이전 기록이면 빈 집합. */
+export function tier2PendingAt(records: SessionRenderRecord[] | undefined, t: string): Set<string> {
+  let cur = new Set<string>();
+  for (const r of records ?? []) {
+    if (r.at > t) break;
+    if (r.event === 'start') cur = new Set(r.tier2 ?? []);
   }
   return cur;
 }

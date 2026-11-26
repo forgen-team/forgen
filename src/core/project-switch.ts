@@ -13,6 +13,7 @@ import { canonicalProjectKey } from '../store/project-registry.js';
 import { byPriority, ruleToText } from '../renderer/rule-renderer.js';
 import { addSessionRules, markProjectInjected } from './session-context.js';
 import { appendSessionRender } from './session-renders.js';
+import { addTier2SessionRules, tier2Assignment, writeTier2Session } from './tier2.js';
 
 const SWITCH_BUDGET_CHARS = 4000;
 const NO_PROJECT = '-';
@@ -34,12 +35,14 @@ export function projectRuleIndex(): string | null {
 }
 
 /** 세션 시작(또는 압축 뒤 재시작) 때 이번 블록이 어느 프로젝트 기준인지 기록한다. */
-export function markSessionStartScope(sessionId: string | undefined, cwd: string | undefined, ruleIds: string[] = []): void {
+export function markSessionStartScope(sessionId: string | undefined, cwd: string | undefined, ruleIds: string[] = [], tier2Rules: Rule[] = []): void {
   if (!sessionId || !cwd || !path.isAbsolute(cwd)) return;
   const project = projectKeyFor(cwd);
   markProjectInjected(sessionId, project ?? NO_PROJECT, { reset: true, cwd, ruleIds });
-  // 0.9.0: 지워지지 않는 세션별 렌더 기록 — 감사(audit recurrence)의 "실렸는가" 근거
-  appendSessionRender({ session: sessionId, event: 'start', cwd, project, ruleIds });
+  // 0.9.0 두 층: 이 세션의 2층 후보(색인 줄로만 보임) — 훅이 상황이 맞을 때 한 번 넣는다. 압축 뒤 재시작이면 새로 시작.
+  writeTier2Session(sessionId, tier2Rules, project);
+  // 0.9.0: 지워지지 않는 세션별 렌더 기록 — 감사(audit recurrence)의 "실렸는가"·"2층 미발동" 근거
+  appendSessionRender({ session: sessionId, event: 'start', cwd, project, ruleIds, tier2: tier2Rules.map((r) => r.rule_id) });
 }
 
 /**
@@ -51,7 +54,12 @@ export function projectSwitchContext(sessionId: string | undefined, where: strin
   const key = projectKeyFor(where);
   if (!key) return null;
   if (!markProjectInjected(sessionId, key)) return null;
-  const rules = projectRulesFor(key);
+  const all = projectRulesFor(key);
+  // 0.9.0 두 층: 그 프로젝트의 2층 룰은 이 블록이 아니라 상황 신호로만 — 세션 후보에 더한다.
+  let tier2 = new Map<string, string[]>();
+  try { tier2 = tier2Assignment(all); } catch { /* 색인 문제 = 전부 본문 */ }
+  if (tier2.size) addTier2SessionRules(sessionId, all.filter((r) => tier2.has(r.rule_id)), key);
+  const rules = all.filter((r) => !tier2.has(r.rule_id));
   if (rules.length === 0) return null;
   const lines: string[] = [];
   const ids: string[] = [];

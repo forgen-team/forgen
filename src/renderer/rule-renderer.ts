@@ -28,6 +28,11 @@ export interface RenderContext {
   compact?: boolean;
   /** 압축 형식에서 이 폴더 프로젝트와 같은 프로젝트 태그는 뺀다. */
   projectKey?: string | null;
+  /**
+   * 0.9.0 두 층(§8.1 ②): 이 룰들은 본문에 넣지 않고 "상황이 맞으면 들어오는 룰" 색인 한 줄로만 보인다.
+   * 값은 룰 ID → 색인에 보일 주제 낱말.
+   */
+  tier2?: Map<string, string[]>;
 }
 
 export const DEFAULT_CONTEXT: RenderContext = {
@@ -244,6 +249,8 @@ export interface RenderResult {
   included: Rule[];
   /** 예산 초과로 빠진 룰. 조용히 사라지지 않게 본문과 상태 파일에 표시한다. */
   omitted: Rule[];
+  /** 0.9.0 두 층: 본문 대신 색인 줄로만 보인 2층 룰(훅이 상황이 맞을 때 넣는다). */
+  tier2?: Rule[];
 }
 
 /** 예산이 모자랄 때 먼저 지키는 순서: hard → strong → 사용자 교정 → 최신. */
@@ -261,7 +268,10 @@ export function renderRulesDetailed(
   ctx: RenderContext = DEFAULT_CONTEXT,
 ): RenderResult {
   // host_copy: 같은 교정이 호스트 기억에 실려 주입만 뺀 룰(0.9.0 처방 Q4) — 강제는 그대로.
-  const deduped = dedupeByRenderKey(rules.filter((r) => r.status === 'active' && !r.host_copy)).sort(byPriority);
+  const all = dedupeByRenderKey(rules.filter((r) => r.status === 'active' && !r.host_copy)).sort(byPriority);
+  // 두 층: 2층 룰은 본문 예산을 쓰지 않고 색인 줄로만 보인다(넣는 것은 훅이 상황이 맞을 때 한 번).
+  const tier2 = ctx.tier2?.size ? all.filter((r) => ctx.tier2?.has(r.rule_id)) : [];
+  const deduped = tier2.length ? all.filter((r) => !ctx.tier2?.has(r.rule_id)) : all;
   const fmt: RuleTextFormat = { compact: ctx.compact, projectKey: ctx.projectKey ?? null };
 
   initLocaleFromConfig();
@@ -285,7 +295,9 @@ export function renderRulesDetailed(
     for (const rule of communicationPackRules(state.communication_pack)) sections.get('How To Report')?.push(rule);
   }
 
-  const OMITTED_NOTE_RESERVE = 120;
+  const tier2Line = tier2.length ? tier2IndexLine(tier2, ctx.tier2 as Map<string, string[]>) : '';
+  // 압축 형식은 예산을 예전 형식 길이로 세고 실제 글은 그보다 훨씬 짧다 — 색인 줄 때문에 1층 룰이 빠지지 않게 압축에서는 예약하지 않는다.
+  const OMITTED_NOTE_RESERVE = 120 + (ctx.compact ? 0 : tier2Line.length);
   const headerChars = SECTION_ORDER.reduce((n, name) => n + name.length + 6, 0);
   // 압축 형식도 예산은 예전 형식 길이로 센다 — 압축은 "같은 룰을 더 짧게"이고, 줄어든 자리에 빠졌던 룰을 더 채우지 않는다
   // (채우면 압축 전보다 블록이 커지는 폴더가 생긴다 — 복사본 실측 제품 A +16%). 빠진 룰은 두 층의 2층이 맡는다.
@@ -298,14 +310,21 @@ export function renderRulesDetailed(
   const included: Rule[] = [];
   const omitted: Rule[] = [];
   let strongShown = false;
-  for (const rule of deduped) {
-    const text = ruleToText(rule, fmt);
+  // 압축 형식에서는 2층 룰도 순서대로 예산 자리를 차지한 것처럼 센다 — 1층 룰 선택이 두 층 이전과 같고, 2층으로 간 룰의 자리를
+  // 예산에서 빠졌던 룰로 다시 채우지 않는다(압축과 같은 원칙). 2층 룰 자체는 본문에 넣지 않는다(색인 줄).
+  const tier2Ids = new Set(tier2.map((r) => r.rule_id));
+  let slots = 0;
+  for (const rule of fmt.compact && tier2.length ? all : deduped) {
+    const isTier2 = tier2Ids.has(rule.rule_id);
+    const text = isTier2 ? '' : ruleToText(rule, fmt);
     const cost = fmt.compact ? legacyTextLength(rule) : text.length;
-    if (used + cost + 3 > ctx.max_chars || included.length >= ctx.max_rules) {
-      omitted.push(rule);
+    if (used + cost + 3 > ctx.max_chars || slots >= ctx.max_rules) {
+      if (!isTier2) omitted.push(rule);
       continue;
     }
     used += cost + 3;
+    slots++;
+    if (isTier2) continue;
     included.push(rule);
     if (fmt.compact && rule.strength === 'strong') strongShown = true;
     const section: SectionName = rule.strength === 'hard'
@@ -335,12 +354,29 @@ export function renderRulesDetailed(
     if (items.length > 0) parts.push(`## ${name}\n${items.map((i) => `- ${i}`).join('\n')}`);
   }
   if (strongShown) parts.splice(parts.indexOf(evidenceBlock) + 1, 0, '(! = strong preference)');
+  if (tier2Line) parts.push(tier2Line);
   if (omitted.length > 0 || facetOmitted > 0) {
     parts.push(`## Omitted\n- ${omitted.length} lower-priority rules${facetOmitted ? ` and ${facetOmitted} profile rules` : ''} omitted (budget). List: forgen rule list`);
   }
   if (warningsBlock) parts.push(warningsBlock);
 
-  return { text: parts.join('\n\n'), included, omitted };
+  return { text: parts.join('\n\n'), included, omitted, tier2 };
+}
+
+/** 2층 색인 한 줄: 룰 수와 주제 낱말(겹치지 않게, 룰마다 앞의 몇 개). Q11 — 색인에 보이는 2층 룰은 누락으로 세지 않는다. */
+export function tier2IndexLine(rules: Rule[], words: Map<string, string[]>, maxWords = 24): string {
+  const seen = new Set<string>();
+  const topics: string[] = [];
+  for (let round = 0; round < 3 && topics.length < maxWords; round++) {
+    for (const r of rules) {
+      const w = (words.get(r.rule_id) ?? [])[round];
+      if (!w || seen.has(w)) continue;
+      seen.add(w);
+      topics.push(w);
+      if (topics.length >= maxWords) break;
+    }
+  }
+  return `## Situational Rules\n- ${rules.length} more load once when the prompt or tool matches${topics.length ? ` (topics: ${topics.join(', ')})` : ''}. See all: rule-list tool.`;
 }
 
 

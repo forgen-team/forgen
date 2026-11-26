@@ -329,6 +329,11 @@ export async function main(): Promise<void> {
       try { (await import('../core/session-context.js')).recordWorkContext(input.session_id, input.cwd, { countTurn: true }); } catch { /* fail-open */ }
       // 0.8.0 S5: 이 세션에서 처음 들어온 프로젝트면 그 프로젝트 룰을 한 번 넣는다.
       try { switchContext = (await import('../core/project-switch.js')).projectSwitchContext(input.session_id, input.cwd); } catch { /* fail-open */ }
+      // 0.9.0 두 층: 이 프롬프트 낱말이 2층 룰과 맞으면 그 룰을 이 세션에 한 번 넣는다(결정적, 모델 호출 없음).
+      try {
+        const t2 = await (await import('../core/tier2.js')).tier2Context(input.session_id, input.prompt, 'prompt');
+        if (t2) switchContext = switchContext ? `${switchContext}\n${t2}` : t2;
+      } catch { /* fail-open */ }
     }
 
     // ADR-008 / docs/codex-integration.md — prompt-history writer 활성화
