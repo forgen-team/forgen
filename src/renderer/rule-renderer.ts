@@ -309,53 +309,153 @@ export function renderRulesDetailed(
 
   const included: Rule[] = [];
   const omitted: Rule[] = [];
-  let strongShown = false;
   // 2층 룰은 예산을 쓰지 않는다 — 1층 선택은 2층 룰과 무관하게 정해진다(우선순위는 updated_at 을 보므로, 조건 승인처럼 룰 파일을
   // 다시 쓰는 일이 1층 룰을 밀어내면 안 된다). 2층으로 빠진 자리는 예산에서 빠졌던 1층 룰이 채운다(§3.1 예산 탈락 결함).
   for (const rule of deduped) {
-    const text = ruleToText(rule, fmt);
-    const cost = fmt.compact ? legacyTextLength(rule) : text.length;
+    const cost = fmt.compact ? legacyTextLength(rule) : ruleToText(rule, fmt).length;
     if (used + cost + 3 > ctx.max_chars || included.length >= ctx.max_rules) {
       omitted.push(rule);
       continue;
     }
     used += cost + 3;
     included.push(rule);
-    if (fmt.compact && rule.strength === 'strong') strongShown = true;
-    const section: SectionName = rule.strength === 'hard'
-      ? 'Must Not'
-      : (CATEGORY_TO_SECTION[rule.category] ?? 'Working Defaults');
-    sections.get(section)?.push(text);
   }
 
-  // R8: 4축 프로필을 렌더에 연결한다. 이전에는 `include_pack_summary`(항상 false) 뒤에 있어 facet 값을 바꿔도
-  // 주입본이 같았다. 0.85/0.15 를 넘는 facet 의 규칙만 넣고, 룰이 예산을 다 쓴 뒤 남는 자리에만 들어간다(예산 최하위).
+  // R8: 4축 프로필을 렌더에 연결한다. 0.85/0.15 를 넘는 facet 의 규칙만 넣고, 룰이 예산을 다 쓴 뒤 남는 자리에만 들어간다(예산 최하위).
   // 임계값 근거: 기본 0.5, 자동 갱신 ±0.1 단위 → 극단값은 여러 세션의 강한 신호가 누적된 뒤에만 도달한다.
+  const facets: FacetRule[] = [];
   let facetOmitted = 0;
   for (const fr of facetDrivenRules(profile)) {
     const text = `[profile] ${fr.rule}`;
     if (used + text.length + 3 > ctx.max_chars) { facetOmitted++; continue; }
     used += text.length + 3;
-    sections.get(fr.section)?.push(text);
+    facets.push(fr);
   }
 
-  const parts: string[] = [];
-  const mustNot = sections.get('Must Not') ?? [];
-  if (mustNot.length > 0) parts.push(`## Must Not\n${mustNot.map((i) => `- ${i}`).join('\n')}`);
-  parts.push(evidenceBlock);
-  for (const name of SECTION_ORDER) {
-    if (name === 'Must Not') continue;
-    const items = sections.get(name) ?? [];
-    if (items.length > 0) parts.push(`## ${name}\n${items.map((i) => `- ${i}`).join('\n')}`);
-  }
-  if (strongShown) parts.splice(parts.indexOf(evidenceBlock) + 1, 0, '(! = strong preference)');
-  if (tier2Line) parts.push(tier2Line);
-  if (omitted.length > 0 || facetOmitted > 0) {
-    parts.push(`## Omitted\n- ${omitted.length} lower-priority rules${facetOmitted ? ` and ${facetOmitted} profile rules` : ''} omitted (budget). List: forgen rule list`);
-  }
-  if (warningsBlock) parts.push(warningsBlock);
+  const assemble = (inc: Rule[], omit: Rule[], fr: FacetRule[], frOmitted: number, short: Map<string, string>): string => {
+    const secs = new Map<SectionName, string[]>();
+    for (const name of SECTION_ORDER) secs.set(name, [...(sections.get(name) ?? [])]);
+    let strongShown = false;
+    for (const rule of inc) {
+      const s = short.get(rule.rule_id);
+      const text = ruleToText(s ? { ...rule, policy: s } : rule, fmt);
+      if (fmt.compact && rule.strength === 'strong') strongShown = true;
+      const section: SectionName = rule.strength === 'hard' ? 'Must Not' : (CATEGORY_TO_SECTION[rule.category] ?? 'Working Defaults');
+      secs.get(section)?.push(text);
+    }
+    for (const f of fr) secs.get(f.section)?.push(`[profile] ${f.rule}`);
+    const parts: string[] = [];
+    const mustNot = secs.get('Must Not') ?? [];
+    if (mustNot.length > 0) parts.push(`## Must Not\n${mustNot.map((i) => `- ${i}`).join('\n')}`);
+    parts.push(evidenceBlock);
+    for (const name of SECTION_ORDER) {
+      if (name === 'Must Not') continue;
+      const items = secs.get(name) ?? [];
+      if (items.length > 0) parts.push(`## ${name}\n${items.map((i) => `- ${i}`).join('\n')}`);
+    }
+    if (strongShown) parts.splice(parts.indexOf(evidenceBlock) + 1, 0, '(! = strong preference)');
+    if (tier2Line) parts.push(tier2Line);
+    const note = omittedNote(omit, frOmitted, short.size, ctx.projectKey ?? null);
+    if (note) parts.push(note);
+    if (warningsBlock) parts.push(warningsBlock);
+    return parts.join('\n\n');
+  };
 
-  return { text: parts.join('\n\n'), included, omitted, tier2 };
+  let text = assemble(included, omitted, facets, facetOmitted, new Map());
+  // 0.9.1 #1: 압축 형식(세션 시작)에서는 그 폴더에 해당하는 중요 지침(직접 교정·hard·strong)을 예산으로 빼지 않는다.
+  // 블록 상한 = min(4,000토큰, 위 예전 선택 블록 +20%). 넘으면 그 폴더에 해당하지 않는 룰 → 추론·온보딩 등 낮은 순위 룰 순으로 빼고,
+  // 그래도 넘으면 중요 지침을 짧은 형태(첫 문장, 길면 앞부분)로 싣는다 — 빼지 않는다.
+  if (fmt.compact && omitted.some((r) => isImportantHere(r, ctx.projectKey ?? null))) {
+    const cap = Math.min(SESSION_BLOCK_MAX_TOKENS, Math.floor(estimateTokens(text) * 1.2));
+    const fits = (t: string) => estimateTokens(t) <= cap && t.length <= ctx.max_chars;
+    const important = deduped.filter((r) => isImportantHere(r, ctx.projectKey ?? null));
+    const importantIds = new Set(important.map((r) => r.rule_id));
+    const keptIds = new Set(included.map((r) => r.rule_id));
+    let others = deduped.filter((r) => !importantIds.has(r.rule_id) && keptIds.has(r.rule_id));
+    // 빼는 순서: 이 폴더에 해당하지 않는 룰 먼저, 그다음 우선순위가 낮은 것부터
+    const dropOrder = [...others].sort((a, b) => Number(appliesForContext(a, ctx.projectKey ?? null)) - Number(appliesForContext(b, ctx.projectKey ?? null)) || byPriority(b, a));
+    let fr = facets;
+    let frOmitted = facetOmitted;
+    const pick = () => deduped.filter((r) => importantIds.has(r.rule_id) || others.some((o) => o.rule_id === r.rule_id));
+    const omitOf = (inc: Rule[]) => deduped.filter((r) => !inc.includes(r));
+    let inc = pick();
+    let short = new Map<string, string>();
+    text = assemble(inc, omitOf(inc), fr, frOmitted, short);
+    while (!fits(text) && fr.length) { fr = fr.slice(0, -1); frOmitted++; text = assemble(inc, omitOf(inc), fr, frOmitted, short); }
+    for (const d of dropOrder) {
+      if (fits(text)) break;
+      others = others.filter((o) => o.rule_id !== d.rule_id);
+      inc = pick();
+      text = assemble(inc, omitOf(inc), fr, frOmitted, short);
+    }
+    if (!fits(text)) {
+      // 중요 지침을 같은 길이 상한 L 로 줄인다 — 상한에 맞는 가장 긴 L(40자까지). 그래도 넘으면 40자 형태로 싣는다.
+      const longest = Math.max(...important.map((r) => r.policy.length));
+      for (let L = Math.min(longest, 400); L >= 40; L -= 10) {
+        short = new Map(important.filter((r) => r.policy.length > L).map((r) => [r.rule_id, shortPolicy(r.policy, L)]));
+        text = assemble(inc, omitOf(inc), fr, frOmitted, short);
+        if (fits(text)) break;
+      }
+    }
+    // 마지막 안전장치: 호스트가 통째로 버리는 길이(세션 시작 전체 ~9,500자)를 넘지 않게, 40자 형태로도 글자 상한을 넘으면
+    // 우선순위가 가장 낮은 중요 지침부터 뺀다(Omitted 에 "중요 지침 N개"로 적는다). 실데이터 폴더에서는 일어나지 않는 극단값용.
+    while (text.length > ctx.max_chars && inc.length) {
+      const last = [...inc].sort(byPriority).pop() as Rule;
+      importantIds.delete(last.rule_id);
+      inc = pick();
+      text = assemble(inc, omitOf(inc), fr, frOmitted, short);
+    }
+    included.splice(0, included.length, ...inc);
+    omitted.splice(0, omitted.length, ...omitOf(inc));
+  }
+
+  return { text, included, omitted, tier2 };
+}
+
+/** 세션 시작 forgen 블록의 절대 상한(0.9.1 #1). */
+export const SESSION_BLOCK_MAX_TOKENS = 4000;
+
+/** 로컬 근사(audit/tokens.ts 와 같은 식): ASCII 4자 ≈ 1토큰, 그 밖 1자 ≈ 0.9토큰. */
+function estimateTokens(text: string): number {
+  let ascii = 0;
+  let other = 0;
+  for (const ch of text) { if ((ch.codePointAt(0) ?? 0) < 128) ascii++; else other++; }
+  return Math.round(ascii / 4 + other * 0.9);
+}
+
+/** 그 폴더에 해당하는 중요 지침(직접 교정·hard·strong) — 세션 시작에서 예산으로 빼지 않는다. */
+export function isImportantHere(r: Rule, projectKey: string | null): boolean {
+  return (r.source === 'explicit_correction' || r.strength === 'hard' || r.strength === 'strong') && appliesForContext(r, projectKey);
+}
+
+/** 짧은 형태: 첫 문장, 그래도 길면 L자 앞부분 + … */
+export function shortPolicy(policy: string, L: number): string {
+  const t = policy.replace(/\s+/g, ' ').trim();
+  const first = /^(.+?[.!?。])(\s|$)/.exec(t)?.[1] ?? t;
+  const s = first.length <= L ? first : t;
+  return s.length <= L ? s : `${s.slice(0, L - 1).trimEnd()}…`;
+}
+
+/** Omitted 줄(사람이 읽는 말): 빠진 룰의 수와 종류. 짧게 실은 중요 지침도 알린다. */
+export function omittedNote(omitted: Rule[], facetOmitted: number, shortened: number, projectKey: string | null): string {
+  if (!omitted.length && !facetOmitted && !shortened) return '';
+  const ko = getLocale() === 'ko';
+  const n = { other: 0, inference: 0, onboarding: 0, rest: 0, important: 0 };
+  for (const r of omitted) {
+    if (isImportantHere(r, projectKey)) n.important++;
+    else if (!appliesForContext(r, projectKey)) n.other++;
+    else if (r.source === 'behavior_inference') n.inference++;
+    else if (r.source === 'onboarding') n.onboarding++;
+    else n.rest++;
+  }
+  const kinds = ko
+    ? [n.important && `중요 지침 ${n.important}개`, n.inference && `추론 룰 ${n.inference}개`, n.onboarding && `온보딩 룰 ${n.onboarding}개`, n.other && `다른 프로젝트 룰 ${n.other}개`, n.rest && `우선순위 낮은 룰 ${n.rest}개`, facetOmitted && `프로필 규칙 ${facetOmitted}개`]
+    : [n.important && `${n.important} important`, n.inference && `${n.inference} inferred`, n.onboarding && `${n.onboarding} onboarding`, n.other && `${n.other} other-project`, n.rest && `${n.rest} lower-priority`, facetOmitted && `${facetOmitted} profile`];
+  const list = kinds.filter(Boolean).join(ko ? '·' : ', ');
+  const lines: string[] = [];
+  if (list) lines.push(ko ? `- ${list}는 이번 세션에 안 넣음(자리 부족) — 전체: forgen rule list` : `- ${list} rules not loaded this session (no room). All: forgen rule list`);
+  if (shortened) lines.push(ko ? `- 중요 지침 ${shortened}개는 앞부분만 넣음 — 전문: forgen rule list` : `- ${shortened} important rules shortened to their first part. Full text: forgen rule list`);
+  return `## Omitted\n${lines.join('\n')}`;
 }
 
 /** 2층 색인 한 줄: 룰 수와 주제 낱말(겹치지 않게, 룰마다 앞의 몇 개). Q11 — 색인에 보이는 2층 룰은 누락으로 세지 않는다. */
