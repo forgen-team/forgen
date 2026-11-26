@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.2] — 2026-11-26 — 업그레이드에서 나온 결함 2개
+
+0.9.1 을 실서버에 npm 으로 올린 뒤 찾았다. 0.9.1 검증이 이전 버전에서 올리는 과정을 따라 하지 않아 놓쳤다. 새 기능 없음. 정본: `docs/plans/2026-11-26-v0.9.2-upgrade-fixes.md`.
+
+### Fixed
+- **업그레이드가 사용자가 `forgen fix` 로 끈 forgen 스킬을 다시 깔던 것**(실서버: 16개 재생성, 세션 시작 스킬 설명 217 → 986 토큰). 끈 스킬은 `~/.forgen/state/disabled-skills.json` 에 기록되고, 모든 설치 경로(postinstall Claude·Codex, `forgen install`, `doctor --repair`, 세션 시작의 보완 설치)가 같은 함수로 그 기록을 존중한다. 0.9.0·0.9.1 로 끈 기록(처방 원장)은 첫 업그레이드 때 옮긴다. 다시 켜기: `forgen fix --undo <id>`. 새 스킬은 그대로 설치된다. Codex 사본은 판정 근거(Codex 사용 기록)가 없어 끄지 않는다.
+- **감사 첫 화면이 이전 판정 방식으로 잰 재생 결과를 경고 없이 보여 주던 것**(실서버: 0.9.0 판정의 "13.5%"). 판정 모델·문안 번호·후보 고르기가 지금과 다르면 "이전 판정 방식으로 잰 값 — forgen audit recurrence 로 다시 재세요"와 옛 값임을 밝힌다. forgen 버전만 다른 것은 경고하지 않는다.
+
 ## [0.9.1] — 2026-11-26 — 직접 써 보고 고친 것: 읽히는 화면 · 빠지던 중요 룰 · 설치 전 먼저 보기
 
 0.9.0 을 실데이터로 사용자처럼 처음부터 끝까지 써 보고 찾은 결함 12개와, claude-bulkhead 에서 가져온 다섯 가지를 고쳤다. 정본: `docs/plans/2026-11-26-v0.9.1-fixes.md`. 이번부터 완료 기준은 "실데이터로 돌린 화면을 처음 보는 사람이 읽을 수 있는가"다(fresh-context 읽기 비평 2회, 출력 전문 대조).
