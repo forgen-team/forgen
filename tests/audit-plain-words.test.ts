@@ -144,6 +144,19 @@ describe('0.9.1 화면 — 내부 용어 없음 · 첫 화면 모양', () => {
     expect(json.representativePct).toBeLessThanOrEqual(Math.max(...pcts));
   });
 
+  it('#14 audit --share: 숫자와 발견 유형만 — 경로·폴더·프로젝트 이름·기억 본문·비밀 없음', async () => {
+    const out = await quiet(() => handleAudit([...ARGS(), '--no-open', '--share']));
+    const body = out.slice(0, out.indexOf('자세히(나만 보기)'));
+    expect(body).toContain('붙여 넣기용 마크다운');
+    expect(body).toContain('**forgen 감사 요약**');
+    expect(body).not.toMatch(/\/[\w.-]+\//); // 경로 없음
+    for (const f of FX.folders) expect(body).not.toContain(path.basename(f));
+    expect(body).not.toMatch(/projc|proj-a|proj-b/i);
+    expect(body).not.toContain('sk-');
+    expect(body).not.toContain('dq0'); // 기억 본문(심은 문장 표지) 없음
+    expect(banned(body)).toEqual([]);
+  });
+
   it('audit recurrence 요약: 내부 용어 없음, 비율은 % · 예시 인용은 비밀 가림', () => {
     const text = summaryLines(recResult() as never).join('\n');
     expect(banned(text)).toEqual([]);

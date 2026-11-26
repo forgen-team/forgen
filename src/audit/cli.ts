@@ -22,7 +22,9 @@ import { attachModelChecks, runModelChecks } from './model-checks.js';
 import { getLocale, initLocaleFromConfig } from '../i18n/index.js';
 import { groupSame } from './activity.js';
 
-const HELP_KO = `  forgen audit [--folder <경로>]... [--claude-dir <경로>] [--json] [--timing] [--no-model] [--no-open]
+const HELP_KO = `  forgen audit [--since 30d] [--share] [--folder <경로>]... [--claude-dir <경로>] [--json] [--timing] [--no-model] [--no-open]
+      설치 전에도 됨: npx -y @wooojin/forgen audit --since 30d (결과 폴더 ~/.forgen/audit 밖에는 아무것도 쓰지 않음)
+      --since: 그 기간 대화 기록에서 같은 말 다시 하기도 잰다 · --share: 숫자와 발견 유형만 담은 공유용 요약
       CLAUDE.md·.claude/rules·자동 메모(MEMORY.md)·AGENTS.md·forgen 룰을 읽기만 해서 점검한다:
       잘림·크기·토큰·같은 문장·없는 것을 가리키는 줄·다른 프로젝트 지시 섞임·늘 실리는 rules 파일 +
       모델 판정(같은 뜻 중복·부딪힘·섞임 — 내 컴퓨터의 claude CLI, 판정은 저장해 다시 묻지 않음)
@@ -43,7 +45,9 @@ const HELP_KO = `  forgen audit [--folder <경로>]... [--claude-dir <경로>] [
       상황 맞춤 룰 후보 시험: 룰마다 근거 교정 직전 대화를 다시 대 보고 조건이 맞았을지 본다. --apply 면 결과를 적어
       다음 세션부터 통과한 룰은 조건이 맞을 때만 들어온다`;
 
-const HELP_EN = `  forgen audit [--folder <path>]... [--claude-dir <path>] [--json] [--timing] [--no-model] [--no-open]
+const HELP_EN = `  forgen audit [--since 30d] [--share] [--folder <path>]... [--claude-dir <path>] [--json] [--timing] [--no-model] [--no-open]
+      Works before installing: npx -y @wooojin/forgen audit --since 30d (writes nothing outside ~/.forgen/audit)
+      --since: also count repeated corrections in that window · --share: short summary with numbers and finding types only
       Read-only check of CLAUDE.md · .claude/rules · auto memory (MEMORY.md) · AGENTS.md · forgen rules:
       truncation · size · tokens · same sentence · lines pointing at missing files · cross-project mix · always-loaded rules files +
       model checks (same meaning · conflict · mix — your local claude CLI, results stored so nothing is asked twice)
@@ -62,6 +66,13 @@ const HELP_EN = `  forgen audit [--folder <path>]... [--claude-dir <path>] [--js
   forgen audit tier2 --replay [--apply] [--json] [--claude-dir <path>]
       Test situational-rule candidates against the conversation right before each source correction. --apply records the result`;
 
+/** 터미널에서 예/아니오 한 번 묻기(기본 예). */
+async function askYes(q: string): Promise<boolean> {
+  const { createInterface } = await import('node:readline/promises');
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  try { const a = (await rl.question(q)).trim().toLowerCase(); return !(a === 'n' || a === 'no' || a === '아니오' || a === 'ㄴ'); } finally { rl.close(); }
+}
+
 export function auditHelp(): string { initLocaleFromConfig(); return getLocale() === 'ko' ? HELP_KO : HELP_EN; }
 
 function values(args: string[], name: string): string[] {
@@ -71,7 +82,7 @@ function values(args: string[], name: string): string[] {
 }
 
 const KNOWN_BY_SUB: Record<string, Set<string>> = {
-  '': new Set(['--folder', '--claude-dir', '--json', '--timing', '--no-model', '--no-open', '--help', '-h']),
+  '': new Set(['--folder', '--claude-dir', '--json', '--timing', '--no-model', '--no-open', '--since', '--share', '--help', '-h']),
   tokens: new Set(['--folder', '--claude-dir', '--json', '--help', '-h']),
   recurrence: new Set(['--claude-dir', '--since', '--until', '--lookback', '--limit', '--no-model', '--json', '--help', '-h']),
   baseline: new Set(['--claude-dir', '--until', '--freeze', '--force', '--json', '--help', '-h']),
@@ -216,15 +227,32 @@ export async function handleAudit(args: string[]): Promise<void> {
     }
     return;
   }
-  const run = runAudit({ folders: values(rest, '--folder'), claudeDir });
-  try { const n3 = (await import('./fix.js')).n3Summary(run); if (n3) run.result.summary.n3 = n3; } catch (e) { process.stderr.write(`[forgen] N3 같은 집합 비교 실패: ${e instanceof Error ? e.message : String(e)}\n`); }
   const json = rest.includes('--json');
-  let judgeStats: JudgeStats | null = null;
-  if (sub !== 'tokens' && !rest.includes('--no-model')) {
+  let useModel = sub !== 'tokens' && !rest.includes('--no-model');
+  // 0.9.1 #11: 모델 판정은 첫 실행에 범위를 알리고, 터미널이면 묻는다(아니오 = --no-model 과 같음).
+  if (useModel) {
     const d = takeModelDisclosure();
-    if (d) { if (json) process.stderr.write(`${d}\n\n`); else console.log(`${d}\n`); }
-    judgeStats = await modelChecks(run);
+    if (d) {
+      if (json) process.stderr.write(`${d}\n\n`); else console.log(`${d}\n`);
+      if (!json && process.stdin.isTTY && process.stdout.isTTY) useModel = await askYes('모델 판정을 쓸까요? [Y/n] (n = 모델 없이, 아무것도 보내지 않음) ');
+    }
   }
+  // 0.9.1 #11: --since 면 그 기간 대화 기록에서 "같은 말 다시 하기"도 같이 잰다(설치 전 미리 보기). 결과 폴더(~/.forgen/audit) 밖에는 쓰지 않는다.
+  const sinceArg = values(rest, '--since')[0];
+  if (rest.includes('--since') && !sinceArg) { console.error('[forgen] --since 뒤에 30d 처럼 날 수나 날짜'); process.exitCode = 1; return; }
+  if (sinceArg && sub !== 'tokens') {
+    try {
+      const { runRecurrence, writeRecurrenceRun } = await import('./recurrence.js');
+      const { parseDate, parseDays } = await import('./recurrence-cli.js');
+      const days = /^\d+\s*d?$/.test(sinceArg.trim()) ? parseDays(sinceArg) : undefined;
+      const since = days !== undefined ? new Date(Date.now() - days * 86_400_000) : parseDate(sinceArg, '--since');
+      writeRecurrenceRun(await runRecurrence({ claudeDir, since, model: useModel }));
+    } catch (e) { process.stderr.write(`[forgen] 같은 말 다시 하기를 재지 못함: ${e instanceof Error ? e.message : String(e)}\n`); }
+  }
+  const run = runAudit({ folders: values(rest, '--folder'), claudeDir });
+  try { const n3 = (await import('./fix.js')).n3Summary(run); if (n3) run.result.summary.n3 = n3; } catch (e) { process.stderr.write(`[forgen] 처방 전후 비교 실패: ${e instanceof Error ? e.message : String(e)}\n`); }
+  let judgeStats: JudgeStats | null = null;
+  if (useModel) judgeStats = await modelChecks(run);
 
   if (sub === 'tokens') {
     if (json) console.log(JSON.stringify({ schema: 'forgen-audit-tokens/1', generatedAt: run.result.generatedAt, ...(run.result.summary.n3 ? { n3: run.result.summary.n3 } : {}), folders: run.result.folders.map((f) => ({ folder: f.folder, projectKey: f.projectKey, totalTokens: f.totalTokens, ...(f.forgenTier2 ? { forgenTier2: f.forgenTier2, expectedTokens: f.totalTokens + (f.forgenTier2.expected ?? 0) } : {}), byLayer: f.byLayer, reducible: f.reducible, mixCandidateTokens: f.mixCandidateTokens, entries: f.entries })) }, null, 2));
@@ -245,6 +273,15 @@ export async function handleAudit(args: string[]): Promise<void> {
     return;
   }
   const r = run.result;
+  if (rest.includes('--share')) {
+    // 0.9.1 #14: 숫자와 발견 유형만(경로·이름·본문 없음) — 터미널 글 + 붙여 넣기용 마크다운
+    const sh = (await import('./top.js')).shareSummary(run);
+    console.log('forgen 감사 요약 (공유용 — 경로·프로젝트 이름·기억 내용 없음)');
+    for (const l of sh.text) console.log(`  • ${l}`);
+    console.log(`\n붙여 넣기용 마크다운:\n\n${sh.markdown}\n`);
+    console.log(`자세히(나만 보기): ${shortPath(out.htmlPath)}`);
+    return;
+  }
   console.log(r.model.used
     ? 'forgen 감사 — 내 Claude 기억(CLAUDE.md·메모·forgen 룰)을 읽기만 해서 점검했습니다. 부딪힘·같은 뜻·섞임은 내 컴퓨터의 claude CLI 가 판정(후보 문장만 보냄)\n'
     : 'forgen 감사 — 내 Claude 기억(CLAUDE.md·메모·forgen 룰)을 읽기만 해서 점검했습니다(--no-model: 모델을 부르지 않음, 아무것도 밖으로 보내지 않음)\n');

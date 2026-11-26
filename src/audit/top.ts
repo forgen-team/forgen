@@ -121,6 +121,40 @@ export function nextSteps(run: AuditRun): string[] {
   return out.slice(0, 3);
 }
 
+const KIND_NAME: Record<Finding['kind'], string> = {
+  conflict: '서로 부딪히는 지시', repeat: '적혀 있는데 또 말한 교정', mix: '다른 프로젝트 지시가 섞임', missing: '중요 지침이 안 실림', stale: '없는 파일·명령을 가리키는 줄', dup: '같은 뜻 지시 중복',
+};
+
+/**
+ * 0.9.1 #14 공유용 요약: 숫자와 발견 유형만 — 경로·폴더·프로젝트 이름·기억 본문·인용은 넣지 않는다.
+ * 터미널 텍스트와 붙여 넣기 좋은 마크다운 두 가지.
+ */
+export function shareSummary(run: AuditRun): { text: string[]; markdown: string } {
+  const r = run.result;
+  const f = r.summary.findings;
+  const rec = r.summary.recurrence;
+  const kinds = findings(run).map((x) => KIND_NAME[x.kind]);
+  const lines = [
+    rec.status !== 'none' && rec.per30d
+      ? `지난 30일 교정 약 ${Math.round(rec.per30d.corrections)}번 — 그중 이미 적혀 있는데 또 말한 것 약 ${Math.round(rec.per30d.written)}번, 같은 말 다시 하기 전체 약 ${Math.round(rec.per30d.total)}번`
+      : '같은 말 다시 하기: 아직 재지 않음',
+    `세션 시작에 늘 실리는 기억 약 ${representativeTokens(r)}토큰(자주 쓰는 폴더 평균) · 폴더 ${r.folders.length}곳`,
+    f.conflicts === 'pending' ? `같은 문장 ${f.sameSentence}묶음 · 없는 것을 가리키는 줄 ${f.stale}개 (모델 판정 꺼짐)`
+      : `서로 부딪히는 지시 ${f.conflicts}쌍 · 같은 뜻 중복 ${f.dupGroups}묶음 · 다른 프로젝트 지시 섞임 ${f.mixConfirmed}개 · 같은 문장 ${f.sameSentence}묶음 · 없는 것을 가리키는 줄 ${f.stale}개`,
+    `MEMORY.md 상한에 잘린 곳 ${r.summary.truncation.truncated}곳 (메모 폴더 ${r.summary.truncation.memoryDirs}곳 중)`,
+    ...(kinds.length ? [`가장 중요한 발견 유형: ${kinds.join(' · ')}`] : []),
+    'forgen audit(읽기만 함, 아무것도 보내지 않음)으로 잰 값',
+  ];
+  return { text: lines, markdown: ['**forgen 감사 요약**', '', ...lines.map((l) => `- ${l}`)].join('\n') };
+}
+
+function representativeTokens(r: AuditRun['result']): number {
+  const active = r.folders.filter((x) => (x.sessions30d ?? 0) >= 3);
+  const use = active.length ? active : r.folders;
+  const w = active.length ? use.reduce((n, x) => n + (x.sessions30d ?? 0), 0) : use.length;
+  return w ? Math.round(use.reduce((n, x) => n + x.totalTokens * (active.length ? (x.sessions30d ?? 0) : 1), 0) / w) : 0;
+}
+
 export function attachTop(run: AuditRun): void {
   run.result.summary.top = { findings: findings(run).map(renderFinding), next: nextSteps(run) };
 }

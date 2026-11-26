@@ -436,6 +436,7 @@ export const MODEL_DISCLOSURE = [
   `  상황 맞춤 조건 초안        룰 문장(≤ ${MIX_TEXT_MAX}자) + 그 룰이 실리는 폴더 이름·도구 이름 목록                  ${CHECK_MODEL}   룰 낱말로만 만든 조건`,
   '  보내는 곳은 내가 이미 쓰는 로컬 `claude` CLI 뿐입니다(forgen 서버·제3자 없음). 대화 전체·파일 전체는 보내지 않고, 비밀키는 가리며 <private> 구간은 뺍니다.',
   '  판정 결과는 ~/.forgen/audit/cache/ 에 저장해 같은 입력은 다시 보내지 않습니다.',
+  '  forgen 은 ~/.claude 에 아무것도 쓰지 않습니다. 다만 claude CLI 는 실행될 때 자기 상태 파일(~/.claude/backups 등)을 쓸 수 있습니다 — 그것도 싫으면 --no-model.',
 ].join('\n');
 
 /** 공개를 이미 보였는가 — <FORGEN_HOME>/audit/model-notice.json. 이번 판정자 구성으로 보이지 않았으면 표시하고 기록한다. */
