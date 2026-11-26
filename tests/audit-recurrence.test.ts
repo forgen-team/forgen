@@ -213,6 +213,8 @@ describe('forgen audit recurrence — 합성 D 축소판', () => {
     expect(r.items.find((i) => i.gist.includes(tq(30)))?.branch).toBe('new');
     expect(r.memory.unknownTime).toBeGreaterThanOrEqual(1);
     expect(r.corrections.becameMemory).toBe(1);
+    // 사전 등록 2026-11-26: 교정 뒤에 생긴 기억과의 짝은 "그때 이미 지시했나"가 아니라 따로(나중 기억 질문) 판정한다
+    expect(readJudgeCalls(FAKE).some((c) => c.startsWith('later '))).toBe(true);
     const unk = r.items.find((i) => i.gist.includes(tq(33)));
     expect(unk?.branch).toBe('new');
     expect(unk?.unknown).toBeGreaterThan(0);
@@ -227,9 +229,10 @@ describe('forgen audit recurrence — 합성 D 축소판', () => {
     // 모델: 교정 = Haiku, 쌍 = Sonnet(고정 ID), 묶음 호출, 쌍은 1회(순서 바꾸기 없음)
     const calls = readJudgeCalls(FAKE);
     expect(calls.filter((c) => c.startsWith('correction ')).every((c) => c.endsWith(CORRECTION_MODEL))).toBe(true);
-    expect(calls.filter((c) => c.startsWith('pair ')).every((c) => c.endsWith(PAIR_MODEL))).toBe(true);
-    const sent = calls.filter((c) => c.startsWith('pair ')).reduce((n, c) => n + Number(c.split(' ')[1]), 0);
-    expect(sent).toBe(new Set(r.items.flatMap((i) => i.pairs.map((x) => `${i.gist}|${x.text}`))).size);
+    expect(calls.filter((c) => c.startsWith('pair ') || c.startsWith('later ')).every((c) => c.endsWith(PAIR_MODEL))).toBe(true);
+    // 쌍 판정(그때 이미 지시했나) + 나중 기억 판정(따로) — 둘 다 쌍마다 1회
+    const sent = calls.filter((c) => c.startsWith('pair ') || c.startsWith('later ')).reduce((n, c) => n + Number(c.split(' ')[1]), 0);
+    expect(sent).toBe(new Set(r.items.flatMap((i) => i.pairs.map((x) => `${x.tier === 'later' ? 'L' : 'P'}|${i.gist}|${x.text}`))).size);
     expect(first.judgeStats?.calls).toBe(calls.length);
     expect(first.manifest.judge).toMatchObject({ correction: { model: CORRECTION_MODEL }, pair: { model: PAIR_MODEL, version: PAIR_PROMPT_VERSION, mode: 'single-asymmetric' }, prefilterMin: PREFILTER_MIN });
     expect(r.notes.join(' ')).toContain('기억이 바뀌면(룰을 지우거나 더하면)');

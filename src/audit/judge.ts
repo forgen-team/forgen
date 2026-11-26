@@ -60,6 +60,16 @@ export const PAIR_PROMPT = `너는 기억 감사의 판정자다. 아래 쌍마�
 출력은 쌍마다 한 줄 JSON 만, 다른 말 없이:
 {"id":"<id>","answer":"yes"|"no"|"unknown"}`;
 
+export const LATER_PROMPT_VERSION = 'n4-later/1';
+/** 사전 등록 — 나중 기억 판정(그 뒤 기억이 된 것). 쌍 판정(PAIR_PROMPT)과 다른 질문. */
+export const LATER_PROMPT = `너는 기억 감사의 판정자다. 아래 쌍마다 "교정"(사용자가 AI 에게 한 교정의 요지)과 "나중 기억"(그 교정 **뒤에** 적힌 룰·메모·지침)이 있다.
+질문: 이 나중 기억은 이 교정이 고치려던 행동을 반영해 적힌 것인가 — 앞으로 이 기억을 지키면 같은 교정을 다시 할 필요가 없는가?
+- yes: 나중 기억이 이 교정의 요구(같은 행동·같은 방향)를 담고 있다. 더 일반적인 원칙으로 담아도 yes.
+- no: 주제만 겹치고 이 교정이 요구한 행동은 담지 않았다.
+- unknown: 문장만으로는 판단할 수 없다.
+출력은 쌍마다 한 줄 JSON 만, 다른 말 없이:
+{"id":"<id>","answer":"yes"|"no"|"unknown"}`;
+
 /** 지시 검사(같은 뜻 중복·부딪힘·섞임)와 처방 문안의 판정자 — Haiku(§2.4 표). 교정 판정과 같은 모델 ID. */
 export const CHECK_MODEL = CORRECTION_MODEL;
 export const CHECK_TEXT_MAX = 400;
@@ -365,6 +375,23 @@ export class Judge {
         return { id: it.id, key: pairKey(gist, memory), input: { gist, memory } };
       }),
       block: (c) => `교정: ${c.gist}\n기억: ${c.memory}`,
+      parse: (r) => (r.answer === 'yes' || r.answer === 'no' || r.answer === 'unknown' ? r.answer : undefined),
+    });
+  }
+
+  /**
+   * 나중 기억 판정(따로 셈 — 사전 등록 2026-11-26): 교정 **뒤에** 생긴 기억이 이 교정을 반영해 적힌 것인가.
+   * "그때 이미 지시하고 있었나"와 다른 질문이라 같은 프롬프트로 묻지 않는다. "그 뒤 기억이 된 것" 숫자에만 쓴다.
+   */
+  laterPairs(items: Array<{ id: string; gist: string; memory: string }>): Promise<Map<string, PairVerdict | null>> {
+    return this.run<{ gist: string; memory: string }, PairVerdict>({
+      version: LATER_PROMPT_VERSION, model: PAIR_MODEL, header: LATER_PROMPT,
+      items: items.map((it) => {
+        const gist = prepareText(it.gist, GIST_MAX);
+        const memory = prepareText(it.memory, PAIR_TEXT_MAX);
+        return { id: it.id, key: sha(`${LATER_PROMPT_VERSION}\0${PAIR_MODEL}\0${gist}\0${memory}`), input: { gist, memory } };
+      }),
+      block: (c) => `교정: ${c.gist}\n나중 기억: ${c.memory}`,
       parse: (r) => (r.answer === 'yes' || r.answer === 'no' || r.answer === 'unknown' ? r.answer : undefined),
     });
   }

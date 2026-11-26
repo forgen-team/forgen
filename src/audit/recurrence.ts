@@ -316,7 +316,9 @@ export async function runRecurrence(opts: RecurrenceOptions = {}): Promise<Recur
     plan.set(id, { p, gist, cands, skipped: false });
     for (const c of cands) pairs.push({ id: `${id}|${c.tier}|${c.key}`, gist, memory: c.text });
   }
-  const pairVerdicts = await judge.pairs(pairs);
+  // 사전 등록(2026-11-26): 교정 뒤에 생긴 기억과의 짝은 "그때 이미 지시하고 있었나"로 묻지 않고 따로("나중 기억이 이 교정을 반영했나") 판정한다.
+  const isLater = (x: { id: string }) => x.id.includes('|later|');
+  const pairVerdicts = new Map([...(await judge.pairs(pairs.filter((x) => !isLater(x)))), ...(await judge.laterPairs(pairs.filter(isLater)))]);
   lap('pairJudge');
 
   // 6. 실렸는가 + 갈래

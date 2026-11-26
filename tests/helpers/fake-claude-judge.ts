@@ -21,7 +21,7 @@ process.stdin.on('end', () => {
   if (process.env.FAKE_DOWN === '1') { process.stderr.write('Please run /login\\n'); process.exit(1); }
   const model = process.argv[process.argv.indexOf('--model') + 1];
   const blocks = input.split(/^### /m).slice(1).map((b) => { const nl = b.indexOf('\\n'); return { id: b.slice(0, nl).trim(), body: b.slice(nl + 1) }; });
-  const isPair = input.includes('이미 지시하고 있었나');
+  const isPair = input.includes('이미 지시하고 있었나') || input.includes('나중 기억은 이 교정이');
   const kind = input.includes('언제 쓰는 규칙인가') ? 'condition' : input.includes('기억 파일을 정리하는 편집자') ? 'fix' : input.includes('한 프로젝트에서만 뜻이 있는가') ? 'mix' : input.includes('하나만 남겨도 AI 가 받는') ? 'dup' : input.includes('동시에 지킬 수 없는가') ? 'conflict' : isPair ? 'pair' : 'correction';
   const out = [];
   for (const b of blocks) {
@@ -52,7 +52,7 @@ process.stdin.on('end', () => {
       else out.push(JSON.stringify({ id: b.id, text: t1, name: 'memo ' + t1.slice(0, 12), description: t1.slice(0, 60) }));
     } else if (isPair) {
       const a = (/^교정: (.*)$/m.exec(b.body) || [])[1] || '';
-      const bb = (/^기억: (.*)$/m.exec(b.body) || [])[1] || '';
+      const bb = (/^(?:나중 )?기억: (.*)$/m.exec(b.body) || [])[1] || '';
       const ta = (a.match(/tq\\d\\d/) || [])[0];
       const tb = (bb.match(/tq\\d\\d/) || [])[0];
       const answer = a.includes('UNK') || bb.includes('UNK') ? 'unknown' : ta && ta === tb ? 'yes' : 'no';
@@ -63,7 +63,7 @@ process.stdin.on('end', () => {
       out.push(JSON.stringify({ id: b.id, correction: !!m, gist: m ? '고칠 것 ' + m[1] + (u.includes('UNK') ? ' UNK' : '') + ' 방향 지시' : '', task_specific: u.includes('[[T]]') }));
     }
   }
-  if (S) fs.appendFileSync(S + '/calls.log', kind + ' ' + blocks.length + ' ' + model + '\\n');
+  if (S) fs.appendFileSync(S + '/calls.log', (input.includes('나중 기억은 이 교정이') ? 'later' : kind) + ' ' + blocks.length + ' ' + model + '\\n');
   process.stdout.write('\`\`\`\\n' + out.join('\\n') + '\\n\`\`\`\\n');
 });
 `;
