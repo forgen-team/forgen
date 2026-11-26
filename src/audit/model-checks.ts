@@ -12,7 +12,7 @@
 import { isNeg } from '../way/conflict.js';
 import { bigrams, topK } from './lexical.js';
 import { CHECK_MODEL, CONFLICT_PROMPT_VERSION, DUP_PROMPT_VERSION, MIX_PROMPT_VERSION, type CheckVerdict, type Judge, type MixVerdict } from './judge.js';
-import { isImportantRule, type MixCandidate, type Unit, type UnitLayer } from './checks.js';
+import { isDirective, isImportantRule, type MixCandidate, type Unit, type UnitLayer } from './checks.js';
 import { unitKey, type AuditContext, type AuditResult } from './run.js';
 import { createHash } from 'node:crypto';
 
@@ -64,7 +64,8 @@ const owner = (u: { ruleId?: string; path: string }) => u.ruleId ?? u.path;
 
 /** 결정적 후보 고르기 — 모델을 부르지 않는다. */
 export function pairCandidates(ctx: AuditContext): { dup: Omit<PairFinding, 'verdict' | 'reason'>[]; conflict: Omit<PairFinding, 'verdict' | 'reason'>[] } {
-  const units = ctx.units.filter((u) => u.norm.length >= MIN_NORM && (ctx.loadedIn.get(unitKey(u))?.length ?? 0) > 0);
+  // 0.9.1 #7: 지시문만(목록·링크·표·설명 줄은 같은 뜻·부딪힘 후보에서 뺀다)
+  const units = ctx.units.filter((u) => u.norm.length >= MIN_NORM && (ctx.loadedIn.get(unitKey(u))?.length ?? 0) > 0 && isDirective(u));
   const feedbackTopics = ctx.topics.filter((t) => t.memoryType === 'feedback' && t.norm.length >= MIN_NORM);
   const grams = new Map<string, Set<string>>();
   const g = (u: Unit) => { const k = unitKey(u); let x = grams.get(k); if (!x) { x = bigrams(u.norm); grams.set(k, x); } return x; };
