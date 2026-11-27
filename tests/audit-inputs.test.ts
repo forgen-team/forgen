@@ -195,7 +195,7 @@ describe('runInputs (합성 기록)', async () => {
       { week: '2026-11-09', days: 7, value: null, defectReports: 1, doneClaims: 0 },
       { week: '2026-11-16', days: 7, value: 1, defectReports: 1, doneClaims: 1 },
     ]);
-    expect(r.total.selfFound).toEqual({ blocks: 1, doneClaimsWithSelfFound: 1, a0Phrase: 0 });
+    expect(r.total.selfFound).toEqual({ blocks: 1, doneClaimsWithSelfFound: 1, a0Phrase: 0, openedByHumanDefect: 0 });
     // "## 판단할 것\nA 안(추천) / B 안" → 라벨 항목 있음, 다음 발화 "아니 B 로 하자" → 뒤집기
     expect(r.total.m3).toEqual({
       labeled: 1, labeledNone: 0, labeledItem: 1, withNext: 1, overturned: 1, accepted: 0, unclear: 0, ratio: 1,
@@ -293,5 +293,25 @@ describe('handleInputs — 기본은 stdout 만, --save 일 때만 FORGEN_HOME/a
     expect(out).toContain('사람 발화 9 [실측]');
     expect(fs.readdirSync(path.join(FH, 'audit', 'inputs'))).toEqual(['2026-11-16.json']);
     expect(fs.readdirSync(FH)).toEqual(['audit']);
+  });
+});
+
+describe('스스로 찾은 결함: 사람이 결함을 보고해 연 턴은 세지 않는다 (다듬기 1회)', async () => {
+  const dir = path.join(ROOT, 'claude-self');
+  const put = (session: string, lines: J[]) => {
+    const p = path.join(dir, 'projects', W, `${session}.jsonl`);
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, `${lines.map((l) => JSON.stringify(l)).join('\n')}\n`);
+  };
+  const found = '목록 화면을 다시 보다가 정렬이 어긋나는 버그를 발견해 고쳤습니다.';
+  const done = `${KO_LONG}작업을 완료했습니다.`;
+  // 사람이 결함을 보고해 연 턴: 찾은 결함은 "스스로"가 아님
+  put('s-defect', [user('2026-11-17T01:00:00Z', '목록 정렬이 이상해. 고쳐 줘'), asst('2026-11-17T01:05:00Z', found), asst('2026-11-17T01:06:00Z', done)]);
+  // 지시로 연 턴: 셈
+  put('s-own', [user('2026-11-18T01:00:00Z', '목록 화면 정리해 줘'), asst('2026-11-18T01:05:00Z', found), asst('2026-11-18T01:06:00Z', done)]);
+  const r = await runInputs({ claudeDir: dir, sinceMs: SINCE, untilMs: UNTIL, now: new Date('2026-11-27T00:00:00Z') });
+  it('결함 보고로 연 턴은 openedByHumanDefect 로만 센다', () => {
+    expect(r.total.m2.doneClaims).toBe(2);
+    expect(r.total.selfFound).toEqual({ blocks: 1, doneClaimsWithSelfFound: 1, a0Phrase: 0, openedByHumanDefect: 1 });
   });
 });

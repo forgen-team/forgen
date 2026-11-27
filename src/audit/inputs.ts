@@ -171,7 +171,7 @@ const zeroTypes = (): TypeCounts => ({ nudge: 0, lang: 0, done: 0, proxy: 0, def
 interface Ratio { n: number; low: number; ratio: number | null }
 const ratio = (n: number, low: number): Ratio => ({ n, low, ratio: n ? Math.round((low / n) * 1000) / 1000 : null });
 
-export interface Claim { session: string; ms: number; done: boolean; next: InputType[] | null; nextIsOther: boolean; selfBlocks: number; selfA0: boolean; decision: boolean; decisionReply: Reply | null; label: 'item' | 'none' | null; labelReply: Reply | null }
+export interface Claim { session: string; ms: number; done: boolean; next: InputType[] | null; nextIsOther: boolean; selfBlocks: number; openedByDefect: boolean; selfA0: boolean; decision: boolean; decisionReply: Reply | null; label: 'item' | 'none' | null; labelReply: Reply | null }
 type Reply = 'overturn' | 'accept' | 'unclear';
 interface ReplyCounts { withNext: number; overturned: number; accepted: number; unclear: number; ratio: number | null }
 
@@ -180,7 +180,8 @@ interface Counts {
   lang: { all: Ratio; final: Ratio; correctionUtterances: number };
   /** 주 지표 = defectPerDoneClaim(결함 보고 ÷ 완료 보고)의 주간 추이. afterDone 은 보조(완료 보고 바로 다음 발화가 결함인 비율) */
   m2: { defectPerDoneClaim: number | null; defectReports: number; doneClaims: number; afterDone: { turnsWithReply: number; doneWithNext: number; nextDefect: number; ratio: number | null; control: { turns: number; nextDefect: number; ratio: number | null } } };
-  selfFound: { blocks: number; doneClaimsWithSelfFound: number; a0Phrase: number };
+  /** openedByHumanDefect: 스스로 찾은 결함 블록이 있지만 턴을 연 사람 발화가 결함 보고라 세지 않은 완료 보고 수(다듬기 1회, 2026-11-27) */
+  selfFound: { blocks: number; doneClaimsWithSelfFound: number; a0Phrase: number; openedByHumanDefect: number };
   /** labeled = 턴 마지막 보고에 "판단할 것" 라벨 줄이 있는 수, labeledNone = 그 라벨이 "없음". 뒤집기 비율의 분모는 라벨에 항목이 있고 다음 사람 발화가 있는 보고 */
   m3: { labeled: number; labeledNone: number; labeledItem: number } & ReplyCounts & { legacy: { decisionReports: number } & ReplyCounts };
 }
@@ -220,7 +221,7 @@ export const NOTES = [
   '단순 입력(simple) = 재촉·언어·완료 확인·조작 대행 중 하나라도 걸린 발화 수.',
   '언어 누수 [실측]: 사람 발화가 있는 일반 폴더 세션의 어시스턴트 text 블록. 코드·인라인 코드·URL·경로를 지운 뒤 한글/(한글+영문) < 0.3 이면 저한글. 20자 미만·JSON 응답·코드뿐인 응답은 뺀다. final = 턴의 마지막 text 블록만.',
   'M2 [근사]: 주 지표는 defectPerDoneClaim = 결함 보고 발화 수 ÷ 완료 보고 수의 주간 추이(trend.defectPerDoneClaim). 완료 보고 = 턴 마지막 text 블록이 150자 이상이고 완료 문구를 담음. 보조(afterDone): 완료 보고 바로 다음 사람 발화에 결함 보고 유형이 있는 비율과, 완료 보고가 아닌 턴 뒤의 같은 비율(control) — A0 에서 둘이 구별되지 않아 보조로 내렸다.',
-  '스스로 찾은 결함 [근사]: 완료 보고 턴(앞 사람 발화 ~ 완료 보고) 안의 어시스턴트 text 블록 중 발견 동사+결함 명사(또는 결함 명사+고침 동사)가 한 줄에 가까이 붙은 블록 수(blocks)와 그런 블록이 하나라도 있는 완료 보고 수. 한계: 문구 매칭이라 "결함은 없습니다"·계획 설명·사람 말 인용도 걸릴 수 있고, 말없이 고친 것은 못 센다. 도구 호출 내용(diff)은 보지 않는다. a0Phrase = A0 §3 의 거친 대용 문구가 완료 보고 블록에 있는 수(연속성 비교용).',
+  '스스로 찾은 결함 [근사]: 완료 보고 턴(앞 사람 발화 ~ 완료 보고) 안의 어시스턴트 text 블록 중 발견 동사+결함 명사(또는 결함 명사+고침 동사)가 한 줄에 가까이 붙은 블록 수(blocks)와 그런 블록이 하나라도 있는 완료 보고 수. 한계: 문구 매칭이라 "결함은 없습니다"·계획 설명·사람 말 인용도 걸릴 수 있고, 말없이 고친 것은 못 센다. 도구 호출 내용(diff)은 보지 않는다. 턴을 연 사람 발화가 결함 보고인 완료 보고는 blocks·doneClaimsWithSelfFound 에서 빼고 openedByHumanDefect 로 따로 센다(표본 20개 판정 뒤 다듬기 1회, 2026-11-27; 이 뒤로 규칙은 고치지 않는다). a0Phrase = A0 §3 의 거친 대용 문구가 완료 보고 블록에 있는 수(연속성 비교용).',
   'M3: 턴 마지막 보고에 "판단할 것" 라벨 줄(/판단할\\s*것/)이 있으면 labeled [실측]. 라벨 뒤(같은 줄, 비었으면 다음 줄)가 "없음"이면 labeledNone, 아니면 labeledItem. labeledItem 중 다음 사람 발화가 있는 것이 분모(withNext). 그 발화가 부정·대안 어휘("아니·말고·대신·반대로…")를 담으면 overturned, "추천대로·그대로·ㅇㅇ…"면 accepted, 나머지 unclear [근사 — 답 판정은 키워드]. legacy = 라벨 도입 전 키워드 근사("판단/결정할 것" 류 문구)로, 연속성 비교용.',
   '보고 관문(B1 Stop 훅): <claude-dir>/hooks/state/report-gate.jsonl 을 읽기만 한다. 관문은 완료 보고로 판정한 때에만 기록하므로 판정 수 자체가 관문이 본 완료 보고 수다. 판정 수·decision 별·problems 별·missing 별·judgeNone 수·막힌 비율 blockedRatio = block ÷ (block + pass + cap-pass) [실측]. status: no-file(파일 없음)·before-first-record(첫 기록 전 구간, 경고 안 함)·maybe-off(첫 기록 이후 키워드 규칙의 완료 보고가 있는데 판정 0)·ok. 관문은 무인 실행에도 걸릴 수 있어 inCountedSessions(기본 집계 세션의 판정)를 따로 낸다.',
   '작업 경계·세션: 세션 = 대화 기록 파일 1개. 압축 = compact_boundary 수(없으면 압축 요약 수).',
@@ -250,7 +251,7 @@ function emptyCounts(): Counts {
     human: 0, sessions: 0, types: zeroTypes(), primary: zeroTypes(), simple: 0, multiLabeled: 0,
     lang: { all: ratio(0, 0), final: ratio(0, 0), correctionUtterances: 0 },
     m2: { defectPerDoneClaim: null, defectReports: 0, doneClaims: 0, afterDone: { turnsWithReply: 0, doneWithNext: 0, nextDefect: 0, ratio: null, control: { turns: 0, nextDefect: 0, ratio: null } } },
-    selfFound: { blocks: 0, doneClaimsWithSelfFound: 0, a0Phrase: 0 },
+    selfFound: { blocks: 0, doneClaimsWithSelfFound: 0, a0Phrase: 0, openedByHumanDefect: 0 },
     m3: { labeled: 0, labeledNone: 0, labeledItem: 0, withNext: 0, overturned: 0, accepted: 0, unclear: 0, ratio: null, legacy: { decisionReports: 0, withNext: 0, overturned: 0, accepted: 0, unclear: 0, ratio: null } },
   };
 }
@@ -292,10 +293,12 @@ export function analyze(raw: RawSession[], fromMs: number, toMs: number): Analyz
       const last = blocks[blocks.length - 1];
       const nextU = end < AH.length ? byEv.get(AH[end] as Ev & { k: 'H' }) ?? null : null;
       const done = last.len >= DONE_CLAIM_MIN && DONE_CLAIM.test(last.text);
+      // 턴을 연 사람 발화가 결함 보고면 그 턴에서 찾은 결함은 "스스로" 찾은 것이 아니다.
+      const openedByDefect = byEv.get(AH[hi] as Ev & { k: 'H' })?.labels.includes('defect') ?? false;
       const decision = DECISION_ITEM.test(last.text);
       out.claims.push({
         session: r.session, ms: last.ms, done, next: nextU ? nextU.labels : null, nextIsOther: !!nextU && !nextU.labels.length,
-        selfBlocks: done ? blocks.filter((b) => isSelfFound(b.text)).length : 0, selfA0: done && SELF_A0.test(last.text),
+        selfBlocks: done ? blocks.filter((b) => isSelfFound(b.text)).length : 0, openedByDefect, selfA0: done && SELF_A0.test(last.text),
         decision, decisionReply: decision && nextU ? decisionReply((AH[end] as Ev & { k: 'H' }).text) : null,
         label: last.label, labelReply: last.label === 'item' && nextU ? decisionReply((AH[end] as Ev & { k: 'H' }).text) : null,
       });
@@ -332,7 +335,11 @@ function count(a: Analyzed, inR: (ms: number) => boolean): Counts {
     defectPerDoneClaim: r3(c.types.defect, done.length), defectReports: c.types.defect, doneClaims: done.length,
     afterDone: { turnsWithReply: cl.filter((x) => x.next).length, doneWithNext: dn.length, nextDefect, ratio: r3(nextDefect, dn.length), control: { turns: nd.length, nextDefect: ctlDefect, ratio: r3(ctlDefect, nd.length) } },
   };
-  c.selfFound = { blocks: done.reduce((n, x) => n + x.selfBlocks, 0), doneClaimsWithSelfFound: done.filter((x) => x.selfBlocks > 0).length, a0Phrase: done.filter((x) => x.selfA0).length };
+  const own = done.filter((x) => !x.openedByDefect);
+  c.selfFound = {
+    blocks: own.reduce((n, x) => n + x.selfBlocks, 0), doneClaimsWithSelfFound: own.filter((x) => x.selfBlocks > 0).length,
+    a0Phrase: done.filter((x) => x.selfA0).length, openedByHumanDefect: done.filter((x) => x.openedByDefect && x.selfBlocks > 0).length,
+  };
   const replies = (xs: (Reply | null)[]): ReplyCounts => {
     const r = xs.filter((x): x is Reply => x !== null);
     const over = r.filter((x) => x === 'overturn').length;
