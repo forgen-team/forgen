@@ -7,9 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.6] — 2026-11-27 — 읽기 전용 공개 출력과 사람 발화 주간 재측정
+
 측정 중 예외(D2, 읽기 전용 출력 추가, 동작 변경 없음). forgen 1.0 측정(R7) 중이라 주입·차단·훅·렌더와 기존 명령의 출력은 그대로 두고, 외부 도구가 사람용 문구나 forgen 내부 파일을 직접 읽지 않아도 되도록 기계용 출력 두 개와 계약 문서·스키마만 더한다. 정본: `docs/reference/public-contracts.md`.
 
 ### Added
+- `forgen audit inputs` — 대화 기록을 읽기만 해서 사람 발화를 주 단위(월~일, KST)로 센다. 모델 호출 없음. 유형별(진행 재촉·언어 교정·완료 확인·조작 대행·결함 보고, 다중 분류)·세션별 건수, 언어 누수, 결함 보고 ÷ 완료 보고 주간 추이, "판단할 것" 라벨 보고와 뒤집힌 수, 보고 관문 기록(`~/.claude/hooks/state/report-gate.jsonl`) 집계와 꺼짐 의심 경고. `--save` 일 때만 `~/.forgen/audit/inputs/<주>.json` 에 쓴다. 주간 launchd 예시 `docs/launchd/`. 도움말은 `forgen audit inputs --help` 에서만(측정 중이라 기존 도움말은 그대로).
 - `forgen audit recurrence --latest --json` — 새로 판정하지 않고 저장된 가장 최근 재생 결과를 기존 schema `forgen-audit-recurrence/2` 그대로(+`runId`) 낸다. 없으면 `status: "no-data"`(`runId: null`). `status` 5종(`ok|insufficient|incomplete|model-off|no-data`) 그대로. 어떤 파일도 쓰지 않는다(회차·지문·두 층 색인·교정 원장·판정 캐시). `--json` 없이, 또는 판정 옵션(`--since` 등)과 같이 쓰면 오류. 새로 판정하는 `audit recurrence --json` 은 그대로.
 - `forgen status --rate-limit --json` — `{ schema: "forgen-rate-limit/v1", samples }`, 샘플은 `rate-limit-samples.jsonl` 원본 형식(최근 7일, 읽을 수 있는 줄). 읽기만 하고 압축도 하지 않는다.
 - 공개 출력 계약 문서 `docs/reference/public-contracts.md`(K0: `forgen-way/1`·`forgen-rule-list/v1`·`forgen-rule-history/v1`·`forgen-rule-health/v1`·`forgen-events/v1`·`way import` 입력, K2-b: 위 두 개)와 JSON Schema 8개(`assets/schemas/*.schema.json`, npm 패키지에 실림). 실제 출력 픽스처(`tests/fixtures/contracts/`)를 스키마로 검사하는 테스트. 새 의존 없음(검사는 기존 의존 zod 4 의 `z.fromJSONSchema`, 테스트에서만).
