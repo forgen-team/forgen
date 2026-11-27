@@ -1,20 +1,20 @@
 {
   "schema": "smoke-report/v1",
   "passed": true,
-  "at": "2026-11-27T07:26:41.147Z",
-  "version": "0.9.6",
+  "at": "2026-11-27T15:34:54.222Z",
+  "version": "0.9.7",
   "mock_detected": false,
   "node": "v22.22.0",
   "checks": [
     {
       "name": "vitest",
       "passed": true,
-      "summary": "\u001b[22m \u001b[1m\u001b[32m4498 passed\u001b[39m\u001b[22m\u001b[2m | \u001b[22m\u001b[33m5 skipped\u001b[39m\u001b[90m (4503)\u001b[39m"
+      "summary": "\u001b[22m \u001b[1m\u001b[32m4499 passed\u001b[39m\u001b[22m\u001b[2m | \u001b[22m\u001b[33m5 skipped\u001b[39m\u001b[90m (4504)\u001b[39m"
     },
     {
       "name": "cli-version",
       "passed": true,
-      "summary": "0.9.6"
+      "summary": "0.9.7"
     },
     {
       "name": "statusline-roundtrip",
