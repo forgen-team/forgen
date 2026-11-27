@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.8] — 2026-11-28 — 읽기 전용 출력 두 개
+
+- `forgen status --rate-limit --json --latest` — 창(five_hour·seven_day)마다 가장 늦은 샘플 하나만 낸다. 같은 `forgen-rate-limit/v1` 형식이고, 전체 출력(수 MB)을 넘기지 않으려는 화면용이다.
+- `forgen project which [폴더] --json` — `forgen-project-which/1` `{schema, folder, key}` (어느 프로젝트도 아니면 `key: null`). 스키마는 `assets/schemas/forgen-project-which.1.schema.json`, 계약은 `docs/reference/public-contracts.md`.
+- 둘 다 아무것도 쓰지 않는다. 주입·차단·훅 동작은 바뀌지 않는다.
+
 ## [0.9.7] — 2026-11-28 — 주간 재측정의 "스스로 찾은 결함" 다듬기
 
 - `forgen audit inputs` — 턴을 연 사람 발화가 결함 보고면 그 턴의 결함은 "스스로 찾은 결함"(`selfFound.blocks`·`doneClaimsWithSelfFound`)에서 빼고 새 칸 `selfFound.openedByHumanDefect` 로 따로 센다. 표본 20개 판정 뒤 다듬기 1회이며, 이 뒤로 규칙은 고치지 않는다. 측정 전용이라 주입·차단·훅 동작은 바뀌지 않는다.
