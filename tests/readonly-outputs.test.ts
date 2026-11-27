@@ -37,6 +37,7 @@ const { runRecurrence, writeRecurrenceRun, RECURRENCE_SCHEMA } = await import('.
 const { handleAudit } = await import('../src/audit/cli.js');
 const { handleStatus } = await import('../src/core/status-cli.js');
 const { readSamples, SAMPLES_PATH } = await import('../src/core/rate-limit-forecast.js');
+const { handleProject } = await import('../src/core/project-cli.js');
 const { encodeProjectDir } = await import('../src/audit/sources.js');
 
 afterAll(() => {
@@ -207,6 +208,26 @@ describe('forgen status --rate-limit --json (K2-b)', () => {
     expectPass(ID, fixture(ID, j));
   });
 
+  it('--latest: 창마다 가장 늦은 샘플 하나만, 같은 형식', async () => {
+    const now = Date.now();
+    const lines = [
+      { w: 'five_hour', t: now - 3_600_000, used: 12.5, resets_at: Math.floor(now / 1000) + 3600 },
+      { w: 'seven_day', t: now - 1_800_000, used: 40, resets_at: null },
+      { w: 'five_hour', t: now - 60_000, used: 14, resets_at: Math.floor(now / 1000) + 3600 },
+      { w: 'seven_day', t: now - 2_400_000, used: 39, resets_at: null },
+    ];
+    const body = `${lines.map((l) => JSON.stringify(l)).join('\n')}\n`;
+    W(SAMPLES_PATH, body);
+    const r = await readOnly(() => handleStatus(['--rate-limit', '--json', '--latest']));
+    const j = JSON.parse(r.out) as J;
+    expect(j).toEqual({ schema: ID, samples: [lines[2], lines[1]] });
+    expect(fs.readFileSync(SAMPLES_PATH, 'utf-8')).toBe(body);
+    expectPass(ID, j);
+    fs.rmSync(SAMPLES_PATH);
+    const empty = await readOnly(() => handleStatus(['--rate-limit', '--json', '--latest']));
+    expect(JSON.parse(empty.out)).toEqual({ schema: ID, samples: [] });
+  });
+
   it('--json 없는 --rate-limit 은 예전처럼 알 수 없는 옵션 오류', async () => {
     const r = await readOnly(() => handleStatus(['--rate-limit']));
     expect(r.out).toBe('');
@@ -219,5 +240,29 @@ describe('forgen status --rate-limit --json (K2-b)', () => {
     for (const bad of [{ ...s, w: 'hourly' }, { ...s, t: '1' }, { w: s.w, t: s.t, used: s.used }, { ...s, resets_at: 'soon' }]) expectFail(ID, { schema: ID, samples: [bad] });
     expectFail(ID, { schema: 'forgen-rate-limit/v2', samples: [] });
     expectFail(ID, { schema: ID });
+  });
+});
+
+describe('forgen project which --json (K2-b)', () => {
+  const ID = 'forgen-project-which/1';
+  it('폴더가 풀리는 키를 JSON 하나로, 쓰기 없음', async () => {
+    const r = await readOnly(async () => handleProject(['which', PROJ, '--json']));
+    const j = JSON.parse(r.out) as J;
+    expect(j).toEqual({ schema: ID, folder: PROJ, key: 'proj-ro' });
+    expectPass(ID, j);
+    expectPass(ID, fixture(ID, j));
+  });
+  it('프로젝트가 아니면 key: null, --json 없으면 예전 한 줄 그대로', async () => {
+    const none = path.join(ROOT, 'not-a-project');
+    fs.mkdirSync(none, { recursive: true });
+    const r = await readOnly(async () => handleProject(['which', '--json', none]));
+    expect(JSON.parse(r.out)).toEqual({ schema: ID, folder: none, key: null });
+    const line = await readOnly(async () => handleProject(['which', PROJ]));
+    expect(line.out).toBe(`${PROJ} → proj-ro`);
+  });
+  it('스키마는 깨진 값을 거른다', () => {
+    expectFail(ID, { schema: ID, folder: '/x' });
+    expectFail(ID, { schema: ID, folder: '/x', key: 3 });
+    expectFail(ID, { schema: 'forgen-project-which/2', folder: '/x', key: null });
   });
 });

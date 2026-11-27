@@ -18,6 +18,7 @@
  *   forgen status --history --json [--days N] [--rule <id>]  룰별 하루 스냅숏 (forgen-rule-history/v1)
  *   forgen status --html [--out <경로>] [--days N]  룰·건강·후보·이력 HTML 한 파일 (외부 리소스 없음)
  *   forgen status --rate-limit --json  rate-limit 샘플 원본 (forgen-rate-limit/v1, 읽기 전용)
+ *   forgen status --rate-limit --json --latest  창마다 최신 샘플 하나만 (같은 형식)
  */
 
 import * as fs from 'node:fs';
@@ -57,7 +58,15 @@ export async function handleStatus(args: string[]): Promise<void> {
   // --json 없이 --rate-limit 만 주면 예전처럼 아래 알 수 없는 옵션 오류로 간다.
   if (args.includes('--rate-limit') && args.includes('--json')) {
     const { readSamples } = await import('./rate-limit-forecast.js');
-    console.log(JSON.stringify({ schema: 'forgen-rate-limit/v1', samples: readSamples() }, null, 2));
+    const all = readSamples();
+    // --latest: 창(five_hour·seven_day)마다 가장 늦은 샘플 하나만 — 같은 형식, 짧은 답(handoff 화면용).
+    const samples = args.includes('--latest')
+      ? (['five_hour', 'seven_day'] as const).flatMap((w) => {
+          const last = all.filter((x) => x.w === w).reduce<(typeof all)[number] | null>((m, x) => (!m || x.t >= m.t ? x : m), null);
+          return last ? [last] : [];
+        })
+      : all;
+    console.log(JSON.stringify({ schema: 'forgen-rate-limit/v1', samples }, null, 2));
     return;
   }
   if (args.includes('--health')) {

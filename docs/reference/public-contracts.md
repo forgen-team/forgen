@@ -20,7 +20,8 @@ forgen 밖의 도구(Handoff 등)가 기대도 되는 forgen 의 기계용 출�
 | K0 | `forgen-events/v1` | `forgen status --events --json [--since ISO] [--until ISO]` | 없음 | `forgen-events.v1.schema.json` |
 | K0 입력 | `forgen-way/1` 문서 | `forgen way import <파일> [--apply]` | `--apply` 때 룰 | `forgen-way-import.1.schema.json` |
 | K2-b | `forgen-audit-recurrence/2` | `forgen audit recurrence --latest --json` | **없음** | `forgen-audit-recurrence.2.schema.json` |
-| K2-b | `forgen-rate-limit/v1` | `forgen status --rate-limit --json` | **없음** | `forgen-rate-limit.v1.schema.json` |
+| K2-b | `forgen-rate-limit/v1` | `forgen status --rate-limit --json [--latest]` | **없음** | `forgen-rate-limit.v1.schema.json` |
+| K2-b | `forgen-project-which/1` | `forgen project which [폴더] --json` | **없음** | `forgen-project-which.1.schema.json` |
 
 `--history`·`--health` 는 읽기 명령이지만 닫힌 날의 일별 보관 파일(`<FORGEN_HOME>/state/metrics/daily/`)을 채운다(기존 동작). 쓰기가 없어야 하는 소비자는 이 두 명령을 부르는 횟수를 줄인다.
 
@@ -53,6 +54,15 @@ type ForgenRateLimit = {
 - 원천: `<FORGEN_HOME>/state/rate-limit-samples.jsonl`(statusline 이 쌓음). 샘플 형식은 파일 그대로이고, 읽는 규칙은 forgen 예측과 같다(`readSamples()`): 최근 7일 줄만, 파싱 안 되는 줄(잘린 줄)·형식이 틀린 줄은 뺀다. 파일 순서 그대로.
 - 파일이 없으면 `samples: []`. 파일을 만들거나 압축하지 않는다.
 - `--json` 없는 `--rate-limit` 은 지금처럼 "알 수 없는 status 옵션" 오류다.
+- `--latest`: 창(`five_hour`·`seven_day`)마다 `t` 가 가장 늦은 샘플 하나만(최대 2개, 창 순서). 같은 형식이라 스키마는 같다. 파일 전체(수 MB)를 넘기지 않으려는 화면용.
+
+### `forgen project which [폴더] --json` → `forgen-project-which/1`
+
+```ts
+type ForgenProjectWhich = { schema: "forgen-project-which/1"; folder: string /* 절대 경로 */; key: string | null /* 소문자 */ };
+```
+
+- 규칙은 `--json` 없는 `project which` 와 같다(`projectKeyFor()`: 등록부 → git 저장소 폴더 이름). 어떤 파일도 쓰지 않는다. 폴더를 빼면 현재 폴더.
 
 ## K0 — 이미 있는 출력 (형식 유지 선언)
 

@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://forgen.dev/schemas/forgen-project-which.1.schema.json",
+  "title": "forgen-project-which/1",
+  "description": "forgen project which [폴더] --json 이 내는 답: 그 폴더가 풀리는 프로젝트 키. 읽기 전용.",
+  "type": "object",
+  "required": ["schema", "folder", "key"],
+  "additionalProperties": false,
+  "properties": {
+    "schema": { "const": "forgen-project-which/1" },
+    "folder": { "type": "string", "description": "절대 경로로 푼 폴더" },
+    "key": { "type": ["string", "null"], "description": "소문자 프로젝트 키. 어느 프로젝트도 아니면 null" }
+  }
+}
