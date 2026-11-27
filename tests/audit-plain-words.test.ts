@@ -34,7 +34,8 @@ const { createRule, saveRule } = await import('../src/store/rule-store.js');
 
 /** 내부 용어 — 화면에 나오면 안 된다(사용자 내용·명령 이름·처방 id 는 빼고 본다). */
 export const BANNED = ['N2', 'N3', 'N4', '같은 집합', '되살린 룰', '이전 정의', 'Q3', 'Q4', 'Q11', '기억 풀', '1,000개당', '1층', '2층', 'tier2', '판본', '갈래', '자격 게이트', '결정적', '렌더', '주입', '호스트', '2-gram', '캐시', '몫', '판정자', '회차', '원장', '색인', '하네스', '지적만', '사전 필터', 'superseded', 'suppressed'];
-const banned = (text: string) => BANNED.filter((w) => text.includes(w));
+// 임시 폴더 이름(mkdtemp 무작위 6자)에 'N2' 등이 우연히 들어가면 오탐 — 경로는 빼고 본다
+const banned = (text: string) => { const t = text.split(ROOT).join('<tmp>'); return BANNED.filter((w) => t.includes(w)); };
 
 const ARGS = () => [...FX.folders.flatMap((f) => ['--folder', f]), '--claude-dir', FX.claude];
 const quiet = async (fn: () => Promise<unknown>): Promise<string> => {
