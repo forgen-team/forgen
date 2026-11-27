@@ -3,7 +3,7 @@
  *   forgen project add <키> <폴더...> [--alias a,b | --alias a --alias b]   폴더를 키로 묶는다(git 아닌 폴더도 됨)
  *   forgen project list                              등록된 키, 폴더, 별칭, 없는 폴더
  *   forgen project remove <키>
- *   forgen project which [폴더]                      그 폴더가 어느 키로 풀리는지
+ *   forgen project which [폴더] [--json]             그 폴더가 어느 키로 풀리는지 (--json: forgen-project-which/1)
  */
 import * as path from 'node:path';
 import { addProjectPaths, missingRegistryPaths, PROJECT_REGISTRY_PATH, readProjectRegistry, removeProject } from '../store/project-registry.js';
@@ -14,7 +14,7 @@ function usage(): void {
   forgen project add <key> <folder...> [--alias old-key,...]
   forgen project list
   forgen project remove <key>
-  forgen project which [folder]`);
+  forgen project which [folder] [--json]`);
 }
 
 export function handleProject(args: string[]): void {
@@ -64,8 +64,13 @@ export function handleProject(args: string[]): void {
     return;
   }
   if (sub === 'which') {
-    const dir = path.resolve(rest[0] ?? process.cwd());
-    console.log(`${dir} → ${projectKeyFor(dir) ?? '(프로젝트 아님)'}`);
+    const json = rest.includes('--json');
+    const folder = rest.find((a) => a !== '--json');
+    const dir = path.resolve(folder ?? process.cwd());
+    const key = projectKeyFor(dir) ?? null;
+    // K2(docs/reference/public-contracts.md) forgen-project-which/1: 읽기 전용, stdout 에 JSON 하나.
+    if (json) console.log(JSON.stringify({ schema: 'forgen-project-which/1', folder: dir, key }));
+    else console.log(`${dir} → ${key ?? '(프로젝트 아님)'}`);
     return;
   }
   usage();
