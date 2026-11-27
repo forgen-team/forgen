@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.7] — 2026-11-28 — 주간 재측정의 "스스로 찾은 결함" 다듬기
+
+- `forgen audit inputs` — 턴을 연 사람 발화가 결함 보고면 그 턴의 결함은 "스스로 찾은 결함"(`selfFound.blocks`·`doneClaimsWithSelfFound`)에서 빼고 새 칸 `selfFound.openedByHumanDefect` 로 따로 센다. 표본 20개 판정 뒤 다듬기 1회이며, 이 뒤로 규칙은 고치지 않는다. 측정 전용이라 주입·차단·훅 동작은 바뀌지 않는다.
+
 ## [0.9.6] — 2026-11-27 — 읽기 전용 공개 출력과 사람 발화 주간 재측정
 
 측정 중 예외(D2, 읽기 전용 출력 추가, 동작 변경 없음). forgen 1.0 측정(R7) 중이라 주입·차단·훅·렌더와 기존 명령의 출력은 그대로 두고, 외부 도구가 사람용 문구나 forgen 내부 파일을 직접 읽지 않아도 되도록 기계용 출력 두 개와 계약 문서·스키마만 더한다. 정본: `docs/reference/public-contracts.md`.
