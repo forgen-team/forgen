@@ -1,0 +1,149 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://forgen.dev/schemas/forgen-rule-health.v1.schema.json",
+  "title": "forgen-rule-health/v1",
+  "description": "forgen status --health --json [--days N] 이 내는 룰 건강 지표(흐름·대기열·상위·일별·보관 정보).",
+  "type": "object",
+  "required": ["schema", "generatedAt", "windowDays", "rules", "flow", "top", "days", "history"],
+  "properties": {
+    "schema": { "const": "forgen-rule-health/v1" },
+    "generatedAt": { "type": "string" },
+    "windowDays": { "type": "integer", "minimum": 1 },
+    "rules": {
+      "type": "object",
+      "required": ["active", "flagged", "candidates", "neverInjected", "unscopedLearned", "duplicateGroups"],
+      "properties": {
+        "active": {
+          "type": "object",
+          "required": ["total", "explicit", "mined", "onboarding", "other"],
+          "properties": {
+            "total": { "$ref": "#/$defs/count" },
+            "explicit": { "$ref": "#/$defs/count" },
+            "mined": { "$ref": "#/$defs/count" },
+            "onboarding": { "$ref": "#/$defs/count" },
+            "other": { "$ref": "#/$defs/count" }
+          }
+        },
+        "flagged": {
+          "type": "object",
+          "required": ["total", "conflictOnly", "other"],
+          "properties": {
+            "total": { "$ref": "#/$defs/count" },
+            "conflictOnly": { "$ref": "#/$defs/count" },
+            "other": { "$ref": "#/$defs/count" }
+          }
+        },
+        "candidates": { "$ref": "#/$defs/count" },
+        "neverInjected": { "$ref": "#/$defs/count" },
+        "unscopedLearned": { "$ref": "#/$defs/count" },
+        "duplicateGroups": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["policy", "ruleIds"],
+            "properties": { "policy": { "type": "string" }, "ruleIds": { "type": "array", "items": { "type": "string" } } }
+          }
+        }
+      }
+    },
+    "flow": {
+      "type": "object",
+      "required": [
+        "correctionsUser", "correctionsMined", "rulesCreatedExplicit", "rulesCreatedMined", "candidatesConfirmed", "injections",
+        "checksPass", "checksViolation", "acknowledgments", "blocks", "advisories", "bypasses", "promotions", "retired"
+      ],
+      "properties": {
+        "correctionClasses": {
+          "type": "object",
+          "description": "0.8.0 추가(현재 코드는 늘 낸다). pending 은 그 뒤 추가.",
+          "required": ["recurrence", "deliveryFailure", "new", "unknownDelivery"],
+          "properties": {
+            "recurrence": { "$ref": "#/$defs/count" },
+            "deliveryFailure": { "$ref": "#/$defs/count" },
+            "new": { "$ref": "#/$defs/count" },
+            "unknownDelivery": { "$ref": "#/$defs/count" },
+            "pending": { "$ref": "#/$defs/count" }
+          }
+        },
+        "correctionsUser": { "$ref": "#/$defs/count" },
+        "correctionsMined": { "$ref": "#/$defs/count" },
+        "rulesCreatedExplicit": { "$ref": "#/$defs/count" },
+        "rulesCreatedMined": { "$ref": "#/$defs/count" },
+        "candidatesConfirmed": { "$ref": "#/$defs/count" },
+        "injections": { "type": "number", "minimum": 0 },
+        "checksPass": { "$ref": "#/$defs/count" },
+        "checksViolation": { "$ref": "#/$defs/count" },
+        "acknowledgments": { "$ref": "#/$defs/count" },
+        "blocks": { "$ref": "#/$defs/count" },
+        "advisories": { "$ref": "#/$defs/count" },
+        "bypasses": { "$ref": "#/$defs/count" },
+        "promotions": { "$ref": "#/$defs/count" },
+        "retired": { "$ref": "#/$defs/count" }
+      }
+    },
+    "top": {
+      "type": "object",
+      "required": ["blocking", "blockingAll", "recorrected"],
+      "properties": {
+        "blocking": {
+          "type": "array",
+          "maxItems": 8,
+          "items": {
+            "type": "object",
+            "required": ["ruleId", "policy", "blocks"],
+            "properties": { "ruleId": { "type": "string" }, "policy": { "type": ["string", "null"] }, "blocks": { "$ref": "#/$defs/count" } }
+          }
+        },
+        "blockingAll": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["ruleId", "blocks"],
+            "properties": { "ruleId": { "type": "string" }, "blocks": { "$ref": "#/$defs/count" } }
+          }
+        },
+        "recorrected": {
+          "type": "array",
+          "maxItems": 8,
+          "items": {
+            "type": "object",
+            "required": ["ruleId", "policy", "count"],
+            "properties": { "ruleId": { "type": "string" }, "policy": { "type": ["string", "null"] }, "count": { "$ref": "#/$defs/count" } }
+          }
+        }
+      }
+    },
+    "days": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["day", "corrections", "correctionsUser", "correctionsMined", "rulesCreated", "rulesPromoted", "rulesRetired", "blocks", "advisories", "bypasses"],
+        "properties": {
+          "day": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$" },
+          "corrections": { "$ref": "#/$defs/count" },
+          "correctionsUser": { "$ref": "#/$defs/count" },
+          "correctionsMined": { "$ref": "#/$defs/count" },
+          "rulesCreated": { "$ref": "#/$defs/count" },
+          "rulesPromoted": { "$ref": "#/$defs/count" },
+          "rulesRetired": { "$ref": "#/$defs/count" },
+          "blocks": { "$ref": "#/$defs/count" },
+          "advisories": { "$ref": "#/$defs/count" },
+          "bypasses": { "$ref": "#/$defs/count" },
+          "source": { "enum": ["live", "closed", "backfill"], "description": "0.7.1 추가. live = 원천 계산, closed·backfill = 보관값." }
+        }
+      }
+    },
+    "history": {
+      "type": "object",
+      "required": ["retentionDays", "oldestDay", "definition"],
+      "properties": {
+        "retentionDays": { "$ref": "#/$defs/count" },
+        "oldestDay": { "type": ["string", "null"] },
+        "definition": { "type": "integer", "minimum": 1 }
+      }
+    }
+  },
+  "$defs": {
+    "count": { "type": "integer", "minimum": 0 }
+  }
+}

@@ -84,7 +84,7 @@ function values(args: string[], name: string): string[] {
 const KNOWN_BY_SUB: Record<string, Set<string>> = {
   '': new Set(['--folder', '--claude-dir', '--json', '--timing', '--no-model', '--no-open', '--since', '--share', '--help', '-h']),
   tokens: new Set(['--folder', '--claude-dir', '--json', '--help', '-h']),
-  recurrence: new Set(['--claude-dir', '--since', '--until', '--lookback', '--limit', '--no-model', '--json', '--help', '-h']),
+  recurrence: new Set(['--claude-dir', '--since', '--until', '--lookback', '--limit', '--no-model', '--json', '--latest', '--help', '-h']),
   baseline: new Set(['--claude-dir', '--until', '--freeze', '--force', '--json', '--help', '-h']),
   review: new Set(['--import', '--kind', '--no-open', '--json', '--help', '-h']),
   score: new Set(['--json', '--help', '-h']),

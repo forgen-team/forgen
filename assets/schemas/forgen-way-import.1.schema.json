@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://forgen.dev/schemas/forgen-way-import.1.schema.json",
+  "title": "forgen-way-import/1",
+  "description": "forgen way import <파일> 이 받는 입력 문서(문서의 schema 값은 forgen-way/1, 모르는 칸은 오류).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "items"],
+  "properties": {
+    "schema": { "const": "forgen-way/1" },
+    "generator": {},
+    "generated_at": {},
+    "project": {},
+    "stats": {},
+    "render": {},
+    "items": { "type": "array", "items": { "$ref": "#/$defs/item" } }
+  },
+  "$defs": {
+    "item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "statement", "applies_when", "projects", "strength", "provenance", "enforceable"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "kind": { "enum": ["rule", "solution", "habit"] },
+        "statement": { "type": "string", "pattern": "\\S" },
+        "applies_when": { "type": "string" },
+        "why": { "type": "string" },
+        "projects": { "type": "array", "items": { "type": "string" } },
+        "strength": { "enum": ["soft", "default", "strong", "hard"] },
+        "provenance": { "$ref": "#/$defs/provenance" },
+        "enforceable": { "type": "boolean" },
+        "status": { "enum": ["active", "suppressed", "removed"] },
+        "category": { "type": "string" },
+        "render_key": { "type": "string" },
+        "source": { "enum": ["explicit_correction", "onboarding", "behavior_inference", "pack_overlay", "imported"] },
+        "updated_at": { "type": "string" },
+        "conflicts_with": { "type": "string" }
+      }
+    },
+    "provenance": {
+      "description": "kind 가 imported 면 from 이 필요하다. io.ts 는 다른 kind 에도 quote·date·from 칸을 허용한다.",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind"],
+          "properties": { "kind": { "enum": ["you-said", "mined"] }, "quote": { "type": "string" }, "date": { "type": "string" }, "from": { "type": "string" } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "from"],
+          "properties": { "kind": { "const": "imported" }, "quote": { "type": "string" }, "date": { "type": "string" }, "from": { "type": "string" } }
+        }
+      ]
+    }
+  }
+}

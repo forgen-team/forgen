@@ -1,0 +1,257 @@
+{
+  "schema": "forgen-rule-health/v1",
+  "generatedAt": "2026-11-27T06:43:10.420Z",
+  "windowDays": 14,
+  "rules": {
+    "active": {
+      "total": 3,
+      "explicit": 1,
+      "mined": 1,
+      "onboarding": 0,
+      "other": 1
+    },
+    "flagged": {
+      "total": 1,
+      "conflictOnly": 0,
+      "other": 1
+    },
+    "candidates": 1,
+    "neverInjected": 1,
+    "unscopedLearned": 1,
+    "duplicateGroups": []
+  },
+  "flow": {
+    "correctionClasses": {
+      "recurrence": 0,
+      "deliveryFailure": 0,
+      "new": 0,
+      "unknownDelivery": 0,
+      "pending": 0
+    },
+    "correctionsUser": 1,
+    "correctionsMined": 1,
+    "rulesCreatedExplicit": 3,
+    "rulesCreatedMined": 1,
+    "candidatesConfirmed": 0,
+    "injections": 4,
+    "checksPass": 1,
+    "checksViolation": 0,
+    "acknowledgments": 0,
+    "blocks": 2,
+    "advisories": 1,
+    "bypasses": 1,
+    "promotions": 1,
+    "retired": 2
+  },
+  "top": {
+    "blocking": [
+      {
+        "ruleId": "11111111-1111-4111-8111-111111111111",
+        "policy": "테스트는 임시 폴더에서 격리해 돌린다",
+        "blocks": 2
+      }
+    ],
+    "blockingAll": [
+      {
+        "ruleId": "11111111-1111-4111-8111-111111111111",
+        "blocks": 2
+      }
+    ],
+    "recorrected": [
+      {
+        "ruleId": "11111111-1111-4111-8111-111111111111",
+        "policy": "테스트는 임시 폴더에서 격리해 돌린다",
+        "count": 1
+      }
+    ]
+  },
+  "days": [
+    {
+      "day": "2026-11-14",
+      "corrections": 0,
+      "correctionsUser": 0,
+      "correctionsMined": 0,
+      "rulesCreated": 0,
+      "rulesPromoted": 0,
+      "rulesRetired": 0,
+      "blocks": 0,
+      "advisories": 0,
+      "bypasses": 0,
+      "source": "live"
+    },
+    {
+      "day": "2026-11-15",
+      "corrections": 0,
+      "correctionsUser": 0,
+      "correctionsMined": 0,
+      "rulesCreated": 0,
+      "rulesPromoted": 0,
+      "rulesRetired": 0,
+      "blocks": 0,
+      "advisories": 0,
+      "bypasses": 0,
+      "source": "live"
+    },
+    {
+      "day": "2026-11-16",
+      "corrections": 0,
+      "correctionsUser": 0,
+      "correctionsMined": 0,
+      "rulesCreated": 0,
+      "rulesPromoted": 0,
+      "rulesRetired": 0,
+      "blocks": 0,
+      "advisories": 0,
+      "bypasses": 0,
+      "source": "live"
+    },
+    {
+      "day": "2026-11-17",
+      "corrections": 0,
+      "correctionsUser": 0,
+      "correctionsMined": 0,
+      "rulesCreated": 0,
+      "rulesPromoted": 0,
+      "rulesRetired": 0,
+      "blocks": 0,
+      "advisories": 0,
+      "bypasses": 0,
+      "source": "live"
+    },
+    {
+      "day": "2026-11-18",
+      "corrections": 0,
+      "correctionsUser": 0,
+      "correctionsMined": 0,
+      "rulesCreated": 0,
+      "rulesPromoted": 0,
+      "rulesRetired": 0,
+      "blocks": 0,
+      "advisories": 0,
+      "bypasses": 0,
+      "source": "live"
+    },
+    {
+      "day": "2026-11-19",
+      "corrections": 0,
+      "correctionsUser": 0,
+      "correctionsMined": 0,
+      "rulesCreated": 0,
+      "rulesPromoted": 0,
+      "rulesRetired": 0,
+      "blocks": 0,
+      "advisories": 0,
+      "bypasses": 0,
+      "source": "live"
+    },
+    {
+      "day": "2026-11-20",
+      "corrections": 0,
+      "correctionsUser": 0,
+      "correctionsMined": 0,
+      "rulesCreated": 0,
+      "rulesPromoted": 0,
+      "rulesRetired": 0,
+      "blocks": 0,
+      "advisories": 0,
+      "bypasses": 0,
+      "source": "live"
+    },
+    {
+      "day": "2026-11-21",
+      "corrections": 0,
+      "correctionsUser": 0,
+      "correctionsMined": 0,
+      "rulesCreated": 0,
+      "rulesPromoted": 0,
+      "rulesRetired": 0,
+      "blocks": 0,
+      "advisories": 0,
+      "bypasses": 0,
+      "source": "live"
+    },
+    {
+      "day": "2026-11-22",
+      "corrections": 0,
+      "correctionsUser": 0,
+      "correctionsMined": 0,
+      "rulesCreated": 5,
+      "rulesPromoted": 0,
+      "rulesRetired": 0,
+      "blocks": 0,
+      "advisories": 0,
+      "bypasses": 0,
+      "source": "closed"
+    },
+    {
+      "day": "2026-11-23",
+      "corrections": 1,
+      "correctionsUser": 1,
+      "correctionsMined": 0,
+      "rulesCreated": 0,
+      "rulesPromoted": 0,
+      "rulesRetired": 0,
+      "blocks": 0,
+      "advisories": 0,
+      "bypasses": 0,
+      "source": "closed"
+    },
+    {
+      "day": "2026-11-24",
+      "corrections": 0,
+      "correctionsUser": 0,
+      "correctionsMined": 0,
+      "rulesCreated": 0,
+      "rulesPromoted": 0,
+      "rulesRetired": 1,
+      "blocks": 0,
+      "advisories": 0,
+      "bypasses": 0,
+      "source": "closed"
+    },
+    {
+      "day": "2026-11-25",
+      "corrections": 0,
+      "correctionsUser": 0,
+      "correctionsMined": 0,
+      "rulesCreated": 0,
+      "rulesPromoted": 0,
+      "rulesRetired": 0,
+      "blocks": 0,
+      "advisories": 0,
+      "bypasses": 0,
+      "source": "closed"
+    },
+    {
+      "day": "2026-11-26",
+      "corrections": 0,
+      "correctionsUser": 0,
+      "correctionsMined": 0,
+      "rulesCreated": 0,
+      "rulesPromoted": 0,
+      "rulesRetired": 1,
+      "blocks": 1,
+      "advisories": 0,
+      "bypasses": 0,
+      "source": "closed"
+    },
+    {
+      "day": "2026-11-27",
+      "corrections": 1,
+      "correctionsUser": 0,
+      "correctionsMined": 1,
+      "rulesCreated": 0,
+      "rulesPromoted": 1,
+      "rulesRetired": 0,
+      "blocks": 1,
+      "advisories": 1,
+      "bypasses": 1,
+      "source": "live"
+    }
+  ],
+  "history": {
+    "retentionDays": 400,
+    "oldestDay": "2026-11-22",
+    "definition": 1
+  }
+}

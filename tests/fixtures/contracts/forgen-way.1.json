@@ -1,0 +1,125 @@
+{
+  "schema": "forgen-way/1",
+  "generator": "forgen-way",
+  "generated_at": "2026-11-27T06:43:10.373Z",
+  "items": [
+    {
+      "id": "11111111-1111-4111-8111-111111111111",
+      "kind": "rule",
+      "statement": "테스트는 임시 폴더에서 격리해 돌린다",
+      "applies_when": "테스트를 돌릴 때",
+      "why": "사용자 발언: \"테스트는 임시 폴더에서 돌려\"",
+      "projects": [],
+      "strength": "default",
+      "provenance": {
+        "kind": "you-said",
+        "quote": "테스트는 임시 폴더에서 돌려",
+        "date": "2026-11-23"
+      },
+      "enforceable": false,
+      "status": "active",
+      "category": "quality",
+      "render_key": "quality.k1111",
+      "source": "explicit_correction",
+      "updated_at": "2026-11-22T06:43:10.052Z"
+    },
+    {
+      "id": "22222222-2222-4222-8222-222222222222",
+      "kind": "rule",
+      "statement": "빌드 전에 타입 검사를 먼저 돌린다",
+      "applies_when": "테스트를 돌릴 때",
+      "why": "",
+      "projects": [
+        "proj-a"
+      ],
+      "strength": "soft",
+      "provenance": {
+        "kind": "mined",
+        "date": "2026-11-22"
+      },
+      "enforceable": false,
+      "status": "active",
+      "category": "workflow",
+      "render_key": "quality.k2222",
+      "source": "behavior_inference",
+      "updated_at": "2026-11-22T06:43:10.052Z"
+    },
+    {
+      "id": "33333333-3333-4333-8333-333333333333",
+      "kind": "rule",
+      "statement": "답변 끝에 다음 단계를 한 줄로 적는다",
+      "applies_when": "테스트를 돌릴 때",
+      "why": "",
+      "projects": [],
+      "strength": "default",
+      "provenance": {
+        "kind": "imported",
+        "from": "proj-a/feedback_next.md",
+        "date": "2026-11-22"
+      },
+      "enforceable": false,
+      "status": "active",
+      "category": "communication",
+      "render_key": "quality.k3333",
+      "source": "imported",
+      "updated_at": "2026-11-22T06:43:10.052Z"
+    },
+    {
+      "id": "solution:docker-cache-bust",
+      "kind": "solution",
+      "statement": "1. 캐시 없이 다시 빌드한다.",
+      "applies_when": "도커 빌드가 옛 캐시를 쓸 때",
+      "why": "",
+      "projects": [],
+      "strength": "default",
+      "provenance": {
+        "kind": "you-said",
+        "date": "2026-10-01"
+      },
+      "enforceable": false,
+      "category": "pattern",
+      "source": "explicit_correction",
+      "updated_at": "2026-10-01"
+    },
+    {
+      "id": "habit:auto-2026-11-01-workflow:0",
+      "kind": "habit",
+      "statement": "작업을 시작하기 전에 할 일 목록을 먼저 적는다",
+      "applies_when": "workflow",
+      "why": "",
+      "projects": [],
+      "strength": "soft",
+      "provenance": {
+        "kind": "mined",
+        "date": "2026-11-01"
+      },
+      "enforceable": false,
+      "category": "habit"
+    }
+  ],
+  "stats": {
+    "rules_active": 3,
+    "rules_you_said": 1,
+    "rules_mined": 1,
+    "rules_imported": 1,
+    "rules_enforceable": 0,
+    "solutions_verified": 1,
+    "solutions_unverified": 0,
+    "habits": 1
+  },
+  "render": {
+    "at": "2026-11-27T05:43:10.052Z",
+    "included": [
+      "11111111-1111-4111-8111-111111111111",
+      "33333333-3333-4333-8333-333333333333"
+    ],
+    "omitted": [
+      {
+        "rule_id": "22222222-2222-4222-8222-222222222222",
+        "strength": "soft",
+        "policy": "빌드 전에 타입 검사를 먼저 돌린다"
+      }
+    ],
+    "chars": 512
+  }
+}

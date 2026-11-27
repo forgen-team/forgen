@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://forgen.dev/schemas/forgen-way.1.schema.json",
+  "title": "forgen-way/1",
+  "description": "forgen way --json(·export --target json·collect-memory --json)이 내는 호스트 중립 '내 방식' 문서.",
+  "type": "object",
+  "required": ["schema", "generator", "generated_at", "items"],
+  "properties": {
+    "schema": { "const": "forgen-way/1" },
+    "generator": { "const": "forgen-way" },
+    "generated_at": { "type": "string" },
+    "project": { "type": ["string", "null"], "description": "export --target json 에만 있다." },
+    "items": { "type": "array", "items": { "$ref": "#/$defs/item" } },
+    "stats": { "$ref": "#/$defs/stats", "description": "forgen way --json 에만 있다." },
+    "render": {
+      "description": "forgen way --json 에만 있다. 마지막 렌더 기록이 없으면 null.",
+      "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/render" }]
+    }
+  },
+  "$defs": {
+    "item": {
+      "type": "object",
+      "required": ["id", "kind", "statement", "applies_when", "why", "projects", "strength", "provenance", "enforceable"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "kind": { "enum": ["rule", "solution", "habit"] },
+        "statement": { "type": "string" },
+        "applies_when": { "type": "string" },
+        "why": { "type": "string" },
+        "projects": { "type": "array", "items": { "type": "string" } },
+        "strength": { "enum": ["soft", "default", "strong", "hard"] },
+        "provenance": { "$ref": "#/$defs/provenance" },
+        "enforceable": { "type": "boolean" },
+        "status": { "enum": ["active", "suppressed", "removed"] },
+        "category": { "type": "string" },
+        "render_key": { "type": "string" },
+        "source": { "enum": ["explicit_correction", "onboarding", "behavior_inference", "pack_overlay", "imported"] },
+        "updated_at": { "type": "string" },
+        "conflicts_with": { "type": "string" }
+      }
+    },
+    "provenance": {
+      "oneOf": [
+        { "type": "object", "required": ["kind"], "properties": { "kind": { "const": "you-said" }, "quote": { "type": "string" }, "date": { "type": "string" } } },
+        { "type": "object", "required": ["kind"], "properties": { "kind": { "const": "mined" }, "date": { "type": "string" } } },
+        { "type": "object", "required": ["kind", "from"], "properties": { "kind": { "const": "imported" }, "from": { "type": "string" }, "date": { "type": "string" } } }
+      ]
+    },
+    "stats": {
+      "type": "object",
+      "required": ["rules_active", "rules_you_said", "rules_mined", "rules_imported", "rules_enforceable", "solutions_verified", "solutions_unverified", "habits"],
+      "properties": {
+        "rules_active": { "type": "integer", "minimum": 0 },
+        "rules_you_said": { "type": "integer", "minimum": 0 },
+        "rules_mined": { "type": "integer", "minimum": 0 },
+        "rules_imported": { "type": "integer", "minimum": 0 },
+        "rules_enforceable": { "type": "integer", "minimum": 0 },
+        "solutions_verified": { "type": "integer", "minimum": 0 },
+        "solutions_unverified": { "type": "integer", "minimum": 0 },
+        "habits": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "render": {
+      "type": "object",
+      "required": ["at", "included", "omitted", "chars"],
+      "properties": {
+        "at": { "type": "string" },
+        "included": { "type": "array", "items": { "type": "string" } },
+        "omitted": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["rule_id", "strength", "policy"],
+            "properties": { "rule_id": { "type": "string" }, "strength": { "type": "string" }, "policy": { "type": "string" } }
+          }
+        },
+        "chars": { "type": "integer", "minimum": 0 }
+      }
+    }
+  }
+}

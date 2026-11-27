@@ -13,7 +13,7 @@ import { resolvePendingCorrections } from '../core/correction-ledger-judge.js';
 import { maskQuote } from './quote.js';
 import { shortPath } from './html.js';
 import { TERMS_LINE } from './html.js';
-import { judgeChanges, latestRecurrenceRun, rangeText, recurrenceLine, runRecurrence, STALE_JUDGE_NOTE, writeRecurrenceRun, type RecurrenceResult, type RecurrenceRun } from './recurrence.js';
+import { judgeChanges, latestRecurrenceRun, RECURRENCE_SCHEMA, rangeText, recurrenceLine, runRecurrence, STALE_JUDGE_NOTE, writeRecurrenceRun, type RecurrenceResult, type RecurrenceRun } from './recurrence.js';
 
 const DAY = 86_400_000;
 export const BASELINE_SCHEMA = 'forgen-audit-baseline/1' as const;
@@ -95,8 +95,30 @@ function disclose(json: boolean): void {
   else console.log(`${d}\n`);
 }
 
+/** --latest 와 같이 쓸 수 없는 옵션 — 모두 "새로 판정"하는 데만 뜻이 있다. */
+const LATEST_EXCLUSIVE = ['--since', '--until', '--lookback', '--limit', '--no-model', '--claude-dir'] as const;
+
+/**
+ * K2-b(docs/reference/public-contracts.md): 저장된 가장 최근 재생 결과를 그대로 낸다. 새로 판정하지 않고 아무것도 쓰지 않는다
+ * (회차·지문·두 층 색인·교정 원장·판정 캐시·모델 안내 모두). 없으면 status 'no-data' 한 덩이.
+ */
+export function latestRecurrenceJson(): Record<string, unknown> {
+  const latest = latestRecurrenceRun();
+  if (!latest) {
+    return { schema: RECURRENCE_SCHEMA, status: 'no-data', statusNote: '저장된 재생 결과가 없다 — forgen audit recurrence 로 먼저 잰다', runId: null };
+  }
+  return { ...latest.result, runId: latest.runId };
+}
+
 export async function handleRecurrence(args: string[], claudeDir: string | undefined): Promise<void> {
   const json = args.includes('--json');
+  if (args.includes('--latest')) {
+    if (!json) throw new Error('--latest 는 --json 과 함께 쓴다 (저장된 결과를 JSON 으로만 낸다)');
+    const bad = LATEST_EXCLUSIVE.filter((f) => args.includes(f));
+    if (bad.length) throw new Error(`--latest 는 새로 판정하지 않으므로 ${bad.join(' ')} 와 같이 쓸 수 없다`);
+    console.log(JSON.stringify(latestRecurrenceJson(), null, 2));
+    return;
+  }
   const model = !args.includes('--no-model');
   const limitRaw = value(args, '--limit');
   const limit = limitRaw !== undefined ? Number(limitRaw) : undefined;
