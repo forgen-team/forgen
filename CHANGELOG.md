@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.4] — 2026-11-27 — 오래 걸리는 판정에 진행 표시
+
+맥에서 처음 `forgen audit baseline --freeze` 를 돌리면 판정할 요청이 수천 개라 10분 넘게 걸리는데, 화면에 아무것도 안 나와 멈춘 것처럼 보였다(오너 실사용). 새 기능 없음.
+
+### Fixed
+- 모델 판정 단계마다 시작 줄(새로 판정할 개수·저장된 판정 재사용·끊어도 다시 돌리면 이어서 됨)과 진행·남은 시간·끝 줄을 stderr 에 보인다(터미널이면 한 줄을 고쳐 씀, 아니면 10%마다). 새로 물을 것이 없으면 아무것도 안 쓴다. `--json` 의 stdout 은 그대로. 끄기: `FORGEN_NO_PROGRESS=1`.
+
 ## [0.9.3] — 2026-11-27 — 모델 판정을 못 했을 때의 화면
 
 0.9.2 를 맥에 올리고 원격 접속(SSH)으로 기준값을 고정하다 찾았다(SSH 에서는 macOS 키체인이 잠겨 모델 판정이 전부 실패). 새 기능 없음. 정본: `docs/plans/2026-11-27-v0.9.3-unmeasured-screen.md`.

@@ -295,6 +295,46 @@ async function pool<T>(tasks: Array<() => Promise<T>>, n: number): Promise<T[]> 
   return res;
 }
 
+const STAGE: Array<[string, string]> = [
+  ['n4-correction', '교정 찾기'], [PAIR_PROMPT_VERSION, '같은 말인지 비교(엄격 판정)'], [PAIR_PROMPT_LENIENT_VERSION, '같은 말인지 비교(관대 판정)'], ['n4-pair', '같은 말인지 비교'], ['n4-later', '나중에 적힌 기억과 비교'],
+  ['audit-dup', '같은 뜻 중복 판정'], ['audit-conflict', '부딪힘 판정'], ['audit-mix', '다른 프로젝트 섞임 판정'],
+  ['fix-text', '처방 문장 쓰기'], ['tier2-condition', '상황 조건 쓰기'],
+];
+
+/**
+ * 0.9.4 진행 표시: 처음 돌리면 판정이 수천 개라 10분 넘게 걸리는데 화면이 조용해 멈춘 것처럼 보였다(맥 실사용).
+ * 새로 물을 것이 있을 때만 stderr 에 — 시작 한 줄(몇 개·저장된 것 재사용·끊겨도 이어서 됨), 터미널이면 같은 줄을 고쳐 쓰며 진행·남은 시간.
+ * stdout(--json 등)은 건드리지 않는다. FORGEN_NO_PROGRESS=1 이면 끈다.
+ */
+export function startProgress(version: string, total: number, reused: number, out: { write(s: string): unknown; isTTY?: boolean } = process.stderr): { tick(n: number, stopped?: string): void; done(stopped?: string): void } {
+  const off = !total || process.env.FORGEN_NO_PROGRESS === '1';
+  const label = STAGE.find(([k]) => version.startsWith(k))?.[1] ?? '모델 판정';
+  const t0 = Date.now();
+  let n = 0;
+  let lastPct = -1;
+  if (!off) out.write(`[forgen] ${label}: 새로 판정할 것 ${total}개${reused ? ` (저장된 판정 ${reused}개는 다시 묻지 않음)` : ''} — 많으면 몇 분 걸립니다. 중간에 끊어도 판정한 것은 저장돼 다시 돌리면 이어서 합니다\n`);
+  const line = () => {
+    const sec = Math.round((Date.now() - t0) / 1000);
+    const left = n && n < total ? Math.round(((Date.now() - t0) / n) * (total - n) / 1000) : 0;
+    const eta = left >= 60 ? ` · 약 ${Math.ceil(left / 60)}분 남음` : left > 0 ? ` · 약 ${left}초 남음` : '';
+    return `[forgen] ${label} ${n}/${total} · ${sec}초${eta}`;
+  };
+  return {
+    tick(k: number, stopped?: string) {
+      if (off || stopped) return;
+      n = Math.min(total, n + k);
+      if (out.isTTY) { out.write(`\r${line()}\x1b[K`); return; }
+      const pct = Math.floor((n / total) * 10);
+      if (pct > lastPct && n < total) { lastPct = pct; out.write(`${line()}\n`); }
+    },
+    done(stopped?: string) {
+      if (off) return;
+      if (out.isTTY) out.write(`\r\x1b[K`);
+      out.write(stopped ? `[forgen] ${label} 멈춤 — ${stopped}\n` : `[forgen] ${label} 끝 (${total}개, ${Math.round((Date.now() - t0) / 1000)}초)\n`);
+    },
+  };
+}
+
 export class Judge {
   readonly stats: JudgeStats = { calls: 0, failedCalls: 0, cacheHits: 0, judged: 0, unjudged: 0, ms: 0, byModel: {} };
   readonly cache: JudgeCache;
@@ -353,10 +393,13 @@ export class Judge {
     }
     const chunks: typeof todo[] = [];
     for (let i = 0; i < todo.length; i += this.batchSize) chunks.push(todo.slice(i, i + this.batchSize));
+    const prog = startProgress(o.version, todo.length, o.items.length - todo.length);
     await pool(chunks.map((chunk) => async () => {
       const verdicts = await this.batch(o.model, o.header, chunk.map((c) => o.block(c.input)), o.parse);
       chunk.forEach((c, j) => { if (verdicts[j] !== undefined) this.cache.put(o.version, o.model, c.key, verdicts[j]); });
+      prog.tick(chunk.length, this.stats.stopped);
     }), this.concurrency);
+    prog.done(this.stats.stopped);
     const res = new Map<string, V | null>();
     for (const it of o.items) {
       const v = this.cache.get<V>(o.version, o.model, it.key) ?? null;
