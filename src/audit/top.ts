@@ -8,7 +8,7 @@ import * as path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import type { Rule } from '../store/types.js';
 import { fixId, ident, importantMissing, baselinePath } from './fix.js';
-import { shortPath } from './html.js';
+import { modelUnmeasured, shortPath } from './html.js';
 import { maskQuote } from './quote.js';
 import { judgeChanges, latestRecurrence, STALE_JUDGE_NOTE } from './recurrence.js';
 import { unitKey, type AuditRun } from './run.js';
@@ -149,6 +149,7 @@ export function nextSteps(run: AuditRun): string[] {
   const c = r.summary.findings.conflicts;
   if (typeof c === 'number' && c > 0) out.push(`서로 부딪히는 지시 ${c}쌍은 forgen 이 고치지 않습니다 — 위 "가장 중요한 발견"의 파일을 직접 정리하세요`);
   if (r.summary.recurrence.status === 'none') out.push('forgen audit recurrence — 지난 30일 대화 기록에서 같은 말을 다시 한 횟수를 잽니다');
+  else if (r.summary.recurrence.status === 'incomplete') out.push('forgen audit recurrence — 지난번에 모델이 대부분 판정하지 못해 같은 말 다시 하기를 못 쟀습니다. 다시 재면 판정한 것은 다시 묻지 않습니다');
   else if (r.summary.recurrence.staleJudge?.length) out.push('forgen audit recurrence — 저장된 같은 말 다시 하기 값이 이전 판정 방식이라 지금 방식으로 다시 잽니다');
   else if (fs.existsSync(baselinePath())) out.push('forgen fix --report — 처방 전후 세션 시작 토큰과 빠진 중요 지침을 봅니다');
   return out.slice(0, 3);
@@ -171,11 +172,13 @@ export function shareSummary(run: AuditRun): { text: string[]; markdown: string 
   const rng = (lo: number, hi?: number) => (hi === undefined || pct(lo) === pct(hi) ? pct(lo) : `${pct(Math.min(lo, hi))}~${pct(Math.max(lo, hi))}`);
   const lines = [
     rec.staleJudge?.length ? '같은 말 다시 하기: 이전 판정 방식으로 잰 값이라 뺌(다시 재야 함)'
+    : rec.status === 'incomplete' ? '같은 말 다시 하기: 재지 못함(모델 판정 실패)'
     : rec.status !== 'none' && rec.per1000
       ? `내 요청 중 같은 교정을 다시 한 비율 ${rng(rec.per1000.total, rec.lenient?.per1000.total)} · 그중 이미 적혀 있던 것 ${rng(rec.per1000.written, rec.lenient?.per1000.written)}${rec.lenient ? '(판정 기준에 따라 범위)' : rec.ci95 ? `(오차 범위 ${pct(rec.ci95[0])}~${pct(rec.ci95[1])})` : ''}${rec.sampled ? ' · 표본으로 잰 참고값' : ''}`
       : '같은 말 다시 하기: 아직 재지 않음',
     `세션 시작에 늘 실리는 기억 약 ${Math.round(representativeTokens(r) / 100) * 100}토큰(자주 쓰는 폴더 평균, 백 단위)`,
-    f.conflicts === 'pending' ? `같은 문장 ${f.sameSentence}묶음 · 없는 것을 가리키는 줄 ${f.stale}개 (모델 판정 꺼짐)`
+    modelUnmeasured(r) ? `같은 문장 ${f.sameSentence}묶음 · 없는 것을 가리키는 줄 ${f.stale}개 (부딪힘·같은 뜻·섞임은 모델 판정을 못 해 뺌)`
+    : f.conflicts === 'pending' ? `같은 문장 ${f.sameSentence}묶음 · 없는 것을 가리키는 줄 ${f.stale}개 (모델 판정 꺼짐)`
       : `서로 부딪히는 지시 ${f.conflicts}쌍 · 같은 뜻 중복 ${f.dupGroups}묶음 · 다른 프로젝트 지시 섞임 ${f.mixConfirmed}개 · 같은 문장 ${f.sameSentence}묶음 · 없는 것을 가리키는 줄 ${f.stale}개`,
     `MEMORY.md 상한에 잘린 곳 ${r.summary.truncation.truncated}곳 (메모 폴더 ${r.summary.truncation.memoryDirs}곳 중)`,
     ...(kinds.length ? [`가장 중요한 발견 유형: ${kinds.join(' · ')}`] : []),

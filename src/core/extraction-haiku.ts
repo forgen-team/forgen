@@ -86,6 +86,17 @@ export function settingsProvidedAuth(): string | null {
 const AUTH_RE = /not logged in|please run \/login|invalid api key|authentication|unauthorized|credit balance/i;
 const RATE_RE = /usage limit|rate.?limit|429|overloaded|quota/i;
 
+/**
+ * 0.9.3: "로그인 필요" 안내. macOS 에 원격 접속(SSH)으로 들어와 있으면 실제로는 로그인돼 있어도
+ * 키체인이 잠겨 claude CLI 가 로그인 정보를 못 읽는다 — 그때는 다시 로그인하라고 하지 않고 까닭과 길을 말한다.
+ */
+export function loginNeededReason(env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): string {
+  if (platform === 'darwin' && (env.SSH_CONNECTION || env.SSH_TTY) && !env.CLAUDE_CODE_OAUTH_TOKEN && !env.ANTHROPIC_API_KEY) {
+    return 'claude 로그인 정보를 못 읽음 — 원격 접속(SSH)에서는 macOS 키체인이 잠겨 있음. 맥 터미널에서 직접 실행하거나, claude setup-token 으로 받은 값을 CLAUDE_CODE_OAUTH_TOKEN 으로 주고 실행';
+  }
+  return 'claude 로그인 필요 (claude /login)';
+}
+
 export function classifyFailure(err: { code?: string; signal?: string | null; stderr?: string; stdout?: string; message?: string }): { outcome: HaikuOutcome; reason: string; retriable: boolean } {
   const text = `${err.stderr ?? ''}\n${err.stdout ?? ''}\n${err.message ?? ''}`;
   if (err.code === 'ENOENT') return { outcome: 'unavailable', reason: 'claude CLI 를 찾지 못함', retriable: false };
@@ -95,7 +106,7 @@ export function classifyFailure(err: { code?: string; signal?: string | null; st
   if (AUTH_RE.test(text)) {
     const viaSettings = settingsProvidedAuth();
     if (viaSettings) return { outcome: 'unavailable', reason: `인증이 settings(${viaSettings})에서 오는데 추출 호출은 격리를 위해 settings 를 읽지 않음 — 환경변수로 인증을 주거나 forgen compound consent off`, retriable: false };
-    return { outcome: 'unavailable', reason: 'claude 로그인 필요 (claude /login)', retriable: false };
+    return { outcome: 'unavailable', reason: loginNeededReason(), retriable: false };
   }
   if (RATE_RE.test(text)) return { outcome: 'rate-limited', reason: '사용량 한도/과부하', retriable: true };
   return { outcome: 'error', reason: (text.trim().split('\n')[0] || 'unknown').slice(0, 160), retriable: true };
@@ -126,7 +137,7 @@ export function probeClaudeAvailability(): { available: boolean; reason?: string
     const out = execFileSync('claude', ['auth', 'status'], { encoding: 'utf-8', timeout: 8000, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, ...NESTED_RUN_ENV } });
     try {
       const j = JSON.parse(out) as { loggedIn?: boolean };
-      if (j.loggedIn === false) return { available: false, reason: 'claude 로그인 필요 (claude /login)' };
+      if (j.loggedIn === false) return { available: false, reason: loginNeededReason() };
     } catch { /* 형식이 달라도 성공 종료면 가용으로 본다 */ }
     return { available: true };
   } catch (e) {
@@ -134,7 +145,7 @@ export function probeClaudeAvailability(): { available: boolean; reason?: string
     if (er.code === 'ENOENT') return { available: false, reason: 'claude CLI 를 PATH 에서 찾지 못함' };
     if (er.code === 'ETIMEDOUT') return { available: true }; // 판정 불가 → 시도는 허용
     const text = `${er.stdout ?? ''}${er.stderr ?? ''}`;
-    if (/loggedIn"?\s*:\s*false|not logged in/i.test(text)) return { available: false, reason: 'claude 로그인 필요 (claude /login)' };
+    if (/loggedIn"?\s*:\s*false|not logged in/i.test(text)) return { available: false, reason: loginNeededReason() };
     return { available: true };
   }
 }
