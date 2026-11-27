@@ -50,6 +50,9 @@ export interface ModelChecks {
   judge: { model: string; versions: { dup: string; conflict: string; mix: string }; dup: { top: number; min: number }; conflict: { top: number; min: number } };
   status: 'ok' | 'incomplete';
   statusNote: string;
+  /** 0.9.3: 판정에 보낸 후보 수와 그중 판정 못 한 수(첫 화면이 "0쌍"을 판정 결과처럼 보이지 않게) */
+  judgeTotal?: number;
+  unjudged?: number;
   dup: PairFinding[];
   conflict: PairFinding[];
   mix: MixFinding[];
@@ -178,7 +181,8 @@ export async function runModelChecks(result: AuditResult, ctx: AuditContext, jud
   return {
     judge: { model: CHECK_MODEL, versions: { dup: DUP_PROMPT_VERSION, conflict: CONFLICT_PROMPT_VERSION, mix: MIX_PROMPT_VERSION }, dup: { top: DUP_TOP, min: DUP_MIN }, conflict: { top: CONFLICT_TOP, min: CONFLICT_MIN } },
     status: incomplete ? 'incomplete' : 'ok',
-    statusNote: incomplete ? `판정 불완전 — 후보 ${total}개 중 ${unjudged}개를 판정하지 못함${judge.stats.stopped ? ` (${judge.stats.stopped})` : judge.stats.lastError ? ` (${judge.stats.lastError})` : ''}. 다시 돌리면 캐시 뒤 나머지만 묻는다` : '',
+    judgeTotal: total, unjudged,
+    statusNote: incomplete ? `판정 불완전 — 후보 ${total}개 ${unjudged >= total ? '모두' : `중 ${unjudged}개를`} 판정하지 못함${judge.stats.stopped ? ` (${judge.stats.stopped})` : judge.stats.lastError ? ` (${judge.stats.lastError})` : ''}. 다시 돌리면 캐시 뒤 나머지만 묻는다` : '',
     dup, conflict, mix,
     counts: {
       dupGroups: groups.length, dupPairs: yesDup.length, conflicts: conflict.filter((p) => p.verdict === 'yes').length,

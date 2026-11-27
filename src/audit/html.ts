@@ -25,10 +25,16 @@ export function shortPath(p: string, home = os.homedir()): string {
 /** 첫 화면 맨 위 한 줄: 화면에 나오는 낱말의 뜻(B1). */
 export const TERMS_LINE = '"실린다" = 세션이 시작될 때 AI 에게 자동으로 보내지는 지시 · "부딪힘" = 동시에 지킬 수 없는 두 지시';
 
+/** 0.9.3: 모델 판정을 절반 넘게 못 했으면 부딪힘·중복·섞임 숫자(0 등)를 판정 결과처럼 보이지 않는다. */
+export function modelUnmeasured(r: AuditResult): boolean {
+  const m = r.checks.model;
+  return !!m && m.status === 'incomplete' && (m.judgeTotal ?? 0) > 0 && (m.unjudged ?? 0) * 2 > (m.judgeTotal ?? 0);
+}
+
 /** 같은 말 다시 하기 한 줄(첫 화면용, 퍼센트 없이) — 어느 재생 결과인지(날짜·전부/표본)를 같이 적는다(B2). */
 export function recurrenceShort(r: AuditResult): string {
   const rc = r.summary.recurrence;
-  if (rc.status === 'none' || !rc.per30d || rc.staleJudge?.length) return rc.line;
+  if (rc.status === 'none' || rc.status === 'incomplete' || !rc.per30d || rc.staleJudge?.length) return rc.line;
   const f = (x: number) => String(Math.round(x));
   const src = `${rc.generatedAt?.slice(0, 10) ?? ''} 에 지난 대화 기록 요청 ${rc.prompts?.window ?? '?'}개 ${rc.sampled ? `중 ${rc.prompts?.judged ?? '?'}개 표본으로 잰 참고값` : '전부로 잰 값 — audit recurrence --limit 로 표본만 다시 재면 숫자가 다르게 나옴'}`;
   const rg = (lo: number, hi: number | undefined) => { const a = f(Math.min(lo, hi ?? lo)); const b = f(Math.max(lo, hi ?? lo)); return a === b ? a : `${a}~${b}`; };
@@ -57,9 +63,11 @@ export function topLines(r: AuditResult): string[] {
     rep
       ? `세션 시작에 실리는 기억: ${rep.weighted ? `자주 쓰는 폴더(최근 30일 세션 3개 이상) ${rep.folders}곳 평균` : `폴더 ${rep.folders}곳 평균`} 약 ${Math.round(rep.value)}토큰 (폴더별 ${Math.min(...tokens)}~${Math.max(...tokens)})`
       : '세션 시작에 실리는 기억: 감사한 폴더 없음',
-    f.conflicts === 'pending' || f.dupGroups === null || f.mixConfirmed === null
+    modelUnmeasured(r)
+      ? `서로 부딪히는 지시·같은 뜻 중복·다른 프로젝트 지시 섞임: 재지 못함 — ${r.checks.model?.statusNote ?? ''} · 같은 문장 ${f.sameSentence}묶음 · 지금 없는 것을 가리키는 줄 ${f.stale}개 · 늘 실리는 .claude/rules 파일 ${f.unscopedRules}개(paths: 없음 = 특정 파일을 다룰 때만 실리게 하는 표시가 없음)`
+    : f.conflicts === 'pending' || f.dupGroups === null || f.mixConfirmed === null
       ? `같은 문장 ${f.sameSentence}묶음 · 지금 없는 것을 가리키는 줄 ${f.stale}개 · 늘 실리는 .claude/rules 파일 ${f.unscopedRules}개(paths: 없음 = 특정 파일을 다룰 때만 실리게 하는 표시가 없음) (부딪힘·같은 뜻·섞임은 모델을 꺼서 세지 않음)`
-      : `서로 부딪히는 지시 ${f.conflicts}쌍 · 같은 뜻 중복 ${f.dupGroups}묶음 · 다른 프로젝트 지시 섞임 ${f.mixConfirmed}개 (모델 판정${r.checks.model?.status === 'incomplete' ? ', 일부 못 함' : ''}) · 같은 문장 ${f.sameSentence}묶음 · 지금 없는 것을 가리키는 줄 ${f.stale}개 · 늘 실리는 .claude/rules 파일 ${f.unscopedRules}개(paths: 없음 = 특정 파일을 다룰 때만 실리게 하는 표시가 없음)`,
+      : `서로 부딪히는 지시 ${f.conflicts}쌍 · 같은 뜻 중복 ${f.dupGroups}묶음 · 다른 프로젝트 지시 섞임 ${f.mixConfirmed}개 (모델 판정${r.checks.model?.status === 'incomplete' ? `, 후보 ${r.checks.model.judgeTotal ?? '?'}개 중 ${r.checks.model.unjudged ?? '?'}개 못 함 — 실제는 더 있을 수 있음` : ''}) · 같은 문장 ${f.sameSentence}묶음 · 지금 없는 것을 가리키는 줄 ${f.stale}개 · 늘 실리는 .claude/rules 파일 ${f.unscopedRules}개(paths: 없음 = 특정 파일을 다룰 때만 실리게 하는 표시가 없음)`,
     `MEMORY.md 가 상한(200줄·25KB)에 잘린 곳 ${tr.truncated}/${tr.memoryDirs} · ${tight}`,
     ...situationalLine(r),
     ...(n3 ? [`처방 전(${n3.baselineAt.slice(0, 10)}) 대비 ${n3rep?.weighted ? '자주 쓰는 폴더의 ' : ''}세션 시작 기억 ${pc(n3rep ? n3rep.pct : n3.medianPct)} — 자세히: forgen fix --report`] : []),
@@ -111,8 +119,9 @@ var C = D.checks || {};
 var M = C.model || null;
 function yesN(xs){ return (xs||[]).filter(function(p){return p.verdict==='yes';}).length; }
 var tabs = [['tokens','폴더별 토큰 ('+(D.folders||[]).length+')']];
-if (M) { tabs.push(['conflict','부딪힘 ('+yesN(M.conflict)+')']); tabs.push(['dup','같은 뜻 중복 ('+M.counts.dupGroups+'묶음)']); }
-tabs = tabs.concat([['same','같은 문장 ('+(C.sameSentence||[]).length+')'],['mix',(M?'다른 프로젝트 섞임 ('+M.counts.mixConfirmed+')':'다른 프로젝트 섞임 의심 ('+(C.mix||[]).length+')')],['stale','없는 것을 가리킴 ('+(C.stale||[]).length+')'],['trunc','MEMORY.md 여유 ('+(C.truncation||[]).length+')'],['rules','늘 실리는 rules 파일 ('+(C.unscopedRules||[]).length+')'],['sources','읽은 파일']];
+var MU = M && M.status === 'incomplete' && (M.judgeTotal||0) > 0 && (M.unjudged||0) * 2 > (M.judgeTotal||0);
+if (M) { tabs.push(['conflict','부딪힘 ('+(MU?'판정 못 함':yesN(M.conflict))+')']); tabs.push(['dup','같은 뜻 중복 ('+(MU?'판정 못 함':M.counts.dupGroups+'묶음')+')']); }
+tabs = tabs.concat([['same','같은 문장 ('+(C.sameSentence||[]).length+')'],['mix',(M?'다른 프로젝트 섞임 ('+(MU?'판정 못 함':M.counts.mixConfirmed)+')':'다른 프로젝트 섞임 의심 ('+(C.mix||[]).length+')')],['stale','없는 것을 가리킴 ('+(C.stale||[]).length+')'],['trunc','MEMORY.md 여유 ('+(C.truncation||[]).length+')'],['rules','늘 실리는 rules 파일 ('+(C.unscopedRules||[]).length+')'],['sources','읽은 파일']];
 var nav = document.getElementById('tabs');
 tabs.forEach(function(t){ var b=el('button',{role:'tab','data-tab':t[0],text:t[1]}); b.onclick=function(){ show(t[0]); }; nav.appendChild(b); });
 var R = {tokens:renderTokens,conflict:function(){renderPairs('conflict');},dup:function(){renderPairs('dup');},same:renderSame,mix:renderMix,stale:renderStale,trunc:renderTrunc,rules:renderRules,sources:renderSources};

@@ -459,7 +459,8 @@ export async function runRecurrence(opts: RecurrenceOptions = {}): Promise<Recur
   const pairUnjudged = [...pairVerdicts.values()].filter((x) => x === null).length;
   if (judge.stats.stopped || unjudged > windowSample.length * MAX_UNJUDGED_RATIO || pairUnjudged > pairs.length * MAX_UNJUDGED_RATIO) {
     status = 'incomplete';
-    statusNote = `모델이 일부를 판정하지 못함 — 요청 ${windowSample.length}개 중 ${unjudged}개, 비교 ${pairs.length}개 중 ${pairUnjudged}개${judge.stats.stopped ? ` (${judge.stats.stopped})` : judge.stats.lastError ? ` (${judge.stats.lastError})` : ''}. 다시 돌리면 이미 판정한 것은 다시 묻지 않고 나머지만 묻는다`;
+    const what = [unjudged ? `요청 ${windowSample.length}개 ${unjudged >= windowSample.length ? '모두' : `중 ${unjudged}개`}` : '', pairUnjudged ? `비교 ${pairs.length}개 ${pairUnjudged >= pairs.length ? '모두' : `중 ${pairUnjudged}개`}` : ''].filter(Boolean).join(', ');
+    statusNote = `모델이 ${unjudged >= windowSample.length && windowSample.length ? '' : '일부를 '}판정하지 못함${what ? ` — ${what}` : ''}${judge.stats.stopped ? ` (${judge.stats.stopped})` : judge.stats.lastError ? ` (${judge.stats.lastError})` : ''}. 다시 돌리면 이미 판정한 것은 다시 묻지 않고 나머지만 묻는다`;
   } else if (windowCorr.length < MIN_CORRECTIONS || corr30 < MIN_CORRECTIONS_30D) {
     status = 'insufficient';
     statusNote = `참고값(교정 ${windowCorr.length}개로 잼)`;
@@ -529,16 +530,19 @@ export function latestRecurrenceRun(): { runId: string; result: RecurrenceResult
   const base = path.join(FORGEN_HOME, 'audit', 'recurrence');
   let names: string[] = [];
   try { names = fs.readdirSync(base).sort().reverse(); } catch { return null; }
+  // 0.9.3: 판정을 대부분 못 한 회차(incomplete)는 앞서 제대로 잰 회차를 가리지 않는다 — 그런 회차가 없을 때만 보인다
   let sampled: { runId: string; result: RecurrenceResult } | null = null;
+  let incomplete: { runId: string; result: RecurrenceResult } | null = null;
   for (const n of names) {
     try {
       const r = JSON.parse(fs.readFileSync(path.join(base, n, 'result.json'), 'utf-8')) as RecurrenceResult;
       if (r.schema !== RECURRENCE_SCHEMA || r.status === 'model-off') continue;
+      if (r.status === 'incomplete') { incomplete ??= { runId: n, result: r }; continue; }
       if (r.prompts.limit === null) return { runId: n, result: r };
       sampled ??= { runId: n, result: r };
     } catch { /* 깨진 회차 */ }
   }
-  return sampled;
+  return sampled ?? incomplete;
 }
 
 export function latestRecurrence(): RecurrenceResult | null {
@@ -565,10 +569,16 @@ export function staleLine(r: RecurrenceResult): string {
   return `같은 말 다시 하기: ${STALE_JUDGE_NOTE} (${r.generatedAt.slice(0, 10)} 에 잰 옛 값 ${pct} — 지금 방식과 기준이 달라 비교하지 마세요)`;
 }
 
+/** 0.9.3: 모델이 대부분 판정하지 못한 회차 — 숫자(0% 등)를 보이지 않고 못 잰 까닭만. */
+export function unmeasuredLine(r: RecurrenceResult): string {
+  return `같은 말 다시 하기: 재지 못함 — ${r.statusNote || '모델이 대부분 판정하지 못함'}`;
+}
+
 export function recurrenceLine(r: RecurrenceResult | null): string {
   if (!r) return '같은 교정을 다시 한 횟수: 아직 재지 않음 — forgen audit recurrence 로 지난 대화 기록을 읽어 잰다(내 컴퓨터의 claude CLI 로 판정)';
   if (r.status === 'model-off') return '같은 교정을 다시 한 횟수: 모델을 끄고 재서 세지 않음';
   if (r.status === 'no-data') return `같은 교정을 다시 한 횟수: ${r.statusNote}`;
+  if (r.status === 'incomplete') return unmeasuredLine(r);
   if (judgeChanges(r).length) return staleLine(r);
   const c = r.per30d;
   const f = (x: number) => (x >= 10 ? String(Math.round(x)) : String(r1(x)));

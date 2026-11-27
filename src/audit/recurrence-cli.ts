@@ -46,9 +46,13 @@ const pctOf = (per1000: number) => `${Math.round(per1000) / 10}%`;
 export function summaryLines(r: RecurrenceResult): string[] {
   const out = [`같은 말 다시 하기 — ${r.window.since.slice(0, 10)} ~ ${r.window.until.slice(0, 10)} (${r.window.days}일, 그 앞 ${r.window.lookbackDays}일은 "전에 한 말"을 찾는 데만 씀) · 판정: 내 컴퓨터의 claude CLI${r.judge ? '(교정 찾기 Haiku · 같은 말인지 Sonnet)' : ''}`];
   out.push(`  ${recurrenceLine(r)}`);
-  if (r.range) out.push(`  범위: 아래 끝 = 엄격 판정(그 기억을 그 상황에서 그대로 따랐다면 교정이 필요 없었을 때만 "적혀 있었다"), 위 끝 = 관대 판정(같은 원칙이면 "적혀 있었다"). 예시·첫 화면 발견은 엄격 판정에서도 맞는 것만 씁니다`);
-  if (r.statusNote) out.push(`  ${r.statusNote}`);
+  if (r.range && r.status !== 'incomplete') out.push(`  범위: 아래 끝 = 엄격 판정(그 기억을 그 상황에서 그대로 따랐다면 교정이 필요 없었을 때만 "적혀 있었다"), 위 끝 = 관대 판정(같은 원칙이면 "적혀 있었다"). 예시·첫 화면 발견은 엄격 판정에서도 맞는 것만 씁니다`);
+  if (r.statusNote && r.status !== 'incomplete') out.push(`  ${r.statusNote}`);
   if (r.status === 'model-off' || r.status === 'no-data') return out;
+  if (r.status === 'incomplete') {
+    out.push(`  센 요청 ${r.prompts.window}개 · 판정 ${r.prompts.judged} · 판정 못 함 ${r.prompts.unjudged} — 표는 판정이 끝난 뒤에 보입니다`);
+    return out;
+  }
   if (r.prompts.limit) out.push(`  (요청 ${r.prompts.window}개 중 ${r.prompts.sampled}개만 뽑아 잰 참고값 — 전부로 잰 감사 첫 화면 숫자와 다를 수 있음. 전부: --limit 없이)`);
   const p = r.prompts;
   out.push(`  센 요청: AI 답 바로 뒤에 내가 한 말 ${p.window}개${p.limit ? ` 중 ${p.sampled}개를 뽑음` : ''} · 판정 ${p.judged}${p.unjudged ? ` · 판정 못 함 ${p.unjudged}` : ''}`);

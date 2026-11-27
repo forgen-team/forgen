@@ -414,6 +414,44 @@ describe('CLI · 첫 화면 · 기준값', () => {
     expect(recurrenceLine(null)).toContain('아직 재지 않음');
   });
 
+  it('0.9.3 판정을 대부분 못 한 회차: 숫자 대신 "재지 못함", 앞서 잰 회차를 가리지 않음', async () => {
+    const { latestRecurrenceRun, writeRecurrenceRun } = await import('../src/audit/recurrence.js');
+    const good = latestRecurrenceRun() as NonNullable<ReturnType<typeof latestRecurrenceRun>>;
+    const bad = { ...good.result, status: 'incomplete' as const, statusNote: '모델이 일부를 판정하지 못함 — 요청 10개 중 10개 (claude 로그인 필요 (claude /login))', per30d: { ...good.result.per30d, written: 0, total: 0 }, generatedAt: new Date(Date.now() + 60_000).toISOString() };
+    const line = recurrenceLine(bad);
+    expect(line).toContain('재지 못함');
+    expect(line).not.toContain('기억이 먹히고 있음');
+    expect(line).not.toMatch(/\d%/);
+    const { summaryLines } = await import('../src/audit/recurrence-cli.js');
+    const sl = summaryLines(bad).join('\n');
+    expect(sl).toContain('재지 못함');
+    expect(sl).not.toContain('오차 범위');
+    // 실패 회차를 더 나중에 써도 "가장 최근"은 앞서 제대로 잰 회차
+    const dir = path.join(FH, 'audit', 'recurrence');
+    const before = fs.readdirSync(dir);
+    writeRecurrenceRun({ result: bad, manifest: { judge: {}, sourcesDigest: 'deadbeefcafe' }, memoryFiles: [] } as never);
+    const added = fs.readdirSync(dir).filter((n) => !before.includes(n));
+    try {
+      expect(latestRecurrenceRun()?.runId).toBe(good.runId);
+    } finally { for (const n of added) fs.rmSync(path.join(dir, n), { recursive: true, force: true }); }
+  });
+
+  it('0.9.3 모델 판정을 대부분 못 한 감사: 부딪힘·중복·섞임 0 을 판정 결과처럼 보이지 않는다', async () => {
+    const { modelUnmeasured, topLines } = await import('../src/audit/html.js');
+    const mk = (candidates: number, unjudged: number) => ({ checks: { model: { status: 'incomplete', statusNote: '판정 불완전 — 후보 40개 모두 판정하지 못함 (x)', judgeTotal: candidates, unjudged } } }) as never;
+    expect(modelUnmeasured(mk(40, 40))).toBe(true);
+    expect(modelUnmeasured(mk(40, 10))).toBe(false);
+    expect(typeof topLines).toBe('function');
+  });
+
+  it('0.9.3 맥에 SSH 로 들어와 있으면 "다시 로그인" 대신 키체인 까닭을 말한다', async () => {
+    const { loginNeededReason } = await import('../src/core/extraction-haiku.js');
+    expect(loginNeededReason({ SSH_CONNECTION: '1 2 3 4' }, 'darwin')).toContain('키체인');
+    expect(loginNeededReason({ SSH_CONNECTION: '1 2 3 4', CLAUDE_CODE_OAUTH_TOKEN: 'x' }, 'darwin')).toContain('claude /login');
+    expect(loginNeededReason({ SSH_CONNECTION: '1 2 3 4' }, 'linux')).toContain('claude /login');
+    expect(loginNeededReason({}, 'darwin')).toContain('claude /login');
+  });
+
   it('audit baseline --freeze: 6주·12주를 숫자·manifest 해시·판본과 고정, 덮어쓰기는 --force 만', async () => {
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
     const err = vi.spyOn(console, 'error').mockImplementation(() => {});
