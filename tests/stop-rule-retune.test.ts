@@ -164,6 +164,23 @@ describe('언어 룰은 한글 비율로', () => {
     expect(evaluateStop('The release is done and all tests pass on the main branch now.', [r]).action).toBe('block');
     expect(evaluateStop('배포를 마쳤습니다. 아래 명령으로 확인하세요.\n```bash\nnpm view @wooojin/forgen version --json && forgen doctor --verbose\n```', [r]).action).toBe('approve');
   });
+  // 2026-11-27: `claude -p --json-schema` 같은 실행이 낸 JSON 문서가 영어 키 때문에 오탐 → 한국어 룰 자동 강등.
+  it('응답 전체가 JSON 문서면 영어 키가 많아도 위반 아님', () => {
+    const doc = JSON.stringify({ items: [{
+      channelId: 'C07KUM00QPM', channelName: 'm_16_saas_cx_공유', ts: '1732600000.000100', threadTs: '1732600000.000100',
+      permalink: 'https://example.slack.com/archives/C07KUM00QPM/p1732600000000100', text: '아니 예약은 CRM 파트에서 책임져 주세요.',
+    }] }, null, 2);
+    expect(evaluateStop(`\n  ${doc}\n`, [r]).action).toBe('approve');
+    expect(evaluateStop('[{"status":"ok","summary":"completed without errors","nextStep":"none"}]', [r]).action).toBe('approve');
+  });
+  it('영어 산문은 여전히 위반, 한국어 산문은 통과', () => {
+    expect(evaluateStop('I checked the hook and the language ratio logic looks correct to me.', [r]).action).toBe('block');
+    expect(evaluateStop('훅을 확인했고 언어 비율 검사 로직이 맞게 동작하는 것으로 보입니다.', [r]).action).toBe('approve');
+  });
+  it('JSON 처럼 시작해도 파싱이 안 되는 영어 산문은 여전히 위반', () => {
+    expect(evaluateStop('{Note} The release is done and all tests pass on the main branch now.', [r]).action).toBe('block');
+    expect(evaluateStop('[draft] The release is done and all tests pass on the main branch now.', [r]).action).toBe('block');
+  });
 });
 
 describe('retuneStopSpecs', () => {

@@ -272,10 +272,25 @@ function matchedSentences(raw: string, re: RegExp): string[] | null {
   return sawNonEmpty ? out : null;
 }
 
+/** 앞뒤 공백을 뺀 본문이 `{` 또는 `[` 로 시작하고 JSON 으로 파싱되면 true. */
+function isJsonDocument(message: string): boolean {
+  const t = message.trim();
+  if (!t.startsWith('{') && !t.startsWith('[')) return false;
+  try {
+    JSON.parse(t);
+    return true;
+  } catch {
+    return false; // JSON 처럼 보이지만 파싱 안 됨 → 일반 산문으로 검사
+  }
+}
+
 function evaluateVerifier(rule: SpikeRule, recentTools: string[] = [], message = ''): { violated: boolean; reason: string } {
   const v = rule.verifier;
   // 2026-10-07: 언어 룰 — 코드·URL·경로를 뺀 본문 글자 중 한글 비율. 기준 미달이면 위반.
   if (v.kind === 'language_ratio') {
+    // 2026-11-27: 응답 전체가 JSON 문서면 사람용 답변이 아니다(`claude -p --json-schema` 같은 실행의 출력).
+    // 영어 키 이름 때문에 한글 비율이 떨어져 오탐 → 한국어 룰이 정밀도 0.2 로 자동 강등됐다.
+    if (isJsonDocument(message)) return { violated: false, reason: '' };
     const body = message.replace(/```[\s\S]*?```/g, ' ').replace(/`[^`]*`/g, ' ').replace(/https?:\/\/\S+/g, ' ').replace(/[~./\\][\w./\\-]+/g, ' ');
     const letters = body.match(/[A-Za-z가-힣]/g) ?? [];
     if (letters.length < 20) return { violated: false, reason: '' };
