@@ -198,6 +198,8 @@ function tokenTable(r: AuditResult): string[] {
 }
 
 export async function handleAudit(args: string[]): Promise<void> {
+  // C2: 사람 발화 주간 재측정 — 자기 도움말·옵션을 가진 별도 모듈(기존 하위 명령·도움말 출력은 그대로)
+  if (args[0] === 'inputs') { await (await import('./inputs-cli.js')).handleInputs(args.slice(1)); return; }
   if (args.includes('--help') || args.includes('-h') || args[0] === 'help') { console.log(auditHelp()); return; }
   const sub = args[0] && !args[0].startsWith('-') ? args[0] : null;
   if (sub && !(sub in KNOWN_BY_SUB)) {
