@@ -17,6 +17,7 @@
  *   forgen status --events --json [--since <ISO>] [--until <ISO>]  세션별 사건 (forgen-events/v1)
  *   forgen status --history --json [--days N] [--rule <id>]  룰별 하루 스냅숏 (forgen-rule-history/v1)
  *   forgen status --html [--out <경로>] [--days N]  룰·건강·후보·이력 HTML 한 파일 (외부 리소스 없음)
+ *   forgen status --rate-limit --json  rate-limit 샘플 원본 (forgen-rate-limit/v1, 읽기 전용)
  */
 
 import * as fs from 'node:fs';
@@ -52,6 +53,13 @@ export async function handleStatus(args: string[]): Promise<void> {
     const di = args.indexOf('--days');
     return di !== -1 ? Math.min(365, Math.max(1, Number(args[di + 1]) || fallback)) : fallback;
   };
+  // K2-b(docs/reference/public-contracts.md): rate-limit 샘플 원본 형식 그대로 (forgen-rate-limit/v1). 읽기만 — 압축(compactSamples)도 하지 않는다.
+  // --json 없이 --rate-limit 만 주면 예전처럼 아래 알 수 없는 옵션 오류로 간다.
+  if (args.includes('--rate-limit') && args.includes('--json')) {
+    const { readSamples } = await import('./rate-limit-forecast.js');
+    console.log(JSON.stringify({ schema: 'forgen-rate-limit/v1', samples: readSamples() }, null, 2));
+    return;
+  }
   if (args.includes('--health')) {
     const { renderRuleHealth } = await import('./rule-health.js');
     const { healthWithHistory } = await import('./metrics-history.js');

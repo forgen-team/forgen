@@ -1,0 +1,243 @@
+{
+  "schema": "forgen-rule-list/v1",
+  "generatedAt": "2026-11-27T06:43:10.396Z",
+  "rules": [
+    {
+      "id": "11111111-1111-4111-8111-111111111111",
+      "status": "active",
+      "phase": "active",
+      "category": "quality",
+      "strength": "default",
+      "source": "explicit_correction",
+      "origin": "user",
+      "scope": "me",
+      "projects": [],
+      "statement": "테스트는 임시 폴더에서 격리해 돌린다",
+      "trigger": "테스트를 돌릴 때",
+      "renderKey": "quality.k1111",
+      "createdAt": "2026-11-22T06:43:10.052Z",
+      "updatedAt": "2026-11-22T06:43:10.052Z",
+      "counts": {
+        "inject": 3,
+        "violation": 2,
+        "bypass": 0
+      },
+      "lastInjectAt": "2026-11-26T06:43:10.052Z",
+      "lastViolationAt": "2026-11-27T04:43:10.052Z",
+      "enforce": {
+        "hasEnforceVia": false,
+        "mode": "advise",
+        "label": "자문"
+      },
+      "statusHistory": [],
+      "evidence": [
+        {
+          "id": "ev-user-1",
+          "at": "2026-11-23T06:43:10.052Z",
+          "kind": "user",
+          "summary": "테스트는 임시 폴더에서 돌려"
+        }
+      ],
+      "evidenceTruncated": 0,
+      "supersededBy": null,
+      "reviewedAt": null,
+      "archived": false
+    },
+    {
+      "id": "22222222-2222-4222-8222-222222222222",
+      "status": "active",
+      "phase": "flagged",
+      "category": "workflow",
+      "strength": "soft",
+      "source": "behavior_inference",
+      "origin": "mined",
+      "scope": "me",
+      "projects": [
+        "proj-a"
+      ],
+      "statement": "빌드 전에 타입 검사를 먼저 돌린다",
+      "trigger": "테스트를 돌릴 때",
+      "renderKey": "quality.k2222",
+      "createdAt": "2026-11-22T06:43:10.052Z",
+      "updatedAt": "2026-11-22T06:43:10.052Z",
+      "counts": {
+        "inject": 1,
+        "violation": 0,
+        "bypass": 1
+      },
+      "lastInjectAt": null,
+      "lastViolationAt": null,
+      "enforce": {
+        "hasEnforceVia": false,
+        "mode": "advise",
+        "label": "자문"
+      },
+      "statusHistory": [],
+      "evidence": [
+        {
+          "id": "ev-mined-1",
+          "at": "2026-11-27T03:43:10.052Z",
+          "kind": "mined",
+          "summary": "타입 검사 먼저(추론)"
+        }
+      ],
+      "evidenceTruncated": 0,
+      "supersededBy": null,
+      "reviewedAt": null,
+      "archived": false
+    },
+    {
+      "id": "33333333-3333-4333-8333-333333333333",
+      "status": "active",
+      "phase": "active",
+      "category": "communication",
+      "strength": "default",
+      "source": "imported",
+      "origin": "other",
+      "scope": "me",
+      "projects": [],
+      "statement": "답변 끝에 다음 단계를 한 줄로 적는다",
+      "trigger": "테스트를 돌릴 때",
+      "renderKey": "quality.k3333",
+      "createdAt": "2026-11-22T06:43:10.052Z",
+      "updatedAt": "2026-11-22T06:43:10.052Z",
+      "counts": {
+        "inject": 0,
+        "violation": 0,
+        "bypass": 0
+      },
+      "lastInjectAt": null,
+      "lastViolationAt": null,
+      "enforce": {
+        "hasEnforceVia": false,
+        "mode": "advise",
+        "label": "자문"
+      },
+      "statusHistory": [],
+      "evidence": [],
+      "evidenceTruncated": 0,
+      "supersededBy": null,
+      "reviewedAt": null,
+      "archived": false
+    },
+    {
+      "id": "44444444-4444-4444-8444-444444444444",
+      "status": "suppressed",
+      "phase": "suppressed",
+      "category": "quality",
+      "strength": "default",
+      "source": "explicit_correction",
+      "origin": "user",
+      "scope": "me",
+      "projects": [],
+      "statement": "오래된 합성 룰",
+      "trigger": "테스트를 돌릴 때",
+      "renderKey": "quality.k4444",
+      "createdAt": "2026-11-22T06:43:10.052Z",
+      "updatedAt": "2026-11-26T06:43:10.052Z",
+      "counts": {
+        "inject": 0,
+        "violation": 0,
+        "bypass": 0
+      },
+      "lastInjectAt": null,
+      "lastViolationAt": null,
+      "enforce": {
+        "hasEnforceVia": false,
+        "mode": "advise",
+        "label": "자문"
+      },
+      "statusHistory": [
+        {
+          "at": "2026-11-26T06:43:10.052Z",
+          "from": "active",
+          "to": "suppressed",
+          "reason": "user: 더 안 씀",
+          "by": "cli"
+        }
+      ],
+      "evidence": [],
+      "evidenceTruncated": 0,
+      "supersededBy": null,
+      "reviewedAt": null,
+      "archived": false
+    },
+    {
+      "id": "55555555-5555-4555-8555-555555555555",
+      "status": "candidate",
+      "phase": "active",
+      "category": "quality",
+      "strength": "default",
+      "source": "behavior_inference",
+      "origin": "mined",
+      "scope": "me",
+      "projects": [],
+      "scopeState": "unresolved",
+      "statement": "후보 합성 룰: 커밋 전 린트",
+      "trigger": "테스트를 돌릴 때",
+      "renderKey": "quality.k5555",
+      "createdAt": "2026-11-22T06:43:10.052Z",
+      "updatedAt": "2026-11-22T06:43:10.052Z",
+      "counts": {
+        "inject": 0,
+        "violation": 0,
+        "bypass": 0
+      },
+      "lastInjectAt": null,
+      "lastViolationAt": null,
+      "enforce": {
+        "hasEnforceVia": false,
+        "mode": "advise",
+        "label": "자문"
+      },
+      "statusHistory": [],
+      "evidence": [],
+      "evidenceTruncated": 0,
+      "supersededBy": null,
+      "reviewedAt": null,
+      "archived": false
+    },
+    {
+      "id": "66666666-6666-4666-8666-666666666666",
+      "status": "removed",
+      "phase": "active",
+      "category": "quality",
+      "strength": "default",
+      "source": "explicit_correction",
+      "origin": "user",
+      "scope": "me",
+      "projects": [],
+      "statement": "보관된 합성 룰",
+      "trigger": "테스트를 돌릴 때",
+      "renderKey": "quality.k6666",
+      "createdAt": "2026-11-22T06:43:10.052Z",
+      "updatedAt": "2026-11-22T06:43:10.052Z",
+      "counts": {
+        "inject": 0,
+        "violation": 0,
+        "bypass": 0
+      },
+      "lastInjectAt": null,
+      "lastViolationAt": null,
+      "enforce": {
+        "hasEnforceVia": false,
+        "mode": "advise",
+        "label": "자문"
+      },
+      "statusHistory": [
+        {
+          "at": "2026-11-24T06:43:10.052Z",
+          "from": "active",
+          "to": "removed",
+          "reason": "prune",
+          "by": "auto"
+        }
+      ],
+      "evidence": [],
+      "evidenceTruncated": 0,
+      "supersededBy": null,
+      "reviewedAt": null,
+      "archived": true
+    }
+  ]
+}

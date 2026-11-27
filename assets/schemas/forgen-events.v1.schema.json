@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://forgen.dev/schemas/forgen-events.v1.schema.json",
+  "title": "forgen-events/v1",
+  "description": "forgen status --events --json [--since ISO] [--until ISO] 이 내는 세션별 사건 목록(문구 없음).",
+  "type": "object",
+  "required": ["schema", "generatedAt", "since", "until", "sources", "events", "sessions"],
+  "properties": {
+    "schema": { "const": "forgen-events/v1" },
+    "generatedAt": { "type": "string" },
+    "since": { "type": "string" },
+    "until": { "type": "string" },
+    "sources": {
+      "type": "object",
+      "required": ["enforcement", "evidence", "sessionsDb"],
+      "properties": {
+        "enforcement": { "type": "boolean" },
+        "evidence": { "type": "boolean" },
+        "sessionsDb": { "type": "boolean" }
+      }
+    },
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["at", "sessionId", "kind", "ruleId"],
+        "properties": {
+          "at": { "type": "string" },
+          "sessionId": { "type": ["string", "null"] },
+          "kind": {
+            "enum": ["block", "bypass", "false_positive", "correction_user", "correction_mined", "solution_matched", "solution_surfaced", "solution_acted_on"]
+          },
+          "ruleId": { "type": ["string", "null"] }
+        }
+      }
+    },
+    "sessions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "cwd", "startedAt"],
+        "properties": {
+          "id": { "type": "string" },
+          "cwd": { "type": "string" },
+          "startedAt": { "type": "string" }
+        }
+      }
+    }
+  }
+}

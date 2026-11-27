@@ -1,0 +1,79 @@
+{
+  "schema": "forgen-events/v1",
+  "generatedAt": "2026-11-27T06:43:10.432Z",
+  "since": "2026-10-28T06:43:10.432Z",
+  "until": "2026-11-27T06:43:10.432Z",
+  "sources": {
+    "enforcement": true,
+    "evidence": true,
+    "sessionsDb": true
+  },
+  "events": [
+    {
+      "at": "2026-11-23T06:43:10.052Z",
+      "sessionId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "kind": "correction_user",
+      "ruleId": "11111111-1111-4111-8111-111111111111"
+    },
+    {
+      "at": "2026-11-26T06:43:10.052Z",
+      "sessionId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "kind": "block",
+      "ruleId": "11111111-1111-4111-8111-111111111111"
+    },
+    {
+      "at": "2026-11-26T10:43:10.052Z",
+      "sessionId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "kind": "false_positive",
+      "ruleId": "11111111-1111-4111-8111-111111111111"
+    },
+    {
+      "at": "2026-11-27T02:43:10.052Z",
+      "sessionId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      "kind": "solution_matched",
+      "ruleId": null
+    },
+    {
+      "at": "2026-11-27T02:43:11.052Z",
+      "sessionId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      "kind": "solution_surfaced",
+      "ruleId": null
+    },
+    {
+      "at": "2026-11-27T03:43:10.052Z",
+      "sessionId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      "kind": "bypass",
+      "ruleId": "22222222-2222-4222-8222-222222222222"
+    },
+    {
+      "at": "2026-11-27T03:43:10.052Z",
+      "sessionId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      "kind": "correction_mined",
+      "ruleId": "22222222-2222-4222-8222-222222222222"
+    },
+    {
+      "at": "2026-11-27T03:43:10.052Z",
+      "sessionId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      "kind": "solution_acted_on",
+      "ruleId": null
+    },
+    {
+      "at": "2026-11-27T04:43:10.052Z",
+      "sessionId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "kind": "block",
+      "ruleId": "11111111-1111-4111-8111-111111111111"
+    }
+  ],
+  "sessions": [
+    {
+      "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "cwd": "/tmp/forgen-fixture/work/proj-a",
+      "startedAt": "2026-11-26T05:43:10.052Z"
+    },
+    {
+      "id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      "cwd": "/tmp/forgen-fixture/work/proj-b",
+      "startedAt": "2026-11-27T01:43:10.052Z"
+    }
+  ]
+}

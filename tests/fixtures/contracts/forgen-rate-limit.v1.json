@@ -1,0 +1,23 @@
+{
+  "schema": "forgen-rate-limit/v1",
+  "samples": [
+    {
+      "w": "five_hour",
+      "t": 1795758473264,
+      "used": 12.5,
+      "resets_at": 1795765673
+    },
+    {
+      "w": "seven_day",
+      "t": 1795760273264,
+      "used": 40,
+      "resets_at": null
+    },
+    {
+      "w": "five_hour",
+      "t": 1795762013264,
+      "used": 14,
+      "resets_at": 1795765673
+    }
+  ]
+}

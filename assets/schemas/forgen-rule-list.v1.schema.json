@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://forgen.dev/schemas/forgen-rule-list.v1.schema.json",
+  "title": "forgen-rule-list/v1",
+  "description": "forgen rule list --json [--archive] 이 내는 개인 룰 목록.",
+  "type": "object",
+  "required": ["schema", "generatedAt", "rules"],
+  "properties": {
+    "schema": { "const": "forgen-rule-list/v1" },
+    "generatedAt": { "type": "string" },
+    "rules": { "type": "array", "items": { "$ref": "#/$defs/rule" } }
+  },
+  "$defs": {
+    "rule": {
+      "type": "object",
+      "required": [
+        "id", "status", "phase", "category", "strength", "source", "origin", "scope", "projects", "statement", "trigger",
+        "renderKey", "createdAt", "updatedAt", "counts", "lastInjectAt", "lastViolationAt", "enforce", "statusHistory",
+        "evidence", "evidenceTruncated", "supersededBy", "reviewedAt", "archived"
+      ],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "status": { "enum": ["active", "candidate", "suppressed", "removed", "superseded"] },
+        "phase": { "enum": ["active", "flagged", "suppressed", "retired", "merged", "superseded", null] },
+        "category": { "enum": ["quality", "autonomy", "communication", "workflow", "safety"] },
+        "strength": { "enum": ["soft", "default", "strong", "hard"] },
+        "source": { "enum": ["onboarding", "explicit_correction", "behavior_inference", "pack_overlay", "imported"] },
+        "origin": { "enum": ["user", "mined", "default", "other"] },
+        "scope": { "enum": ["me", "session"] },
+        "projects": { "type": "array", "items": { "type": "string" } },
+        "scopeState": { "const": "unresolved", "description": "0.8.0 추가. 프로젝트 한정인데 프로젝트를 못 정했을 때만 있다." },
+        "statement": { "type": "string" },
+        "trigger": { "type": "string" },
+        "renderKey": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" },
+        "counts": {
+          "type": "object",
+          "required": ["inject", "violation", "bypass"],
+          "properties": {
+            "inject": { "type": "number", "minimum": 0 },
+            "violation": { "type": "number", "minimum": 0 },
+            "bypass": { "type": "number", "minimum": 0 }
+          }
+        },
+        "lastInjectAt": { "type": ["string", "null"] },
+        "lastViolationAt": { "type": ["string", "null"] },
+        "enforce": {
+          "type": "object",
+          "required": ["hasEnforceVia", "mode", "label"],
+          "properties": {
+            "hasEnforceVia": { "type": "boolean" },
+            "mode": { "enum": ["block", "advise"] },
+            "label": { "enum": ["차단", "탐지", "자문"] }
+          }
+        },
+        "statusHistory": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["at", "from", "to", "reason", "by"],
+            "properties": {
+              "at": { "type": "string" },
+              "from": { "type": "string" },
+              "to": { "type": "string" },
+              "reason": { "type": "string" },
+              "by": { "type": "string" }
+            }
+          }
+        },
+        "evidence": {
+          "type": "array",
+          "maxItems": 20,
+          "items": {
+            "type": "object",
+            "required": ["id", "at", "kind", "summary"],
+            "properties": {
+              "id": { "type": "string" },
+              "at": { "type": ["string", "null"] },
+              "kind": { "enum": ["user", "mined", "other"] },
+              "summary": { "type": ["string", "null"], "maxLength": 200 }
+            }
+          }
+        },
+        "evidenceTruncated": { "type": "integer", "minimum": 0 },
+        "supersededBy": { "type": ["string", "null"] },
+        "reviewedAt": { "type": ["string", "null"] },
+        "archived": { "type": "boolean" }
+      }
+    }
+  }
+}

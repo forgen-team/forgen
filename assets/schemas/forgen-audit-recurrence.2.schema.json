@@ -1,0 +1,223 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://forgen.dev/schemas/forgen-audit-recurrence.2.schema.json",
+  "title": "forgen-audit-recurrence/2",
+  "description": "같은 말 다시 하기 재생 결과. forgen audit recurrence --latest --json 은 저장된 가장 최근 결과(runId 문자열) 또는 저장된 결과가 없을 때의 no-data 한 덩이(runId null)를 낸다. forgen audit recurrence --json(새로 판정)도 결과 칸은 같다.",
+  "oneOf": [
+    {
+      "title": "저장된 결과 없음 (--latest 전용)",
+      "type": "object",
+      "required": ["schema", "status", "statusNote", "runId"],
+      "properties": {
+        "schema": { "const": "forgen-audit-recurrence/2" },
+        "status": { "const": "no-data" },
+        "statusNote": { "type": "string" },
+        "runId": { "type": "null" }
+      }
+    },
+    {
+      "title": "재생 결과",
+      "type": "object",
+      "required": ["schema", "forgenVersion", "generatedAt", "claudeDir", "window", "judge", "status", "statusNote", "prompts", "corrections", "counts", "per1000", "per30d", "ci95per1000", "unknown", "pairsJudged", "memory", "loadedVia", "notes", "items", "runId"],
+      "properties": {
+        "schema": { "const": "forgen-audit-recurrence/2" },
+        "runId": { "type": "string", "description": "<FORGEN_HOME>/audit/recurrence/<runId>/ 회차 이름" },
+        "forgenVersion": { "type": "string" },
+        "generatedAt": { "type": "string" },
+        "claudeDir": { "type": "string" },
+        "window": {
+          "type": "object",
+          "required": ["since", "until", "lookbackDays", "days"],
+          "properties": {
+            "since": { "type": "string" },
+            "until": { "type": "string" },
+            "lookbackDays": { "type": "number" },
+            "days": { "type": "number" }
+          }
+        },
+        "judge": {
+          "anyOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "required": ["correction", "pair", "prefilterMin", "top"],
+              "properties": {
+                "correction": { "type": "object", "required": ["model", "version"], "properties": { "model": { "type": "string" }, "version": { "type": "string" } } },
+                "pair": { "type": "object", "required": ["model", "version"], "properties": { "model": { "type": "string" }, "version": { "type": "string" }, "mode": { "type": "string" } } },
+                "prefilterMin": { "type": "number" },
+                "top": { "type": "object" }
+              }
+            }
+          ]
+        },
+        "status": { "enum": ["ok", "insufficient", "incomplete", "model-off", "no-data"], "description": "insufficient 는 참고값(표본 부족), incomplete 는 판정 못 한 것이 많음 — 숫자를 보이지 않는다" },
+        "statusNote": { "type": "string" },
+        "prompts": {
+          "type": "object",
+          "required": ["window", "lookback", "sampled", "judged", "unjudged", "limit", "per30d"],
+          "properties": {
+            "window": { "type": "number" },
+            "lookback": { "type": "number" },
+            "sampled": { "type": "number" },
+            "judged": { "type": "number" },
+            "unjudged": { "type": "number" },
+            "limit": { "type": ["number", "null"], "description": "null = 전부로 잰 결과, 숫자 = 표본(--limit)" },
+            "per30d": { "type": "number" }
+          }
+        },
+        "corrections": {
+          "type": "object",
+          "required": ["total", "taskSpecific", "lookback", "per1000", "per30d", "becameMemory"],
+          "properties": {
+            "total": { "type": "number" },
+            "taskSpecific": { "type": "number" },
+            "lookback": { "type": "number" },
+            "per1000": { "type": "number" },
+            "per30d": { "type": "number" },
+            "becameMemory": { "type": "number" }
+          }
+        },
+        "counts": { "$ref": "#/$defs/counts" },
+        "per1000": { "$ref": "#/$defs/counts" },
+        "per30d": { "$ref": "#/$defs/counts" },
+        "ci95per1000": {
+          "type": "object",
+          "required": ["total", "written"],
+          "properties": {
+            "total": { "$ref": "#/$defs/pair" },
+            "written": { "$ref": "#/$defs/pair" }
+          }
+        },
+        "range": {
+          "type": "object",
+          "required": ["strictVersion", "lenientVersion", "lenient"],
+          "properties": {
+            "strictVersion": { "type": "string" },
+            "lenientVersion": { "type": "string" },
+            "lenient": {
+              "type": "object",
+              "required": ["counts", "per1000", "per30d"],
+              "properties": {
+                "counts": { "$ref": "#/$defs/counts" },
+                "per1000": { "$ref": "#/$defs/counts" },
+                "per30d": { "$ref": "#/$defs/counts" }
+              }
+            }
+          }
+        },
+        "unknown": { "type": "number" },
+        "pairsJudged": { "type": "number" },
+        "memory": {
+          "type": "object",
+          "required": ["items", "byKind", "unknownTime", "deleted"],
+          "properties": {
+            "items": { "type": "number" },
+            "byKind": { "type": "object", "additionalProperties": { "type": "number" } },
+            "unknownTime": { "type": "number" },
+            "deleted": { "type": "number" }
+          }
+        },
+        "loadedVia": {
+          "type": "object",
+          "required": ["renderLog", "replay"],
+          "properties": { "renderLog": { "type": "number" }, "replay": { "type": "number" } }
+        },
+        "biweekly": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["from", "to", "prompts", "corrections", "written", "total", "tier2Missed", "per1000"],
+            "properties": {
+              "from": { "type": "string" },
+              "to": { "type": "string" },
+              "prompts": { "type": "number" },
+              "corrections": { "type": "number" },
+              "written": { "type": "number" },
+              "total": { "type": "number" },
+              "tier2Missed": { "type": "number" },
+              "per1000": { "type": "number" }
+            }
+          }
+        },
+        "notes": { "type": "array", "items": { "type": "string" } },
+        "items": { "type": "array", "items": { "$ref": "#/$defs/item" } }
+      }
+    }
+  ],
+  "$defs": {
+    "pair": { "type": "array", "items": { "type": "number" }, "minItems": 2, "maxItems": 2 },
+    "counts": {
+      "type": "object",
+      "required": ["ignored", "notLoaded", "written", "unwrittenRepeat", "deletedRepeat", "total"],
+      "properties": {
+        "ignored": { "type": "number" },
+        "notLoaded": { "type": "number" },
+        "written": { "type": "number" },
+        "unwrittenRepeat": { "type": "number" },
+        "deletedRepeat": { "type": "number" },
+        "total": { "type": "number" },
+        "tier2Missed": { "type": "number" }
+      }
+    },
+    "item": {
+      "type": "object",
+      "description": "교정 하나. utterance·gist·match.text 는 사용자 원문이라 화면에 보일 때는 forgen maskQuote(80자)처럼 가린다",
+      "required": ["id", "session", "ts", "cwd", "gist", "utterance", "taskSpecific", "branch", "becameMemory", "pairs", "unknown"],
+      "properties": {
+        "id": { "type": "string" },
+        "session": { "type": "string" },
+        "ts": { "type": "string" },
+        "cwd": { "type": "string" },
+        "gist": { "type": "string" },
+        "utterance": { "type": "string" },
+        "taskSpecific": { "type": "boolean" },
+        "branch": { "enum": ["ignored", "not-loaded", "unwritten-repeat", "deleted-repeat", "new"] },
+        "match": {
+          "type": "object",
+          "required": ["key", "kind", "text"],
+          "properties": {
+            "key": { "type": "string" },
+            "kind": { "type": "string" },
+            "text": { "type": "string" },
+            "loaded": { "type": "boolean" },
+            "loadedVia": { "type": "string" },
+            "reason": { "type": "string" },
+            "path": { "type": "string" },
+            "line": { "type": "number" },
+            "ruleId": { "type": "string" }
+          }
+        },
+        "earlier": {
+          "type": "object",
+          "required": ["session", "ts", "text", "source"],
+          "properties": {
+            "session": { "type": "string" },
+            "ts": { "type": "string" },
+            "text": { "type": "string" },
+            "source": { "enum": ["replay", "forgen-evidence"] }
+          }
+        },
+        "becameMemory": { "type": "boolean" },
+        "pairs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["tier", "key", "kind", "text", "score", "verdict"],
+            "properties": {
+              "tier": { "enum": ["memory", "later", "deleted", "earlier"] },
+              "key": { "type": "string" },
+              "kind": { "type": "string" },
+              "text": { "type": "string" },
+              "score": { "type": "number" },
+              "verdict": { "enum": ["yes", "no", "unknown", null] },
+              "path": { "type": "string" },
+              "line": { "type": "number" }
+            }
+          }
+        },
+        "unknown": { "type": "number" },
+        "skipped": { "const": "task-specific" }
+      }
+    }
+  }
+}

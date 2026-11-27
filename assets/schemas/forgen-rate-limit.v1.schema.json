@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://forgen.dev/schemas/forgen-rate-limit.v1.schema.json",
+  "title": "forgen-rate-limit/v1",
+  "description": "forgen status --rate-limit --json 이 내는 rate-limit 샘플(원본 형식 그대로, 최근 7일·읽을 수 있는 줄만). 읽기 전용.",
+  "type": "object",
+  "required": ["schema", "samples"],
+  "properties": {
+    "schema": { "const": "forgen-rate-limit/v1" },
+    "samples": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["w", "t", "used", "resets_at"],
+        "properties": {
+          "w": { "enum": ["five_hour", "seven_day"], "description": "창 이름" },
+          "t": { "type": "number", "description": "샘플 시각(epoch ms)" },
+          "used": { "type": "number", "description": "사용률(%)" },
+          "resets_at": { "type": ["number", "null"], "description": "창 리셋 시각(epoch s). 모르면 null" }
+        }
+      }
+    }
+  }
+}

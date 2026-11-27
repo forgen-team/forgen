@@ -1,0 +1,234 @@
+{
+  "schema": "forgen-audit-recurrence/2",
+  "forgenVersion": "0.9.5",
+  "generatedAt": "2026-11-01T00:00:00.000Z",
+  "claudeDir": "/tmp/forgen-fixture/home/.claude",
+  "window": {
+    "since": "2026-10-01T00:00:00.000Z",
+    "until": "2026-11-01T00:00:00.000Z",
+    "lookbackDays": 30,
+    "days": 31
+  },
+  "judge": {
+    "correction": {
+      "model": "claude-haiku-5-5",
+      "version": "n4-correction/2"
+    },
+    "pair": {
+      "model": "claude-sonnet-5-5",
+      "version": "n4-pair/5",
+      "mode": "single-asymmetric"
+    },
+    "prefilterMin": 0.05,
+    "top": {
+      "memory": 4,
+      "earlier": 3,
+      "later": 1,
+      "deleted": 2
+    }
+  },
+  "memory": {
+    "items": 0,
+    "byKind": {},
+    "unknownTime": 0,
+    "deleted": 0
+  },
+  "status": "insufficient",
+  "statusNote": "참고값(교정 3개로 잼)",
+  "prompts": {
+    "window": 4,
+    "lookback": 0,
+    "sampled": 4,
+    "judged": 4,
+    "unjudged": 0,
+    "limit": null,
+    "per30d": 3.9
+  },
+  "corrections": {
+    "total": 3,
+    "taskSpecific": 0,
+    "lookback": 0,
+    "per1000": 750,
+    "per30d": 2.9,
+    "becameMemory": 0
+  },
+  "counts": {
+    "ignored": 0,
+    "notLoaded": 0,
+    "written": 0,
+    "unwrittenRepeat": 1,
+    "deletedRepeat": 0,
+    "total": 1,
+    "tier2Missed": 0
+  },
+  "per1000": {
+    "ignored": 0,
+    "notLoaded": 0,
+    "written": 0,
+    "unwrittenRepeat": 250,
+    "deletedRepeat": 0,
+    "total": 250,
+    "tier2Missed": 0
+  },
+  "per30d": {
+    "ignored": 0,
+    "notLoaded": 0,
+    "written": 0,
+    "unwrittenRepeat": 1,
+    "deletedRepeat": 0,
+    "total": 1,
+    "tier2Missed": 0
+  },
+  "ci95per1000": {
+    "total": [
+      3.3,
+      1391
+    ],
+    "written": [
+      0,
+      922.3
+    ]
+  },
+  "range": {
+    "strictVersion": "n4-pair/5",
+    "lenientVersion": "n4-pair/4",
+    "lenient": {
+      "counts": {
+        "ignored": 0,
+        "notLoaded": 0,
+        "written": 0,
+        "unwrittenRepeat": 1,
+        "deletedRepeat": 0,
+        "total": 1,
+        "tier2Missed": 0
+      },
+      "per1000": {
+        "ignored": 0,
+        "notLoaded": 0,
+        "written": 0,
+        "unwrittenRepeat": 250,
+        "deletedRepeat": 0,
+        "total": 250,
+        "tier2Missed": 0
+      },
+      "per30d": {
+        "ignored": 0,
+        "notLoaded": 0,
+        "written": 0,
+        "unwrittenRepeat": 1,
+        "deletedRepeat": 0,
+        "total": 1,
+        "tier2Missed": 0
+      }
+    }
+  },
+  "unknown": 0,
+  "pairsJudged": 2,
+  "loadedVia": {
+    "renderLog": 0,
+    "replay": 0
+  },
+  "biweekly": [
+    {
+      "from": "2026-10-01T00:00:00.000Z",
+      "to": "2026-10-15T00:00:00.000Z",
+      "prompts": 2,
+      "corrections": 1,
+      "written": 0,
+      "total": 0,
+      "tier2Missed": 0,
+      "per1000": 0
+    },
+    {
+      "from": "2026-10-15T00:00:00.000Z",
+      "to": "2026-10-29T00:00:00.000Z",
+      "prompts": 2,
+      "corrections": 2,
+      "written": 0,
+      "total": 1,
+      "tier2Missed": 0,
+      "per1000": 500
+    },
+    {
+      "from": "2026-10-29T00:00:00.000Z",
+      "to": "2026-11-01T00:00:00.000Z",
+      "prompts": 0,
+      "corrections": 0,
+      "written": 0,
+      "total": 0,
+      "tier2Missed": 0,
+      "per1000": 0
+    }
+  ],
+  "notes": [
+    "비교한 기억: forgen 룰 0 · 메모 파일 0 · MEMORY.md 줄 0 · CLAUDE.md 등 지침 줄 0 — 기억이 바뀌면(룰을 지우거나 더하면) 같은 대화 기록이라도 숫자가 달라진다",
+    "CLAUDE.md·MEMORY.md 가 그 세션에 실렸는지는 지금 파일 구성으로 판단한다",
+    "한계: 다시 교정한 경우만 센다. 룰이 안 들어왔거나 무시됐는데 내가 다시 말하지 않고 넘어간 경우는 대화 기록으로 알 수 없다"
+  ],
+  "items": [
+    {
+      "id": "e111442b3265",
+      "session": "s-first",
+      "ts": "2026-10-03T10:00:00.000Z",
+      "cwd": "/tmp/forgen-fixture/work/proj-ro",
+      "gist": "고칠 것 tq01 방향 지시",
+      "utterance": "[[C:tq01]] 그게 아니라 tq01 방식으로 다시 해 줘",
+      "taskSpecific": false,
+      "branch": "new",
+      "becameMemory": false,
+      "pairs": [],
+      "unknown": 0
+    },
+    {
+      "id": "9c617ef458eb",
+      "session": "s-repeat",
+      "ts": "2026-10-20T10:00:00.000Z",
+      "cwd": "/tmp/forgen-fixture/work/proj-ro",
+      "gist": "고칠 것 tq01 방향 지시",
+      "utterance": "[[C:tq01]] 그게 아니라 tq01 방식으로 다시 해 줘",
+      "taskSpecific": false,
+      "branch": "unwritten-repeat",
+      "becameMemory": false,
+      "pairs": [
+        {
+          "tier": "earlier",
+          "key": "replay:e111442b3265",
+          "kind": "earlier:replay",
+          "text": "고칠 것 tq01 방향 지시",
+          "score": 0.577,
+          "verdict": "yes"
+        }
+      ],
+      "unknown": 0,
+      "earlier": {
+        "session": "s-first",
+        "ts": "2026-10-03T10:00:00.000Z",
+        "text": "고칠 것 tq01 방향 지시",
+        "source": "replay"
+      }
+    },
+    {
+      "id": "b09bd92fd053",
+      "session": "s-repeat",
+      "ts": "2026-10-20T11:00:00.000Z",
+      "cwd": "/tmp/forgen-fixture/work/proj-ro",
+      "gist": "고칠 것 tq02 방향 지시",
+      "utterance": "[[C:tq02]] 그게 아니라 tq02 방식으로 해 줘",
+      "taskSpecific": false,
+      "branch": "new",
+      "becameMemory": false,
+      "pairs": [
+        {
+          "tier": "earlier",
+          "key": "replay:e111442b3265",
+          "kind": "earlier:replay",
+          "text": "고칠 것 tq01 방향 지시",
+          "score": 0.478,
+          "verdict": "no"
+        }
+      ],
+      "unknown": 0
+    }
+  ],
+  "runId": "20261101T000000Z-986c7377"
+}

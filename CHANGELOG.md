@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+측정 중 예외(D2, 읽기 전용 출력 추가, 동작 변경 없음). forgen 1.0 측정(R7) 중이라 주입·차단·훅·렌더와 기존 명령의 출력은 그대로 두고, 외부 도구가 사람용 문구나 forgen 내부 파일을 직접 읽지 않아도 되도록 기계용 출력 두 개와 계약 문서·스키마만 더한다. 정본: `docs/reference/public-contracts.md`.
+
+### Added
+- `forgen audit recurrence --latest --json` — 새로 판정하지 않고 저장된 가장 최근 재생 결과를 기존 schema `forgen-audit-recurrence/2` 그대로(+`runId`) 낸다. 없으면 `status: "no-data"`(`runId: null`). `status` 5종(`ok|insufficient|incomplete|model-off|no-data`) 그대로. 어떤 파일도 쓰지 않는다(회차·지문·두 층 색인·교정 원장·판정 캐시). `--json` 없이, 또는 판정 옵션(`--since` 등)과 같이 쓰면 오류. 새로 판정하는 `audit recurrence --json` 은 그대로.
+- `forgen status --rate-limit --json` — `{ schema: "forgen-rate-limit/v1", samples }`, 샘플은 `rate-limit-samples.jsonl` 원본 형식(최근 7일, 읽을 수 있는 줄). 읽기만 하고 압축도 하지 않는다.
+- 공개 출력 계약 문서 `docs/reference/public-contracts.md`(K0: `forgen-way/1`·`forgen-rule-list/v1`·`forgen-rule-history/v1`·`forgen-rule-health/v1`·`forgen-events/v1`·`way import` 입력, K2-b: 위 두 개)와 JSON Schema 8개(`assets/schemas/*.schema.json`, npm 패키지에 실림). 실제 출력 픽스처(`tests/fixtures/contracts/`)를 스키마로 검사하는 테스트. 새 의존 없음(검사는 기존 의존 zod 4 의 `z.fromJSONSchema`, 테스트에서만).
+
 ## [0.9.5] — 2026-11-27 — JSON 응답 언어 오탐과 한국어 룰 자동 강등
 
 사람이 아닌 실행의 JSON 응답을 한국어 룰이 "영어 응답"으로 막아, 그 오탐으로 룰이 자동 강등돼 실제 영어 응답을 막지 못하던 것(오너 실데이터). 1.0 측정 중 급한 버그 수정. 새 기능 없음.
